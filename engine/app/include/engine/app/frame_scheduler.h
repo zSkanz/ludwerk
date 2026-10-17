@@ -80,6 +80,53 @@ private:
     bool m_switched = false;
 };
 
+// **An overloaded world slows its clock instead of stalling** (ADR 0233).
+//
+// Fed each frame with how much of it the simulation took and in how many
+// ticks; once a second at most it moves the rate. **Down at once to what
+// fits** while the simulation took more than 90% of the second: the rate at
+// which ticks of the cost they had take 70% of a second, a step at least,
+// down to the floor. **Up a step of 5%** once three seconds in a row took
+// less than half. A world that stepped down a twentieth a second spent ten
+// seconds behind its ticks on the way to the rate it could keep -- every
+// player's prediction corrected all the while -- where one step is one
+// second.
+//
+// **Changed rarely, because a change costs.** The rate reaches a replica a
+// round trip after the authority runs at it, and for that moment the two
+// tick at different rates: each of the replica's characters was corrected
+// once at every change. A tick's cost varies by a fifth from one second to
+// the next, and a band of 70% to 90% around a target of 80% moved the rate
+// every few seconds.
+class TimeDilation
+{
+public:
+    void configure(bool on, f64 floor, f64 ticksPerSecond = 60.0) noexcept;
+    void note(u64 nowNs, f64 simulatedMs, u32 ticks) noexcept;
+    [[nodiscard]] bool on() const noexcept { return on_; }
+    [[nodiscard]] f64 rate() const noexcept { return rate_; }
+    // The share of the last whole second the simulation took, 0 to 1.
+    [[nodiscard]] f64 busy() const noexcept { return busy_; }
+
+    static constexpr f64 Step = 0.05;
+    static constexpr f64 SlowAbove = 0.9;
+    static constexpr f64 SpeedBelow = 0.5;
+    static constexpr u32 CalmSeconds = 3;
+    // What a rate stepped down to leaves the simulation of each second.
+    static constexpr f64 FitTo = 0.7;
+
+private:
+    bool on_ = false;
+    f64 floor_ = 0.25;
+    f64 ticksPerSecond_ = 60.0;
+    f64 rate_ = 1.0;
+    f64 busy_ = 0.0;
+    u64 windowStartNs_ = 0;
+    f64 windowSimulatedMs_ = 0.0;
+    u64 windowTicks_ = 0;
+    u32 calm_ = 0;
+};
+
 class FrameScheduler
 {
 public:
@@ -109,6 +156,11 @@ public:
     // deliberately NOT rescaled: it holds real time owed to the simulation, and
     // that debt is the same number of seconds whatever the tick becomes.
     void setFixedDt(f64 seconds) noexcept { timing_.fixedDt = seconds; }
+    // **How fast the simulation's clock runs against the wall's** (ADR
+    // 0233): 1 at full speed, less while an overloaded world is slowed. The
+    // tick is the same; fewer of them are owed a second.
+    void setTimeScale(f64 scale) noexcept { timeScale_ = scale < 0.01 ? 0.01 : (scale > 1.0 ? 1.0 : scale); }
+    [[nodiscard]] f64 timeScale() const noexcept { return timeScale_; }
     // How many ticks a frame may run to catch up; see `catchUpTicksFor`.
     void setMaxCatchUpTicks(u32 ticks) noexcept { timing_.maxCatchUpTicks = ticks > 0 ? ticks : 1; }
     // The frame loop says where a long frame's time went itself, so the
@@ -138,6 +190,7 @@ private:
     u64 lastNs_ = 0;
     bool started_ = false;
     f64 accumulator_ = 0.0;
+    f64 timeScale_ = 1.0;
     // The ticks of the last frame, and the count it shared with the one
     // before it; none while they differed.
     u32 lastTicks_ = 0;

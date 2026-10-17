@@ -1,5 +1,6 @@
 #include "engine/app/world_host.h"
 
+#include "engine/app/managed_world.h"
 #include "engine/core/profile.h"
 
 #if ENG_ENABLE_REPLICATION
@@ -31,6 +32,7 @@
 #include "engine/render/debug_draw.h"
 #include "engine/render/scene_types.h"
 #include "engine/scene/players.h"
+#include "engine/scene/rewind.h"
 #include "engine/scene/sprite_animation.h"
 #include "engine/scene/swarm.h"
 #include "engine/scene/voxel_fluid.h"
@@ -56,8 +58,12 @@ using core::LogLevel;
 // a directory walk, because the set is the engine's own surface (ADR 0030) and
 // discovering it from a directory would make an accidentally-shipped file part
 // of the API.
-constexpr std::string_view RuntimeModules[] = {"announcements", "camera",    "ragdoll",      "settings", "splitscreen",
-                                               "stamppool",     "subtitles", "travelscreen", "testing",  "views"};
+//
+// `bot` is a load test's bot (ADR 0236): a game that requires it is told
+// only a bot process runs one, by the module itself.
+constexpr std::string_view RuntimeModules[] = {"announcements", "bot",      "camera",       "npclod",
+                                               "ragdoll",       "settings", "splitscreen",  "stamppool",
+                                               "subtitles",     "testing",  "travelscreen", "views"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -367,6 +373,10 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     // and none of the game's (ADR 0107 §3).
     m_world->engineState().subWorld = options.subWorld;
     m_world->engineState().maxSubWorlds = options.subWorld ? 0u : options.maxSubWorlds;
+    m_world->engineState().dormantRadius = options.dormantRadius;
+    m_world->engineState().rewindCapMs = options.rewindCapMs;
+    m_world->engineState().managedWorld = options.managedWorld;
+    m_world->engineState().networkChannel = options.managedWorld.empty() ? 1u : channelOf(options.managedWorld);
     m_seed = options.seed;
 
     m_saves = std::make_unique<script::SaveStore>(script::SaveStore::Options{
@@ -1004,9 +1014,10 @@ std::optional<core::EngineError> WorldHost::mountConformance(const std::filesyst
         entries.push_back(script::MountedScript{relative, relative, std::move(source)});
     }
 
-    // The runner's own path sorts wherever it sorts, and it does not matter: it
-    // hangs off `game.Loaded`, which is raised after every entry script has had
-    // its first resumption whatever order they ran in.
+    // The runner hangs off `game.Loaded`, which is raised after every entry
+    // script has had its first resumption. **Its path sorts before every
+    // spec's**, and that matters: it starts first, and hears the errors a
+    // spec raises as it loads -- a spec that cannot load is a failure.
     std::string runnerSource;
     const std::filesystem::path runnerPath = platform::paths().contentDir / ConformanceRunnerPath;
     if (!readFile(runnerPath, runnerSource)) {
@@ -1846,6 +1857,13 @@ void WorldHost::tick()
     {
         ENG_PROFILE_SCOPE("subworlds");
         stepSubWorlds();
+    }
+
+    // **Where what can be shot was** (ADR 0235), as this tick's snapshot
+    // carries it: on an authority, for a shot checked as its shooter saw it.
+    {
+        ENG_PROFILE_SCOPE("rewind.record");
+        scene::recordRewind(*m_world);
     }
 }
 

@@ -11,6 +11,25 @@ here.
 
 ### Fixed
 
+- A ray, a sphere cast and an overlap now meet characters. Before, a ray at a
+  `CharacterBody` went straight through it, or answered with whichever other
+  part happened to share its number in the physics world. `CanQuery` on a
+  character is honoured. **This changes behaviour**: see the first entry
+  under Changed.
+- A player whose server presents a different key from the one remembered
+  for that address is told so, with the address and what to do. Before,
+  the join failed as "connection lost". `JoinFailed` gives the reason, and the
+  command line logs it.
+- `ludwerk test` counts a spec that fails to load as a failed case. Before,
+  a spec with an error at its top level registered no cases, and the suite
+  passed without it.
+- A world a manager starts writes its log from the first line. The log
+  folder was created after the world launched, so a new world logged
+  nothing.
+- A manager no longer lets more players into a world than it holds while
+  some of them are still on their way: a player with a pass counts from the
+  moment the pass is given, not from their first heartbeat.
+
 - Long shadows from distant buildings no longer disappear at camera cascade
   boundaries. Each sun-shadow projection includes the depth of the objects
   that can shadow its visible region, rather than a fixed extrusion.
@@ -166,8 +185,68 @@ here.
   the anchored parts near it, and blown by the wind. Picture only; off at the
   Low level and on a phone below High. `--skip=cloth` draws a run without it.
 
+- A dedicated server spends its tick on players, not on drawing. It no
+  longer builds a picture nobody sees. A player's interest comes from a grid
+  instead of from every part, and what a player owns comes from the parts
+  that have an owner. With 128 players and 1,000 server characters, telling
+  the players what changed went from 133 to 86 ms a frame. A server that falls
+  behind holds its snapshots while it catches up, and no longer spirals:
+  under that load it now runs 38 to 40 frames a second, where it ran 1.8.
+  `CaptureProfile` reports `calls`, `perCallMs` and `ticksPerFrame`.
+- `ludwerk server loadtest`: a dedicated server is tried with light bots,
+  one encrypted connection each, that walk, travel between worlds through
+  pads tagged `Portal`, and run a behaviour script (`--bot-behavior`, with
+  `require("@engine/bot")`). It reports a plateau and fails when a second
+  runs over the tick, a bot fails or a message is dropped.
+- A budget for each player: `[network] client_budget_kb_per_second`, 48 by
+  default. What matters most to a player is sent first: their own character
+  and what they own always, then what is nearest, times
+  `BasePart.ReplicationPriority` and `Player:SetReplicationPriority`. What
+  waits is drawn smoothly a little behind. `Player.ReplicationBudget` gives
+  one player more or less. `GetStats()` adds `Deferred` and `BudgetUsed`.
+- What no player is near sleeps on a dedicated server: `[server]
+  dormant_radius`, `BasePart.Dormancy` and `Dormant`, and
+  `Workspace:GetNearestPlayerDistance`. `@engine/npclod` calls an NPC's code
+  less often the further it is from every player.
+- An overloaded world slows its clock instead of stalling. With `[server]
+  time_dilation` (or `--time-dilation`), a server that cannot keep up runs
+  its ticks slower, to as low as `time_dilation_floor`, and every client
+  slows with it; it returns to full speed when the load passes.
+  `RunService.TimeDilation` and `TimeDilationChanged`.
+- Channels: a world that fills opens another copy of itself, by
+  `channels`, `max_channels` and `channel_open_at` in `servers.toml`.
+  Channels that empty close, and ones that run low are merged.
+  `NetworkService.Channel`, `SwitchChannel`, `TravelToPlayer`,
+  `GetChannelsAsync` and `ChannelMerging`. `Travel` and its relatives skip a
+  player who has left and say whom they sent. Saves are shared by every
+  channel of a world, and two writers of one slot never mix.
+- A queue at the front door: `[manager] max_players`, `queue_max` and
+  `queue_grace_seconds`. A player who arrives when the game is full waits in
+  line and is told their place and an estimate (`NetworkService.Queued`, and
+  the travel screen). A player who drops keeps their place for the grace.
+- Phases: `Instance.Phase` puts a thing in a phase, and only the players in
+  it (`Player:AddPhase`, `RemovePhase`, `HasPhase`, `GetPhases`, `CanSee`)
+  are sent it. A phased part collides only with the characters and owned
+  parts of players who see it, in 3D and on the plane;
+  `BasePart.PhaseCollision` turns that off.
+- A shot is checked against the world its shooter saw:
+  `Workspace:RaycastAsSeenBy` and `SpherecastAsSeenBy`, on the server, place
+  every player's character and every `BasePart.LagCompensated` part where
+  the shooter's machine drew them. The rewind is at most `[network]
+  rewind_cap_ms`, 200 by default.
+
 ### Changed
 
+- **Behaviour change: rays meet characters.** `Workspace:Raycast`,
+  `Spherecast`, `GetBodiesInBox` and `GetBodiesInSphere` now hit a
+  `CharacterBody` as they hit any part. A cast that starts inside your own
+  character, such as a ground check or a camera boom from its centre, now
+  hits that character first. **To fix it, leave the character out**:
+  `RaycastParams.new({ Filter = { character } })`, or set
+  `character.CanQuery = false` if nothing should ever hit it. The engine's
+  own casts already leave characters out where they should: the camera's line
+  of sight, foot placement, detectors, particle collision, a crowd's ground and
+  the light bake.
 - Luau 0.742, luau-lsp 1.70.1, StyLua 2.6.0, SDL 3.4.18, fastgltf 0.9.1 with
   simdjson 4.6.11, meshoptimizer 1.3 and xxHash 0.8.4. Bytecode exported by
   the previous build still loads: the compiler still writes version 9, and the
@@ -184,7 +263,7 @@ here.
 - Android games target API 36 (Android 16), which Google Play requires of new
   apps and updates. They still run from API 21. Building needs SDK platform 36
   and build-tools 36.0.0; `scripts/install-android.ps1` installs them.
-- The wire protocol is 54. A build before this one cannot join a server of
+- The wire protocol is 55. A build before this one cannot join a server of
   this one, or the other way round.
 - In the editor, the scene is edited, and Play starts, in the project's
   graphics settings; a player's saved ones are Play's only when asked for.

@@ -15,6 +15,7 @@ engine_add_module(script
     LAYER 5
     SOURCES
         src/animation.cpp
+        src/bot_behavior.cpp
         src/builtins.cpp
         src/bytecode.cpp
         src/input_events.cpp
@@ -91,6 +92,7 @@ engine_add_module_tests(script
         tests/save_tests.cpp
         tests/crypto_service_tests.cpp
         tests/bytecode_tests.cpp
+        tests/bot_behavior_tests.cpp
 )
 
 # The sandbox tests boot a VM directly rather than through `ScriptRuntime`, so

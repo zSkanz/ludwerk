@@ -104,6 +104,9 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
     for (const std::string& address : document.strings("manager.admin_allow"))
         config.adminAllow.push_back(address);
 
+    count("manager.max_players", 0, 1000000, config.maxPlayers);
+    count("manager.queue_max", 0, 1000000, config.queueMax);
+    count("manager.queue_grace_seconds", 0, 3600, config.queueGraceSeconds);
     std::set<std::string> names;
     for (core::usize at = 0; at < document.count("world"); ++at) {
         const std::string prefix = "world." + std::to_string(at) + ".";
@@ -111,6 +114,16 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
         world.name = std::string(document.string(prefix + "name").value_or(""));
         world.scene = std::string(document.string(prefix + "scene").value_or(""));
         world.entry = document.boolean(prefix + "entry").value_or(false);
+        world.timeDilation = document.boolean(prefix + "time_dilation").value_or(false);
+        world.channels = document.boolean(prefix + "channels").value_or(false);
+        count(prefix + "max_channels", 1, 64, world.maxChannels);
+        count(prefix + "channel_close_seconds", 0, 86400, world.channelCloseSeconds);
+        if (const std::optional<core::f64> share = document.number(prefix + "channel_open_at");
+            share.has_value() && *share >= 0.1 && *share <= 1.0)
+            world.channelOpenAt = *share;
+        if (const std::optional<core::f64> minutes = document.number(prefix + "merge_minutes");
+            minutes.has_value() && *minutes >= 0.0 && *minutes <= 1440.0)
+            world.mergeMinutes = *minutes;
         count(prefix + "max_players", 1, 4096, world.maxPlayers);
         if (!nameWord(world.name) || !names.insert(world.name).second) {
             error = problem(ENG_TR("manager.err.servers_name"), source, world.name);

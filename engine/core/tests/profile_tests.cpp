@@ -84,6 +84,10 @@ TEST_CASE("the scopes of a frame form a tree whose parts add up to the whole")
     CHECK(rows[3].name == "test.scripts");
     CHECK(rows[3].calls == doctest::Approx(2.0));
     CHECK(rows[3].medianMs == doctest::Approx(2.0));
+    // **One run of a scope**, which a frame that ran it twice says twice
+    // over: what a catching-up server's ticks are read by.
+    CHECK(rows[3].perCallMs == doctest::Approx(1.0));
+    CHECK(rows[1].perCallMs == doctest::Approx(5.0));
 
     // What no scope under a scope accounts for is its own: the frame's 1 ms
     // outside the tick, and nothing in a tick its children fill.

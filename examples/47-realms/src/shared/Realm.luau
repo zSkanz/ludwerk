@@ -35,9 +35,19 @@ export type Options = {
 --- How close to a pad's centre a character must stand to be on it.
 Realm.PadRadius = 2
 
+--- Whether `player` is still in this world: one who left while something
+--- waited -- a dungeon being made, a handler's turn -- is gone, and its
+--- `Player` with them.
+function Realm.here(player: Player): boolean
+    return table.find(NetworkService:GetPlayers(), player) ~= nil
+end
+
 --- What a player is told, by the key of a line in `i18n/`, under the world's
 --- name: their client shows it for a few seconds.
 function Realm.tell(player: Player, key: string)
+    if not Realm.here(player) then
+        return
+    end
     player:SetAttribute("Notice", key)
     player:SetAttribute("NoticeAt", RunService.SimTime)
 end
@@ -75,6 +85,8 @@ function Realm.build(options: Options)
         pad.Size = vector.create(Realm.PadRadius * 2, 0.2, Realm.PadRadius * 2)
         pad.Position = portal.Position + vector.create(0, 0.1, 0)
         pad:SetMaterialParameter("Color", portal.Color)
+        -- What a load test's `travel` bots walk to (ADR 0236).
+        pad:AddTag("Portal")
         pad.Parent = workspace
         local arch = Instance.new("Part")
         arch.Name = `{portal.Name}Arch`

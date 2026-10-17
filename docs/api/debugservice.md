@@ -37,7 +37,9 @@ Draws the wireframe of a sphere at a position in world space, with a radius in m
 
 ### `GetProfileReport(): any`
 
-Returns the report of the capture requested with `CaptureProfile`, or nil until the capture completes. The report is a table with `frames`, `seconds` and `scopes`. Each scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs` and `selfMedianMs`.
+Returns the report of the capture requested with `CaptureProfile`, or nil until the capture completes. The report is a table with `frames`, `seconds`, `ticksPerFrame` and `scopes`. Each scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs`, `selfMedianMs`, `calls` and `perCallMs`.
+
+The times are a frame's: what the scope spent in one frame, over the frames captured. `calls` is how many times it ran in a frame, at the median, and `perCallMs` is one run of it. `ticksPerFrame` is how many simulation ticks a frame ran, at the median: 1 for a world keeping up. A server catching up runs several in a frame, and a tick's scopes then show several ticks' time in each frame; read `perCallMs` for one tick.
 
 A scope's times include its child scopes and any waiting, and they are CPU times, not GPU times. At most the latest 16,384 frames are kept. The report stays available until the next capture is requested.
 

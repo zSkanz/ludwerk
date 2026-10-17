@@ -166,6 +166,10 @@ struct JoinTarget
         return core::engineCatalog().format(ENG_TR("net.err.refused_luau_flags"));
     if (reason == replication::RefusedInsecure)
         return core::engineCatalog().format(ENG_TR("net.err.refused_insecure"));
+    if (reason == replication::RefusedServerKey)
+        return core::engineCatalog().format(ENG_TR("net.err.join_key_changed"));
+    if (reason == replication::RefusedNotEncrypted)
+        return core::engineCatalog().format(ENG_TR("net.err.join_insecure"));
     // The game's own words for a refusal, or the engine's where it gave none.
     if (reason == replication::RefusedByGame)
         return words.empty() ? core::engineCatalog().format(ENG_TR("net.err.refused_by_game")) : words;
@@ -507,6 +511,17 @@ void NetworkSession::send()
 #endif
 }
 
+void NetworkSession::holdSnapshots(bool held)
+{
+    if (m_replication != nullptr)
+        m_replication->holdSnapshots(held);
+}
+
+bool NetworkSession::snapshotSent() const
+{
+    return m_replication != nullptr && m_replication->snapshotSent();
+}
+
 void NetworkSession::noteTimeDropped()
 {
     if (m_replication != nullptr)
@@ -548,6 +563,8 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     scene::World& world = host->world();
     world.engineState().networkTopology = scene::NetworkTopology::Solo;
     world.engineState().networkPeerCount = 0;
+    // Its own clock again, at full speed (ADR 0233).
+    world.engineState().timeDilation = 1.0;
     world.engineState().networkPort = 0;
     // The world is this machine's own again: its scene's client code runs.
     world.engineState().sceneClientHeld = false;
@@ -769,6 +786,10 @@ void NetworkSession::update()
     const replication::Status status = m_replication->status();
     state.networkServerTick = status.serverTick;
     state.networkServerClock = status.serverClock;
+    // **A replica runs at its authority's rate** (ADR 0233): its prediction
+    // steps as often as the authority's ticks do.
+    if (state.networkTopology == scene::NetworkTopology::Replica)
+        state.timeDilation = status.timeDilation;
     state.networkPeerCount = status.peerCount;
     state.networkPort = m_port;
     noteRelay(status.relayState, status.joinCode);
@@ -780,6 +801,8 @@ void NetworkSession::update()
         shown.encrypted = m_security.encrypt;
         shown.wireBytesSent = status.wireBytesSent;
         shown.wireBytesReceived = status.wireBytesReceived;
+        shown.deferredPerSecond = stats.deferredLastSecond;
+        shown.budgetUsed = stats.budgetUsedLastSecond;
         shown.pingMs = static_cast<core::f64>(status.pingMs);
         shown.jitterMs = static_cast<core::f64>(status.jitterMs);
         shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
@@ -887,13 +910,23 @@ void NetworkSession::update()
     // script's join is still the machine's own world until the welcome, so
     // this is asked whatever the topology says.
     if (m_connecting && status.refused != 0) {
-        goSolo("JoinFailed", refusalText(status.refused, status.refusedText),
-               state.networkTopology != scene::NetworkTopology::Replica);
+        const std::string why = refusalText(status.refused, status.refusedText);
+        // **A join from the command line has no script to tell**: the log
+        // is where its player reads why.
+        if (m_redial)
+            core::logText(core::LogLevel::Warn, why);
+        goSolo("JoinFailed", why, state.networkTopology != scene::NetworkTopology::Replica);
         return;
     }
     if (!m_connecting && state.networkTopology != scene::NetworkTopology::Replica)
         return;
     if (m_connecting) {
+        // **In line at a full game's door** (ADR 0232): waiting is not a
+        // join that failed -- the clock starts again with each place told.
+        if (status.queuePosition != 0 && !status.welcomed && status.queuePosition != m_queuedAt) {
+            m_queuedAt = status.queuePosition;
+            m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
+        }
         if (status.welcomed) {
             m_connecting = false;
             m_lostSinceNs = 0;
@@ -924,7 +957,10 @@ void NetworkSession::update()
     // A join from the command line dials again, as it always has (ADR 0085);
     // one a script made hands the decision back to the game.
     if (status.refused != 0) {
-        goSolo("Disconnected", refusalText(status.refused, status.refusedText), false);
+        const std::string why = refusalText(status.refused, status.refusedText);
+        if (m_redial)
+            core::logText(core::LogLevel::Warn, why);
+        goSolo("Disconnected", why, false);
         return;
     }
     // **Dropped by a world it was sent to**, on a join that dials until it is

@@ -22,6 +22,8 @@
 #include "engine/core/finite.h"
 #include "engine/core/host_platform.h"
 #include "engine/physics/types.h"
+#include "engine/scene/dormancy.h"
+#include "engine/scene/phases.h"
 #include "engine/scene/pivot.h"
 #include "engine/scene/world.h"
 
@@ -189,6 +191,62 @@ Value getInstanceClassName(const World& world, core::InstanceId id)
 {
     const ClassDescriptor* descriptor = world.classes().find(world.classOf(id));
     return descriptor == nullptr ? std::string{} : std::string(world.atoms().text(descriptor->name));
+}
+
+Value getInstancePhase(const World& world, core::InstanceId id)
+{
+    const PhaseComponent* phased = world.phases().find(id);
+    if (phased == nullptr || !phased->phase.valid())
+        return Value{std::string{}};
+    return Value{std::string(world.atoms().text(phased->phase))};
+}
+
+bool setInstancePhase(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr || text->size() > 64 || !world.alive(id))
+        return false;
+    PhaseComponent* phased = world.phases().find(id);
+    if (text->empty()) {
+        if (phased != nullptr && phased->collision)
+            (void)world.phases().remove(id);
+        else if (phased != nullptr)
+            phased->phase = core::NameAtom{};
+        return true;
+    }
+    const core::NameAtom phase = world.atoms().intern(*text);
+    // A world names at most `MostPhases`: past it, refused.
+    if (!phaseBit(world, phase).has_value())
+        return false;
+    if (phased == nullptr)
+        phased = &world.phases().add(id, PhaseComponent{});
+    phased->phase = phase;
+    return true;
+}
+
+Value getBasePartPhaseCollision(const World& world, core::InstanceId id)
+{
+    if (readPart(world, id) == nullptr)
+        return Value{};
+    const PhaseComponent* phased = world.phases().find(id);
+    return Value{phased == nullptr || phased->collision};
+}
+
+bool setBasePartPhaseCollision(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr || readPart(world, id) == nullptr)
+        return false;
+    PhaseComponent* phased = world.phases().find(id);
+    if (phased == nullptr) {
+        if (*flag)
+            return true;
+        phased = &world.phases().add(id, PhaseComponent{});
+    }
+    phased->collision = *flag;
+    if (phased->collision && !phased->phase.valid())
+        (void)world.phases().remove(id);
+    return true;
 }
 
 Value getInstanceLocal(const World& world, core::InstanceId id)
@@ -552,6 +610,27 @@ bool setPlayerGamepadId(World& world, core::InstanceId id, const Value& value)
         std::floor(*number) != *number)
         return false;
     player->gamepadId = static_cast<u32>(*number);
+    return true;
+}
+
+Value getRunServiceTimeDilation(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().timeDilation};
+}
+
+Value getPlayerReplicationBudget(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    return player == nullptr ? Value{} : Value{static_cast<f64>(player->replicationBudgetKb)};
+}
+
+bool setPlayerReplicationBudget(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    PlayerComponent* player = world.players().find(id);
+    if (number == nullptr || player == nullptr || !(*number >= 0.0 && *number <= 1.0e6))
+        return false;
+    player->replicationBudgetKb = static_cast<f32>(*number);
     return true;
 }
 
@@ -1441,6 +1520,72 @@ bool setBasePartFade(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getBasePartDormancy(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{EnumValue{generated::DormancyEnumId, part->dormancy}};
+}
+
+bool setBasePartDormancy(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<EnumValue>(&value);
+    PartComponent* part = writePart(world, id);
+    if (item == nullptr || part == nullptr || item->enumId != generated::DormancyEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    part->dormancy = item->value;
+    return true;
+}
+
+Value getBasePartDormant(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    if (part == nullptr)
+        return Value{};
+    if (const CharacterBodyComponent* character = world.characterBodies().find(id); character != nullptr)
+        return Value{character->dormant};
+    return Value{part->dormancy == 0 && dormantAt(world, part->cframe.position)};
+}
+
+Value getBasePartLagCompensated(const World& world, core::InstanceId id)
+{
+    if (readPart(world, id) == nullptr)
+        return Value{};
+    const LagCompensatedComponent* compensated = world.lagCompensated().find(id);
+    return Value{compensated != nullptr && compensated->on};
+}
+
+bool setBasePartLagCompensated(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    if (flag == nullptr || readPart(world, id) == nullptr)
+        return false;
+    if (*flag) {
+        if (world.lagCompensated().find(id) == nullptr)
+            (void)world.lagCompensated().add(id, LagCompensatedComponent{});
+    }
+    else {
+        (void)world.lagCompensated().remove(id);
+    }
+    return true;
+}
+
+Value getBasePartReplicationPriority(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{static_cast<f64>(part->replicationPriority)};
+}
+
+bool setBasePartReplicationPriority(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    PartComponent* part = writePart(world, id);
+    if (number == nullptr || part == nullptr || !(*number >= 0.0 && *number <= 1.0e6))
+        return false;
+    part->replicationPriority = static_cast<f32>(*number);
+    return true;
+}
+
 Value getBasePartReceivesDecals(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);
@@ -2059,6 +2204,11 @@ Value getDataModelEngineVersion(const World& world, core::InstanceId)
 Value getDataModelLuauVersion(const World& world, core::InstanceId)
 {
     return world.engineState().luauVersion;
+}
+
+Value getNetworkServiceChannel(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().networkChannel)};
 }
 
 Value getNetworkServiceAuthority(const World& world, core::InstanceId)

@@ -300,6 +300,8 @@ public:
         int threadRef = -1;
     };
     std::vector<InstanceWaiter> instanceWaiters;
+    // `NetworkService:GetChannelsAsync` (ADR 0230), the same way.
+    std::vector<InstanceWaiter> channelWaiters;
 
     // `CrossWorldService` (ADR 0223): each callback by its topic, and how
     // many this world published in the second it is in.
@@ -557,6 +559,10 @@ void fireSubWorldMessages(lua_State* L);
 // 0106), fired by the host when the connection it manages changes; the last
 // two carry a readable reason.
 void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason);
+
+// `RunService.TimeDilationChanged` (ADR 0233), fired by the host when the
+// rate its world runs at changes.
+void fireTimeDilationChanged(lua_State* L);
 
 // Wakes every `GraphicsService:SaveAsync` (or, with `load`, `LoadAsync`) with
 // whether the host did it (ADR 0147).

@@ -163,6 +163,12 @@ struct ProjectConfig
     // world's `/health` and `/metrics`, on the game's port number over TCP
     // when no other is given.
     bool serverHealth = false;
+    // `[server] dormant_radius` (ADR 0234): metres from every player's focus
+    // past which a character sleeps; 0 never; below 0, twice the load radius.
+    core::f64 serverDormantRadius = -1.0;
+    // `[server] time_dilation` and `time_dilation_floor` (ADR 0233).
+    bool serverTimeDilation = false;
+    core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;
 
@@ -173,6 +179,13 @@ struct ProjectConfig
     // on this game's server: a household, a LAN house, a school, a carrier's
     // NAT. Nought for any number; 64 by default.
     core::u32 networkMaxPerAddress = 64;
+    // `[network] client_budget_kb_per_second` (ADR 0229): kilobytes of the
+    // world's state a second each player is sent at most; 0 for no budget.
+    core::u32 networkClientBudgetKb = 48;
+    // `[network] rewind_cap_ms` (ADR 0235): the furthest back, in
+    // milliseconds, a shot is checked against what its shooter saw. From 0 --
+    // never -- to 1000; 200 by default.
+    core::u32 networkRewindCapMs = 200;
 
     // **`[luau.flags]`** (ADR 0217): Luau's flags the project sets, each a
     // switch or a number, in the file's order. Applied before the first script

@@ -54,6 +54,9 @@ end
 declare extern type EnumLogLevel extends EnumItem with
 end
 
+declare extern type EnumDormancy extends EnumItem with
+end
+
 declare extern type EnumRunContext extends EnumItem with
 end
 
@@ -948,6 +951,14 @@ declare extern type Instance with
     --- The name of this instance's class. `typeof` returns `Instance` for every class, so use
     --- `ClassName` or `IsA` to tell classes apart.
     read ClassName: string
+    --- The phase this instance and everything under it belong to, seen only by the players in it.
+    --- Empty, the default, is everybody's. A player not in the phase (`Player:AddPhase`) is not sent
+    --- the instance at all: it is absent on their machine, not hidden. It leaves their machine when
+    --- they leave the phase, as a thing out of range does. It is the server's to say and is not itself
+    --- sent. A phased part collides with the characters, and the parts, of the players in its phase,
+    --- and never with those of players who are not; everything else collides with it as with any part
+    --- (`BasePart.PhaseCollision`). A world names at most 64 phases.
+    Phase: string
     --- Whether this instance exists only on this machine and is never sent to another. It is true for
     --- an instance that a client-side script made with `Instance.new` or `Clone`, and for everything
     --- under it. A client-side script is one under `ClientScriptService`, in the client half of
@@ -1149,6 +1160,33 @@ declare extern type BasePart extends PVInstance with
     --- part is still drawn and lit, and still receives shadows. A transparent part casts no shadow
     --- regardless of this value.
     CastShadow: boolean
+    --- Whether this part's phase decides what it collides with. On, the default, it never collides with
+    --- the characters and owned parts of players outside its phase, and does with those inside it. Off,
+    --- it collides as any part does, and the game decides with `CollisionGroup` who stands on what.
+    PhaseCollision: boolean
+    --- Whether the part may sleep where no player is near. On a dedicated server, a `CharacterBody`
+    --- with no player's focus within `dormant_radius` (`[server]` in `project.toml`; twice
+    --- `StreamingService.LoadRadius` unless the game says) does not walk, and what it was asked to do
+    --- (`Move`) waits until a player comes near. A player sees only within the load radius, so a
+    --- character wakes before anybody can see it. `Never` keeps the part awake wherever it is. A host
+    --- and a single-player game never sleep anything, nor does a world one of whose players has no
+    --- character or focus: that player is sent the whole world.
+    Dormancy: EnumDormancy
+    --- Whether the part is asleep this tick because no player is near it (`Dormancy`). Decided where
+    --- the physics step begins, from where the players were then.
+    read Dormant: boolean
+    --- Whether `Workspace:RaycastAsSeenBy` checks a shot against this part where the shooter's machine
+    --- drew it, rather than where it is now. Every player's `Character` is checked that way without it.
+    --- Set it on a moving target that is not a player's, such as an NPC, a vehicle or a dummy. Only the
+    --- authority reads it, and it is not replicated.
+    LagCompensated: boolean
+    --- How much this part's changes come first when a player's budget cannot carry every change at once
+    --- (`Player.ReplicationBudget`). 1 by default; 3 makes the part's turn come three times as fast,
+    --- 0.25 four times as slowly, and 0 only once a second. A part a player's machine waits for is
+    --- drawn where it was last sent, moving smoothly between the states it was sent, a little behind.
+    --- Only the authority reads it, and it is not replicated. A part that does not change costs
+    --- nothing, whatever its priority.
+    ReplicationPriority: number
     --- How much this machine fades the part out of its own picture, from 0 to 1. At 0 the part is drawn
     --- as `Transparency` says; at 1 it is not drawn. It is never replicated and never saved, so use it
     --- to change what one player sees of a part that every player has, such as a tree between the
@@ -4721,6 +4759,11 @@ declare extern type Workspace extends Instance with
     --- The world's terrain, or nil if the world has none. A `Terrain` is an ordinary instance under the
     --- workspace, and this property refers to the one the engine uses as the world's ground.
     read Terrain: Terrain?
+    --- Returns the distance in meters from `position` to the nearest player's focus, or `math.huge`
+    --- when no player has one. A focus is their `ReplicationFocus`, or their character, as the physics
+    --- step last took them. Use it to decide how much a far thing needs to do; `@engine/npclod` calls
+    --- an NPC's code by it.
+    function GetNearestPlayerDistance(self, position: vector): number
     --- Returns the wind at a point at the current simulation time, in meters per second: `GlobalWind`
     --- with its gusts and turbulence. The renderer uses the same function, so a flag, a sail or a sound
     --- driven by this value matches what is drawn.
@@ -4737,6 +4780,18 @@ declare extern type Workspace extends Instance with
     --- `Raycast` for a camera boom or a character's ground check, where a thin ray would pass through a
     --- gap that the object itself does not fit through.
     function Spherecast(self, origin: vector, radius: number, direction: vector, params: RaycastParams?): RaycastResult?
+    --- Returns what a ray hits in the world as `player`'s machine was drawing it. Every other player's
+    --- `Character`, and every part with `BasePart.LagCompensated`, is placed where that machine drew
+    --- it, at the moment it was showing; everything else is as it is now. Check a shot with it on the
+    --- server, and a player with real latency hits the moving target they aimed at. The rewind is at
+    --- most `rewind_cap_ms` under `[network]` in `project.toml`, 200 by default: a slower shooter's
+    --- shot is checked against the world that long ago, so a target who reached cover more than that
+    --- long ago is safe. The shooter's own character is where it is now. Only the server calls it; on a
+    --- client it raises.
+    function RaycastAsSeenBy(self, player: Player, origin: vector, direction: vector, params: RaycastParams?): RaycastResult?
+    --- `RaycastAsSeenBy` for a sphere moved along the ray: a thick projectile, or a melee swing,
+    --- checked against what its player saw.
+    function SpherecastAsSeenBy(self, player: Player, origin: vector, radius: number, direction: vector, params: RaycastParams?): RaycastResult?
     --- Returns every part that overlaps an oriented box, as a new array in a stable order, with one
     --- entry per part. `size` is the full extent of the box, as in `BasePart.Size`.
     function GetBodiesInBox(self, cframe: CFrame, size: vector, params: RaycastParams?): {BasePart}
@@ -5293,6 +5348,10 @@ declare extern type ServerStorage extends Instance with
 end
 
 declare extern type NetworkService extends Instance with
+    --- Which channel of its world this server is: 1 for a world without channels, and for the first of
+    --- a world with them. A `[[world]]` with `channels = true` in `servers.toml` is copied into
+    --- channels 2, 3 and on as the open ones fill, each a server of its own.
+    read Channel: number
     --- Whether this process decides the state of the world. It is true in single-player, when hosting
     --- and on a dedicated server, and false on a client, which shows the state it is sent.
     read Authority: boolean
@@ -5367,6 +5426,16 @@ declare extern type NetworkService extends Instance with
     --- Fires when the connection ends and this machine is back in single-player. The server left, the
     --- network failed, or `Disconnect` was called.
     read Disconnected: Signal<string>
+    --- Fires on a channel the manager is about to merge into another, because it has held under a
+    --- quarter of its players for a while. In `seconds` its players are moved, all together, to the
+    --- fullest channel with room. A game can say so first.
+    read ChannelMerging: Signal<number>
+    --- Fires on a client waiting in line at a full game's front door, with its place and an estimate.
+    --- The place counts from 1. The estimate is about how many seconds until its turn, measured by how
+    --- fast the line moved in the last five minutes, and nil before anybody has left it. It fires when
+    --- the machine joins the line and every five seconds after; `Connected` fires as usual when it is
+    --- let in. `@engine/travelscreen` shows it.
+    read Queued: Signal<number, number?>
     --- Fires on the server of the world a player traveled to, after `PlayerAdded`, with the `data` the
     --- world they left sent and that world's name. A player who came through the front door fires it
     --- too, with nil and an empty origin. `reason` is empty, or `"InstanceFailed"` for a player sent
@@ -5447,14 +5516,17 @@ declare extern type NetworkService extends Instance with
     --- waiting, or older than 10 seconds when their turn came. `WireBytesSent` and `WireBytesReceived`
     --- are what the network itself carried: the same messages with the transport's headers,
     --- acknowledgements, resends and encryption added. They are what a player's connection pays for,
-    --- and are larger than `BytesSent` and `BytesReceived`. `Path` says how the other end is reached:
-    --- `"lan"` on the same network, `"direct"` across the internet, or `"relayed"` through a relay,
-    --- which adds the relay's distance to the round trip. On a host it is the longest path among its
-    --- players. It is empty when nobody is connected. `LocalPlayers` has one entry for each local
-    --- player on a machine that joined a match: the primary player first, then the guests. Each entry
-    --- has the player's `UserId` and the three correction numbers for that player's character alone. It
-    --- is empty on an authority and in single-player.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
+    --- and are larger than `BytesSent` and `BytesReceived`. On an authority, `Deferred` counts the
+    --- updates its players' budgets held back in the last second (`Player.ReplicationBudget`), and
+    --- `BudgetUsed` is how much of those budgets that second's snapshots spent, from 0 to 1; above 1
+    --- when what may not wait, such as a player joining, spent more. Both are 0 on a client. `Path`
+    --- says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet,
+    --- or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it
+    --- is the longest path among its players. It is empty when nobody is connected. `LocalPlayers` has
+    --- one entry for each local player on a machine that joined a match: the primary player first, then
+    --- the guests. Each entry has the player's `UserId` and the three correction numbers for that
+    --- player's character alone. It is empty on an authority and in single-player.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
     --- Connects to a server at `address`, written as `host` or `host:port`. With no address, it
     --- connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with
     --- the server's, and server scripts stop, because this machine is no longer the authority.
@@ -5485,11 +5557,29 @@ declare extern type NetworkService extends Instance with
     --- `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can
     --- store, at most 16 KiB. Their character does not travel; the target spawns one. Only a world a
     --- manager started can send players elsewhere: anywhere else, and for a world the manager does not
-    --- have, this raises at once.
-    function Travel(self, player: Player, target: string, data: any?): ()
+    --- have, this raises at once. Returns whether `player` was sent. A player who left while the script
+    --- waited, for `CreateInstanceAsync` say, is not an error: they are gone, nothing is sent, and it
+    --- returns false.
+    function Travel(self, player: Player, target: string, data: any?): boolean
+    --- Sends `player` to channel `channel` of the world this server is, for a channel menu: as `Travel`
+    --- does, and with `TravelArrived` there. A channel that is not open, or full, leaves them where
+    --- they are, and a warning says why. Only a world a manager started can call it. Returns whether
+    --- `player` was asked to go: false for a player who has left.
+    function SwitchChannel(self, player: Player, channel: number): boolean
+    --- Sends `player` to the world, and the channel of it, where the player whose `PublicKey` is `key`
+    --- is now: a friend, a party's leader. When that world is full, or the other player is in none,
+    --- they stay where they are, and a warning says why. Returns whether `player` was asked to go:
+    --- false for a player who has left.
+    function TravelToPlayer(self, player: Player, key: string): boolean
+    --- Returns the open channels of the world this server is, each with how many players it holds and
+    --- may hold, as the manager last heard. It waits for the manager's answer. For a world without
+    --- channels, the one entry is this world.
+    function GetChannelsAsync(self): { { Channel: number, Players: number, MaxPlayers: number } }
     --- Sends several players to the same world together, as `Travel` sends one. The target fires
-    --- `TravelArrived` for each, in the order given.
-    function TravelGroup(self, players: {Player}, target: string, data: any?): ()
+    --- `TravelArrived` for each, in the order given. Returns the players sent, in the order given. Any
+    --- who left while the script waited are skipped, not an error, and the rest still go together; when
+    --- none is left, it returns an empty table and sends nobody.
+    function TravelGroup(self, players: {Player}, target: string, data: any?): {Player}
     --- Checks a ticket the game's backend signed, on the server and with no call out, and returns its
     --- claims, or nil. The ticket is a standard JWT signed with Ed25519 (`EdDSA`), which any backend's
     --- JWT library issues. A ticket is accepted when its signature checks against `ticket_public_key`
@@ -5622,6 +5712,16 @@ declare extern type Player extends Instance with
     --- parts are streamed to the player and which agents of a replicated `Swarm` are sent. It does not
     --- change which character the client predicts.
     ReplicationFocus: BasePart?
+    --- The most of the world's state, in kilobytes (1,024 bytes) a second, this player's machine is
+    --- sent. 0, the default, is the game's `client_budget_kb_per_second` under `[network]` in
+    --- `project.toml`, which is 48 unless the game says otherwise. When more changes than that, the
+    --- authority sends what matters most to this player first: their own character and what they own,
+    --- always; then what is nearest them, times `BasePart.ReplicationPriority`, times
+    --- `SetReplicationPriority`. What waits keeps growing in priority until it is sent, and a changed
+    --- part waits no more than about a second while the budget can carry each once a second. Messages a
+    --- script sends (`RemoteEvent`) and what a player is sent as they join are not counted. Only the
+    --- authority reads it. A player on a weak network, or a spectator, can be given less.
+    ReplicationBudget: number
     --- The `Part2D` that represents this player on the 2D plane; the 2D counterpart of `Character`. A
     --- player has one character: setting either property clears the other, and each reads nil while the
     --- other is set. There are two properties so that each has the right type. It is used the same way
@@ -5636,6 +5736,28 @@ declare extern type Player extends Instance with
     --- the local player it is this machine's own action; for a remote player it is the value their
     --- machine sent. An action the player never sent reads false.
     function GetIntent(self, action: string): boolean | number | Vector2 | vector
+    --- Puts this player in `phase`: they see, and collide with, what has that `Phase`. Only the server
+    --- calls it; the player's own machine is told, and reads it with `HasPhase` and `GetPhases`. A
+    --- world names at most 64 phases, and the 65th raises.
+    function AddPhase(self, phase: string): ()
+    --- Takes this player out of `phase`: what has that `Phase` leaves their machine within a snapshot.
+    --- Only the server calls it.
+    function RemovePhase(self, phase: string): ()
+    --- Whether this player is in `phase`.
+    function HasPhase(self, phase: string): boolean
+    --- The phases this player is in, in no particular order.
+    function GetPhases(self): {string}
+    --- Whether this player is in the phase of `instance` and of everything above it: what decides
+    --- whether it is sent to them. For a game's own hit and interaction code. It says nothing of
+    --- distance.
+    function CanSee(self, instance: Instance): boolean
+    --- How much `instance`'s changes come first for this player alone, on top of its
+    --- `BasePart.ReplicationPriority`. Use 4 for a party member's character, and 0.5 for what this
+    --- player hardly needs. 1 forgets what was set. It matters only when the player's budget
+    --- (`ReplicationBudget`) cannot carry every change at once. Only the authority calls it; on a
+    --- client it raises an error. A player keeps at most 256 of these; the instance being destroyed
+    --- forgets it.
+    function SetReplicationPriority(self, instance: Instance, priority: number): ()
     --- Removes this player from the match. Only the authority can call it, and only on a player who
     --- joined: it raises an error on a client, and when a host calls it on its own player. The player's
     --- machine returns to single-player, and its `NetworkService.Disconnected` fires with `reason`:
@@ -5647,6 +5769,12 @@ declare extern type Player extends Instance with
 end
 
 declare extern type RunService extends Instance with
+    --- How fast this world's clock runs against the wall's: 1 at full speed, less while an overloaded
+    --- server is slowed (`[server] time_dilation` in `project.toml`). The tick is the same, so `dt` and
+    --- what a tick does do not change; fewer ticks run a second, and every machine in the match runs at
+    --- the same rate. `task.wait`, animations and sounds driven by the simulation slow with it; the
+    --- interface, the camera and `os.time` do not. `TimeDilationChanged` fires when it changes.
+    read TimeDilation: number
     --- The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a
     --- dedicated server, it is the server's operating system.
     read Platform: EnumPlatform
@@ -5654,6 +5782,9 @@ declare extern type RunService extends Instance with
     --- by `PhysicsService.FixedTimestep` between ticks. It stops while the world is paused. Simulation
     --- code should use this clock. `os.clock` measures real time and is only for profiling.
     read SimTime: number
+    --- Fires when `TimeDilation` changes: an overloaded server slowing its world, or bringing it back
+    --- to full speed. A game can say so to its players.
+    read TimeDilationChanged: Signal<()>
     --- Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`.
     --- Passes the time since the previous frame, in seconds. Its handlers run in a render step:
     --- `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as
@@ -5865,10 +5996,15 @@ declare extern type DebugService extends Instance with
     --- results in the simulation.
     function CaptureProfile(self, seconds: number, warmupSeconds: number?): boolean
     --- Returns the report of the capture requested with `CaptureProfile`, or nil until the capture
-    --- completes. The report is a table with `frames`, `seconds` and `scopes`. Each scope has `name`,
-    --- `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs` and `selfMedianMs`. A
-    --- scope's times include its child scopes and any waiting, and they are CPU times, not GPU times.
-    --- At most the latest 16,384 frames are kept. The report stays available until the next capture is
+    --- completes. The report is a table with `frames`, `seconds`, `ticksPerFrame` and `scopes`. Each
+    --- scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs`,
+    --- `selfMedianMs`, `calls` and `perCallMs`. The times are a frame's: what the scope spent in one
+    --- frame, over the frames captured. `calls` is how many times it ran in a frame, at the median, and
+    --- `perCallMs` is one run of it. `ticksPerFrame` is how many simulation ticks a frame ran, at the
+    --- median: 1 for a world keeping up. A server catching up runs several in a frame, and a tick's
+    --- scopes then show several ticks' time in each frame; read `perCallMs` for one tick. A scope's
+    --- times include its child scopes and any waiting, and they are CPU times, not GPU times. At most
+    --- the latest 16,384 frames are kept. The report stays available until the next capture is
     --- requested.
     function GetProfileReport(self): any
     --- Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`,
@@ -6367,6 +6503,11 @@ declare Enum: {
         Warning: EnumLogLevel,
         Error: EnumLogLevel,
         GetEnumItems: (self: any) -> { EnumLogLevel },
+    },
+    Dormancy: {
+        Auto: EnumDormancy,
+        Never: EnumDormancy,
+        GetEnumItems: (self: any) -> { EnumDormancy },
     },
     RunContext: {
         Client: EnumRunContext,

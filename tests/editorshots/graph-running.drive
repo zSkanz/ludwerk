@@ -28,9 +28,9 @@ shot anim-running
 # Pause; Grounded off; Rise typed; four steps.
 click 781 41
 wait 6
-click 1417 570
+click 1417 596
 wait 4
-dbl 1498 592
+dbl 1498 618
 wait 4
 key ctrl+a
 wait 2

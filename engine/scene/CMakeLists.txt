@@ -24,6 +24,9 @@ engine_add_module(scene
         src/ui_pages.cpp
         src/world_hash.cpp
         src/wind.cpp
+        src/dormancy.cpp
+        src/phases.cpp
+        src/rewind.cpp
         src/camera_view.cpp
         src/world_snapshot.cpp
         src/scene_file.cpp
@@ -94,6 +97,7 @@ engine_add_module_tests(scene
         tests/scene_file_tests.cpp
         tests/pivot_tests.cpp
         tests/swarm_tests.cpp
+        tests/rewind_tests.cpp
         tests/stamp_tests.cpp
         tests/wind_tests.cpp
         tests/partition_tests.cpp

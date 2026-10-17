@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
@@ -36,7 +37,7 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     lastNs_ = nowNs;
 
     frame.renderDt = static_cast<f64>(elapsedNs) / 1'000'000'000.0;
-    accumulator_ += frame.renderDt;
+    accumulator_ += frame.renderDt * timeScale_;
 
     const f64 maxAccumulated = timing_.fixedDt * static_cast<f64>(timing_.maxCatchUpTicks);
     if (accumulator_ > maxAccumulated) {
@@ -87,12 +88,57 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     return frame;
 }
 
+void TimeDilation::configure(bool on, f64 floor, f64 ticksPerSecond) noexcept
+{
+    on_ = on;
+    ticksPerSecond_ = ticksPerSecond > 0.0 ? ticksPerSecond : 60.0;
+    floor_ = floor < 0.05 ? 0.05 : (floor > 1.0 ? 1.0 : floor);
+    if (!on_)
+        rate_ = 1.0;
+}
+
+void TimeDilation::note(u64 nowNs, f64 simulatedMs, u32 ticks) noexcept
+{
+    if (windowStartNs_ == 0 || nowNs < windowStartNs_) {
+        windowStartNs_ = nowNs;
+        windowSimulatedMs_ = 0.0;
+        windowTicks_ = 0;
+        return;
+    }
+    windowSimulatedMs_ += simulatedMs;
+    windowTicks_ += ticks;
+    const u64 spentNs = nowNs - windowStartNs_;
+    if (spentNs < 1'000'000'000ull)
+        return;
+    busy_ = std::min(1.0, windowSimulatedMs_ / (static_cast<f64>(spentNs) / 1.0e6));
+    const f64 tickMs = windowTicks_ > 0 ? windowSimulatedMs_ / static_cast<f64>(windowTicks_) : 0.0;
+    windowStartNs_ = nowNs;
+    windowSimulatedMs_ = 0.0;
+    windowTicks_ = 0;
+    if (!on_)
+        return;
+    calm_ = busy_ < SpeedBelow ? calm_ + 1 : 0;
+    if (busy_ > SlowAbove) {
+        // The rate whose ticks, at the cost these had, take `FitTo` of a
+        // second -- in whole steps, below by one at least.
+        const f64 fits = tickMs > 0.0 ? FitTo * 1000.0 / (ticksPerSecond_ * tickMs) : rate_ - Step;
+        rate_ = std::max(floor_, std::min(rate_ - Step, std::floor(fits * 20.0) / 20.0));
+    }
+    else if (calm_ >= CalmSeconds && rate_ < 1.0) {
+        rate_ = std::min(1.0, rate_ + Step);
+        calm_ = 0;
+    }
+    // Steps of a twentieth, kept exact so a rate said is the rate run.
+    rate_ = std::round(rate_ * 20.0) / 20.0;
+}
+
 u64 FrameScheduler::nanosUntilNextTick(u64 nowNs) const noexcept
 {
     if (!started_)
         return 0;
     const f64 since = nowNs > lastNs_ ? static_cast<f64>(nowNs - lastNs_) / 1'000'000'000.0 : 0.0;
-    const f64 owed = timing_.fixedDt - accumulator_ - since;
+    // In wall time: the tick owed at this rate is that much further off.
+    const f64 owed = (timing_.fixedDt - accumulator_) / timeScale_ - since;
     return owed > 0.0 ? static_cast<u64>(owed * 1'000'000'000.0) : 0;
 }
 

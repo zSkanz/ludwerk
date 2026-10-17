@@ -701,6 +701,92 @@ follow from it:
 Everybody else's parts are drawn between the last two snapshots, a few ticks
 behind the authority, so they glide instead of stepping.
 
+### What a player's progress lets them see: phases
+
+A bridge is broken until a player repairs it; after that, for them, it
+stands -- while for the player beside them it is still broken. That is a
+**phase**: the same place, a different thing in it, for each player.
+
+```luau
+--!strict
+brokenBridge.Phase = "bridge-broken"
+fixedBridge.Phase = "bridge-fixed"
+
+local function bridgeFor(player: Player, repaired: boolean)
+    player:RemovePhase(if repaired then "bridge-broken" else "bridge-fixed")
+    player:AddPhase(if repaired then "bridge-fixed" else "bridge-broken")
+end
+```
+
+- **A thing with a `Phase`**, and everything under it, is sent only to the
+  players in that phase -- absent from everybody else's machine, not hidden
+  -- and leaves a player's machine within a snapshot of their leaving the
+  phase. A thing with none is everybody's, as before.
+- **A player's phases** are the server's to set (`AddPhase`, `RemovePhase`);
+  their machine is told, and reads them with `HasPhase` and `GetPhases`.
+  `Player:CanSee(instance)` answers the server's own question, for hits and
+  interactions.
+- **It collides only for those who see it.** A phased part never stops the
+  characters, or the owned parts, of players outside its phase -- their
+  machines do not have it, and a wall only the server had would correct them
+  at every step -- and does stop those in it. Everything else collides with
+  it as with any part. `PhaseCollision = false` leaves a part to the game's
+  own `CollisionGroup` rules.
+- A world names at most 64 phases; the 65th `AddPhase` raises.
+
+### A budget for each player
+
+When a great many things near a player change at once -- three hundred
+players in one square -- every change cannot go out on the next snapshot
+without each player's machine being sent more than its network carries. So
+each player has a **budget**: 48 kilobytes (1,024 bytes) of the world's state
+a second, unless the game says otherwise.
+
+```toml
+# project.toml
+[network]
+client_budget_kb_per_second = 48   # 0 sends every change at once
+```
+
+Within it, what matters most to that player goes first:
+
+- **Never waiting**: their own character, what they own, everything within
+  eight meters of their character -- what they can bump into next -- and
+  anything they have just come close enough to see.
+- **Then by priority**, which grows every snapshot a change waits: faster the
+  nearer it is (full within 15 meters, a tenth at the edge of
+  `StreamingService.LoadRadius`), times `BasePart.ReplicationPriority`, times
+  what the game said for that player with `Player:SetReplicationPriority`.
+- **And nothing for ever**: a change that has waited three quarters of a
+  second is given up to half of each snapshot's budget, oldest first. While
+  the budget can carry each changed part once a second, none waits longer.
+
+```luau
+--!strict
+-- A boss everybody should see moving, before the scenery.
+boss.ReplicationPriority = 3
+-- A party sees its own members first, wherever they are in the crowd.
+for _, member in party do
+    if member ~= player and member.Character then
+        player:SetReplicationPriority(member.Character, 4)
+    end
+end
+-- A spectator, or a player on a weak network, gets less.
+player.ReplicationBudget = 24
+```
+
+A part that waited is drawn moving between the states it was sent, further
+in the past by about as long as it waits, so it glides a little behind rather
+than standing and jumping. A part that does not change costs nothing,
+whatever its priority. What a script sends (`RemoteEvent`) and what a player
+is sent as they arrive are not counted.
+
+On the authority, `GetStats()` says how much the budgets held back in the
+last second (`Deferred`) and how much of them that second spent
+(`BudgetUsed`, 0 to 1). A dedicated server's `/metrics` has
+`deferred_per_second`. The crowd costs the server's uplink at most players
+times their budget, a number to plan for.
+
 ### A character a script moves
 
 A `CharacterBody` is predicted for you. A character your own code moves -- a
@@ -1094,6 +1180,55 @@ What the machines say to each other is published, byte for byte, in
 `docs/protocol/wire.md` -- generated from the same schema the engine is built
 against, so it is exactly what this build speaks. A peer must speak the same
 protocol version; the CHANGELOG says when a release changes it.
+
+## A shot checked as its shooter saw it
+
+A player with 150 ms of latency aims at somebody running and fires. What they
+aimed at is where that runner was drawn on their screen -- a snapshot that
+crossed the network, drawn a few ticks late so the motion is smooth -- well in
+the past. Checked against where the runner is on the server now, every such
+shot misses. `Workspace:RaycastAsSeenBy` checks it against the world as the
+shooter's machine was drawing it:
+
+```luau
+--!strict
+local fire = Instance.new("RemoteEvent")
+fire.Name = "Fire"
+fire.Parent = workspace
+
+fire.ServerReceived:Connect(function(player: Player, origin: vector, direction: vector)
+    local params = RaycastParams.new({ Filter = { player.Character :: Instance } })
+    local hit = workspace:RaycastAsSeenBy(player, origin, vector.normalize(direction) * 300, params)
+    if hit and hit.Instance:IsDescendantOf(enemies) then
+        damage(hit.Instance, 25)
+    end
+end)
+
+-- A moving target that is not a player's character.
+dummy.LagCompensated = true
+```
+
+- **What is rewound**: every player's `Character`, the parts under it, and
+  every part with `LagCompensated = true` -- placed where the shooter's
+  machine drew them, at the tick it was showing. Everything else is where it
+  is now. The shooter's own character is too: their machine draws it ahead,
+  not behind.
+- **How far back**: each player's machine says, with its input, which tick it
+  is drawing; the server keeps every tick's transforms of what can be rewound,
+  and places them as that tick left them. Nothing in the simulation moves --
+  the cast meets the rewound bodies where they were and the rest of the world
+  as it is.
+- **At most `rewind_cap_ms`** under `[network]` in `project.toml`, 200 by
+  default. A shooter further behind than that is checked against the world
+  200 ms ago, not what they saw, and misses a runner they aimed at: past the
+  cap, a target who reached cover on the server's clock is safe. Within it, a
+  target can be hit "around a corner" by up to the cap -- the trade every game
+  with lag compensation makes, and the number is where it is made. 0 turns it
+  off.
+- `SpherecastAsSeenBy` is the same for a sphere: a thick projectile, a melee
+  swing.
+- **Only on the server.** On a client it raises: a client's own `Raycast` is
+  for its prediction and its effects, and the hit is the server's.
 
 ## Rolling back
 

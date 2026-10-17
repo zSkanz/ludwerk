@@ -164,6 +164,15 @@ The axis a `UIAspectRatioConstraint` takes from its parent when it scales with t
 | `Width` | 0 | The object is as wide as the parent, and its height follows from the ratio. |
 | `Height` | 1 | The object is as tall as the parent, and its width follows from the ratio. |
 
+## Enum.Dormancy
+
+Whether a part may sleep where no player is near, set by `BasePart.Dormancy`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Auto` | 0 | It sleeps on a dedicated server when no player's focus is within the game's `dormant_radius`: a `CharacterBody` does not walk, and what it was asked waits. |
+| `Never` | 1 | It stays awake wherever it is: a train, a projectile, a boss that roams. |
+
 ## Enum.EasingDirection
 
 Which end of a tween the easing applies to.

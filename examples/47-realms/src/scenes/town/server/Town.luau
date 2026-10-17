@@ -51,9 +51,11 @@ local function toDungeon(player: Player)
     local made, id = pcall(function()
         return InstanceService:CreateInstanceAsync("dungeon", { Players = party, Data = { Party = names } })
     end)
+    -- Whoever left while the dungeon was made is not sent: `TravelGroup`
+    -- skips them, and returns who went.
     if made then
         NetworkService:TravelGroup(party, id :: string, { From = "town" })
-    else
+    elseif not made then
         for _, member in party do
             Realm.tell(member, "realm.notice.needs_servers")
         end

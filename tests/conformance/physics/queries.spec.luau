@@ -362,3 +362,59 @@ describe("A part made this instant", function()
         expect(hit.Instance):ToBe(waiting)
     end)
 end)
+
+describe("A character in a query", function()
+    afterEach(function()
+        for _, instance in spawned do
+            instance:Destroy()
+        end
+        table.clear(spawned)
+    end)
+
+    it("is met by a ray, and named as itself", function()
+        -- A ray met a character's capsule and answered with whichever part's
+        -- body had the same slot number, or with nothing (ADR 0235's finding).
+        local body = Instance.new("CharacterBody")
+        body.Name = "Runner"
+        body.Size = vector.create(2, 4, 2)
+        body.Position = vector.create(400, 2, 0)
+        body.Parent = workspace
+        table.insert(spawned, body)
+        task.wait()
+        local hit = workspace:Raycast(vector.create(400, 2, -10), vector.create(0, 0, 20))
+        assert(hit, "expected a hit")
+        expect(hit.Instance):ToBe(body)
+        expect(hit.Position.z):ToBeCloseTo(-1, 0.05)
+        -- And `CanQuery` leaves it out, as it does a part.
+        body.CanQuery = false
+        task.wait()
+        expect(workspace:Raycast(vector.create(400, 2, -10), vector.create(0, 0, 20))):ToBeNil()
+    end)
+end)
+
+describe("Workspace:RaycastAsSeenBy", function()
+    afterEach(function()
+        for _, instance in spawned do
+            instance:Destroy()
+        end
+        table.clear(spawned)
+    end)
+
+    it("takes a player, and refuses anything else", function()
+        local ok, message = pcall(function()
+            return workspace:RaycastAsSeenBy(workspace :: any, vector.zero, vector.create(0, 0, 1))
+        end)
+        expect(ok):ToBe(false)
+        expect(string.find(tostring(message), "not one", 1, true) ~= nil):ToBe(true)
+    end)
+
+    it("is LagCompensated's to say which parts it rewinds, off until a game says so", function()
+        local dummy = block("Dummy", vector.create(420, 1, 0), vector.create(1, 2, 1))
+        expect(dummy.LagCompensated):ToBe(false)
+        dummy.LagCompensated = true
+        expect(dummy.LagCompensated):ToBe(true)
+        expect((dummy:Clone() :: Part).LagCompensated):ToBe(true)
+        dummy.LagCompensated = false
+        expect(dummy.LagCompensated):ToBe(false)
+    end)
+end)

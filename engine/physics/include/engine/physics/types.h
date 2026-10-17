@@ -842,6 +842,16 @@ struct RayHit
     f32 distance = 0.0f;
 };
 
+// **A body somewhere it is not** (ADR 0235): a shot checked against the world
+// its shooter saw is cast with the bodies they saw placed where they were, and
+// nothing in the simulation moves. A body or a character, by its handle.
+struct MovedBody
+{
+    BodyHandle body;
+    CharacterHandle character;
+    core::CFrameD transform;
+};
+
 // `RaycastParams` in the API, and the same filter serves every query. Exclude
 // and include are the two modes `Enum.RaycastFilterType` names; the list holds
 // `userData` values because that is the only identity this module has.
@@ -866,6 +876,13 @@ struct QueryFilter
     // normal is the surface's own, so it points along the ray, not against
     // it. Rays only; a game's queries leave it off.
     bool backFaces = false;
+
+    // **Whether it meets characters** (ADR 0235's finding): a game's query
+    // does. What the engine casts for a look rather than a hit -- a particle's
+    // bounce, a crowd's ground -- leaves them out, as every query did before
+    // a ray could meet one: a spark leaving a character's hand, or a horde
+    // walking into a player, is not stopped on them.
+    bool characters = true;
 };
 
 // **How far from what it touches a character is held**, in metres: two

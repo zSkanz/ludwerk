@@ -38,6 +38,20 @@ constexpr core::u64 HeartbeatNs = 1'000'000'000ull;
 
 } // namespace
 
+core::u32 channelOf(std::string_view world) noexcept
+{
+    const std::size_t colon = world.rfind(':');
+    if (colon == std::string_view::npos)
+        return 1;
+    core::u32 channel = 0;
+    for (const char digit : world.substr(colon + 1)) {
+        if (digit < '0' || digit > '9' || channel > 1000)
+            return 1;
+        channel = channel * 10 + static_cast<core::u32>(digit - '0');
+    }
+    return channel == 0 ? 1 : channel;
+}
+
 ManagedWorld::ManagedWorld(std::string name, std::array<core::u8, 32> managerKey, Send send)
     : m_name(std::move(name)), m_managerKey(managerKey), m_send(std::move(send))
 {}
@@ -173,6 +187,24 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         state.instanceClosing = true;
         return;
     }
+    // **Channels** (ADR 0230): their list, asked for; and this one to be
+    // merged into another, in so many seconds.
+    if (type == "channels") {
+        scene::EngineState::ChannelAnswer answer;
+        answer.id = static_cast<core::u32>(root["id"].asInteger(0));
+        const core::JsonValue list = root["channels"];
+        for (core::usize at = 0; at < list.size(); ++at)
+            answer.channels.push_back(
+                scene::EngineState::ChannelInfo{static_cast<core::u32>(list.at(at)["channel"].asInteger(1)),
+                                                static_cast<core::u32>(list.at(at)["players"].asInteger(0)),
+                                                static_cast<core::u32>(list.at(at)["max"].asInteger(0))});
+        state.channelAnswers.push_back(std::move(answer));
+        return;
+    }
+    if (type == "channel-merging") {
+        state.channelMerging.push_back(root["seconds"].asNumber(60.0));
+        return;
+    }
     if (type == "drain") {
         m_draining = true;
         return;
@@ -210,6 +242,7 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
 {
     scene::EngineState& state = world.engineState();
     state.managedWorld = m_name;
+    state.networkChannel = channelOf(m_name);
     m_dataModel = dataModel;
     if (!m_ready && replication != nullptr && port != 0) {
         m_ready = true;
@@ -276,6 +309,10 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
         asked.field("id", static_cast<core::i64>(travel.id));
         asked.field("target", std::string_view{travel.target});
         asked.field("data", std::string_view{travel.data});
+        if (travel.channel != 0)
+            asked.field("channel", static_cast<core::i64>(travel.channel));
+        if (!travel.toPlayer.empty())
+            asked.field("toPlayer", std::string_view{travel.toPlayer});
         asked.key("players");
         asked.beginArray();
         for (const core::u32 userId : travel.userIds) {
@@ -294,6 +331,18 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
         if (who.empty())
             continue;
         m_travels[travel.id] = std::move(who);
+        send(asked);
+    }
+
+    // The channels, asked for (ADR 0230).
+    std::vector<core::u32> asks;
+    asks.swap(state.channelRequests);
+    for (const core::u32 id : asks) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "channels");
+        asked.field("id", static_cast<core::i64>(id));
+        asked.endObject();
         send(asked);
     }
 

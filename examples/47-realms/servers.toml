@@ -6,12 +6,17 @@
 port = 7777
 world_ports = "7800-7899"
 
-# Where every player arrives: the front door sends them here.
+# Where every player arrives: the front door sends them here. A crowded town
+# opens another channel of itself (ADR 0230) -- `town:2`, `town:3` -- when
+# every one open is nine tenths full; one left empty closes after two
+# minutes, and one left under a quarter full for ten is merged into another.
 [[world]]
 name = "town"
 scene = "scenes/town.scene.json"
 max_players = 64
 entry = true
+channels = true
+max_channels = 4
 
 [[world]]
 name = "fields"

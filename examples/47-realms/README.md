@@ -7,6 +7,12 @@ more, one game, run by the manager from `servers.toml`.
 - `servers.toml` names the worlds: `town`, where the front door sends every
   player, and `fields`; and the `dungeon` template, an instance at a time for
   one party, closed a minute after the last of them leaves.
+- **The town has channels** (ADR 0230): when every channel open is nine
+  tenths full, the manager opens another -- `town:2`, `town:3`, up to four --
+  and a player going to the town goes to the fullest with room, a party all
+  together. Emptied, a channel closes; long under a quarter full, its players
+  are warned (`NetworkService.ChannelMerging`) and moved to another.
+  `ludwerk server loadtest 127.0.0.1:7777 --bots=200` shows it.
 - `src/scenes/town/server/Town.luau` has the road and the gate. The road is
   `NetworkService:Travel(player, "fields", data)`. The gate gathers everyone
   standing on it, asks for a dungeon of their own with

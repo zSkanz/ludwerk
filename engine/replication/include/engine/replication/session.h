@@ -233,6 +233,13 @@ inline constexpr u8 RefusedInsecure = 6;
 // The game's own answer to an ask to join (`JoinAnswer`): a ban, a ticket that
 // did not check, a queue -- in its words, which travel with it.
 inline constexpr u8 RefusedByGame = 7;
+// **Decided by this machine, never sent** (ADR 0224 §3): the server proved a
+// key other than the one this machine pinned or was told, or would not finish
+// an encrypted handshake. Answers as final as a refusal -- dialling again
+// meets the same key -- where they read as a connection lost, dialled again
+// for ever.
+inline constexpr u8 RefusedServerKey = 8;
+inline constexpr u8 RefusedNotEncrypted = 9;
 // An ask to join the game did not answer in this many authority receives (a
 // minute at sixty): refused, as one nobody admitted.
 inline constexpr u32 MaxAskReceives = 3600;
@@ -267,6 +274,10 @@ struct HelloFields
 // A `Redirect` (ADRs 0220, 0222): join there, with that pass.
 [[nodiscard]] std::vector<u8> redirectMessage(std::string_view address, u16 port, std::string_view pass,
                                               std::string_view key, std::string_view world);
+// **A place in the front door's line** (ADR 0232): from 1, and the seconds
+// until its turn, none when nothing has measured it yet.
+inline constexpr u32 NoEstimate = 0xFFFFFFFFu;
+[[nodiscard]] std::vector<u8> queuedMessage(u32 position, u32 estimateSeconds);
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
 // new player, which is what an authority that restarted would say too.
@@ -337,6 +348,9 @@ inline constexpr u32 ServiceNetIdBase = 0x7F000000u;
 // the default rate -- the smallest that nearly always has a sample on each
 // side of the moment drawn -- and enough history for a two-second round trip.
 inline constexpr u32 DefaultInterpolationDelay = 4;
+// The furthest behind a machine is believed to draw the world (ADR 0235): a
+// minute at sixty ticks. The cap a shot is rewound by is far less.
+inline constexpr u64 MaxViewBehindTicks = 3600;
 inline constexpr usize InterpolationSamples = 6;
 inline constexpr usize PredictionHistory = 128;
 
@@ -456,6 +470,10 @@ public:
     // What this machine's Luau flags come to (`Config::luauFlags`): a
     // replica's that differs is refused.
     void setLuauFlags(u64 fingerprint) noexcept { m_luauFlags = fingerprint; }
+    // **Bytes of the world's state a second, each player at most** (ADR
+    // 0229): `[network] client_budget_kb_per_second`, which a player's
+    // `ReplicationBudget` overrides. Nought sends every change at once.
+    void setClientBudget(u32 bytesPerSecond) noexcept { m_clientBudget = bytesPerSecond; }
     // **Says what will be missing on every replica** (protocol 44), where a
     // person is developing: an instance of a class the wire does not carry,
     // under one it does -- the name tag a server script hung on a character.
@@ -521,6 +539,16 @@ private:
         u64 tick = 0;
         std::vector<u32> ids;
     };
+
+    struct Peer;
+    // What the budget weighs of one record (ADR 0229).
+    struct RecordFacts
+    {
+        u32 id = 0;
+        bool full = false;
+    };
+    void chooseWithinBudget(Peer& peer, const scene::PlayerComponent* player, std::span<const RecordFacts> records,
+                            std::span<const usize> starts, std::vector<u8>& chosen, std::vector<u32>& heldBack);
 
     struct Peer
     {
@@ -669,6 +697,9 @@ private:
         // changes.
         std::vector<u32> roster;
         bool rosterSent = false;
+        // The phases each of its seats was last told it is in (ADR 0231).
+        std::array<std::vector<std::string>, 4> phasesSent{};
+        std::array<bool, 4> phasesTold{};
         // The scene it was last told the authority is in (ADR 0106), and at
         // which of the authority's loads.
         std::string scene;
@@ -696,6 +727,28 @@ private:
         u64 ownedTick = 0;
         // What it held at each of the last `StateHistory` sends.
         std::deque<PeerInterest> interest;
+        // **What its budget held back** (ADR 0229): each changed part it
+        // has not been sent, with how much its turn has grown and the
+        // snapshot it has waited since. A part sent, or no longer changed
+        // from what the peer holds, is not here.
+        struct Waiting
+        {
+            u32 id = 0;
+            core::f32 priority = 0.0f;
+            u64 since = 0;
+        };
+        std::vector<Waiting> waiting;
+        // **What it holds at a snapshot that held something back**: the
+        // state then with those parts as they were before. At any other
+        // snapshot it holds the authority's own state then, which the
+        // history keeps -- so only these are kept, and only until an
+        // acknowledgement passes them.
+        std::deque<std::pair<u64, std::shared_ptr<const std::vector<EntityState>>>> heldStates;
+        std::shared_ptr<const std::vector<EntityState>> pinnedHeldState;
+        // Its budget's bytes not yet spent, and the tick they were last
+        // added to; nothing added yet while `budgetTick` is nought.
+        core::f64 budgetBytes = 0.0;
+        u64 budgetTick = 0;
         // `RemoteEvent` messages this tick, against the flood limit, and what
         // this tick's intents, owned states and payload bytes came to.
         u32 messagesThisTick = 0;
@@ -807,6 +860,11 @@ private:
                 const std::vector<u32>& relevant, const std::vector<u32>& owned);
     // The ids this peer should hold now, sorted (ADR 0076).
     [[nodiscard]] std::vector<u32> interestOf(const scene::World& world, const Peer& peer) const;
+    // **Who is near what, once a send** (ADR 0228 §2): every entry with a place
+    // in a grid of cells the size of the radius it is kept within, and every
+    // entry with an owner, so a peer is measured against the cells round it
+    // and not against the world.
+    void indexInterest(const scene::World& world);
     // Every replicated swarm's agents to every peer (ADR 0162): who came and
     // went, reliably, and where the ones it would draw wrong are.
     void sendSwarms(scene::World& world);
@@ -912,6 +970,17 @@ private:
     u32 m_maxPlayers = 0;
     u32 m_maxPerAddress = DefaultPeersPerAddress;
     u64 m_luauFlags = 0;
+    // ADR 0234: the characters asleep at the capture before, by network id
+    // in order, and those of the capture being made.
+    std::vector<u32> m_asleepBefore;
+    std::vector<u32> m_asleepNow;
+    // ADR 0229: the budget, and the second its numbers are counted over --
+    // when it began, and what it has held back, spent and given so far.
+    u32 m_clientBudget = 0;
+    u64 m_budgetWindowTick = 0;
+    u32 m_windowDeferred = 0;
+    core::f64 m_windowSpent = 0.0;
+    core::f64 m_windowGiven = 0.0;
     // **Which token each proved key was given** in this run (ADR 0224): the
     // same player again while the server runs, a fresh join after it restarts.
     std::map<std::array<u8, 32>, PlayerToken> m_keyTokens;
@@ -929,6 +998,23 @@ private:
     // The last capture's walk, in pre-order, and each network id's place in
     // it -- a peer names ids, and a lookup must not walk the world.
     std::vector<Captured> m_order;
+    struct InterestIndex
+    {
+        // Every entry measured, as before the grid: a radius no grid holds.
+        bool everything = true;
+        core::f64 cell = 0.0;
+        // Whether each entry of `m_order` has a place of its own.
+        std::vector<u8> positioned;
+        // Entries by cell; a part larger than a cell is in each it covers.
+        std::unordered_map<u64, std::vector<u32>> cells;
+        // Entries a peer may own: their index, and the owner's user id.
+        std::vector<std::pair<u32, u32>> owners;
+        // **Each entry's own phase** (ADR 0231), as an atom's id, 0 for
+        // none; and whether any has one.
+        std::vector<u32> phase;
+        bool phased = false;
+    };
+    InterestIndex m_interest;
     // (network id, place in `m_order`), in id order.
     std::vector<std::pair<u32, u32>> m_orderOfNet;
     std::map<u32, TilemapShadow> m_tilemapShadows;
@@ -1129,6 +1215,11 @@ public:
     // Snapshots refused because the reconstruction did not match what the
     // authority described. Zero in a correct build; a test asserts it.
     [[nodiscard]] u64 checksumFailures() const noexcept { return m_checksumFailures; }
+    // The rate the authority's world runs at, as its last snapshot said
+    // (ADR 0233): 1 at full speed.
+    [[nodiscard]] core::f64 timeDilation() const noexcept { return m_timeDilation; }
+    // Its place in a front door's line, 0 when it is in none (ADR 0232).
+    [[nodiscard]] u32 queuePosition() const noexcept { return m_queuePosition; }
     // The loose parts this replica predicts (ADR 0133), and how far, how many
     // and how long.
     void setPrediction(core::f64 radius, u32 maxBodies, u32 lingerTicks) noexcept
@@ -1330,6 +1421,8 @@ private:
     std::vector<core::InstanceId> m_streamedOut;
     std::deque<std::shared_ptr<const WorldState>> m_states;
     u64 m_checksumFailures = 0;
+    core::f64 m_timeDilation = 1.0;
+    u32 m_queuePosition = 0;
     Stats m_stats;
     // Every player's character by user id, as the last roster named it.
     std::map<u32, u32> m_characters;
@@ -1353,6 +1446,12 @@ private:
         u64 tick = 0;
         core::CFrameD cframe;
         std::optional<scene::CharacterCommand> command;
+        // **How many ticks further in the past the part is drawn** (ADR
+        // 0229 §3), as of this sample: grown by the gaps between the states
+        // of a part its authority's budget held back, so it moves between
+        // them rather than holding and jumping; shrinking as it is sent on
+        // time again.
+        core::f32 lag = 0.0f;
     };
     scene::ICharacterReplay* m_replay = nullptr;
     // The last intent the authority applied: one for the machine, whose
@@ -1372,6 +1471,8 @@ private:
     // Interpolation: every remote part's last few snapshot transforms, by
     // server tick, and the server clock they are drawn against.
     std::map<u32, std::deque<Sample>> m_samples;
+    // The parts the snapshot being applied says waited for their turn.
+    std::vector<u32> m_heldBackNow;
     // The same for every remote `Part2D` (ADR 0103): where it was and how it
     // was turned, in degrees, at one snapshot tick.
     struct Sample2D

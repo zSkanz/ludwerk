@@ -222,6 +222,15 @@ struct WorldHostOptions
     bool subWorld = false;
     // `[render] max_sub_worlds`: how many sub-worlds this world may run at once.
     core::u32 maxSubWorlds = 2;
+    // `[server] dormant_radius` (ADR 0234), below 0 the default.
+    f64 dormantRadius = -1.0;
+    // `[network] rewind_cap_ms` (ADR 0235): the furthest back a shot is
+    // checked; nought for never.
+    f64 rewindCapMs = 200.0;
+    // **The manager's name for this world** (`--managed`, ADR 0220), known
+    // before its first script runs: which channel it is (ADR 0230) is read
+    // from it on the first line.
+    std::string managedWorld{};
     // **The size of what the world will be drawn into**, known before the
     // first frame: `UIService.ViewportSize`, `Camera.ViewportSize` and the
     // camera's conversions read it from a script's first line, where they

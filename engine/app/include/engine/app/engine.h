@@ -227,6 +227,12 @@ struct EngineOptions
     // health`, its port (0: the game's, over TCP) and who beyond 127.0.0.1
     // may ask.
     bool healthListen = false;
+    // **Light bots** (`--bots=N` with `--join`, ADR 0236): this process is
+    // that many players and nothing else.
+    core::u32 botCount = 0;
+    std::string botBehavior = "wander";
+    core::f64 botSeconds = 0.0;
+    std::string botIntent = "Move";
     core::u16 healthPort = 0;
     std::vector<std::string> healthAllow;
     // **A world a manager started** (`--managed=NAME`, ADR 0220): its name,
@@ -248,6 +254,16 @@ struct EngineOptions
     core::u32 maxHighlights = 32;
     // `[render] max_sub_worlds` (ADR 0107 §3).
     core::u32 maxSubWorlds = 2;
+    // `[server] dormant_radius` (ADR 0234), below 0 the default.
+    core::f64 dormantRadius = -1.0;
+    // `[network] rewind_cap_ms` (ADR 0235).
+    core::f64 rewindCapMs = 200.0;
+    // `[server] time_dilation` and `time_dilation_floor`, or
+    // `--time-dilation[=floor]` (ADR 0233): an overloaded world slows its
+    // clock, down to the floor, instead of stalling.
+    bool timeDilation = false;
+    core::f64 timeDilationFloor = 0.25;
+    bool timeDilationFromFlag = false;
     // `[render] foliage_density` and `foliage_shadow_distance` (ADR 0116).
     core::f32 foliageDensity = 1.0f;
     core::f32 foliageShadowDistance = 30.0f;

@@ -10,7 +10,9 @@
 #include <array>
 #include <box2d/box2d.h>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "engine/physics/backends.h"
@@ -81,6 +83,32 @@ struct WorldRecord
 class Box2DPhysics final : public IPhysics2D
 {
 public:
+    // ADR 0231: what each phased or player's body carries, by its world and
+    // its user data -- what a shape the filter is handed names. Written
+    // between steps, read during them.
+    struct Phase
+    {
+        u8 phase = 0;
+        bool holder = false;
+        u64 mask = 0;
+    };
+    using PhaseKey = std::pair<u16, u64>;
+
+    static bool phaseFilter(b2ShapeId first, b2ShapeId second, void* context)
+    {
+        const auto& self = *static_cast<const Box2DPhysics*>(context);
+        if (self.m_phases.empty())
+            return true;
+        const auto one = self.m_phases.find(PhaseKey{first.world0, unpackUser(b2Shape_GetUserData(first))});
+        const auto two = self.m_phases.find(PhaseKey{second.world0, unpackUser(b2Shape_GetUserData(second))});
+        if (one == self.m_phases.end() || two == self.m_phases.end())
+            return true;
+        const auto sees = [](const Phase& phased, const Phase& holder) {
+            return phased.phase == 0 || !holder.holder || ((holder.mask >> (phased.phase - 1u)) & 1u) != 0;
+        };
+        return sees(one->second, two->second) && sees(two->second, one->second);
+    }
+
     World2DHandle createWorld(const World2DDesc& desc) override
     {
         b2WorldDef def = b2DefaultWorldDef();
@@ -97,6 +125,9 @@ public:
         WorldRecord& record = m_worlds[index];
         record = WorldRecord{};
         record.id = b2CreateWorld(&def);
+        // **Phases** (ADR 0231): asked of every pair the groups let meet,
+        // and answered at once while no body has one.
+        b2World_SetCustomFilterCallback(record.id, &Box2DPhysics::phaseFilter, this);
         record.generation = ++m_generation;
         record.alive = true;
         record.collides.fill(~u64{0});
@@ -114,6 +145,20 @@ public:
         record->joints.clear();
         record->contacts.clear();
         m_freeWorlds.push_back(world.index);
+    }
+
+    void setBodyPhase(World2DHandle world, Body2DHandle body, core::u8 phase, bool holder, core::u64 mask) override
+    {
+        WorldRecord* record = resolve(world);
+        if (record == nullptr || body.index >= record->bodies.size() || !record->bodies[body.index].alive ||
+            record->bodies[body.index].generation != body.generation)
+            return;
+        const u64 user = unpackUser(b2Body_GetUserData(record->bodies[body.index].id));
+        const PhaseKey key{static_cast<u16>(record->id.index1 - 1), user};
+        if (phase == 0 && !holder)
+            m_phases.erase(key);
+        else
+            m_phases[key] = Phase{phase, holder, mask};
     }
 
     void setGravity(World2DHandle world, core::Vec2 gravity) override
@@ -549,6 +594,7 @@ private:
     }
 
     std::vector<WorldRecord> m_worlds;
+    std::map<PhaseKey, Phase> m_phases;
     std::vector<u32> m_freeWorlds;
     u32 m_generation = 0;
 };

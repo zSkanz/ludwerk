@@ -16,6 +16,8 @@
 #include "engine/asset/voxel_mesher.h"
 #include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
+#include "engine/scene/dormancy.h"
+#include "engine/scene/phases.h"
 #include "engine/scene/players.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/scene/water.h"
@@ -100,6 +102,20 @@ core::InstanceId PhysicsSync::instanceOf(u64 userData) const noexcept
 u64 PhysicsSync::userDataOf(core::InstanceId id) const noexcept
 {
     return packInstance(id);
+}
+
+std::optional<physics::MovedBody> PhysicsSync::movedBody(core::InstanceId id, const core::CFrameD& at) const
+{
+    physics::MovedBody moved;
+    moved.transform = at;
+    if (const auto character = m_characters.find(packInstance(id)); character != m_characters.end()) {
+        moved.character = character->second.handle;
+        return moved;
+    }
+    moved.body = bodyHandleOf(id);
+    if (!moved.body.valid())
+        return std::nullopt;
+    return moved;
 }
 
 bool PhysicsSync::inWorld(core::InstanceId id) const
@@ -657,6 +673,26 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         m_backend.applyAngularImpulse(m_world, record.handle, body.pendingAngularImpulse);
         body.pendingAngularImpulse = core::Vec3{0.0f, 0.0f, 0.0f};
     }
+
+    // **Its phase** (ADR 0231 §4): in one, it collides only with the bodies of
+    // the players in it; owned by a player, it carries their phases.
+    if (m_phased || record.phase != 0 || record.phaseHolder) {
+        u8 phase = 0;
+        if (m_phased) {
+            if (const core::NameAtom named = collidingPhase(m_scene, id); named.valid())
+                if (const std::optional<core::u32> bit = phaseBitOf(m_scene, named); bit.has_value())
+                    phase = static_cast<u8>(*bit + 1);
+        }
+        const auto owner = body.networkOwner != 0 ? m_phaseMasks.find(body.networkOwner) : m_phaseMasks.end();
+        const bool holder = owner != m_phaseMasks.end();
+        const u64 mask = holder ? owner->second : 0;
+        if (phase != record.phase || holder != record.phaseHolder || mask != record.phaseMask) {
+            m_backend.setBodyPhase(m_world, record.handle, phase, holder, mask);
+            record.phase = phase;
+            record.phaseHolder = holder;
+            record.phaseMask = mask;
+        }
+    }
 }
 
 core::DVec3 PhysicsSync::standInPlace(const core::DVec3& known, const core::DVec3& expected, const core::DVec3& own,
@@ -757,6 +793,22 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
 
     CharacterRecord& record = found->second;
     record.seen = true;
+    if (record.queryable != body.canQuery) {
+        m_backend.setCharacterQueryable(m_world, record.handle, body.canQuery);
+        record.queryable = body.canQuery;
+    }
+
+    // **A player's character carries their phases** (ADR 0231 §4).
+    if (m_phased || record.phaseHolder) {
+        const auto carried = m_characterPhases.find(packInstance(id));
+        const bool holder = carried != m_characterPhases.end();
+        const u64 mask = holder ? carried->second : 0;
+        if (holder != record.phaseHolder || mask != record.phaseMask) {
+            m_backend.setCharacterPhase(m_world, record.handle, holder, mask);
+            record.phaseHolder = holder;
+            record.phaseMask = mask;
+        }
+    }
 
     if (!(part.cframe == record.written)) {
         m_backend.setCharacterTransform(m_world, record.handle, part.cframe);
@@ -776,6 +828,14 @@ void PhysicsSync::applyCharacter(core::InstanceId id, PartComponent& part, Rigid
         body.pendingImpulse = core::Vec3{};
         body.pendingAngularImpulse = core::Vec3{};
         body.velocityWritten = false;
+        return;
+    }
+
+    // **Asleep where no player is near** (ADR 0234): not stepped, and what it
+    // was asked to do -- its walk, its jump, a push -- waits for a player to
+    // come near. Put where a script puts it, as above.
+    if (character.dormant) {
+        record.follower = true;
         return;
     }
 
@@ -2388,6 +2448,9 @@ void PhysicsSync::retireUnseenTerrain()
 
 void PhysicsSync::applyScene()
 {
+    // What the step spends, by what it is doing (ADR 0228 §4).
+    core::profile::Sections stretch;
+    ENG_PROFILE_NEXT(stretch, "physics.apply.prepare");
     syncCollisionGroups();
 
     // **Terrain first, and the order is load-bearing.** Body slots are assigned
@@ -2422,15 +2485,41 @@ void PhysicsSync::applyScene()
     });
     std::sort(m_constrainedParts.begin(), m_constrainedParts.end(), byInstance);
 
+    // **Whose phases, on what** (ADR 0231): each player's mask by their
+    // number, for the parts they own, and by their character.
+    m_phased = anyPhased(m_scene);
+    m_phaseMasks.clear();
+    m_characterPhases.clear();
+    if (m_phased) {
+        m_scene.players().forEach([&](core::InstanceId, const PlayerComponent& player) {
+            const u64 mask = phaseMask(m_scene, player);
+            if (player.userId != 0)
+                m_phaseMasks[player.userId] = mask;
+            if (player.character.valid())
+                m_characterPhases[packInstance(player.character)] = mask;
+        });
+    }
+
+    // **Where the players are, as this tick begins** (ADR 0234): what no
+    // player is near sleeps.
+    takePlayerFoci(m_scene);
+    const bool sleeps = dormancyOn(m_scene);
+
     // The pool walk is dense and in slot order, which is a pure function of the
     // operation sequence -- so the order bodies are created in, and therefore
     // the order the backend assigns its own ids in, is deterministic (R10).
+    ENG_PROFILE_NEXT(stretch, "physics.apply.bodies");
     m_scene.rigidBodies().forEach([&](core::InstanceId id, RigidBodyComponent& body) {
         PartComponent* part = m_scene.parts().find(id);
         if (part == nullptr || !inWorld(id))
             return;
 
         if (CharacterBodyComponent* character = m_scene.characterBodies().find(id); character != nullptr) {
+            character->dormant = sleeps && part->dormancy == 0 && dormantAt(m_scene, part->cframe.position);
+            // **A character's step, not a write**: its controller moves it
+            // here, sweeping the world as it goes, and that is nearly all of
+            // this walk's time with a crowd (ADR 0228 §4).
+            ENG_PROFILE_SCOPE("physics.characters");
             applyCharacter(id, *part, body, *character, fixedDt);
             return;
         }
@@ -2444,6 +2533,7 @@ void PhysicsSync::applyScene()
     // would put body creation order in the CONSTRAINT pool's order, and two
     // scenes that differ only in the order somebody added joints would then
     // simulate differently (R10).
+    ENG_PROFILE_NEXT(stretch, "physics.apply.joints");
     for (ConstraintRecord& record : m_constraints)
         record.seen = false;
     m_anySpring = false;
@@ -2451,6 +2541,7 @@ void PhysicsSync::applyScene()
     m_scene.constraints().forEach(
         [&](core::InstanceId id, ConstraintComponent& constraint) { applyConstraint(id, constraint); });
 
+    ENG_PROFILE_NEXT(stretch, "physics.apply.rest");
     retireUnseen();
     // After the sweep, so a pair is only ever excluded between bodies that
     // exist.

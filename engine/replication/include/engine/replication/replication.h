@@ -73,6 +73,18 @@ public:
     // fast the machine was.
     virtual void send(const scene::World& world, core::InstanceId root, u64 tick) = 0;
 
+    // **A snapshot held while a server catches up** (ADR 0228 §7): the one
+    // exception to the count of ticks above, and the frame loop's to decide.
+    // A frame that runs several ticks to catch up sends at most one snapshot
+    // per snapshot interval of real time, rather than one every
+    // `ticksPerSnapshot` ticks run back to back; a snapshot due while held is
+    // owed, and goes with the next tick that is not. What a held snapshot
+    // changes is when a peer is told, never what: the next one is against the
+    // same acknowledged baseline and carries everything since.
+    virtual void holdSnapshots(bool held) { (void)held; }
+    // Whether the last `send` sent the world's state.
+    [[nodiscard]] virtual bool snapshotSent() const { return false; }
+
     // Sends the `RemoteEvent` messages scripts queued this tick, and takes them
     // out of the world's outbox (ADR 0077). Right after `send`, so a message
     // naming an event the same send spawned is behind its spawn on the wire.

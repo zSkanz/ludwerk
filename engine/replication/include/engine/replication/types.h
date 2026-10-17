@@ -111,6 +111,10 @@ struct Config
     // How many of them one address may be, nought for any number
     // (`DefaultPeersPerAddress`).
     u32 maxPeersPerAddress = 64;
+    // **Bytes of the world's state a second each player is sent at most**
+    // (ADR 0229, `[network] client_budget_kb_per_second`); nought for no
+    // budget. A player's `ReplicationBudget` overrides it.
+    u32 clientBudgetBytesPerSecond = 48u * 1024u;
     // **What the project changed of Luau that compiled code can tell**
     // (ADR 0217), as one number, nought for nothing: a joiner whose number is
     // not the host's runs other scripts, and is refused before it plays.
@@ -225,6 +229,10 @@ struct Status
     std::string joinCode;
     u8 path = 0;
     u8 joinFailure = 0;
+    // On a replica, the rate its authority's world runs at (ADR 0233).
+    core::f64 timeDilation = 1.0;
+    // On a replica, its place in a front door's line, 0 in none (ADR 0232).
+    u32 queuePosition = 0;
 };
 
 // One past the largest `MessageType` there will be for a while: the kinds a
@@ -275,6 +283,18 @@ struct Stats
 {
     u64 snapshotsSent = 0;
     u64 snapshotsReceived = 0;
+    // Of those sent, the ones against no baseline -- the whole of what a
+    // peer holds again: a peer's first, and any after its acknowledged state
+    // fell out of the history.
+    u64 snapshotsWhole = 0;
+    // **What each player's budget held back** (ADR 0229), on the authority:
+    // updates of a changed part left for a later snapshot, ever and in the
+    // last second; and how much of the budget the last second's snapshots
+    // spent, from 0 to 1 -- above 1 when what may not wait (a newcomer, a
+    // player's own character) overdrew it.
+    u64 updatesDeferred = 0;
+    u32 deferredLastSecond = 0;
+    core::f64 budgetUsedLastSecond = 0.0;
     u64 bytesSent = 0;
     u64 bytesReceived = 0;
     // **Those bytes by the kind of message they were in** -- a message's first

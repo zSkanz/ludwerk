@@ -1,6 +1,7 @@
 #include "engine/script/save_store.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -30,6 +31,10 @@ constexpr std::string_view Magic = "ESAV";
 constexpr int FormatVersion = 1;
 constexpr std::string_view SaveSuffix = ".save";
 constexpr std::string_view BackupSuffix = ".bak";
+// The file a slot's writer holds while it writes (`writeNow`), and how
+// many times, ten milliseconds apart, it asks for another's.
+constexpr std::string_view LockSuffix = ".lock";
+constexpr int SlotLockAttempts = 200;
 // A main file that would not read, kept aside once its backup has been read in
 // its place: made the backup at the next write, it went over the
 // only good copy.
@@ -549,6 +554,19 @@ bool SaveStore::writeNow(const std::string& name, const std::string& text)
 {
     if (!platform::createDirectories(m_options.directory))
         return false;
+    // **One writer of a slot at a time, across processes** (ADR 0230 §4):
+    // the channels of a world share its saves, and two writing one slot at
+    // once could each make the other's save the backup and rename over it --
+    // a backup lost, a save from neither. Held for the two renames, waited
+    // for up to two seconds; a writer that never lets go is not waited on
+    // for ever, and the renames alone still leave a whole file. **The last
+    // save to finish is the slot**, whole: a slot is never merged.
+    platform::FileLock writing;
+    for (int attempt = 0; attempt < SlotLockAttempts; ++attempt) {
+        if (writing.tryLock(fileOf(m_options.directory, name, LockSuffix)) != platform::FileLock::Taken::Busy)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     const std::filesystem::path main = fileOf(m_options.directory, name, SaveSuffix);
     // The previous save becomes the backup FIRST: a write that dies after this
     // leaves the backup, which `open` reads.

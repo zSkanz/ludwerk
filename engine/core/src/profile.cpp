@@ -405,8 +405,12 @@ std::vector<ScopeReport> report(usize skipFrames)
         std::vector<f64> self;
         std::vector<f64> calls;
         total.reserve(kept.size());
+        f64 spentAll = 0.0;
+        f64 callsAll = 0.0;
         for (const usize slot : kept) {
             const f64 spent = sampleOf(node, slot);
+            spentAll += spent;
+            callsAll += slot < node.calls.size() ? static_cast<f64>(node.calls[slot]) : 0.0;
             f64 children = 0.0;
             for (const i32 child : node.children)
                 children += sampleOf(g_state.nodes[static_cast<usize>(child)], slot);
@@ -438,6 +442,7 @@ std::vector<ScopeReport> report(usize skipFrames)
         row.worstMs = total.empty() ? 0.0 : total.back();
         row.selfMedianMs = at(self, 0.5);
         row.calls = at(calls, 0.5);
+        row.perCallMs = callsAll > 0.0 ? spentAll / callsAll : 0.0;
         out.push_back(std::move(row));
 
         for (auto child = node.children.rbegin(); child != node.children.rend(); ++child)

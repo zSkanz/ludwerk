@@ -673,6 +673,17 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Property },
         Methods = {
             {
+                Name = "GetNearestPlayerDistance",
+                Parameters = { { Name = "position", Type = "vector" } },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0234" },
+                Doc = "Returns the distance in meters from `position` to the nearest player's focus, or "
+                    .. "`math.huge` when no player has one. A focus is their `ReplicationFocus`, or their "
+                    .. "character, as the physics step last took them. Use it to decide how much a far thing needs to do; "
+                    .. "`@engine/npclod` calls an NPC's code by it.",
+            },
+            {
                 Name = "GetWindAt",
                 Parameters = { { Name = "position", Type = "vector" } },
                 Returns = { "vector" },
@@ -720,6 +731,41 @@ local Classes: { Schema.Class } = {
                 Doc = "Returns the nearest thing that a sphere moved along a ray hits, or nil. Use it instead of "
                     .. "`Raycast` for a camera boom or a character's ground check, where a thin ray would pass "
                     .. "through a gap that the object itself does not fit through.",
+            },
+            {
+                Name = "RaycastAsSeenBy",
+                Parameters = {
+                    { Name = "player", Type = "Player" },
+                    { Name = "origin", Type = "vector" },
+                    { Name = "direction", Type = "vector" },
+                    { Name = "params", Type = "RaycastParams?", Default = "nil" },
+                },
+                Returns = { "RaycastResult?" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0235" },
+                Doc = "Returns what a ray hits in the world as `player`'s machine was drawing it. Every other "
+                    .. "player's `Character`, and every part with `BasePart.LagCompensated`, is placed where that "
+                    .. "machine drew it, at the moment it was showing; everything else is as it is now. Check a shot with it on the server, and a "
+                    .. "player with real latency hits the moving target they aimed at.\n\n"
+                    .. "The rewind is at most `rewind_cap_ms` under `[network]` in `project.toml`, 200 by "
+                    .. "default: a slower shooter's shot is checked against the world that long ago, so a "
+                    .. "target who reached cover more than that long ago is safe. The shooter's own character "
+                    .. "is where it is now. Only the server calls it; on a client it raises.",
+            },
+            {
+                Name = "SpherecastAsSeenBy",
+                Parameters = {
+                    { Name = "player", Type = "Player" },
+                    { Name = "origin", Type = "vector" },
+                    { Name = "radius", Type = "number" },
+                    { Name = "direction", Type = "vector" },
+                    { Name = "params", Type = "RaycastParams?", Default = "nil" },
+                },
+                Returns = { "RaycastResult?" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0235" },
+                Doc = "`RaycastAsSeenBy` for a sphere moved along the ray: a thick projectile, or a melee "
+                    .. "swing, checked against what its player saw.",
             },
             {
                 Name = "GetBodiesInBox",
@@ -2324,6 +2370,16 @@ local Classes: { Schema.Class } = {
             .. "tick. `--serve` is the only way to run a dedicated server.",
         Properties = {
             {
+                Name = "Channel",
+                Type = "number",
+                ReadOnly = true,
+                Records = { "ADR 0230" },
+                HostFact = true,
+                Doc = "Which channel of its world this server is: 1 for a world without channels, and for the "
+                    .. "first of a world with them. A `[[world]]` with `channels = true` in `servers.toml` is "
+                    .. "copied into channels 2, 3 and on as the open ones fill, each a server of its own.",
+            },
+            {
                 Name = "Authority",
                 Type = "boolean",
                 ReadOnly = true,
@@ -2527,7 +2583,7 @@ local Classes: { Schema.Class } = {
                         .. "ResimulatedTicksPerSecond: number, ResimulationTime: number, "
                         .. "UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, "
                         .. "BytesSent: number, BytesReceived: number, WireBytesSent: number, "
-                        .. "WireBytesReceived: number, SwarmBytes: number, "
+                        .. "WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, "
                         .. "SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, "
                         .. "UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, "
                         .. "LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, "
@@ -2570,6 +2626,10 @@ local Classes: { Schema.Class } = {
                     .. "messages with the transport's headers, acknowledgements, resends and encryption added. "
                     .. "They are what a player's connection pays for, and are larger than `BytesSent` and "
                     .. "`BytesReceived`.\n\n"
+                    .. "On an authority, `Deferred` counts the updates its players' budgets held back in the last "
+                    .. "second (`Player.ReplicationBudget`), and `BudgetUsed` is how much of those budgets that "
+                    .. "second's snapshots spent, from 0 to 1; above 1 when what may not wait, such as a player "
+                    .. "joining, spent more. Both are 0 on a client.\n\n"
                     .. '`Path` says how the other end is reached: `"lan"` on the same network, `"direct"` across '
                     .. 'the internet, or `"relayed"` through a relay, which adds the relay\'s distance to the '
                     .. "round trip. On a host it is the longest path among its players. It is empty when nobody "
@@ -2640,7 +2700,7 @@ local Classes: { Schema.Class } = {
                     { Name = "target", Type = "string" },
                     { Name = "data", Type = "any?", Default = "nil" },
                 },
-                Returns = {},
+                Returns = { "boolean" },
                 ThreadSafety = "Unsafe",
                 Doc = "Sends `player` to another world of the game: `target` is a world's name from "
                     .. "`servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that "
@@ -2648,7 +2708,45 @@ local Classes: { Schema.Class } = {
                     .. "`SaveService` can store, at most 16 KiB. Their character does not travel; the target "
                     .. "spawns one.\n\n"
                     .. "Only a world a manager started can send players elsewhere: anywhere else, and for a "
-                    .. "world the manager does not have, this raises at once.",
+                    .. "world the manager does not have, this raises at once."
+                    .. "\n\n"
+                    .. "Returns whether `player` was sent. A player who left while the script waited, for "
+                    .. "`CreateInstanceAsync` say, is not an error: they are gone, nothing is sent, and it "
+                    .. "returns false.",
+            },
+            {
+                Name = "SwitchChannel",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "channel", Type = "number" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0230" },
+                Doc = "Sends `player` to channel `channel` of the world this server is, for a channel menu: as "
+                    .. "`Travel` does, and with `TravelArrived` there. A channel that is not open, or full, "
+                    .. "leaves them where they are, and a warning says why. Only a world a manager started can "
+                    .. "call it."
+                    .. " Returns whether `player` was asked to go: false for a player who has left.",
+            },
+            {
+                Name = "TravelToPlayer",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "key", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0230" },
+                Doc = "Sends `player` to the world, and the channel of it, where the player whose `PublicKey` is "
+                    .. "`key` is now: a friend, a party's leader. When that world is full, or the other player is "
+                    .. "in none, they stay where they are, and a warning says why."
+                    .. " Returns whether `player` was asked to go: false for a player who has left.",
+            },
+            {
+                Name = "GetChannelsAsync",
+                Parameters = {},
+                Returns = { "{ { Channel: number, Players: number, MaxPlayers: number } }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0230" },
+                Doc = "Returns the open channels of the world this server is, each with how many players it "
+                    .. "holds and may hold, as the manager last heard. It waits for the manager's answer. For a "
+                    .. "world without channels, the one entry is this world.",
             },
             {
                 Name = "TravelGroup",
@@ -2657,10 +2755,14 @@ local Classes: { Schema.Class } = {
                     { Name = "target", Type = "string" },
                     { Name = "data", Type = "any?", Default = "nil" },
                 },
-                Returns = {},
+                Returns = { "{Player}" },
                 ThreadSafety = "Unsafe",
                 Doc = "Sends several players to the same world together, as `Travel` sends one. The target "
-                    .. "fires `TravelArrived` for each, in the order given.",
+                    .. "fires `TravelArrived` for each, in the order given."
+                    .. "\n\n"
+                    .. "Returns the players sent, in the order given. Any who left while the script waited are "
+                    .. "skipped, not an error, and the rest still go together; when none is left, it returns an "
+                    .. "empty table and sends nobody.",
             },
             {
                 Name = "VerifyTicket",
@@ -2754,6 +2856,27 @@ local Classes: { Schema.Class } = {
                 Parameters = { { Name = "reason", Type = "string" } },
                 Doc = "Fires when the connection ends and this machine is back in single-player. The server left, "
                     .. "the network failed, or `Disconnect` was called.",
+            },
+            {
+                Name = "ChannelMerging",
+                Parameters = { { Name = "seconds", Type = "number" } },
+                Records = { "ADR 0230" },
+                Doc = "Fires on a channel the manager is about to merge into another, because it has held under a "
+                    .. "quarter of its players for a while. In `seconds` its players are moved, all together, to "
+                    .. "the fullest channel with room. A game can say so first.",
+            },
+            {
+                Name = "Queued",
+                Parameters = {
+                    { Name = "position", Type = "number" },
+                    { Name = "estimateSeconds", Type = "number?" },
+                },
+                Records = { "ADR 0232" },
+                Doc = "Fires on a client waiting in line at a full game's front door, with its place and an "
+                    .. "estimate. The place counts from 1. The estimate is about how many seconds until its "
+                    .. "turn, measured by how fast the line moved in the last five minutes, and nil before "
+                    .. "anybody has left it. It fires when the machine joins the line and every five seconds "
+                    .. "after; `Connected` fires as usual when it is let in. `@engine/travelscreen` shows it.",
             },
             {
                 Name = "TravelArrived",
@@ -3094,6 +3217,25 @@ local Classes: { Schema.Class } = {
                     .. "predicts.",
             },
             {
+                Name = "ReplicationBudget",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Records = { "ADR 0229" },
+                Presentation = true,
+                Doc = "The most of the world's state, in kilobytes (1,024 bytes) a second, this player's machine "
+                    .. "is sent. 0, the default, is the game's `client_budget_kb_per_second` under `[network]` in "
+                    .. "`project.toml`, which is 48 unless the game says otherwise.\n\n"
+                    .. "When more changes than that, the authority sends what matters most to this player first: "
+                    .. "their own character and what they own, always; then what is nearest them, times "
+                    .. "`BasePart.ReplicationPriority`, times `SetReplicationPriority`. What waits keeps "
+                    .. "growing in priority until it is sent, and a changed part waits no more than about a "
+                    .. "second while the budget can carry each once a second. Messages a script sends "
+                    .. "(`RemoteEvent`) and what a player is sent as they join are not counted.\n\n"
+                    .. "Only the authority reads it. A player on a weak network, or a spectator, can be given "
+                    .. "less.",
+            },
+            {
                 Name = "Character2D",
                 Type = "Part2D?",
                 Doc = "The `Part2D` that represents this player on the 2D plane; the 2D counterpart of "
@@ -3120,6 +3262,64 @@ local Classes: { Schema.Class } = {
                     .. "the value their machine sent. An action the player never sent reads false.",
             },
             {
+                Name = "AddPhase",
+                Parameters = { { Name = "phase", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0231" },
+                Doc = "Puts this player in `phase`: they see, and collide with, what has that `Phase`. Only the "
+                    .. "server calls it; the player's own machine is told, and reads it with `HasPhase` and "
+                    .. "`GetPhases`. A world names at most 64 phases, and the 65th raises.",
+            },
+            {
+                Name = "RemovePhase",
+                Parameters = { { Name = "phase", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0231" },
+                Doc = "Takes this player out of `phase`: what has that `Phase` leaves their machine within a "
+                    .. "snapshot. Only the server calls it.",
+            },
+            {
+                Name = "HasPhase",
+                Parameters = { { Name = "phase", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0231" },
+                Doc = "Whether this player is in `phase`.",
+            },
+            {
+                Name = "GetPhases",
+                Parameters = {},
+                Returns = { "{string}" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0231" },
+                Doc = "The phases this player is in, in no particular order.",
+            },
+            {
+                Name = "CanSee",
+                Parameters = { { Name = "instance", Type = "Instance" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0231" },
+                Doc = "Whether this player is in the phase of `instance` and of everything above it: what "
+                    .. "decides whether it is sent to them. For a game's own hit and interaction code. It says "
+                    .. "nothing of distance.",
+            },
+            {
+                Name = "SetReplicationPriority",
+                Parameters = { { Name = "instance", Type = "Instance" }, { Name = "priority", Type = "number" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0229" },
+                Doc = "How much `instance`'s changes come first for this player alone, on top of its "
+                    .. "`BasePart.ReplicationPriority`. Use 4 for a party member's character, and 0.5 for what "
+                    .. "this player hardly needs. 1 forgets what was set. It matters only when the player's budget "
+                    .. "(`ReplicationBudget`) cannot carry every change at once.\n\n"
+                    .. "Only the authority calls it; on a client it raises an error. A player keeps at most 256 "
+                    .. "of these; the instance being destroyed forgets it.",
+            },
+            {
                 Name = "Kick",
                 Parameters = { { Name = "reason", Type = "string?", Default = "nil" } },
                 Returns = {},
@@ -3141,6 +3341,21 @@ local Classes: { Schema.Class } = {
         Module = "scene",
         Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
         Properties = {
+            {
+                Name = "TimeDilation",
+                Type = "number",
+                ReadOnly = true,
+                Records = { "ADR 0233" },
+                -- How often ticks run, never what one does: no world's trace
+                -- moves with it.
+                HostFact = true,
+                Doc = "How fast this world's clock runs against the wall's: 1 at full speed, less while an "
+                    .. "overloaded server is slowed (`[server] time_dilation` in `project.toml`). The tick is the "
+                    .. "same, so `dt` and what a tick does do not change; fewer ticks run a second, and every "
+                    .. "machine in the match runs at the same rate. `task.wait`, animations and sounds driven by "
+                    .. "the simulation slow with it; the interface, the camera and `os.time` do not. "
+                    .. "`TimeDilationChanged` fires when it changes.",
+            },
             {
                 Name = "Platform",
                 Type = "Enum.Platform",
@@ -3343,6 +3558,13 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Method },
         Events = {
+            {
+                Name = "TimeDilationChanged",
+                Parameters = {},
+                Records = { "ADR 0233" },
+                Doc = "Fires when `TimeDilation` changes: an overloaded server slowing its world, or bringing it "
+                    .. "back to full speed. A game can say so to its players.",
+            },
             {
                 Name = "PreRender",
                 Parameters = { { Name = "dt", Type = "number" } },
@@ -3697,9 +3919,14 @@ local Classes: { Schema.Class } = {
                 Returns = { "any" },
                 ThreadSafety = "Unsafe",
                 Doc = "Returns the report of the capture requested with `CaptureProfile`, or nil until the "
-                    .. "capture completes. The report is a table with `frames`, `seconds` and `scopes`. Each "
-                    .. "scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs` "
-                    .. "and `selfMedianMs`.\n\n"
+                    .. "capture completes. The report is a table with `frames`, `seconds`, `ticksPerFrame` and "
+                    .. "`scopes`. Each scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, "
+                    .. "`p99Ms`, `worstMs`, `selfMedianMs`, `calls` and `perCallMs`.\n\n"
+                    .. "The times are a frame's: what the scope spent in one frame, over the frames captured. "
+                    .. "`calls` is how many times it ran in a frame, at the median, and `perCallMs` is one run "
+                    .. "of it. `ticksPerFrame` is how many simulation ticks a frame ran, at the median: 1 for a "
+                    .. "world keeping up. A server catching up runs several in a frame, and a tick's scopes "
+                    .. "then show several ticks' time in each frame; read `perCallMs` for one tick.\n\n"
                     .. "A scope's times include its child scopes and any waiting, and they are CPU times, not GPU "
                     .. "times. At most the latest 16,384 frames are kept. The report stays available until the "
                     .. "next capture is requested.",

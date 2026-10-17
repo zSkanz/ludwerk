@@ -9,22 +9,29 @@
 		ludwerk server keygen --name=ana [--out=<folder>]
 		ludwerk server connect <host>[:port] --key=ana.key [--server-key=<hex>] [--follow] [--command=<line>]
 		ludwerk server update <folder> [--key=ana.key] [--port=7778]
+		ludwerk server loadtest <host:port> [path] --bots=N [--seconds=60] [--behavior=wander]
+		    [--metrics=<host:port>] [--report=loadtest.json]
 
 	`run` starts the manager when the folder has a `servers.toml`, and one
 	dedicated server otherwise; `install` makes that the machine's to start at
 	boot -- a systemd unit on Linux, a task that runs at startup on Windows.
 	`keygen` makes an administrator's key pair, `connect` reaches a server's
 	console with it, and `update` asks a manager to move its worlds to a new
-	build, through that same console.
+	build, through that same console. `loadtest` sends light bots at a server
+	(ADR 0236) -- as many processes of 64 as it takes -- reads the server's
+	`/metrics` each second, and writes what both saw.
 
 	**The engine does each of them**: the manager, the handshake and the
 	sealing are the server binary's own code, so this only finds it and asks.
 ]]
 
 local fs = require("@std/fs")
+local json = require("@std/json")
+local net = require("@std/net")
 local path = require("@std/path")
 local platform = require("@std/system/platform")
 local process = require("@std/process")
+local task = require("@std/task")
 
 local brand = require("../brand")
 local catalog = require("../catalog")
@@ -35,6 +42,11 @@ local tr = catalog.tr
 export type Options = {
     action: string?,
     positional: { string },
+    bots: string?,
+    seconds: string?,
+    behavior: string?,
+    metrics: string?,
+    report: string?,
     port: string?,
     name: string?,
     out: string?,
@@ -50,6 +62,218 @@ local DefaultGamePort = 7777
 
 local function absolute(file: string): string
     return path.format(path.resolve(file))
+end
+
+-- The most bots one engine process holds (`MostBotsAProcess`), and the most
+-- one command sends from one machine (ADR 0236 §5).
+local BotsAProcess = 64
+local MostBots = 1000
+-- A server takes twenty connections a second from one address; a process
+-- starts its bots at ten a second, so the next starts once the last is in.
+local BotsJoinedASecond = 10
+
+--- The last of the lines a bots process printed: its totals.
+local function lastBotLine(output: string): { [string]: any }?
+    local found: { [string]: any }? = nil
+    for line in string.gmatch(output, "\30([^\n]+)") do
+        local ok, decoded = pcall(json.deserialize, line)
+        if ok and typeof(decoded) == "table" and (decoded :: any).type == "bots" then
+            found = decoded :: any
+        end
+    end
+    return found
+end
+
+--- **A load test**: the bots, the server's numbers while they run, and a
+--- report. Its exit code says whether the tick stayed inside its time.
+local function loadtest(engine: string, options: Options): number
+    local where = options.positional[1]
+    local bots = tonumber(options.bots or "")
+    if where == nil or bots == nil or bots < 1 or bots > MostBots or bots ~= math.floor(bots) then
+        print(tr("cli.server.err.loadtest_usage", { most = MostBots }))
+        return 2
+    end
+    local project = absolute(options.positional[2] or ".")
+    local seconds = tonumber(options.seconds or "") or 60
+    local behavior = options.behavior or "wander"
+    -- A game's own behavior is a file, read by every bots process.
+    if string.sub(behavior, -5) == ".luau" then
+        behavior = absolute(behavior)
+    end
+    local metrics = options.metrics or where
+    local processes = math.ceil(bots / BotsAProcess)
+    local results: { process.ProcessResult } = {}
+    local finished = 0
+    print(tr("cli.server.loadtest_starting", { bots = bots, processes = processes, address = where }))
+    local remaining = bots
+    local ramp = 0
+    for index = 1, processes do
+        local count = math.min(BotsAProcess, remaining)
+        remaining -= count
+        -- Each process runs as long as the test, less the ramp before it.
+        local own = math.max(5, seconds - ramp)
+        task.spawn(function()
+            results[index] = process.run({
+                engine,
+                project,
+                `--join={where}`,
+                `--bots={count}`,
+                `--bot-seconds={math.floor(own)}`,
+                `--bot-behavior={behavior}`,
+            })
+            finished += 1
+        end)
+        local wait = math.ceil(count / BotsJoinedASecond) + 1
+        ramp += wait
+        if index < processes then
+            task.wait(wait)
+        end
+    end
+
+    -- **The server's side, each second**, while the bots run.
+    local samples: { { [string]: any } } = {}
+    while finished < processes do
+        local ok, response = pcall(function()
+            return net.request(`http://{metrics}/metrics`)
+        end)
+        if ok and (response :: any).status == 200 then
+            local parsed, decoded = pcall(json.deserialize, (response :: any).body)
+            if parsed and typeof(decoded) == "table" then
+                table.insert(samples, decoded :: any)
+            end
+        end
+        task.wait(1)
+    end
+
+    local joined, failed, dropped, bytesIn, snapshots, travels, behaviorsFailed = 0, 0, 0, 0, 0, 0, 0
+    for index = 1, processes do
+        local line = results[index] and lastBotLine(results[index].stdout) or nil
+        if line then
+            joined += (line.connected :: number?) or 0
+            failed += (line.failed :: number?) or 0
+            dropped += (line.dropped :: number?) or 0
+            bytesIn += (line.bytes_in :: number?) or 0
+            snapshots += (line.snapshots :: number?) or 0
+            travels += (line.travels :: number?) or 0
+            behaviorsFailed += (line.behaviors_failed :: number?) or 0
+        else
+            failed += math.min(BotsAProcess, bots - (index - 1) * BotsAProcess)
+        end
+    end
+
+    -- **Each second's own numbers**, from the server's counters: the mean
+    -- tick between two samples is the tick time's difference over the
+    -- ticks', and the bytes the byte counts' difference. `tick_ms_mean` is
+    -- the last minute's, which a person reads, and no use second by second.
+    local perSecond: { { [string]: number } } = {}
+    local mostPlayers, mostMemory = 0, 0
+    for at, sample in samples do
+        mostPlayers = math.max(mostPlayers, (sample.players :: number?) or 0)
+        mostMemory = math.max(mostMemory, (sample.memory_bytes :: number?) or 0)
+        local before = samples[at - 1]
+        if before then
+            local ticks = ((sample.ticks_total :: number?) or 0) - ((before.ticks_total :: number?) or 0)
+            local ms = ((sample.tick_ms_total :: number?) or 0) - ((before.tick_ms_total :: number?) or 0)
+            local second: { [string]: number } = {
+                players = (sample.players :: number?) or 0,
+                ticks = ticks,
+                tick_ms = if ticks > 0 then ms / ticks else 0,
+                bytes_out = ((sample.wire_bytes_sent :: number?) or 0) - ((before.wire_bytes_sent :: number?) or 0),
+                bytes_in = ((sample.wire_bytes_received :: number?) or 0)
+                    - ((before.wire_bytes_received :: number?) or 0),
+            }
+            table.insert(perSecond, second)
+        end
+    end
+    -- **The plateau**: the seconds every bot that got in was in. Joining and
+    -- leaving cost what they cost -- a newcomer is sent the whole world --
+    -- and are reported apart, as the peaks.
+    local held: { { [string]: number } } = {}
+    for _, second in perSecond do
+        if second.players >= mostPlayers and mostPlayers > 0 then
+            table.insert(held, second)
+        end
+    end
+    local function meanOf(rows: { { [string]: number } }, field: string): number
+        local sum = 0
+        for _, row in rows do
+            sum += row[field]
+        end
+        return if #rows > 0 then sum / #rows else 0
+    end
+    local function mostOf(rows: { { [string]: number } }, field: string): number
+        local most = 0
+        for _, row in rows do
+            most = math.max(most, row[field])
+        end
+        return most
+    end
+    local heldTickMean = meanOf(held, "tick_ms")
+    local heldTickWorst = mostOf(held, "tick_ms")
+    local heldTicks = meanOf(held, "ticks")
+    local report = {
+        bots = bots,
+        processes = processes,
+        behavior = behavior,
+        seconds = seconds,
+        joined = joined,
+        failed = failed,
+        dropped = dropped,
+        travels = travels,
+        behaviors_failed = behaviorsFailed,
+        bytes_in = bytesIn,
+        snapshots = snapshots,
+        server_players_most = mostPlayers,
+        server_memory_bytes_most = mostMemory,
+        held_seconds = #held,
+        held_tick_ms_mean = heldTickMean,
+        held_tick_ms_worst_second = heldTickWorst,
+        held_ticks_a_second = heldTicks,
+        held_bytes_out_a_second = meanOf(held, "bytes_out"),
+        held_bytes_in_a_second = meanOf(held, "bytes_in"),
+        peak_bytes_out_a_second = mostOf(perSecond, "bytes_out"),
+        each_second = perSecond,
+        samples = samples,
+    }
+    print(tr("cli.server.loadtest_bots", { joined = joined, bots = bots, failed = failed, dropped = dropped }))
+    -- What the bots were told when a join failed, or why a behavior stopped,
+    -- each once: a server's per-address limit, a full server, another
+    -- version, a behavior's error.
+    local seen: { [string]: boolean } = {}
+    for index = 1, processes do
+        local result = results[index]
+        if result then
+            for line in string.gmatch(result.stdout .. "\n" .. result.stderr, "[^\n]+") do
+                local said = string.find(line, "[warn]", 1, true) or string.find(line, "[error]", 1, true)
+                if said and not seen[line] then
+                    seen[line] = true
+                    print(line)
+                end
+            end
+        end
+    end
+    if #held > 0 then
+        print(tr("cli.server.loadtest_server", {
+            players = mostPlayers,
+            seconds = #held,
+            mean = string.format("%.2f", heldTickMean),
+            worst = string.format("%.2f", heldTickWorst),
+            rate = string.format("%.1f", heldTicks),
+            out = string.format("%.1f", meanOf(held, "bytes_out") / 1024),
+            into = string.format("%.1f", meanOf(held, "bytes_in") / 1024),
+            peak = string.format("%.1f", mostOf(perSecond, "bytes_out") / 1024),
+            memory = math.floor(mostMemory / (1024 * 1024)),
+        }))
+    else
+        print(tr("cli.server.loadtest_no_metrics", { address = metrics }))
+    end
+    local file = absolute(options.report or "loadtest.json")
+    fs.writeStringToFile(file, json.serialize(report :: any))
+    print(tr("cli.server.loadtest_report", { path = file }))
+    -- **Passed**: everybody got in and stayed, every behavior ran, and no
+    -- second of the plateau took longer than its sixty ticks may.
+    local inside = #held > 0 and heldTickWorst < 1000 / 60
+    return if inside and failed == 0 and dropped == 0 and behaviorsFailed == 0 then 0 else 1
 end
 
 --- What starts the folder's servers: the manager when it has a
@@ -226,6 +450,10 @@ local function run(options: Options): number
         end
         print(tr("cli.server.keygen_done", { path = file, name = options.name }))
         return 0
+    end
+
+    if action == "loadtest" then
+        return loadtest(engine, options)
     end
 
     if action == "connect" or action == "update" then

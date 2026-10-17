@@ -671,6 +671,29 @@ u64 World::worldHash() const
 bool quietAtDefault(const World& world, core::InstanceId id, const PropertyDesc& property, const Value& value)
 {
     const std::string_view name = world.atoms().text(property.name);
+    // **ADR 0231's additions**: no phase, and colliding by it, is what every
+    // instance was before either existed.
+    if (name == "Phase") {
+        const auto* text = std::get_if<std::string>(&value);
+        return text != nullptr && text->empty();
+    }
+    if (name == "PhaseCollision") {
+        const auto* flag = std::get_if<bool>(&value);
+        return flag != nullptr && *flag;
+    }
+    // **ADR 0234's additions to parts**: a part that may sleep and is awake
+    // says neither, so a world with no player far from anything hashes as it
+    // did before either existed.
+    if (world.parts().find(id) != nullptr) {
+        if (name == "Dormancy") {
+            const auto* item = std::get_if<EnumValue>(&value);
+            return item != nullptr && item->value == 0;
+        }
+        if (name == "Dormant") {
+            const auto* flag = std::get_if<bool>(&value);
+            return flag != nullptr && !*flag;
+        }
+    }
     if (name == "RunContext") {
         const auto* item = std::get_if<EnumValue>(&value);
         return item != nullptr && item->enumId == generated::RunContextEnumId && item->value == 2;

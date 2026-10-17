@@ -7,4 +7,4 @@ joint-picker 0.93781,0.43167=14,62,99
 # way along, which is how much of the clip a machine has played by the shot. The editor's game follows the
 # clock and the drive counts frames: six frames after Play the fill has not reached there, and on a machine
 # six times as quick as a desk it would not have by the shot either.
-graph-running 0.8821875,0.53722=51,93,141 0.50031,0.98944=0,120,212
+graph-running 0.8821875,0.56611=51,93,141 0.50031,0.98944=0,120,212

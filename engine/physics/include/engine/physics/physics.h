@@ -167,6 +167,16 @@ public:
     virtual void setBodyMaterial(WorldHandle world, BodyHandle body, f32 friction, f32 restitution) = 0;
     virtual void setBodyFlags(WorldHandle world, BodyHandle body, bool collidable, bool queryable) = 0;
     virtual void setBodyGroup(WorldHandle world, BodyHandle body, CollisionGroup group) = 0;
+    // **Phases** (ADR 0231): a body only some players see collides only with
+    // what is theirs. `phase` is its phase's bit plus one, 0 for none;
+    // `holder` and `mask` are what a player's character and owned parts
+    // carry -- the bits of the phases the player is in. A body that is
+    // neither collides as any body does. A backend without the filter
+    // collides everything, as it always did.
+    virtual void setBodyPhase(WorldHandle, BodyHandle, u8 /*phase*/, bool /*holder*/, u64 /*mask*/) {}
+    virtual void setCharacterPhase(WorldHandle, CharacterHandle, bool /*holder*/, u64 /*mask*/) {}
+    // `CanQuery` on a character's part: whether a query meets its capsule.
+    virtual void setCharacterQueryable(WorldHandle, CharacterHandle, bool /*queryable*/) {}
 
     [[nodiscard]] virtual BodyState bodyState(WorldHandle world, BodyHandle body) const = 0;
 
@@ -336,6 +346,25 @@ public:
 
     [[nodiscard]] virtual bool spherecast(WorldHandle world, const RayD& ray, f32 radius, const QueryFilter& filter,
                                           RayHit& outHit) const = 0;
+
+    // **The closest hit with `moved` where they say** (ADR 0235), and every
+    // other body where it is: a shot checked against the world its shooter
+    // saw. A moved body is met only where it is moved to, as the shape the
+    // simulation has for it, and nothing in the simulation moves. A backend
+    // without it answers the cast of the world as it is.
+    [[nodiscard]] virtual bool raycastMoved(WorldHandle world, const RayD& ray, const QueryFilter& filter,
+                                            std::span<const MovedBody> moved, RayHit& outHit) const
+    {
+        (void)moved;
+        return raycast(world, ray, filter, outHit);
+    }
+    [[nodiscard]] virtual bool spherecastMoved(WorldHandle world, const RayD& ray, f32 radius,
+                                               const QueryFilter& filter, std::span<const MovedBody> moved,
+                                               RayHit& outHit) const
+    {
+        (void)moved;
+        return spherecast(world, ray, radius, filter, outHit);
+    }
 
     // Every body overlapping the oriented box, by user data, in a stable order.
     // Appends.

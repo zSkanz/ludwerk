@@ -47,7 +47,7 @@ namespace engine::scene::generated
 void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
 {
     // --- Instance ---
-    static std::array<PropertyDesc, 4> instanceProperties;
+    static std::array<PropertyDesc, 5> instanceProperties;
     instanceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Name"),
@@ -81,6 +81,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getInstanceClassName,
             .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Phase"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "The phase this instance and everything under it belong to, seen only by the players in it. Empty, the default, is everybody's. A player not in the phase (`Player:AddPhase`) is not sent the instance at all: it is absent on their machine, not hidden. It leaves their machine when they leave the phase, as a thing out of range does. It is the server's to say and is not itself sent.\012\012A phased part collides with the characters, and the parts, of the players in its phase, and never with those of players who are not; everything else collides with it as with any part (`BasePart.PhaseCollision`). A world names at most 64 phases.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.phase_name"),
+            .get = native::getInstancePhase,
+            .set = native::setInstancePhase,
         },
         PropertyDesc{
             .name = atoms.intern("Local"),
@@ -480,7 +491,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 25> basePartProperties;
+    static std::array<PropertyDesc, 30> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -558,6 +569,64 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getBasePartCastShadow,
             .set = native::setBasePartCastShadow,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PhaseCollision"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether this part's phase decides what it collides with. On, the default, it never collides with the characters and owned parts of players outside its phase, and does with those inside it. Off, it collides as any part does, and the game decides with `CollisionGroup` who stands on what.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartPhaseCollision,
+            .set = native::setBasePartPhaseCollision,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Dormancy"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("Dormancy"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "Whether the part may sleep where no player is near. On a dedicated server, a `CharacterBody` with no player's focus within `dormant_radius` (`[server]` in `project.toml`; twice `StreamingService.LoadRadius` unless the game says) does not walk, and what it was asked to do (`Move`) waits until a player comes near. A player sees only within the load radius, so a character wakes before anybody can see it. `Never` keeps the part awake wherever it is.\012\012A host and a single-player game never sleep anything, nor does a world one of whose players has no character or focus: that player is sent the whole world.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getBasePartDormancy,
+            .set = native::setBasePartDormancy,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Dormant"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .doc = "Whether the part is asleep this tick because no player is near it (`Dormancy`). Decided where the physics step begins, from where the players were then.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartDormant,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LagCompensated"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether `Workspace:RaycastAsSeenBy` checks a shot against this part where the shooter's machine drew it, rather than where it is now. Every player's `Character` is checked that way without it. Set it on a moving target that is not a player's, such as an NPC, a vehicle or a dummy.\012\012Only the authority reads it, and it is not replicated.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartLagCompensated,
+            .set = native::setBasePartLagCompensated,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ReplicationPriority"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much this part's changes come first when a player's budget cannot carry every change at once (`Player.ReplicationBudget`). 1 by default; 3 makes the part's turn come three times as fast, 0.25 four times as slowly, and 0 only once a second. A part a player's machine waits for is drawn where it was last sent, moving smoothly between the states it was sent, a little behind.\012\012Only the authority reads it, and it is not replicated. A part that does not change costs nothing, whatever its priority.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBasePartReplicationPriority,
+            .set = native::setBasePartReplicationPriority,
         },
         PropertyDesc{
             .name = atoms.intern("Fade"),
@@ -5492,8 +5561,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 6> workspaceMethods;
+    static std::array<MethodDesc, 9> workspaceMethods;
     workspaceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetNearestPlayerDistance"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the distance in meters from `position` to the nearest player's focus, or `math.huge` when no player has one. A focus is their `ReplicationFocus`, or their character, as the physics step last took them. Use it to decide how much a far thing needs to do; `@engine/npclod` calls an NPC's code by it.",
+        },
         MethodDesc{
             .name = atoms.intern("GetWindAt"),
             .yields = false,
@@ -5517,6 +5592,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the nearest thing that a sphere moved along a ray hits, or nil. Use it instead of `Raycast` for a camera boom or a character's ground check, where a thin ray would pass through a gap that the object itself does not fit through.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RaycastAsSeenBy"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns what a ray hits in the world as `player`'s machine was drawing it. Every other player's `Character`, and every part with `BasePart.LagCompensated`, is placed where that machine drew it, at the moment it was showing; everything else is as it is now. Check a shot with it on the server, and a player with real latency hits the moving target they aimed at.\012\012The rewind is at most `rewind_cap_ms` under `[network]` in `project.toml`, 200 by default: a slower shooter's shot is checked against the world that long ago, so a target who reached cover more than that long ago is safe. The shooter's own character is where it is now. Only the server calls it; on a client it raises.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SpherecastAsSeenBy"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "`RaycastAsSeenBy` for a sphere moved along the ray: a thick projectile, or a melee swing, checked against what its player saw.",
         },
         MethodDesc{
             .name = atoms.intern("GetBodiesInBox"),
@@ -6749,8 +6836,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(serverStorageDesc);
 
     // --- NetworkService ---
-    static std::array<PropertyDesc, 10> networkServiceProperties;
+    static std::array<PropertyDesc, 11> networkServiceProperties;
     networkServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Channel"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Which channel of its world this server is: 1 for a world without channels, and for the first of a world with them. A `[[world]]` with `channels = true` in `servers.toml` is copied into channels 2, 3 and on as the open ones fill, each a server of its own.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getNetworkServiceChannel,
+            .set = nullptr,
+        },
         PropertyDesc{
             .name = atoms.intern("Authority"),
             .type = ValueType::Bool,
@@ -6885,7 +6984,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 14> networkServiceMethods;
+    static std::array<MethodDesc, 17> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetLocalPlayers"),
@@ -6927,7 +7026,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the last answer, in meters, whether or not that was a correction. These are what its character pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and pulled back gently, so this stays small but is rarely zero.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.\012\012`WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages with the transport's headers, acknowledgements, resends and encryption added. They are what a player's connection pays for, and are larger than `BytesSent` and `BytesReceived`.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
+            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the last answer, in meters, whether or not that was a correction. These are what its character pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and pulled back gently, so this stays small but is rarely zero.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.\012\012`WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages with the transport's headers, acknowledgements, resends and encryption added. They are what a player's connection pays for, and are larger than `BytesSent` and `BytesReceived`.\012\012On an authority, `Deferred` counts the updates its players' budgets held back in the last second (`Player.ReplicationBudget`), and `BudgetUsed` is how much of those budgets that second's snapshots spent, from 0 to 1; above 1 when what may not wait, such as a player joining, spent more. Both are 0 on a client.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
@@ -6951,13 +7050,31 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("Travel"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that one, which fires `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can store, at most 16 KiB. Their character does not travel; the target spawns one.\012\012Only a world a manager started can send players elsewhere: anywhere else, and for a world the manager does not have, this raises at once.",
+            .doc = "Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that one, which fires `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can store, at most 16 KiB. Their character does not travel; the target spawns one.\012\012Only a world a manager started can send players elsewhere: anywhere else, and for a world the manager does not have, this raises at once.\012\012Returns whether `player` was sent. A player who left while the script waited, for `CreateInstanceAsync` say, is not an error: they are gone, nothing is sent, and it returns false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SwitchChannel"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends `player` to channel `channel` of the world this server is, for a channel menu: as `Travel` does, and with `TravelArrived` there. A channel that is not open, or full, leaves them where they are, and a warning says why. Only a world a manager started can call it. Returns whether `player` was asked to go: false for a player who has left.",
+        },
+        MethodDesc{
+            .name = atoms.intern("TravelToPlayer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends `player` to the world, and the channel of it, where the player whose `PublicKey` is `key` is now: a friend, a party's leader. When that world is full, or the other player is in none, they stay where they are, and a warning says why. Returns whether `player` was asked to go: false for a player who has left.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetChannelsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the open channels of the world this server is, each with how many players it holds and may hold, as the manager last heard. It waits for the manager's answer. For a world without channels, the one entry is this world.",
         },
         MethodDesc{
             .name = atoms.intern("TravelGroup"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.",
+            .doc = "Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.\012\012Returns the players sent, in the order given. Any who left while the script waited are skipped, not an error, and the rest still go together; when none is left, it returns an empty table and sends nobody.",
         },
         MethodDesc{
             .name = atoms.intern("VerifyTicket"),
@@ -6972,7 +7089,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Forgets the key this machine saved for the server at `address`, written as for `Join`. The first time a machine joins a server by its address, it saves the server's key, and a later join to the same address with another key fails with `JoinFailed`: someone may be in the way. A server whose owner reinstalled it has a new key too. A game can offer the player a way to trust it again: call this, then `Join`.\012\012Joining by code saves nothing, so there is nothing to forget.",
         },
     }};
-    static std::array<EventDesc, 10> networkServiceEvents;
+    static std::array<EventDesc, 12> networkServiceEvents;
     networkServiceEvents = {{
         EventDesc{
             .name = atoms.intern("Connected"),
@@ -7000,28 +7117,38 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Fires when the connection ends and this machine is back in single-player. The server left, the network failed, or `Disconnect` was called.",
         },
         EventDesc{
-            .name = atoms.intern("TravelArrived"),
+            .name = atoms.intern("ChannelMerging"),
             .slot = 12,
+            .doc = "Fires on a channel the manager is about to merge into another, because it has held under a quarter of its players for a while. In `seconds` its players are moved, all together, to the fullest channel with room. A game can say so first.",
+        },
+        EventDesc{
+            .name = atoms.intern("Queued"),
+            .slot = 13,
+            .doc = "Fires on a client waiting in line at a full game's front door, with its place and an estimate. The place counts from 1. The estimate is about how many seconds until its turn, measured by how fast the line moved in the last five minutes, and nil before anybody has left it. It fires when the machine joins the line and every five seconds after; `Connected` fires as usual when it is let in. `@engine/travelscreen` shows it.",
+        },
+        EventDesc{
+            .name = atoms.intern("TravelArrived"),
+            .slot = 14,
             .doc = "Fires on the server of the world a player traveled to, after `PlayerAdded`, with the `data` the world they left sent and that world's name. A player who came through the front door fires it too, with nil and an empty origin. `reason` is empty, or `\"InstanceFailed\"` for a player sent back because the instance they were in stopped without closing: the game can say so, and give back what the run cost.",
         },
         EventDesc{
             .name = atoms.intern("TravelStarted"),
-            .slot = 13,
+            .slot = 15,
             .doc = "Fires on a client when it is sent to another world, by the front door or by the world it is in, before it leaves, with that world's name. Show a loading screen here and take it down on `Connected`, which fires when the next world has taken this machine; `@engine/travelscreen` is one, mounted in one line.",
         },
         EventDesc{
             .name = atoms.intern("Announced"),
-            .slot = 14,
+            .slot = 16,
             .doc = "Fires on every machine of the match when the server's operator says something to everybody, with the console's `say` or as `stop` counts down. The engine writes it to the log and draws nothing: a game shows it its own way, or mounts `@engine/announcements`, which shows each one across the top of the screen for a few seconds.",
         },
         EventDesc{
             .name = atoms.intern("PlayerAdded"),
-            .slot = 15,
+            .slot = 17,
             .doc = "Fires when a player joins. A script that connects at its top level and then loops over `GetPlayers()` handles each player exactly once.",
         },
         EventDesc{
             .name = atoms.intern("PlayerRemoving"),
-            .slot = 16,
+            .slot = 18,
             .doc = "Fires when a player is leaving. The player object is still valid inside the handler, so a game can save that player's data.",
         },
     }};
@@ -7168,7 +7295,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteFunctionDesc);
 
     // --- Player ---
-    static std::array<PropertyDesc, 8> playerProperties;
+    static std::array<PropertyDesc, 9> playerProperties;
     playerProperties = {{
         PropertyDesc{
             .name = atoms.intern("Camera"),
@@ -7255,6 +7382,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setPlayerReplicationFocus,
         },
         PropertyDesc{
+            .name = atoms.intern("ReplicationBudget"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The most of the world's state, in kilobytes (1,024 bytes) a second, this player's machine is sent. 0, the default, is the game's `client_budget_kb_per_second` under `[network]` in `project.toml`, which is 48 unless the game says otherwise.\012\012When more changes than that, the authority sends what matters most to this player first: their own character and what they own, always; then what is nearest them, times `BasePart.ReplicationPriority`, times `SetReplicationPriority`. What waits keeps growing in priority until it is sent, and a changed part waits no more than about a second while the budget can carry each once a second. Messages a script sends (`RemoteEvent`) and what a player is sent as they join are not counted.\012\012Only the authority reads it. A player on a weak network, or a spectator, can be given less.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getPlayerReplicationBudget,
+            .set = native::setPlayerReplicationBudget,
+        },
+        PropertyDesc{
             .name = atoms.intern("Character2D"),
             .type = ValueType::Instance,
             .instanceClass = atoms.intern("Part2D"),
@@ -7267,13 +7406,49 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setPlayerCharacter2D,
         },
     }};
-    static std::array<MethodDesc, 2> playerMethods;
+    static std::array<MethodDesc, 8> playerMethods;
     playerMethods = {{
         MethodDesc{
             .name = atoms.intern("GetIntent"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the value of this player's input action of the given name for the current tick. The type is the one `InputAction:GetState` returns: a boolean, a number, a `Vector2` or a `vector`. For the local player it is this machine's own action; for a remote player it is the value their machine sent. An action the player never sent reads false.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AddPhase"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts this player in `phase`: they see, and collide with, what has that `Phase`. Only the server calls it; the player's own machine is told, and reads it with `HasPhase` and `GetPhases`. A world names at most 64 phases, and the 65th raises.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RemovePhase"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes this player out of `phase`: what has that `Phase` leaves their machine within a snapshot. Only the server calls it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("HasPhase"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether this player is in `phase`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPhases"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The phases this player is in, in no particular order.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CanSee"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether this player is in the phase of `instance` and of everything above it: what decides whether it is sent to them. For a game's own hit and interaction code. It says nothing of distance.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetReplicationPriority"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "How much `instance`'s changes come first for this player alone, on top of its `BasePart.ReplicationPriority`. Use 4 for a party member's character, and 0.5 for what this player hardly needs. 1 forgets what was set. It matters only when the player's budget (`ReplicationBudget`) cannot carry every change at once.\012\012Only the authority calls it; on a client it raises an error. A player keeps at most 256 of these; the instance being destroyed forgets it.",
         },
         MethodDesc{
             .name = atoms.intern("Kick"),
@@ -7295,8 +7470,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(playerDesc);
 
     // --- RunService ---
-    static std::array<PropertyDesc, 2> runServiceProperties;
+    static std::array<PropertyDesc, 3> runServiceProperties;
     runServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("TimeDilation"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How fast this world's clock runs against the wall's: 1 at full speed, less while an overloaded server is slowed (`[server] time_dilation` in `project.toml`). The tick is the same, so `dt` and what a tick does do not change; fewer ticks run a second, and every machine in the match runs at the same rate. `task.wait`, animations and sounds driven by the simulation slow with it; the interface, the camera and `os.time` do not. `TimeDilationChanged` fires when it changes.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getRunServiceTimeDilation,
+            .set = nullptr,
+        },
         PropertyDesc{
             .name = atoms.intern("Platform"),
             .type = ValueType::EnumItem,
@@ -7404,31 +7591,36 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Advances the 3D simulation by one fixed tick immediately, without running scripts and without firing `Touched` or `TouchEnded`. Use it to simulate again after `RestoreSimulation`: for each tick to catch up, set that tick's inputs, such as a character's `MoveDirection` or an impulse, and call it once.",
         },
     }};
-    static std::array<EventDesc, 5> runServiceEvents;
+    static std::array<EventDesc, 6> runServiceEvents;
     runServiceEvents = {{
         EventDesc{
-            .name = atoms.intern("PreRender"),
+            .name = atoms.intern("TimeDilationChanged"),
             .slot = 7,
+            .doc = "Fires when `TimeDilation` changes: an overloaded server slowing its world, or bringing it back to full speed. A game can say so to its players.",
+        },
+        EventDesc{
+            .name = atoms.intern("PreRender"),
+            .slot = 8,
             .doc = "Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set. It never fires in a headless run.",
         },
         EventDesc{
             .name = atoms.intern("PreAnimation"),
-            .slot = 8,
+            .slot = 9,
             .doc = "Fires at the start of each simulation tick, before animation is evaluated. Passes the fixed tick length, in seconds.",
         },
         EventDesc{
             .name = atoms.intern("PreSimulation"),
-            .slot = 9,
+            .slot = 10,
             .doc = "Fires each simulation tick, after animation and before the physics step. Passes the fixed tick length, in seconds.",
         },
         EventDesc{
             .name = atoms.intern("PostSimulation"),
-            .slot = 10,
+            .slot = 11,
             .doc = "Fires each simulation tick, immediately after the physics step. Passes the fixed tick length, in seconds.",
         },
         EventDesc{
             .name = atoms.intern("Heartbeat"),
-            .slot = 11,
+            .slot = 12,
             .doc = "Fires at the end of each simulation tick. Passes the fixed tick length, in seconds. It is the usual place for gameplay code that runs every tick and needs the state the tick ended in.",
         },
     }};
@@ -7690,7 +7882,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetProfileReport"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Returns the report of the capture requested with `CaptureProfile`, or nil until the capture completes. The report is a table with `frames`, `seconds` and `scopes`. Each scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs` and `selfMedianMs`.\012\012A scope's times include its child scopes and any waiting, and they are CPU times, not GPU times. At most the latest 16,384 frames are kept. The report stays available until the next capture is requested.",
+            .doc = "Returns the report of the capture requested with `CaptureProfile`, or nil until the capture completes. The report is a table with `frames`, `seconds`, `ticksPerFrame` and `scopes`. Each scope has `name`, `depth`, `meanMs`, `bestMs`, `medianMs`, `p95Ms`, `p99Ms`, `worstMs`, `selfMedianMs`, `calls` and `perCallMs`.\012\012The times are a frame's: what the scope spent in one frame, over the frames captured. `calls` is how many times it ran in a frame, at the median, and `perCallMs` is one run of it. `ticksPerFrame` is how many simulation ticks a frame ran, at the median: 1 for a world keeping up. A server catching up runs several in a frame, and a tick's scopes then show several ticks' time in each frame; read `perCallMs` for one tick.\012\012A scope's times include its child scopes and any waiting, and they are CPU times, not GPU times. At most the latest 16,384 frames are kept. The report stays available until the next capture is requested.",
         },
         MethodDesc{
             .name = atoms.intern("GetStat"),
@@ -8339,6 +8531,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     logLevelDesc.doc = "The severity of a log message, in ascending order. `Value` orders the levels, so a handler can filter with `level.Value >= Enum.LogLevel.Warning.Value`. `DebugService.MessageOut` passes one with every message.";
     logLevelDesc.items = logLevelItems;
     enums.registerEnum(logLevelDesc);
+
+    // --- Dormancy ---
+    static std::array<EnumItemDesc, 2> dormancyItems;
+    dormancyItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Auto"),
+            .value = 0,
+            .doc = "It sleeps on a dedicated server when no player's focus is within the game's `dormant_radius`: a `CharacterBody` does not walk, and what it was asked waits.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Never"),
+            .value = 1,
+            .doc = "It stays awake wherever it is: a train, a projectile, a boss that roams.",
+        },
+    }};
+    EnumDescriptor dormancyDesc;
+    dormancyDesc.name = atoms.intern("Dormancy");
+    dormancyDesc.doc = "Whether a part may sleep where no player is near, set by `BasePart.Dormancy`.";
+    dormancyDesc.items = dormancyItems;
+    enums.registerEnum(dormancyDesc);
 
     // --- RunContext ---
     static std::array<EnumItemDesc, 3> runContextItems;

@@ -283,20 +283,26 @@ TEST_CASE("scrolling forever does not remember forever")
     (void)cache.request(folder / (std::to_string(asked - 1) + ".png"));
     CHECK(cache.trackedCount() == ThumbnailCache::Resident);
 
-    // **Not the very first one**, and the reason is a real property of the
-    // design rather than a fudge. Eviction never drops an entry the pipeline is
-    // holding, because a decode job writes through a pointer that entry owns --
-    // and the first few requests are exactly the ones the pipeline started on.
-    // On a machine whose reads finish slowly they are still in flight when the
-    // ceiling is first crossed, so they are protected and something slightly
-    // newer goes instead. That is bounded by `MaxInFlight` and it is correct;
-    // this case caught it by assuming the oldest id would always be the first to
-    // go, and Linux disagreed with Windows about how fast a failing read fails.
+    // **The forty that went are among the oldest forty-four**, whichever they
+    // were. Eviction never drops an entry the pipeline is holding, because a
+    // decode job writes through a pointer that entry owns -- so an old one in
+    // flight when its turn comes is kept, and a newer one goes in its place.
+    // That is bounded by `MaxInFlight`, and it is correct.
     //
-    // So the one asked about here is old enough to have been evicted and late
-    // enough never to have been admitted.
-    (void)cache.request(folder / "20.png");
-    CHECK(cache.trackedCount() == ThumbnailCache::Resident + 1);
+    // Which old ones are in flight then is the machine's: this case asked
+    // about one name, the twenty-first, as "old enough to have been evicted
+    // and late enough never to have been admitted". In a full run the read
+    // service is still busy with the cases before it, the reads admitted
+    // around the twentieth frame stay in flight through every eviction, and
+    // the twenty-first was one of the kept -- passing alone and failing in a
+    // run. Asked of all of them, the answer is the same however fast reads
+    // finish: each of the oldest `40 + MaxInFlight` the cache no longer holds
+    // grows the table by one when asked again.
+    const usize oldest = asked - ThumbnailCache::Resident + ThumbnailCache::MaxInFlight;
+    const usize before = cache.trackedCount();
+    for (usize index = 0; index < oldest; ++index)
+        (void)cache.request(folder / (std::to_string(index) + ".png"));
+    CHECK(cache.trackedCount() - before == asked - ThumbnailCache::Resident);
 }
 
 // Skipped unless asked for: it reports a wall clock, and a gate that asserted on

@@ -24,7 +24,10 @@
 #include "engine/net/local_address.h"
 #include "engine/platform/event.h"
 #include "engine/platform/window.h"
+#include "engine/scene/dormancy.h"
+#include "engine/scene/phases.h"
 #include "engine/scene/players.h"
+#include "engine/scene/rewind.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
@@ -389,15 +392,27 @@ int debugServiceGetProfileReport(lua_State* L)
         lua_pushnil(L);
         return 1;
     }
-    lua_createtable(L, 0, 3);
+    lua_createtable(L, 0, 4);
     lua_pushnumber(L, static_cast<f64>(capture->frames));
     lua_setfield(L, -2, "frames");
     lua_pushnumber(L, capture->seconds);
     lua_setfield(L, -2, "seconds");
+    // **How many ticks a frame ran**, at the median: the simulation's scope
+    // is entered once a tick. One on a world keeping up; more on a server
+    // catching up, whose frame-long numbers are then that many ticks'.
+    f64 ticksPerFrame = 0.0;
+    for (const auto& row : capture->scopes) {
+        if (row.name == "simulation") {
+            ticksPerFrame = row.calls;
+            break;
+        }
+    }
+    lua_pushnumber(L, ticksPerFrame);
+    lua_setfield(L, -2, "ticksPerFrame");
     lua_createtable(L, static_cast<int>(capture->scopes.size()), 0);
     int index = 0;
     for (const auto& row : capture->scopes) {
-        lua_createtable(L, 0, 9);
+        lua_createtable(L, 0, 11);
         lua_pushlstring(L, row.name.data(), row.name.size());
         lua_setfield(L, -2, "name");
         const auto number = [L](const char* name, f64 value) {
@@ -412,6 +427,8 @@ int debugServiceGetProfileReport(lua_State* L)
         number("p99Ms", row.p99Ms);
         number("worstMs", row.worstMs);
         number("selfMedianMs", row.selfMedianMs);
+        number("calls", row.calls);
+        number("perCallMs", row.perCallMs);
         lua_rawseti(L, -2, ++index);
     }
     lua_setfield(L, -2, "scopes");
@@ -973,6 +990,17 @@ struct TerrainRayHit
     return best;
 }
 
+// **How far the nearest player is** (ADR 0234), from the foci the physics
+// step last took.
+int workspaceGetNearestPlayerDistance(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::Vec3 position = checkVector3(L, 2);
+    const core::DVec3 at{static_cast<f64>(position.x), static_cast<f64>(position.y), static_cast<f64>(position.z)};
+    lua_pushnumber(L, scene::nearestPlayerDistance(world(L), at));
+    return 1;
+}
+
 // **The wind at a point now** (ADR 0115): the renderer's own function, at
 // `RunService.SimTime`, so what a script reads is what is drawn there.
 int workspaceGetWindAt(lua_State* L)
@@ -1051,14 +1079,46 @@ template <class Cast>
     return false;
 }
 
-int workspaceRaycast(lua_State* L)
+// **What `player`'s machine drew, where it drew it** (ADR 0235): every
+// other player's character and every `LagCompensated` part, as the tick it was
+// drawing left them. The shooter's own character is where it is now: their
+// machine draws it ahead, not behind.
+[[nodiscard]] std::vector<physics::MovedBody> seenBy(lua_State* L, int at, const scene::PhysicsSync& sync)
 {
-    const core::InstanceId workspace = checkInstance(L, 1);
-    const core::Vec3 origin = checkVector3(L, 2);
-    const core::Vec3 direction = checkVector3(L, 3);
+    World& w = world(L);
+    if (w.engineState().networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("script.err.rewind_authority"));
+    const core::InstanceId shooter = checkInstance(L, at);
+    const scene::PlayerComponent* player = w.players().find(shooter);
+    if (player == nullptr)
+        raise(L, ENG_TR("script.err.rewind_not_a_player"));
+    std::vector<physics::MovedBody> moved;
+    const std::optional<u64> tick = scene::rewindTickFor(w, *player);
+    const scene::EngineState::RewindFrame* frame = tick.has_value() ? scene::rewindFrameAt(w, *tick) : nullptr;
+    if (frame == nullptr)
+        return moved;
+    moved.reserve(frame->entries.size());
+    for (const scene::EngineState::RewindEntry& entry : frame->entries) {
+        if (!w.alive(entry.id) || w.destroyed(entry.id))
+            continue;
+        if (player->character.valid() && (entry.id == player->character || w.isAncestorOf(player->character, entry.id)))
+            continue;
+        if (const std::optional<physics::MovedBody> body = sync.movedBody(entry.id, entry.cframe); body.has_value())
+            moved.push_back(*body);
+    }
+    return moved;
+}
+
+// `Raycast`, with the bodies `moved` names placed where it says.
+int raycastWith(lua_State* L, core::InstanceId workspace, int at, bool rewound)
+{
+    scene::PhysicsSync* sync = services(L).physics;
+    const std::vector<physics::MovedBody> moved =
+        rewound && sync != nullptr ? (sync->syncForQuery(), seenBy(L, 2, *sync)) : std::vector<physics::MovedBody>{};
+    const core::Vec3 origin = checkVector3(L, at);
+    const core::Vec3 direction = checkVector3(L, at + 1);
     groundAlongRay(L, origin, direction);
 
-    scene::PhysicsSync* sync = services(L).physics;
     if (sync == nullptr) {
         lua_pushnil(L);
         return 1;
@@ -1066,7 +1126,7 @@ int workspaceRaycast(lua_State* L)
 
     sync->syncForQuery();
     std::vector<u64> storage;
-    physics::QueryFilter filter = buildFilter(L, 4, storage);
+    physics::QueryFilter filter = buildFilter(L, at + 2, storage);
 
     physics::RayD ray;
     ray.origin = core::toDVec3(origin);
@@ -1075,7 +1135,8 @@ int workspaceRaycast(lua_State* L)
     physics::RayHit hit;
     const bool bodyHit =
         castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
-            return sync->backend().raycast(sync->worldHandle(), ray, asked, out);
+            return moved.empty() ? sync->backend().raycast(sync->worldHandle(), ray, asked, out)
+                                 : sync->backend().raycastMoved(sync->worldHandle(), ray, asked, moved, out);
         });
     const TerrainRayHit ground = raycastTerrains(L, workspace, origin, direction, filter);
     // Whichever is nearer. A terrain's own collider, where it has one, and
@@ -1105,6 +1166,17 @@ int workspaceRaycast(lua_State* L)
     }
     pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
     return 1;
+}
+
+int workspaceRaycast(lua_State* L)
+{
+    return raycastWith(L, checkInstance(L, 1), 2, false);
+}
+
+// **A shot as its shooter saw it** (ADR 0235): the authority's.
+int workspaceRaycastAsSeenBy(lua_State* L)
+{
+    return raycastWith(L, checkInstance(L, 1), 3, true);
 }
 
 // **The plane's ray** (the 2D layer). The same `RaycastParams` as the 3D one,
@@ -1303,14 +1375,15 @@ int navigationBuildRegion(lua_State* L)
     return 1;
 }
 
-int workspaceSpherecast(lua_State* L)
+int spherecastWith(lua_State* L, int at, bool rewound)
 {
-    (void)checkInstance(L, 1);
-    const core::Vec3 origin = checkVector3(L, 2);
-    const auto radius = static_cast<f32>(luaL_checknumber(L, 3));
-    const core::Vec3 direction = checkVector3(L, 4);
-
     scene::PhysicsSync* sync = services(L).physics;
+    const std::vector<physics::MovedBody> moved =
+        rewound && sync != nullptr ? (sync->syncForQuery(), seenBy(L, 2, *sync)) : std::vector<physics::MovedBody>{};
+    const core::Vec3 origin = checkVector3(L, at);
+    const auto radius = static_cast<f32>(luaL_checknumber(L, at + 1));
+    const core::Vec3 direction = checkVector3(L, at + 2);
+
     if (sync == nullptr) {
         lua_pushnil(L);
         return 1;
@@ -1318,7 +1391,7 @@ int workspaceSpherecast(lua_State* L)
 
     sync->syncForQuery();
     std::vector<u64> storage;
-    physics::QueryFilter filter = buildFilter(L, 5, storage);
+    physics::QueryFilter filter = buildFilter(L, at + 3, storage);
 
     physics::RayD ray;
     ray.origin = core::toDVec3(origin);
@@ -1326,7 +1399,8 @@ int workspaceSpherecast(lua_State* L)
 
     physics::RayHit hit;
     if (!castPastTheGone(*sync, filter, storage, hit, [&](const physics::QueryFilter& asked, physics::RayHit& out) {
-            return sync->backend().spherecast(sync->worldHandle(), ray, radius, asked, out);
+            return moved.empty() ? sync->backend().spherecast(sync->worldHandle(), ray, radius, asked, out)
+                                 : sync->backend().spherecastMoved(sync->worldHandle(), ray, radius, asked, moved, out);
         })) {
         lua_pushnil(L);
         return 1;
@@ -1340,6 +1414,18 @@ int workspaceSpherecast(lua_State* L)
     }
     pushRaycastResult(L, met, hit.position, hit.normal, hit.distance, material, clone);
     return 1;
+}
+
+int workspaceSpherecast(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    return spherecastWith(L, 2, false);
+}
+
+int workspaceSpherecastAsSeenBy(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    return spherecastWith(L, 3, true);
 }
 
 int workspaceGetBodiesInBox(lua_State* L)
@@ -1831,6 +1917,8 @@ int networkServiceGetStats(lua_State* L)
     field("BytesReceived", static_cast<double>(stats.bytesReceived));
     field("WireBytesSent", static_cast<double>(stats.wireBytesSent));
     field("WireBytesReceived", static_cast<double>(stats.wireBytesReceived));
+    field("Deferred", static_cast<double>(stats.deferredPerSecond));
+    field("BudgetUsed", stats.budgetUsed);
     field("SwarmBytes", static_cast<double>(stats.swarmBytes));
     field("SnapshotBytes", static_cast<double>(stats.snapshotBytes));
     field("AttributeBytes", static_cast<double>(stats.attributeBytes));
@@ -2229,6 +2317,112 @@ int playerKick(lua_State* L)
     }
     state.pendingRemovals.emplace_back(player->userId, std::move(reason));
     return 0;
+}
+
+// **What comes first for one player** (ADR 0229): a multiplier on an
+// instance's turn within this player's budget, kept on the player. 1 is the
+// default and forgets it; past `MostReplicationPriorities` the oldest goes.
+constexpr std::size_t MostReplicationPriorities = 256;
+
+int playerSetReplicationPriority(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const core::InstanceId instance = checkInstance(L, 2);
+    const double priority = luaL_checknumber(L, 3);
+    World& w = world(L);
+    if (w.engineState().networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.replication_priority_authority"));
+    if (!(priority >= 0.0 && priority <= 1.0e6))
+        raise(L, ENG_TR("scene.err.replication_priority_range"));
+    scene::PlayerComponent* player = w.players().find(self);
+    if (player == nullptr)
+        return 0;
+    auto& kept = player->replicationPriorities;
+    std::erase_if(kept, [&](const auto& entry) { return entry.first == instance || !w.alive(entry.first); });
+    if (priority != 1.0) {
+        if (kept.size() >= MostReplicationPriorities)
+            kept.erase(kept.begin());
+        kept.emplace_back(instance, static_cast<core::f32>(priority));
+    }
+    return 0;
+}
+
+// **The phases a player is in** (ADR 0231).
+[[nodiscard]] core::NameAtom checkPhase(lua_State* L, int index)
+{
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, index, &length);
+    if (length == 0 || length > 64)
+        raise(L, ENG_TR("scene.err.phase_name"));
+    return world(L).atoms().intern(std::string_view{text, length});
+}
+
+int playerAddPhase(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const core::NameAtom phase = checkPhase(L, 2);
+    World& w = world(L);
+    if (w.engineState().networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.phase_authority"));
+    scene::PlayerComponent* player = w.players().find(self);
+    if (player == nullptr)
+        return 0;
+    if (!scene::phaseBit(w, phase).has_value()) {
+        const core::I18nArg args[] = {{"most", static_cast<core::i64>(scene::MostPhases)}};
+        raise(L, ENG_TR("scene.err.phase_limit"), args);
+    }
+    if (std::find(player->phases.begin(), player->phases.end(), phase) == player->phases.end())
+        player->phases.push_back(phase);
+    return 0;
+}
+
+int playerRemovePhase(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const core::NameAtom phase = checkPhase(L, 2);
+    World& w = world(L);
+    if (w.engineState().networkTopology == scene::NetworkTopology::Replica)
+        raise(L, ENG_TR("scene.err.phase_authority"));
+    if (scene::PlayerComponent* player = w.players().find(self); player != nullptr)
+        std::erase(player->phases, phase);
+    return 0;
+}
+
+int playerHasPhase(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const core::NameAtom phase = checkPhase(L, 2);
+    const scene::PlayerComponent* player = world(L).players().find(self);
+    lua_pushboolean(L, player != nullptr &&
+                           std::find(player->phases.begin(), player->phases.end(), phase) != player->phases.end());
+    return 1;
+}
+
+int playerGetPhases(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    World& w = world(L);
+    const scene::PlayerComponent* player = w.players().find(self);
+    lua_createtable(L, player != nullptr ? static_cast<int>(player->phases.size()) : 0, 0);
+    if (player == nullptr)
+        return 1;
+    int at = 1;
+    for (const core::NameAtom phase : player->phases) {
+        const std::string_view text = w.atoms().text(phase);
+        lua_pushlstring(L, text.data(), text.size());
+        lua_rawseti(L, -2, at++);
+    }
+    return 1;
+}
+
+int playerCanSee(lua_State* L)
+{
+    const core::InstanceId self = checkInstance(L, 1);
+    const core::InstanceId instance = checkInstance(L, 2);
+    World& w = world(L);
+    const scene::PlayerComponent* player = w.players().find(self);
+    lua_pushboolean(L, player != nullptr && scene::playerSees(w, *player, instance));
+    return 1;
 }
 
 int playerGetIntent(lua_State* L)
@@ -3405,6 +3599,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"InstanceService", "Close", instanceServiceClose},
     {"InstanceService", "KeepOpen", instanceServiceKeepOpen},
     {"NetworkService", "TravelGroup", networkServiceTravelGroup},
+    {"NetworkService", "SwitchChannel", networkServiceSwitchChannel},
+    {"NetworkService", "TravelToPlayer", networkServiceTravelToPlayer},
+    {"NetworkService", "GetChannelsAsync", networkServiceGetChannelsAsync},
     {"ConsoleService", "Register", serverConsoleRegister},
     {"ConsoleService", "Unregister", serverConsoleUnregister},
     {"ConsoleService", "ExecuteAsync", serverConsoleExecuteAsync},
@@ -3460,6 +3657,12 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"CryptoService", "HashPasswordAsync", cryptoServiceHashPasswordAsync},
     {"CryptoService", "VerifyPasswordAsync", cryptoServiceVerifyPasswordAsync},
     {"Player", "GetIntent", playerGetIntent},
+    {"Player", "SetReplicationPriority", playerSetReplicationPriority},
+    {"Player", "AddPhase", playerAddPhase},
+    {"Player", "RemovePhase", playerRemovePhase},
+    {"Player", "HasPhase", playerHasPhase},
+    {"Player", "GetPhases", playerGetPhases},
+    {"Player", "CanSee", playerCanSee},
     {"Player", "Kick", playerKick},
     {"ParticleEmitter", "Emit", particleEmitterEmit},
     {"Trail", "Clear", trailClear},
@@ -3526,6 +3729,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"AudioService", "GetBands", audioServiceGetBands},
     {"Sound", "GetBands", soundGetBands},
 
+    {"Workspace", "GetNearestPlayerDistance", workspaceGetNearestPlayerDistance},
     {"Workspace", "GetWindAt", workspaceGetWindAt},
     {"Workspace", "Raycast", workspaceRaycast},
     {"Workspace", "Raycast2D", workspaceRaycast2D},
@@ -3537,6 +3741,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NavigationService", "Raycast", navigationRaycast},
     {"NavigationService", "BuildRegion", navigationBuildRegion},
     {"Workspace", "Spherecast", workspaceSpherecast},
+    {"Workspace", "RaycastAsSeenBy", workspaceRaycastAsSeenBy},
+    {"Workspace", "SpherecastAsSeenBy", workspaceSpherecastAsSeenBy},
     {"Workspace", "GetBodiesInBox", workspaceGetBodiesInBox},
     {"Workspace", "GetBodiesInSphere", workspaceGetBodiesInSphere},
 
@@ -3827,6 +4033,19 @@ void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<st
     else {
         fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) + 1, 0);
     }
+}
+
+void fireTimeDilationChanged(lua_State* L)
+{
+    World& w = world(L);
+    const ClassId runClass = w.classes().findId(w.atoms().lookup("RunService"));
+    const core::InstanceId service = findServiceOfClass(L, runClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(runClass, w.atoms().intern("TimeDilationChanged"));
+    if (descriptor == nullptr)
+        return;
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) + 1, 0);
 }
 
 void fireStreamedOut(lua_State* L, core::InstanceId instance)

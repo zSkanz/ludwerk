@@ -35,6 +35,13 @@ struct ServersConfig
     bool admin = false;
     core::u16 adminPort = 0;
     std::vector<std::string> adminAllow;
+    // **The line at the front door** (ADR 0232): the whole game's players at
+    // most, 0 for no limit beyond each world's; the most who may wait; and
+    // how long one who dropped while waiting -- or from a world -- keeps
+    // their place.
+    core::u32 maxPlayers = 0;
+    core::u32 queueMax = 10000;
+    core::u32 queueGraceSeconds = 60;
 
     // `[[world]]`: a world that runs while the manager does.
     struct World
@@ -43,6 +50,19 @@ struct ServersConfig
         std::string scene;
         core::u32 maxPlayers = 100;
         bool entry = false;
+        // `time_dilation` (ADR 0233): this world slows its clock when it is
+        // overloaded, whatever the game's `[server]` says.
+        bool timeDilation = false;
+        // **Channels** (ADR 0230): copies of this world, opened as every
+        // one open holds `channelOpenAt` of `maxPlayers`, up to
+        // `maxChannels`; one other than the first stopped after
+        // `channelCloseSeconds` empty, and merged into another after
+        // `mergeMinutes` under a quarter full (0 never).
+        bool channels = false;
+        core::u32 maxChannels = 8;
+        core::f64 channelOpenAt = 0.9;
+        core::u32 channelCloseSeconds = 120;
+        core::f64 mergeMinutes = 10.0;
     };
     std::vector<World> worlds;
 

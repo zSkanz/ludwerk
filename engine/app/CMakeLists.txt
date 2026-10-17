@@ -16,6 +16,7 @@ engine_add_module(app
         src/admin_channel.cpp
         src/admin_client.cpp
         src/admin_server.cpp
+        src/bots.cpp
         src/health_server.cpp
         src/match_keys.cpp
         src/servers_config.cpp

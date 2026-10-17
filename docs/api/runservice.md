@@ -17,6 +17,7 @@ listed on the page of the class that declares them.
 |---|---|---|---|---|
 | `Platform` | `Enum.Platform` | — | read-only | The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a dedicated server, it is the server's operating system. |
 | `SimTime` | `number` | — | read-only | The simulation time at the current tick, in seconds. It is constant during a tick and advances by `PhysicsService.FixedTimestep` between ticks. It stops while the world is paused.<br><br>Simulation code should use this clock. `os.clock` measures real time and is only for profiling. |
+| `TimeDilation` | `number` | — | read-only | How fast this world's clock runs against the wall's: 1 at full speed, less while an overloaded server is slowed (`[server] time_dilation` in `project.toml`). The tick is the same, so `dt` and what a tick does do not change; fewer ticks run a second, and every machine in the match runs at the same rate. `task.wait`, animations and sounds driven by the simulation slow with it; the interface, the camera and `os.time` do not. `TimeDilationChanged` fires when it changes. |
 
 ## Methods
 
@@ -118,3 +119,7 @@ Fires every frame before the frame is drawn, after the functions bound with `Bin
 ### `PreSimulation(dt: number)`
 
 Fires each simulation tick, after animation and before the physics step. Passes the fixed tick length, in seconds.
+
+### `TimeDilationChanged()`
+
+Fires when `TimeDilation` changes: an overloaded server slowing its world, or bringing it back to full speed. A game can say so to its players.

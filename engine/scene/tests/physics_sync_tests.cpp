@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "engine/jobs/jobs.h"
+#include "engine/scene/dormancy.h"
 #include "engine/scene/physics_sync.h"
 #include "engine/scene/world.h"
 #include "scene_fixture.h"
@@ -2736,4 +2737,66 @@ TEST_CASE("ADR 0201: a bone on a follower's joint is on the body that leads it, 
     CHECK(resolved->worldCFrame.position.x == doctest::Approx(0.0));
     CHECK(resolved->worldCFrame.position.y == doctest::Approx(2.0));
     CHECK(resolved->worldCFrame.position.z == doctest::Approx(50.0));
+}
+
+TEST_CASE("ADR 0234: on a dedicated server a character no player is near does not walk, and wakes when one comes")
+{
+    Mirror mirror;
+    World& world = mirror.fixture.world;
+    world.engineState().networkTopology = NetworkTopology::Dedicated;
+    // Players see 50 m round them; what is past 100 m of every one sleeps.
+    world.engineState().streamingLoadRadius = 50.0;
+    const core::InstanceId walker = mirror.part("Guard", {0.0, 3.0, 0.0});
+    world.parts().find(walker)->size = core::Vec3{1.0f, 2.0f, 1.0f};
+    world.characterBodies().add(walker, CharacterBodyComponent{});
+    mirror.backend.characterAnswer.transform.position = core::DVec3{0.0, 3.0, 0.0};
+    mirror.backend.characterAnswer.ground = physics::CharacterGround::Grounded;
+    mirror.backend.characterAnswer.groundNormal = core::Vec3{0.0f, 1.0f, 0.0f};
+    // A player whose character is 400 m away.
+    const core::InstanceId hero = mirror.part("Hero", {400.0, 3.0, 0.0});
+    const core::InstanceId player = mirror.fixture.folder("Player1");
+    PlayerComponent seat;
+    seat.userId = 2;
+    seat.character = hero;
+    world.players().add(player, seat);
+    settle(mirror);
+
+    const auto walks = [&]() {
+        world.characterBodies().find(walker)->moveDirection = core::Vec3{1.0f, 0.0f, 0.0f};
+        mirror.backend.moves.clear();
+        mirror.step();
+        return !mirror.backend.moves.empty();
+    };
+    CHECK_FALSE(walks());
+    CHECK(world.characterBodies().find(walker)->dormant);
+    CHECK(nearestPlayerDistance(world, core::DVec3{0.0, 3.0, 0.0}) == doctest::Approx(400.0));
+    // What it was asked waits for a player.
+    CHECK(world.characterBodies().find(walker)->moveDirection.x == doctest::Approx(1.0));
+
+    // The player comes within 100 m: it walks that tick.
+    world.parts().find(hero)->cframe.position = core::DVec3{90.0, 3.0, 0.0};
+    CHECK(walks());
+    CHECK_FALSE(world.characterBodies().find(walker)->dormant);
+
+    // Far again, but marked to stay awake.
+    world.parts().find(hero)->cframe.position = core::DVec3{400.0, 3.0, 0.0};
+    CHECK_FALSE(walks());
+    world.parts().find(walker)->dormancy = 1;
+    CHECK(walks());
+    world.parts().find(walker)->dormancy = 0;
+
+    // A player with no character sees everything: nothing sleeps.
+    const core::InstanceId watcher = mirror.fixture.folder("Player2");
+    world.players().add(watcher, PlayerComponent{});
+    CHECK(walks());
+    (void)world.players().remove(watcher);
+    CHECK_FALSE(walks());
+
+    // Nor on a host, nor alone: only a dedicated server sleeps anything.
+    world.engineState().networkTopology = NetworkTopology::Host;
+    CHECK(walks());
+    world.engineState().networkTopology = NetworkTopology::Dedicated;
+    // And not with the radius at nought.
+    world.engineState().dormantRadius = 0.0;
+    CHECK(walks());
 }

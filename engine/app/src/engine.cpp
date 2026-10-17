@@ -2059,6 +2059,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     std::vector<f64> frameSimMs;
     std::vector<f64> frameWaitMs;
     f64 phaseSimMs = 0.0;
+    // **The last frame's simulation**, as the console and a manager are told
+    // it: they are asked before this frame's ticks run, when this frame's
+    // own number is still nothing.
+    f64 lastSimMs = 0.0;
+    core::u32 lastSimTicks = 0;
     f64 phaseWaitMs = 0.0;
     // The render phase's scripts (ADR 0136): the render-rate input, the render
     // steps and `PreRender`, which run every frame and so grow with the rate.
@@ -2140,6 +2145,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     bool framePresented = true;
     core::u64 pacedFrameNs = 0;
     const core::u32 baseCatchUpTicks = FrameTiming{}.maxCatchUpTicks;
+    // When the last snapshot went out, on the wall clock: a frame catching up
+    // sends the next only an interval after it (ADR 0228 §7). An interval
+    // after the last send rather than a schedule, on purpose: a server short
+    // of time then gives up sends before ticks, which is what lets it catch
+    // up -- a schedule kept the rate and kept the server behind.
+    core::u64 lastSnapshotNs = 0;
 
     // Where everything was one tick ago. Owned by the frame loop rather
     // than by the world, because it is not world state: a reload replaces the
@@ -2748,6 +2759,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     };
 
     FrameScheduler scheduler;
+    // ADR 0233: the rate an overloaded world is slowed to, and the last one a
+    // script was told of.
+    TimeDilation timeDilation;
+    timeDilation.configure(options.timeDilation, options.timeDilationFloor, 1.0 / scheduler.timing().fixedDt);
+    f64 toldDilation = 1.0;
     // **A long frame says where its time went**: the scheduler could
     // say only how long, and a player's log of "Frame took 400 ms" could not
     // be diagnosed by anyone. The phases are the ones `--frame-stats` splits.
@@ -2969,6 +2985,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .startScripts = !authoring && !options.writeTypesOnly && !options.checkScriptsOnly,
         .networkTopology = static_cast<scene::NetworkTopology>(options.network.topology),
         .maxSubWorlds = options.maxSubWorlds,
+        .dormantRadius = options.dormantRadius,
+        .rewindCapMs = options.rewindCapMs,
+        .managedWorld = options.managedWorld,
         .saveDirectory = options.saveDirectory,
         .enabledIntegrations = options.enabledIntegrations,
         .integrationConfigurations = options.integrationConfigurations,
@@ -3300,6 +3319,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // world's, numbers for whatever watches it.
     HealthServer healthServer;
     core::u64 healthPublishedNs = 0;
+    // Ticks and frames since the numbers were last published: how many ticks
+    // a frame ran, which is one on a server keeping up (ADR 0228 §6).
+    core::u64 healthTicks = 0;
+    core::u64 healthFrames = 0;
     if (options.healthListen && options.network.topology == replication::Topology::Dedicated) {
         HealthServer::Options health;
         health.port = options.healthPort != 0 ? options.healthPort : options.network.port;
@@ -6456,8 +6479,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                   .flushSaves = [&host]() { host->flushSaves(); },
                                                   .nowNs = platform::nowNs(),
                                                   .nowUnix = unixSecondsNow()};
-            for (core::u32 at = 0; at < frame.simTicks; ++at)
-                serverConsole.noteTick(phaseSimMs / static_cast<f64>(frame.simTicks));
+            for (core::u32 at = 0; at < lastSimTicks; ++at)
+                serverConsole.noteTick(lastSimMs / static_cast<f64>(lastSimTicks));
             host->world().engineState().websocketClientAllowed = options.websocketClient;
             std::vector<std::string> typed;
             consoleInput.take(typed);
@@ -6500,9 +6523,15 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     },
                     consoleHost);
             serverConsole.frame(consoleHost);
+            healthTicks += frame.simTicks;
+            healthFrames += 1;
             // Once a second is what a probe asks at most.
             if (healthServer.running() && consoleHost.nowNs >= healthPublishedNs + 1'000'000'000ull) {
                 healthPublishedNs = consoleHost.nowNs;
+                const core::f64 ticksPerFrame =
+                    healthFrames > 0 ? static_cast<core::f64>(healthTicks) / static_cast<core::f64>(healthFrames) : 0.0;
+                healthTicks = 0;
+                healthFrames = 0;
                 const ServerConsole::Health now = serverConsole.health(consoleHost);
                 const scene::EngineState& state = host->world().engineState();
                 core::JsonWriter metrics(core::JsonLayout::Compact);
@@ -6513,6 +6542,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 metrics.field("tick", static_cast<core::u64>(state.tick));
                 metrics.field("tick_ms_mean", now.tickMeanMs);
                 metrics.field("tick_ms_worst", now.tickWorstMs);
+                metrics.field("ticks_total", now.ticksTotal);
+                metrics.field("tick_ms_total", now.tickMsTotal);
+                metrics.field("ticks_per_frame", ticksPerFrame);
                 metrics.field("players", static_cast<core::u64>(now.players));
                 metrics.field("max_players", static_cast<core::u64>(now.maxPlayers));
                 metrics.field("memory_bytes", now.memoryBytes);
@@ -6520,6 +6552,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 metrics.field("encrypted", state.networkStats.encrypted);
                 metrics.field("wire_bytes_sent", state.networkStats.wireBytesSent);
                 metrics.field("wire_bytes_received", state.networkStats.wireBytesReceived);
+                metrics.field("deferred_per_second", static_cast<core::u64>(state.networkStats.deferredPerSecond));
+                metrics.field("time_dilation", state.timeDilation);
                 metrics.endObject();
                 healthServer.publish(!now.stopping, metrics.text());
             }
@@ -6528,7 +6562,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             if (managedWorld.has_value()) {
                 managedWorld->frame(host->world(), host->dataModel(), network.replication(),
                                     host->world().engineState().networkPort, consoleHost.nowNs,
-                                    frame.simTicks > 0 ? phaseSimMs / static_cast<f64>(frame.simTicks) : 0.0);
+                                    lastSimTicks > 0 ? lastSimMs / static_cast<f64>(lastSimTicks) : 0.0);
                 // **A world without its manager stops on its own** (ADR 0220
                 // §5): its pipe closed, or the manager said so.
                 if (consoleInput.ended())
@@ -6718,6 +6752,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // escapes the VM ends this tick, logged, rather than the process
             // -- a server that terminates on one bad message is everybody's
             // game ended by one player.
+            // **A frame catching up sends at the snapshot rate of real time**
+            // (ADR 0228 §7): ticks run back to back after a spike would
+            // otherwise send one snapshot every `ticksPerSnapshot` of them,
+            // a burst of states stale before they land, paid for in the
+            // per-peer work exactly while the server is behind. A frame of one
+            // tick sends as it always has. Catch-up is for spikes; a world
+            // that stays behind is time dilation's (ADR 0233).
+            const auto snapshotIntervalNs =
+                static_cast<core::u64>(scheduler.timing().fixedDt *
+                                       static_cast<core::f64>(std::max<u32>(1, networkBase.ticksPerSnapshot)) * 1.0e9);
+            network.holdSnapshots(simTicks > 1 && platform::nowNs() < lastSnapshotNs + snapshotIntervalNs);
             try {
                 // BEFORE the tick, so that once the loop is done the history
                 // holds where everything was one tick ago and the world holds
@@ -6730,12 +6775,31 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 const std::array<core::I18nArg, 1> args{core::I18nArg{"message", std::string_view{error.what()}}};
                 core::log(core::LogLevel::Error, ENG_TR("engine.err.tick_exception"), args);
             }
+            if (network.snapshotSent())
+                lastSnapshotNs = platform::nowNs();
             // **Answered at the tick, not at the frame**: a loaded
             // machine runs several ticks a frame, and a sample asked for tick
             // 240 came back from 241 because the frame went from 239 past it.
             answerSamples();
         }
         phaseSimMs += msSince(simStartedNs);
+        lastSimMs = phaseSimMs;
+        lastSimTicks = simTicks;
+        // **A world too busy for its ticks slows its clock** (ADR 0233): an
+        // authority decides from how much of each second it spent
+        // simulating; a replica runs at the rate its authority says
+        // (`NetworkSession`).
+        {
+            scene::EngineState& clock = host->world().engineState();
+            timeDilation.note(platform::nowNs(), phaseSimMs, simTicks);
+            if (clock.networkTopology != scene::NetworkTopology::Replica)
+                clock.timeDilation = timeDilation.rate();
+            scheduler.setTimeScale(clock.timeDilation);
+            if (clock.timeDilation != toldDilation) {
+                toldDilation = clock.timeDilation;
+                script::fireTimeDilationChanged(host->runtime().state());
+            }
+        }
         ENG_PROFILE_NEXT(stretch, "frame.network");
         // A frame that ran no tick still services the connection: a paused
         // editor, or a frame that arrived early, must not look like a peer
@@ -8024,1150 +8088,1277 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // is chosen to be drawn, the effects, the sky, the interface, what
             // goes up to the device, the views, and the render itself. A frame
             // a scene arrived in had 15 ms here that nothing named.
-            core::profile::Sections drawing;
-            ENG_PROFILE_NEXT(drawing, "draw.choose");
-            // Extraction happens once, at a known moment, from a world that is
-            // between ticks (ADR 0027). Rendering never walks the ECS.
-            // The aspect comes from the target rather than from the camera:
-            // a `Camera` has no ViewportSize in this release (it needs a
-            // Vector2, which the UI brings with the input and UI work), and the renderer is the one
-            // that knows how many pixels it is filling.
-            const f32 aspect =
-                targetHeight == 0 ? 1.0f : static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight);
-            const f32 shadowRadius = renderer != nullptr && renderer->valid() ? renderer->shadowRadius() : 0.0f;
-            // Paused: the editor's own view. Playing: the game's, unchanged --
-            // which is what makes the viewport show the GAME when you press play
-            // rather than a tool's idea of it.
-            //
-            // **Unless the game has no camera at all**. Pressing play on a
-            // project whose scripts never made one left nothing to render
-            // through, and the frame fell back to the first window's "the engine is alive"
-            // pulse -- a background cycling through colours where a world should
-            // be. The editor's camera is the fallback and never the winner: a
-            // game with a camera is still shown through its own, which is the
-            // whole of what pressing play means.
-            // The 2D view is the same camera through an orthographic lens.
-            const render::ViewOverride editorView{editor.cameraCFrame(),   EditorFieldOfView,        0.1f, 5000.0f,
-                                                  editor.view2D() ? 1 : 0, editor.orthographicSize()};
-            // **And "has a camera" has to mean the same thing here as it does
-            // in `extract`, or the fallback misses exactly the case it is for.**
-            // `Workspace.CurrentCamera` is a REFERENCE: deleting the camera in
-            // the editor leaves the property naming a dead id, and an id stays
-            // structurally valid after the instance it named is gone. So this
-            // asked "is the field set" while `extract` asked "can I draw through
-            // it", the two disagreed for a world whose camera had been deleted,
-            // and the frame fell back to the first window's pulse -- the same rainbow two fixes
-            // each removed from a different direction, arriving from a
-            // third. The predicate is now `extract`'s, spelled out: alive, not
-            // retiring, and actually a camera.
-            const core::InstanceId gameCamera = host->currentCamera();
-            const bool gameHasCamera = host->world().alive(gameCamera) && !host->world().destroyed(gameCamera) &&
-                                       host->world().cameras().find(gameCamera) != nullptr;
-            // **Or the view was DETACHED**. Pressing play hands the
-            // view to the game's camera, which is what pressing play means;
-            // detaching takes the view back without touching the simulation, so
-            // the world keeps ticking and you fly around and watch. It is the
-            // only way to see a running game from anywhere other than where it
-            // puts you -- an enemy behind a wall, a chunk that failed to stream,
-            // a character stuck inside geometry the player camera is inside of
-            // too.
-            const bool useEditorView = options.editor && editor.cameraAdopted() &&
-                                       (editing(editor.runState()) || editor.cameraDetached() || !gameHasCamera);
-            // **The selection, drawn as a silhouette rather than as a box.** The
-            // wire box the first editor shipped says where a thing's BOUNDS are, which for
-            // anything that is not a cube is a shape the object does not have --
-            // and around a tree or a character it is a box floating in the air
-            // near the thing you clicked. What the renderer gets is a flag per
-            // draw; what it makes of it is a mask and an outline of its edge.
-            //
-            // Only while EDITING. In play mode the world belongs to the game and
-            // a tool's mark on it would be in every screenshot somebody takes of
-            // their own game.
-            //
-            // **And everything inside what is selected.** A `Model` is not a
-            // draw, so outlining only the selection lit nothing when a model was
-            // clicked -- the one selection whose extent somebody most needs to
-            // see. Its descendants are what it looks like.
-            static std::vector<core::InstanceId> outlinedTree;
-            outlinedTree.clear();
-            if (options.editor && editing(editor.runState())) {
-                for (const core::InstanceId id : inspector.selectionSet()) {
-                    outlinedTree.push_back(id);
-                    if (authored().alive(id) && authored().firstChild(id).valid())
-                        authored().collectDescendants(id, outlinedTree);
+            // **The rest of the frame is pictures, and a dedicated server makes
+            // none** (ADR 0228 §1): no extraction, no world UI, no submission.
+            // What it loaded above stays -- a mesh's collision hull comes from
+            // there -- and its frame is the tick, the network and the console.
+            if (rendersFrames) {
+                core::profile::Sections drawing;
+                ENG_PROFILE_NEXT(drawing, "draw.choose");
+                // Extraction happens once, at a known moment, from a world that is
+                // between ticks (ADR 0027). Rendering never walks the ECS.
+                // The aspect comes from the target rather than from the camera:
+                // a `Camera` has no ViewportSize in this release (it needs a
+                // Vector2, which the UI brings with the input and UI work), and the renderer is the one
+                // that knows how many pixels it is filling.
+                const f32 aspect =
+                    targetHeight == 0 ? 1.0f : static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight);
+                const f32 shadowRadius = renderer != nullptr && renderer->valid() ? renderer->shadowRadius() : 0.0f;
+                // Paused: the editor's own view. Playing: the game's, unchanged --
+                // which is what makes the viewport show the GAME when you press play
+                // rather than a tool's idea of it.
+                //
+                // **Unless the game has no camera at all**. Pressing play on a
+                // project whose scripts never made one left nothing to render
+                // through, and the frame fell back to the first window's "the engine is alive"
+                // pulse -- a background cycling through colours where a world should
+                // be. The editor's camera is the fallback and never the winner: a
+                // game with a camera is still shown through its own, which is the
+                // whole of what pressing play means.
+                // The 2D view is the same camera through an orthographic lens.
+                const render::ViewOverride editorView{editor.cameraCFrame(),   EditorFieldOfView,        0.1f, 5000.0f,
+                                                      editor.view2D() ? 1 : 0, editor.orthographicSize()};
+                // **And "has a camera" has to mean the same thing here as it does
+                // in `extract`, or the fallback misses exactly the case it is for.**
+                // `Workspace.CurrentCamera` is a REFERENCE: deleting the camera in
+                // the editor leaves the property naming a dead id, and an id stays
+                // structurally valid after the instance it named is gone. So this
+                // asked "is the field set" while `extract` asked "can I draw through
+                // it", the two disagreed for a world whose camera had been deleted,
+                // and the frame fell back to the first window's pulse -- the same rainbow two fixes
+                // each removed from a different direction, arriving from a
+                // third. The predicate is now `extract`'s, spelled out: alive, not
+                // retiring, and actually a camera.
+                const core::InstanceId gameCamera = host->currentCamera();
+                const bool gameHasCamera = host->world().alive(gameCamera) && !host->world().destroyed(gameCamera) &&
+                                           host->world().cameras().find(gameCamera) != nullptr;
+                // **Or the view was DETACHED**. Pressing play hands the
+                // view to the game's camera, which is what pressing play means;
+                // detaching takes the view back without touching the simulation, so
+                // the world keeps ticking and you fly around and watch. It is the
+                // only way to see a running game from anywhere other than where it
+                // puts you -- an enemy behind a wall, a chunk that failed to stream,
+                // a character stuck inside geometry the player camera is inside of
+                // too.
+                const bool useEditorView = options.editor && editor.cameraAdopted() &&
+                                           (editing(editor.runState()) || editor.cameraDetached() || !gameHasCamera);
+                // **The selection, drawn as a silhouette rather than as a box.** The
+                // wire box the first editor shipped says where a thing's BOUNDS are, which for
+                // anything that is not a cube is a shape the object does not have --
+                // and around a tree or a character it is a box floating in the air
+                // near the thing you clicked. What the renderer gets is a flag per
+                // draw; what it makes of it is a mask and an outline of its edge.
+                //
+                // Only while EDITING. In play mode the world belongs to the game and
+                // a tool's mark on it would be in every screenshot somebody takes of
+                // their own game.
+                //
+                // **And everything inside what is selected.** A `Model` is not a
+                // draw, so outlining only the selection lit nothing when a model was
+                // clicked -- the one selection whose extent somebody most needs to
+                // see. Its descendants are what it looks like.
+                static std::vector<core::InstanceId> outlinedTree;
+                outlinedTree.clear();
+                if (options.editor && editing(editor.runState())) {
+                    for (const core::InstanceId id : inspector.selectionSet()) {
+                        outlinedTree.push_back(id);
+                        if (authored().alive(id) && authored().firstChild(id).valid())
+                            authored().collectDescendants(id, outlinedTree);
+                    }
                 }
-            }
-            const std::span<const core::InstanceId> outlined = outlinedTree;
-            // **The sequence's camera, as a view** (ADR 0204): the renderer is
-            // told which, as the editor tells it, and the game's camera is
-            // left alone. Over the game's view always; over the editor's only
-            // for the sequence the timeline is scrubbing.
-            std::optional<render::ViewOverride> sequenceView;
-            if (sequenceCamera.has_value() && &authored() == &host->world() &&
-                (!useEditorView || sequenceCamera->player == host->sequences().previewed())) {
-                const scene::CameraComponent* own = gameHasCamera ? host->world().cameras().find(gameCamera) : nullptr;
-                render::ViewOverride taken;
-                taken.cframe = sequenceCamera->cframe;
-                taken.fieldOfView = sequenceCamera->fieldOfView > 0.0f ? sequenceCamera->fieldOfView
-                                    : own != nullptr                   ? own->fieldOfView
-                                                                       : EditorFieldOfView;
-                if (own != nullptr) {
-                    taken.nearPlane = own->nearPlane;
-                    taken.farPlane = own->farPlane;
+                const std::span<const core::InstanceId> outlined = outlinedTree;
+                // **The sequence's camera, as a view** (ADR 0204): the renderer is
+                // told which, as the editor tells it, and the game's camera is
+                // left alone. Over the game's view always; over the editor's only
+                // for the sequence the timeline is scrubbing.
+                std::optional<render::ViewOverride> sequenceView;
+                if (sequenceCamera.has_value() && &authored() == &host->world() &&
+                    (!useEditorView || sequenceCamera->player == host->sequences().previewed())) {
+                    const scene::CameraComponent* own =
+                        gameHasCamera ? host->world().cameras().find(gameCamera) : nullptr;
+                    render::ViewOverride taken;
+                    taken.cframe = sequenceCamera->cframe;
+                    taken.fieldOfView = sequenceCamera->fieldOfView > 0.0f ? sequenceCamera->fieldOfView
+                                        : own != nullptr                   ? own->fieldOfView
+                                                                           : EditorFieldOfView;
+                    if (own != nullptr) {
+                        taken.nearPlane = own->nearPlane;
+                        taken.farPlane = own->farPlane;
+                    }
+                    sequenceView = taken;
                 }
-                sequenceView = taken;
-            }
-            // **The window shared between this machine's players** (ADR
-            // 0205): who has a view this frame and where. Not under the
-            // editor's own camera, not on a prefab's stage, and not while a
-            // sequence has the screen -- a cutscene is one picture for
-            // everybody at it.
-            scene::ScreenSplitFrame split;
-            if (!useEditorView && !sequenceView.has_value() && stageOf() == nullptr)
-                split = scene::resolveScreenSplit(host->world(), host->workspace(), targetWidth, targetHeight);
-            {
-                scene::EngineState& screen = host->world().engineState();
-                screen.screenViews = split.views;
-                screen.screenViewCount = split.form == scene::ScreenForm::One ? 0 : split.count;
-            }
-            const auto pictureOf = [&](core::u32 index, core::u32 width, core::u32 height) {
-                SplitPicture& picture = splitPictures[index];
-                if (picture.texture.valid() && picture.width == width && picture.height == height &&
-                    picture.format == targetFormat)
+                // **The window shared between this machine's players** (ADR
+                // 0205): who has a view this frame and where. Not under the
+                // editor's own camera, not on a prefab's stage, and not while a
+                // sequence has the screen -- a cutscene is one picture for
+                // everybody at it.
+                scene::ScreenSplitFrame split;
+                if (!useEditorView && !sequenceView.has_value() && stageOf() == nullptr)
+                    split = scene::resolveScreenSplit(host->world(), host->workspace(), targetWidth, targetHeight);
+                {
+                    scene::EngineState& screen = host->world().engineState();
+                    screen.screenViews = split.views;
+                    screen.screenViewCount = split.form == scene::ScreenForm::One ? 0 : split.count;
+                }
+                const auto pictureOf = [&](core::u32 index, core::u32 width, core::u32 height) {
+                    SplitPicture& picture = splitPictures[index];
+                    if (picture.texture.valid() && picture.width == width && picture.height == height &&
+                        picture.format == targetFormat)
+                        return picture.texture;
+                    if (picture.texture.valid())
+                        device->destroy(picture.texture);
+                    picture.texture = device->createTexture({
+                        .format = targetFormat,
+                        .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                        .width = width,
+                        .height = height,
+                        .debugName = "screen-view",
+                    });
+                    picture.width = width;
+                    picture.height = height;
+                    picture.format = targetFormat;
                     return picture.texture;
-                if (picture.texture.valid())
-                    device->destroy(picture.texture);
-                picture.texture = device->createTexture({
-                    .format = targetFormat,
-                    .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
-                    .width = width,
-                    .height = height,
-                    .debugName = "screen-view",
-                });
-                picture.width = width;
-                picture.height = height;
-                picture.format = targetFormat;
-                return picture.texture;
-            };
-            const auto widthOf = [](const core::Rect& rect) { return static_cast<core::u32>(rect.max.x - rect.min.x); };
-            const auto heightOf = [](const core::Rect& rect) {
-                return static_cast<core::u32>(rect.max.y - rect.min.y);
-            };
-            // The one picture through `CurrentCamera`, under a grid on its
-            // way in or out.
-            const bool wholeDrawn = split.form == scene::ScreenForm::Rects && split.wholeWeight > 0.0f;
-            bool splitDrawn = split.form != scene::ScreenForm::One && renderer != nullptr && renderer->valid() &&
-                              device != nullptr && target.valid();
-            if (splitDrawn) {
-                for (core::u32 index = 0; index < split.count && splitDrawn; ++index)
-                    splitDrawn =
-                        pictureOf(index, widthOf(split.views[index].rect), heightOf(split.views[index].rect)).valid();
-                if (splitDrawn && wholeDrawn)
-                    splitDrawn = pictureOf(SplitWhole, targetWidth, targetHeight).valid();
-            }
-            else if (!screenShared && renderer != nullptr && device != nullptr) {
-                // No split asked for any more: the pictures and the views'
-                // histories are given back.
-                bool splitHeld = false;
-                for (const SplitPicture& picture : splitPictures)
-                    splitHeld = splitHeld || picture.texture.valid();
-                if (splitHeld) {
-                    device->waitIdle();
-                    for (core::u32 index = 0; index < splitPictures.size(); ++index) {
-                        if (splitPictures[index].texture.valid())
-                            device->destroy(splitPictures[index].texture);
-                        splitPictures[index] = SplitPicture{};
-                        if (index < SplitWhole)
-                            renderer->releaseView(*device, SplitViewBase + index);
-                    }
+                };
+                const auto widthOf = [](const core::Rect& rect) {
+                    return static_cast<core::u32>(rect.max.x - rect.min.x);
+                };
+                const auto heightOf = [](const core::Rect& rect) {
+                    return static_cast<core::u32>(rect.max.y - rect.min.y);
+                };
+                // The one picture through `CurrentCamera`, under a grid on its
+                // way in or out.
+                const bool wholeDrawn = split.form == scene::ScreenForm::Rects && split.wholeWeight > 0.0f;
+                bool splitDrawn = split.form != scene::ScreenForm::One && renderer != nullptr && renderer->valid() &&
+                                  device != nullptr && target.valid();
+                if (splitDrawn) {
+                    for (core::u32 index = 0; index < split.count && splitDrawn; ++index)
+                        splitDrawn =
+                            pictureOf(index, widthOf(split.views[index].rect), heightOf(split.views[index].rect))
+                                .valid();
+                    if (splitDrawn && wholeDrawn)
+                        splitDrawn = pictureOf(SplitWhole, targetWidth, targetHeight).valid();
                 }
-            }
-            // A player's camera as a lens, where it is DRAWN this frame (ADR
-            // 0134), as a camera feeding a texture is.
-            const auto lensOf = [&](core::InstanceId id) -> std::optional<render::ViewOverride> {
-                const scene::CameraComponent* camera = host->world().cameras().find(id);
-                if (camera == nullptr)
-                    return std::nullopt;
-                return render::ViewOverride{.cframe = framePoses.camera(id),
-                                            .fieldOfView = camera->fieldOfView,
-                                            .nearPlane = camera->nearPlane,
-                                            .farPlane = camera->farPlane,
-                                            .projection = camera->projection,
-                                            .orthographicSize = camera->orthographicSize,
-                                            .clipPlane = camera->clipPlane,
-                                            .clipPlaneOn = camera->clipPlaneOn};
-            };
-            // **The frame's first picture.** One player with a camera has the
-            // window through it; of several views it is the first one's, at
-            // the size of its part -- unless the one picture through
-            // `CurrentCamera` is drawn as well, which is then the first.
-            std::optional<render::ViewOverride> playerView;
-            core::u32 mainWidth = targetWidth;
-            core::u32 mainHeight = targetHeight;
-            core::Vec2 mainCorner{};
-            if (split.form == scene::ScreenForm::One) {
-                if (split.camera.valid())
-                    playerView = lensOf(split.camera);
-            }
-            else if (!wholeDrawn) {
-                playerView = lensOf(split.views[0].camera);
-                mainWidth = widthOf(split.views[0].rect);
-                mainHeight = heightOf(split.views[0].rect);
-                mainCorner = split.views[0].rect.min;
-            }
-            const f32 mainAspect = mainHeight == 0 ? 1.0f : static_cast<f32>(mainWidth) / static_cast<f32>(mainHeight);
-            const core::Vec2 mainViewport{static_cast<f32>(mainWidth), static_cast<f32>(mainHeight)};
-            const render::ViewOverride* const viewOverride = sequenceView.has_value() ? &*sequenceView
-                                                             : useEditorView          ? &editorView
-                                                             : playerView.has_value() ? &*playerView
-                                                                                      : nullptr;
-            // **The stage, when one is open.** A prefab is looked at on its
-            // own; drawing it inside the game's scene is what a person saw and
-            // called wrong, and it was.
-            // The terrain nodes the loader chose for this camera (ADR 0082).
-            const std::vector<render::TerrainNodeDraw> terrainNodes = terrainLoader.draws(authored());
-            // **The capes move before the picture is taken** (ADR 0194): from
-            // this frame's pose and this frame's drawn places, into the pose
-            // the extraction below reads. Only for the host's own world, whose
-            // animation this is; a prefab on its stage has none playing.
-            if (renderer != nullptr && &authored() == &host->world()) {
-                springClock += frame.renderDt;
-                const auto& look = renderer->settings();
-                render::SpringFrame springs;
-                springs.seconds = static_cast<f32>(frame.renderDt);
-                springs.camera = snapshot.camera.origin;
-                springs.maxDistance = look.secondaryMotionDistance;
-                springs.step = look.secondaryMotionRate == 0 ? 0.0f : 1.0f / static_cast<f32>(look.secondaryMotionRate);
-                springs.time = static_cast<f32>(springClock);
-                if (const scene::WorkspaceComponent* workspace = host->world().workspaces().find(host->workspace());
-                    workspace != nullptr) {
-                    springs.gravity = workspace->gravity;
-                    springs.wind =
-                        scene::WindSettings{workspace->globalWind, workspace->windGusts, workspace->windTurbulence};
-                }
-                // And its limbs, looks and feet (ADR 0198), on the same
-                // budget: as far as the chains are stepped, and no feet at
-                // the lowest quality. The ground under a foot is the physics
-                // world as the last tick left it.
-                render::IkFrame limbs;
-                limbs.seconds = static_cast<f32>(frame.renderDt);
-                limbs.camera = snapshot.camera.origin;
-                limbs.maxDistance = look.secondaryMotionDistance;
-                limbs.feet = look.quality != render::QualityLevel::Low;
-                if (scene::PhysicsSync* const physics = host->physics();
-                    physics != nullptr && host->world().footPlacements().size() != 0) {
-                    physics->syncForQuery();
-                    limbs.ground = [physics, &footOwn](core::DVec3 from, core::Vec3 direction,
-                                                       std::span<const core::InstanceId> own, core::DVec3& point,
-                                                       core::Vec3& normal) {
-                        footOwn.clear();
-                        for (const core::InstanceId id : own) {
-                            if (const core::u64 data = physics->userDataOf(id); data != 0)
-                                footOwn.push_back(data);
+                else if (!screenShared && renderer != nullptr && device != nullptr) {
+                    // No split asked for any more: the pictures and the views'
+                    // histories are given back.
+                    bool splitHeld = false;
+                    for (const SplitPicture& picture : splitPictures)
+                        splitHeld = splitHeld || picture.texture.valid();
+                    if (splitHeld) {
+                        device->waitIdle();
+                        for (core::u32 index = 0; index < splitPictures.size(); ++index) {
+                            if (splitPictures[index].texture.valid())
+                                device->destroy(splitPictures[index].texture);
+                            splitPictures[index] = SplitPicture{};
+                            if (index < SplitWhole)
+                                renderer->releaseView(*device, SplitViewBase + index);
                         }
-                        physics::QueryFilter filter;
-                        filter.userData = footOwn;
-                        physics::RayHit hit;
-                        if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, direction}, filter,
-                                                        hit))
-                            return false;
-                        point = hit.position;
-                        normal = hit.normal;
-                        return true;
-                    };
+                    }
                 }
-                // And the cloths (ADR 0214), as far as the chains, where the
-                // level has them.
-                render::ClothFrame cloth;
-                cloth.seconds = springs.seconds;
-                cloth.camera = springs.camera;
-                cloth.maxDistance = look.secondaryMotionDistance;
-                cloth.enabled = look.cloth && (look.measuredSkip & render::MeasureSkip::Cloth) == 0;
-                cloth.gravity = springs.gravity;
-                cloth.wind = springs.wind;
-                cloth.time = springs.time;
-                host->stepSecondaryMotion(framePoses, springs, limbs, std::move(cloth), &meshLibrary);
-            }
-            {
-                ENG_PROFILE_SCOPE("render.extract");
-                render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                                stageOf() != nullptr ? stageOf()->lighting() : host->lighting(), meshLibrary,
-                                mainAspect, shadowRadius, host->animation(), framePoses, snapshot, viewOverride,
-                                outlined, &textureLibrary, terrainNodes);
-                // The rigs this frame reached, for how often each is posed.
-                // By the settings as they are this frame: a level, a
-                // project's own value or a player's menu.
-                host->setAnimationDetail(static_cast<f32>(
-                    host->world().engineState().graphics.effective(scene::GraphicsSetting::AnimationDetail)));
-                host->reportSeenSkins(snapshot.seenSkins, true);
-                // And the rigs inside the frames a player can see (ADR 0107,
-                // amended): looked at whether or not their frame was redrawn.
-                if (const render::AnimationSystem* animation = host->animation(); animation != nullptr) {
-                    frameSkins.clear();
-                    collectFrameSkins(
-                        host->world(), static_cast<f32>(targetHeight),
-                        [animation](core::InstanceId meshPart) { return animation->animates(meshPart); }, frameSkins);
-                    if (!frameSkins.empty())
-                        host->reportSeenSkins(frameSkins, false);
+                // A player's camera as a lens, where it is DRAWN this frame (ADR
+                // 0134), as a camera feeding a texture is.
+                const auto lensOf = [&](core::InstanceId id) -> std::optional<render::ViewOverride> {
+                    const scene::CameraComponent* camera = host->world().cameras().find(id);
+                    if (camera == nullptr)
+                        return std::nullopt;
+                    return render::ViewOverride{.cframe = framePoses.camera(id),
+                                                .fieldOfView = camera->fieldOfView,
+                                                .nearPlane = camera->nearPlane,
+                                                .farPlane = camera->farPlane,
+                                                .projection = camera->projection,
+                                                .orthographicSize = camera->orthographicSize,
+                                                .clipPlane = camera->clipPlane,
+                                                .clipPlaneOn = camera->clipPlaneOn};
+                };
+                // **The frame's first picture.** One player with a camera has the
+                // window through it; of several views it is the first one's, at
+                // the size of its part -- unless the one picture through
+                // `CurrentCamera` is drawn as well, which is then the first.
+                std::optional<render::ViewOverride> playerView;
+                core::u32 mainWidth = targetWidth;
+                core::u32 mainHeight = targetHeight;
+                core::Vec2 mainCorner{};
+                if (split.form == scene::ScreenForm::One) {
+                    if (split.camera.valid())
+                        playerView = lensOf(split.camera);
                 }
-            }
-            // The terrains' palettes, which their shader reads, for the same
-            // world and the same root.
-            terrainLoader.appendRenderTerrains(authored(),
-                                               stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                                               snapshot, &textureLibrary);
-            ENG_PROFILE_NEXT(drawing, "draw.effects");
-            // **Particles, on the render clock**: advanced by this frame's
-            // own length -- which a headless run fixes at one tick, so a golden
-            // with sparks in it is still one picture -- and appended for the
-            // same root the extract drew.
-            // **Simulated on the GPU where the device can** (ADR 0160).
-            particles.setGpuSimulation(renderer != nullptr && renderer->valid() && device != nullptr &&
-                                       device->caps().compute);
-            // **What a particle that collides meets among the parts** (ADR
-            // 0160): a ray into the physics world, which this frame only reads.
-            particles.setRaycast([&host](core::DVec3 from, core::Vec3 delta, core::DVec3& hit, core::Vec3& normal) {
-                const scene::PhysicsSync* physics = host->physics();
-                if (physics == nullptr)
-                    return false;
-                physics::RayHit found;
-                if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, delta},
-                                                physics::QueryFilter{}, found))
-                    return false;
-                hit = found.position;
-                normal = found.normal;
-                return true;
-            });
-            particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                             frame.renderDt, &framePoses);
-            particles.append(snapshot, &textureLibrary);
-            // **Beams and trails** (ADR 0129), on the same clock and for the
-            // same root: a trail gains a piece where its ends are drawn.
-            ribbons.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                           frame.renderDt, &framePoses);
-            ribbons.append(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot,
-                           &textureLibrary, &framePoses);
-            // The foliage the tiles hold, as runs and buckets for the cull.
-            foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
-            // The sky's pictures, for the sky the extract resolved: a bake
-            // started, or a finished one uploaded -- before any render pass.
-            ENG_PROFILE_NEXT(drawing, "draw.sky");
-            if (renderer != nullptr && renderer->valid()) {
-                skyLoader.sync(*device, *cmd, authored(), snapshot.look.sky);
-                skyLoader.append(snapshot);
-            }
-            // **What a room reflects and the light it gives back** (ADRs 0202,
-            // 0203), once the snapshot says where the camera is and what the
-            // sun and the sky are. The volumes' rays are cast here: between
-            // ticks, with this thread waiting for the workers, so the physics
-            // world is read by many and stepped by none.
-            ENG_PROFILE_NEXT(drawing, "draw.indirect");
-            {
-                scene::World& lit = authored();
-                indirectLight.update({
-                    .world = &lit,
-                    .physics = &lit == &host->world() ? host->physics() : nullptr,
-                    .renderer = renderer != nullptr && renderer->valid() ? renderer.get() : nullptr,
-                    .snapshot = &snapshot,
-                    .workspace = stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
-                    .meshes = &meshLibrary,
-                    .textures = &textureLibrary,
-                    .traceMeshes = renderer == nullptr ||
-                                   (renderer->settings().measuredSkip & render::MeasureSkip::BakeTriangles) == 0u,
-                    .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0,
-                    // Behind the curtain -- and in a run with no window, which
-                    // nobody watches at all -- as much a frame as fits. A run
-                    // with no window that was TOLD its budget keeps to it:
-                    // what a player sees is measured that way.
-                    .flatOut = curtain.up() || (options.headless && !options.indirectBudgetKept),
-                    .nowNs = platform::nowNs(),
-                    .tick = lit.engineState().tick,
-                    .seconds = static_cast<f32>(frame.renderDt),
-                    .readContent = [&host](std::string_view urn,
-                                           std::vector<std::byte>& out) { return host->readContentBytes(urn, out); },
-                    // Where the tools are, somebody is there to be told.
-                    .development = ENG_DEBUG_UI != 0,
-                    .baking = options.bakeIrradiance || bakeAsked.valid(),
-                    .bakingOne = options.bakeIrradiance ? core::InstanceId{} : bakeAsked,
+                else if (!wholeDrawn) {
+                    playerView = lensOf(split.views[0].camera);
+                    mainWidth = widthOf(split.views[0].rect);
+                    mainHeight = heightOf(split.views[0].rect);
+                    mainCorner = split.views[0].rect.min;
+                }
+                const f32 mainAspect =
+                    mainHeight == 0 ? 1.0f : static_cast<f32>(mainWidth) / static_cast<f32>(mainHeight);
+                const core::Vec2 mainViewport{static_cast<f32>(mainWidth), static_cast<f32>(mainHeight)};
+                const render::ViewOverride* const viewOverride = sequenceView.has_value() ? &*sequenceView
+                                                                 : useEditorView          ? &editorView
+                                                                 : playerView.has_value() ? &*playerView
+                                                                                          : nullptr;
+                // **The stage, when one is open.** A prefab is looked at on its
+                // own; drawing it inside the game's scene is what a person saw and
+                // called wrong, and it was.
+                // The terrain nodes the loader chose for this camera (ADR 0082).
+                const std::vector<render::TerrainNodeDraw> terrainNodes = terrainLoader.draws(authored());
+                // **The capes move before the picture is taken** (ADR 0194): from
+                // this frame's pose and this frame's drawn places, into the pose
+                // the extraction below reads. Only for the host's own world, whose
+                // animation this is; a prefab on its stage has none playing.
+                if (renderer != nullptr && &authored() == &host->world()) {
+                    springClock += frame.renderDt;
+                    const auto& look = renderer->settings();
+                    render::SpringFrame springs;
+                    springs.seconds = static_cast<f32>(frame.renderDt);
+                    springs.camera = snapshot.camera.origin;
+                    springs.maxDistance = look.secondaryMotionDistance;
+                    springs.step =
+                        look.secondaryMotionRate == 0 ? 0.0f : 1.0f / static_cast<f32>(look.secondaryMotionRate);
+                    springs.time = static_cast<f32>(springClock);
+                    if (const scene::WorkspaceComponent* workspace = host->world().workspaces().find(host->workspace());
+                        workspace != nullptr) {
+                        springs.gravity = workspace->gravity;
+                        springs.wind =
+                            scene::WindSettings{workspace->globalWind, workspace->windGusts, workspace->windTurbulence};
+                    }
+                    // And its limbs, looks and feet (ADR 0198), on the same
+                    // budget: as far as the chains are stepped, and no feet at
+                    // the lowest quality. The ground under a foot is the physics
+                    // world as the last tick left it.
+                    render::IkFrame limbs;
+                    limbs.seconds = static_cast<f32>(frame.renderDt);
+                    limbs.camera = snapshot.camera.origin;
+                    limbs.maxDistance = look.secondaryMotionDistance;
+                    limbs.feet = look.quality != render::QualityLevel::Low;
+                    if (scene::PhysicsSync* const physics = host->physics();
+                        physics != nullptr && host->world().footPlacements().size() != 0) {
+                        physics->syncForQuery();
+                        limbs.ground = [physics, &footOwn](core::DVec3 from, core::Vec3 direction,
+                                                           std::span<const core::InstanceId> own, core::DVec3& point,
+                                                           core::Vec3& normal) {
+                            footOwn.clear();
+                            for (const core::InstanceId id : own) {
+                                if (const core::u64 data = physics->userDataOf(id); data != 0)
+                                    footOwn.push_back(data);
+                            }
+                            physics::QueryFilter filter;
+                            filter.userData = footOwn;
+                            physics::RayHit hit;
+                            if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, direction},
+                                                            filter, hit))
+                                return false;
+                            point = hit.position;
+                            normal = hit.normal;
+                            return true;
+                        };
+                    }
+                    // And the cloths (ADR 0214), as far as the chains, where the
+                    // level has them.
+                    render::ClothFrame cloth;
+                    cloth.seconds = springs.seconds;
+                    cloth.camera = springs.camera;
+                    cloth.maxDistance = look.secondaryMotionDistance;
+                    cloth.enabled = look.cloth && (look.measuredSkip & render::MeasureSkip::Cloth) == 0;
+                    cloth.gravity = springs.gravity;
+                    cloth.wind = springs.wind;
+                    cloth.time = springs.time;
+                    host->stepSecondaryMotion(framePoses, springs, limbs, std::move(cloth), &meshLibrary);
+                }
+                {
+                    ENG_PROFILE_SCOPE("render.extract");
+                    render::extract(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                    stageOf() != nullptr ? stageOf()->lighting() : host->lighting(), meshLibrary,
+                                    mainAspect, shadowRadius, host->animation(), framePoses, snapshot, viewOverride,
+                                    outlined, &textureLibrary, terrainNodes);
+                    // The rigs this frame reached, for how often each is posed.
+                    // By the settings as they are this frame: a level, a
+                    // project's own value or a player's menu.
+                    host->setAnimationDetail(static_cast<f32>(
+                        host->world().engineState().graphics.effective(scene::GraphicsSetting::AnimationDetail)));
+                    host->reportSeenSkins(snapshot.seenSkins, true);
+                    // And the rigs inside the frames a player can see (ADR 0107,
+                    // amended): looked at whether or not their frame was redrawn.
+                    if (const render::AnimationSystem* animation = host->animation(); animation != nullptr) {
+                        frameSkins.clear();
+                        collectFrameSkins(
+                            host->world(), static_cast<f32>(targetHeight),
+                            [animation](core::InstanceId meshPart) { return animation->animates(meshPart); },
+                            frameSkins);
+                        if (!frameSkins.empty())
+                            host->reportSeenSkins(frameSkins, false);
+                    }
+                }
+                // The terrains' palettes, which their shader reads, for the same
+                // world and the same root.
+                terrainLoader.appendRenderTerrains(authored(),
+                                                   stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                                   snapshot, &textureLibrary);
+                ENG_PROFILE_NEXT(drawing, "draw.effects");
+                // **Particles, on the render clock**: advanced by this frame's
+                // own length -- which a headless run fixes at one tick, so a golden
+                // with sparks in it is still one picture -- and appended for the
+                // same root the extract drew.
+                // **Simulated on the GPU where the device can** (ADR 0160).
+                particles.setGpuSimulation(renderer != nullptr && renderer->valid() && device != nullptr &&
+                                           device->caps().compute);
+                // **What a particle that collides meets among the parts** (ADR
+                // 0160): a ray into the physics world, which this frame only reads.
+                particles.setRaycast([&host](core::DVec3 from, core::Vec3 delta, core::DVec3& hit, core::Vec3& normal) {
+                    const scene::PhysicsSync* physics = host->physics();
+                    if (physics == nullptr)
+                        return false;
+                    physics::RayHit found;
+                    // What a spark bounces off is the world, not the characters
+                    // it leaves the hands of.
+                    physics::QueryFilter world;
+                    world.characters = false;
+                    if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, delta}, world, found))
+                        return false;
+                    hit = found.position;
+                    normal = found.normal;
+                    return true;
                 });
-                indirectLight.append(snapshot);
-                // **A bake the editor asked for** (ADR 0207): written the
-                // frame its volume is whole.
-                if (bakeAsked.valid()) {
-                    BakedLight kept;
-                    if (lit.irradianceVolumes().find(bakeAsked) == nullptr) {
-                        bakeAsked = {};
+                particles.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                                 frame.renderDt, &framePoses);
+                particles.append(snapshot, &textureLibrary);
+                // **Beams and trails** (ADR 0129), on the same clock and for the
+                // same root: a trail gains a piece where its ends are drawn.
+                ribbons.update(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                               frame.renderDt, &framePoses);
+                ribbons.append(authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot,
+                               &textureLibrary, &framePoses);
+                // The foliage the tiles hold, as runs and buckets for the cull.
+                foliage.append(authored(), meshLibrary, snapshot, &textureLibrary);
+                // The sky's pictures, for the sky the extract resolved: a bake
+                // started, or a finished one uploaded -- before any render pass.
+                ENG_PROFILE_NEXT(drawing, "draw.sky");
+                if (renderer != nullptr && renderer->valid()) {
+                    skyLoader.sync(*device, *cmd, authored(), snapshot.look.sky);
+                    skyLoader.append(snapshot);
+                }
+                // **What a room reflects and the light it gives back** (ADRs 0202,
+                // 0203), once the snapshot says where the camera is and what the
+                // sun and the sky are. The volumes' rays are cast here: between
+                // ticks, with this thread waiting for the workers, so the physics
+                // world is read by many and stepped by none.
+                ENG_PROFILE_NEXT(drawing, "draw.indirect");
+                {
+                    scene::World& lit = authored();
+                    indirectLight.update({
+                        .world = &lit,
+                        .physics = &lit == &host->world() ? host->physics() : nullptr,
+                        .renderer = renderer != nullptr && renderer->valid() ? renderer.get() : nullptr,
+                        .snapshot = &snapshot,
+                        .workspace = stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
+                        .meshes = &meshLibrary,
+                        .textures = &textureLibrary,
+                        .traceMeshes = renderer == nullptr ||
+                                       (renderer->settings().measuredSkip & render::MeasureSkip::BakeTriangles) == 0u,
+                        .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0,
+                        // Behind the curtain -- and in a run with no window, which
+                        // nobody watches at all -- as much a frame as fits. A run
+                        // with no window that was TOLD its budget keeps to it:
+                        // what a player sees is measured that way.
+                        .flatOut = curtain.up() || (options.headless && !options.indirectBudgetKept),
+                        .nowNs = platform::nowNs(),
+                        .tick = lit.engineState().tick,
+                        .seconds = static_cast<f32>(frame.renderDt),
+                        .readContent =
+                            [&host](std::string_view urn, std::vector<std::byte>& out) {
+                                return host->readContentBytes(urn, out);
+                            },
+                        // Where the tools are, somebody is there to be told.
+                        .development = ENG_DEBUG_UI != 0,
+                        .baking = options.bakeIrradiance || bakeAsked.valid(),
+                        .bakingOne = options.bakeIrradiance ? core::InstanceId{} : bakeAsked,
+                    });
+                    indirectLight.append(snapshot);
+                    // **A bake the editor asked for** (ADR 0207): written the
+                    // frame its volume is whole.
+                    if (bakeAsked.valid()) {
+                        BakedLight kept;
+                        if (lit.irradianceVolumes().find(bakeAsked) == nullptr) {
+                            bakeAsked = {};
+                        }
+                        else if (indirectLight.keep(lit, bakeAsked, kept)) {
+                            (void)writeBaked(lit, bakeAsked, kept);
+                            // Read again at once, and every volume that names
+                            // the file is given the new light.
+                            const std::array<core::NameAtom, 1> written{lit.irradianceVolumes().find(bakeAsked)->baked};
+                            indirectLight.forgetBaked(written);
+                            bakeAsked = {};
+                        }
                     }
-                    else if (indirectLight.keep(lit, bakeAsked, kept)) {
-                        (void)writeBaked(lit, bakeAsked, kept);
-                        // Read again at once, and every volume that names
-                        // the file is given the new light.
-                        const std::array<core::NameAtom, 1> written{lit.irradianceVolumes().find(bakeAsked)->baked};
-                        indirectLight.forgetBaked(written);
-                        bakeAsked = {};
+                    // **And the bake a command asked for** (`--bake-irradiance`):
+                    // every volume that names a file, written when every one of
+                    // them is whole, and then the run is over. A few ticks in,
+                    // so what a script builds as it starts is there to be lit.
+                    if (options.bakeIrradiance && !bakeWritten && !bakeFailure.has_value() &&
+                        lit.engineState().tick >= 4) {
+                        std::vector<core::InstanceId> named;
+                        lit.irradianceVolumes().forEach(
+                            [&](core::InstanceId id, const scene::IrradianceVolumeComponent& set) {
+                                if (set.enabled && !set.followsCamera && set.baked.id != 0)
+                                    named.push_back(id);
+                            });
+                        std::vector<BakedLight> kept(named.size());
+                        core::usize whole = 0;
+                        core::InstanceId waiting;
+                        for (core::usize index = 0; index < named.size(); ++index) {
+                            if (indirectLight.keep(lit, named[index], kept[index]))
+                                ++whole;
+                            else if (!waiting.valid())
+                                waiting = named[index];
+                        }
+                        // Ten minutes of frames is a bake that is not going to end:
+                        // no device to draw a frame with, most likely.
+                        const bool over =
+                            (options.frames != 0 && frame.index + 1 >= options.frames) || frame.index > 36000;
+                        if (named.empty()) {
+                            bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_none"));
+                        }
+                        else if (whole == named.size()) {
+                            bakeWritten = true;
+                            for (core::usize index = 0; index < named.size(); ++index) {
+                                if (!writeBaked(lit, named[index], kept[index]) && !bakeFailure.has_value()) {
+                                    const std::array<core::I18nArg, 1> args{core::I18nArg{
+                                        "path", lit.atoms().text(lit.irradianceVolumes().find(named[index])->baked)}};
+                                    bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_write"), args);
+                                }
+                            }
+                        }
+                        else if (over) {
+                            const std::array<core::I18nArg, 2> args{
+                                core::I18nArg{"count", static_cast<core::i64>(named.size() - whole)},
+                                core::I18nArg{"name", lit.atoms().text(lit.name(lit.parentOf(waiting)))}};
+                            bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_unfinished"), args);
+                        }
+                        if (bakeWritten || bakeFailure.has_value())
+                            quit = true;
+                    }
+                    // **Said when the rooms in view are lit** (ADRs 0202, 0203):
+                    // how long it took, which is what the loading curtain waited.
+                    const IndirectLight::Stats& rooms = indirectLight.stats();
+                    if (rooms.settledMs != indirectSaidMs) {
+                        indirectSaidMs = rooms.settledMs;
+                        const std::array<core::I18nArg, 8> args{
+                            core::I18nArg{"ms", rooms.settledMs},
+                            core::I18nArg{"probes", static_cast<core::i64>(rooms.probesHeld)},
+                            core::I18nArg{"pictures", static_cast<core::i64>(rooms.picturesDrawn)},
+                            core::I18nArg{"volumes", static_cast<core::i64>(rooms.volumesWhole)},
+                            core::I18nArg{"points", static_cast<core::i64>(rooms.lastVolumePoints)},
+                            core::I18nArg{"rays", rooms.lastVolumeMs},
+                            core::I18nArg{"meshes", static_cast<core::i64>(rooms.tracedMeshes)},
+                            core::I18nArg{"triangles", static_cast<core::i64>(rooms.tracedTriangles)}};
+                        core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_ready"), args);
+                    }
+                    // And when a volume is lit again under another light, how
+                    // long its rays took: what following a sun or a lamp costs.
+                    if (rooms.lastRelightMs != indirectRelitMs) {
+                        indirectRelitMs = rooms.lastRelightMs;
+                        const std::array<core::I18nArg, 2> args{
+                            core::I18nArg{"points", static_cast<core::i64>(rooms.lastRelightPoints)},
+                            core::I18nArg{"ms", rooms.lastRelightMs}};
+                        core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_relit"), args);
+                    }
+                    // And when a level is carried after the camera (ADR 0206):
+                    // what walking through the open costs. Said for the first,
+                    // and then every sixteenth -- a walk is hundreds of them.
+                    if (rooms.carries != indirectCarries) {
+                        indirectCarries = rooms.carries;
+                        if (rooms.carries == 1 || rooms.carries % 16 == 0) {
+                            const std::array<core::I18nArg, 2> args{
+                                core::I18nArg{"ms", rooms.lastCarryMs},
+                                core::I18nArg{"count", static_cast<core::i64>(rooms.carries)}};
+                            core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_carried"), args);
+                        }
                     }
                 }
-                // **And the bake a command asked for** (`--bake-irradiance`):
-                // every volume that names a file, written when every one of
-                // them is whole, and then the run is over. A few ticks in,
-                // so what a script builds as it starts is there to be lit.
-                if (options.bakeIrradiance && !bakeWritten && !bakeFailure.has_value() && lit.engineState().tick >= 4) {
-                    std::vector<core::InstanceId> named;
-                    lit.irradianceVolumes().forEach(
-                        [&](core::InstanceId id, const scene::IrradianceVolumeComponent& set) {
-                            if (set.enabled && !set.followsCamera && set.baked.id != 0)
-                                named.push_back(id);
+                // The UI is laid out against the TARGET's size rather than the
+                // window's: an offscreen render at 640x360 has to produce the
+                // layout that resolution would, which is the whole of what the
+                // two-resolution goldens check.
+                // The matrices the image was drawn with, not the ones the next
+                // frame will use. A pick taken against a fresher camera lands
+                // wherever the camera moved to between the click and the walk,
+                // which is invisible standing still and wrong while walking.
+                if (options.editor && snapshot.camera.valid)
+                    editor.setCamera(snapshot.camera.projection, snapshot.camera.view, snapshot.camera.origin);
+                // **Where terrain is levelled from next frame.** The loader runs
+                // before `extract` has decided this frame's camera, so it is handed
+                // the one this frame was drawn through -- a frame of lag in a
+                // level-of-detail choice is invisible.
+                if (snapshot.camera.valid) {
+                    terrainLoader.setFocus(snapshot.camera.origin);
+                    // **And from every other view of a shared window** (ADR
+                    // 0205): each player's ground is as fine under their own
+                    // camera as the first's is.
+                    {
+                        std::array<core::DVec3, 4> others;
+                        core::u32 otherCount = 0;
+                        for (core::u32 index = wholeDrawn ? 0 : 1;
+                             split.form != scene::ScreenForm::One && index < split.count; ++index) {
+                            if (const std::optional<render::ViewOverride> lens = lensOf(split.views[index].camera);
+                                lens.has_value())
+                                others[otherCount++] = lens->cframe.position;
+                        }
+                        const std::span<const core::DVec3> foci{others.data(), otherCount};
+                        terrainLoader.setOtherFoci(foci);
+                        voxelLoader.setOtherFoci(foci);
+                        foliage.setOtherFoci(foci);
+                    }
+                    // **The level of detail by what it looks like** (ADR 0140):
+                    // the loader is told how many pixels a metre at a metre's
+                    // distance covers -- from the projection and the picture's
+                    // height -- and how many a terrain cell may. An orthographic
+                    // view keeps the distance rule.
+                    // **And how far**: as far as the camera sees (`terrainLodFor`).
+                    // **In the pixels the world is rendered at**, not the
+                    // target's: at three quarters of the resolution, or under a
+                    // handheld's cap, a cell covers that many fewer -- and ground
+                    // refined for pixels nobody draws is built, uploaded and
+                    // drawn for nothing.
+                    const render::GraphicsSettings& graphics =
+                        renderer != nullptr ? renderer->settings() : liveGraphics;
+                    const f32 worldScale = render::effectiveRenderScale(graphics, targetWidth, targetHeight);
+                    reportRenderWidth = static_cast<core::u32>(static_cast<f32>(targetWidth) * worldScale + 0.5f);
+                    reportRenderHeight = static_cast<core::u32>(static_cast<f32>(targetHeight) * worldScale + 0.5f);
+                    terrainLoader.setLodSettings(render::terrainLodFor(
+                        terrainLoader.lodSettings(), snapshot.camera.projection, snapshot.camera.farPlane,
+                        reportRenderHeight, static_cast<f64>(graphics.terrainPixelError)));
+                    voxelLoader.setFocus(snapshot.camera.origin);
+                    foliage.setFocus(snapshot.camera.origin);
+                }
+
+                ENG_PROFILE_NEXT(drawing, "draw.interface");
+                const core::Vec2 uiViewport{static_cast<f32>(targetWidth), static_cast<f32>(targetHeight)};
+                host->world().engineState().viewportSize = uiViewport;
+                if (uiViewport != lastUiViewport) {
+                    // A scale is a fraction of something that just changed, so
+                    // every tree is stale. Marked here rather than in the resize
+                    // handler because an offscreen target can change size with no
+                    // window event at all.
+                    host->world().screenGuis().forEach(
+                        [](core::InstanceId, scene::ScreenGuiComponent& screen) { screen.layoutDirty = true; });
+                    lastUiViewport = uiViewport;
+                }
+                // What moves by itself -- a page that is sliding -- by the time
+                // since it last did, in real seconds: drawn, never simulated. No
+                // more than a tenth at once, so a stall is not a jump.
+                {
+                    const core::u64 uiNowNs = platform::nowNs();
+                    const f64 elapsed = static_cast<f64>(uiNowNs - uiAdvancedNs) / 1.0e9;
+                    uiAdvancedNs = uiNowNs;
+                    ui::advance(host->world(), static_cast<f32>(std::clamp(elapsed, 0.0, 0.1)));
+                }
+                {
+                    ENG_PROFILE_SCOPE("ui.layout");
+                    ui::layout(host->world(), host->uiService(), uiViewport);
+                }
+
+                // Interaction reads the rectangles the layout just produced, and it
+                // runs here rather than beside the event pump for that reason: a hit
+                // test against last frame's rectangles is a click that lands where a
+                // button used to be.
+                const input::DeviceState& devices = host->input().snapshot();
+                ui::InteractionInput interaction;
+                // **Where the pointer is, and what it did, from the events that
+                // said so**: a tap's place is the tap's, not the mouse's.
+                uiPointer.fill(interaction, devices.pointer);
+                interaction.pointerLocked = pointerLocked;
+                interaction.text = uiTypedText;
+                interaction.backspace = uiBackspace;
+                interaction.forwardDelete = uiForwardDelete;
+                interaction.caretLeft = uiCaretLeft;
+                interaction.caretRight = uiCaretRight;
+                interaction.caretHome = uiCaretHome;
+                interaction.caretEnd = uiCaretEnd;
+                interaction.submit = uiSubmit;
+                interaction.commands = uiCommands;
+                interaction.composition = uiComposition;
+                interaction.compositionCursor = uiCompositionCursor;
+                interaction.compositionChanged = uiCompositionChanged;
+                interaction.time = static_cast<f64>(platform::nowNs()) / 1.0e9;
+                uiNavigation.fill(host->world(), interaction, interaction.time);
+                for (core::u32 seat = 0; seat < playerNavigationCount; ++seat) {
+                    ui::InteractionInput own;
+                    playerNavigation[seat].fill(host->world(), own, interaction.time);
+                    interaction.players[seat] = ui::PlayerNavigation{.player = playerNavigationOf[seat],
+                                                                     .navigateX = own.navigateX,
+                                                                     .navigateY = own.navigateY,
+                                                                     .activate = own.navigateActivate,
+                                                                     .pageStep = own.pageStep};
+                }
+                interaction.playerCount = playerNavigationCount;
+                interaction.readClipboard = []() { return platform::clipboardText(); };
+                interaction.writeClipboard = [](std::string_view text) { (void)platform::setClipboardText(text); };
+                // **A button printed on a wall is a button**: the pointer's ray
+                // into the world, met with every `SurfaceGui` and `BillboardGui`,
+                // and hidden by anything solid in front of the canvas -- asked of
+                // the physics world, leaving out the part the canvas is on.
+                if (snapshot.camera.valid) {
+                    const core::DVec3 cameraOrigin = snapshot.camera.origin;
+                    const app::SolidAlong solidAlong = [&host,
+                                                        cameraOrigin](core::Vec3 origin, core::Vec3 direction,
+                                                                      core::InstanceId adornee) -> std::optional<f32> {
+                        const scene::PhysicsSync* physics = host->physics();
+                        if (physics == nullptr)
+                            return std::nullopt;
+                        const std::array<u64, 1> excluded{physics->userDataOf(adornee)};
+                        physics::QueryFilter filter;
+                        filter.mode = physics::QueryFilter::Mode::Exclude;
+                        filter.userData = std::span<const u64>{excluded.data(), adornee.valid() ? 1u : 0u};
+                        constexpr f32 Reach = 2000.0f;
+                        physics::RayHit hit;
+                        const physics::RayD ray{core::DVec3{cameraOrigin.x + static_cast<f64>(origin.x),
+                                                            cameraOrigin.y + static_cast<f64>(origin.y),
+                                                            cameraOrigin.z + static_cast<f64>(origin.z)},
+                                                direction * Reach};
+                        if (!physics->backend().raycast(physics->worldHandle(), ray, filter, hit))
+                            return std::nullopt;
+                        return hit.distance;
+                    };
+                    // Through the frame's first picture, where the pointer is in
+                    // it (ADR 0205): a button on a wall is pressed in the view it
+                    // is seen in.
+                    const core::Vec2 inMain = interaction.pointer - mainCorner;
+                    const bool pointerInMain =
+                        inMain.x >= 0.0f && inMain.y >= 0.0f && inMain.x < mainViewport.x && inMain.y < mainViewport.y;
+                    if (const std::optional<app::WorldUiPick> picked =
+                            pointerInMain
+                                ? app::pickWorldUi(host->world(), host->workspace(), host->uiService(), mainViewport,
+                                                   snapshot.camera, inMain, solidAlong, &framePoses)
+                                : std::nullopt)
+                        interaction.worldOver = picked->element;
+                }
+                const ui::InteractionResult uiResult = [&] {
+                    ENG_PROFILE_SCOPE("ui.interaction");
+                    return ui::updateInteraction(host->world(), host->uiService(), interaction);
+                }();
+                host->input().setPointerCapturedByUi(uiResult.pointerOverUi);
+                // The keyboard half of the same claim (ADR 0041): a focused
+                // `TextInput` eats the keys, so typing into a chat box does not also
+                // drive the character.
+                host->input().setKeyboardCapturedByUi(uiResult.textInputFocused);
+                // And the platform asked for the characters, which nothing did:
+                // on a phone this is what raises the keyboard.
+                if (window != nullptr) {
+                    const bool editorTyping = overlay.has_value() && overlay->editorTyping();
+                    if (const std::optional<bool> typing =
+                            textInputFocus.follow(uiResult.textInputFocused, editorTyping))
+                        platform::setTextInputEnabled(platform::windowId(*window), *typing);
+                    // **The keyboard the focused field asks for** (ADR 0139): a
+                    // phone raises it, and a new field or a new kind restarts it.
+                    const i32 kind =
+                        uiResult.masked ? static_cast<i32>(platform::TextInputKind::Password) : uiResult.keyboardType;
+                    if (uiResult.textInputFocused &&
+                        (uiResult.focusedInput != uiTextInputFor || kind != uiTextInputKind)) {
+                        platform::TextInputOptions keyboard;
+                        keyboard.kind = static_cast<platform::TextInputKind>(kind);
+                        keyboard.multiLine = uiResult.multiLine;
+                        platform::setTextInputEnabled(platform::windowId(*window), true, keyboard);
+                    }
+                    uiTextInputFor = uiResult.focusedInput;
+                    uiTextInputKind = uiResult.textInputFocused ? kind : -1;
+                    // Where the caret is, so an input method's candidates open
+                    // beside it. The game's own screen only: the editor draws the
+                    // game into a panel whose place the interface does not know.
+                    if (uiResult.textInputFocused && !overlay.has_value()) {
+                        const core::Rect caret = uiResult.caret;
+                        platform::setTextInputArea(platform::windowId(*window), static_cast<i32>(caret.min.x),
+                                                   static_cast<i32>(caret.min.y),
+                                                   static_cast<i32>(caret.max.x - caret.min.x) + 1,
+                                                   static_cast<i32>(caret.max.y - caret.min.y), 0);
+                    }
+                }
+
+                // **Built against the atlas it leaves**: text that filled the
+                // glyph store mid-frame cleared it, and every label built before
+                // the clear drew garbage -- so a frame that cleared is built again.
+                ui::buildWithSettledGlyphs([&] {
+                    ENG_PROFILE_SCOPE("ui.drawlist");
+                    ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
+                    // **What a sequence puts over the picture** (ADR 0204): the
+                    // bars of a wider picture, then a fade's colour, UNDER the
+                    // game's interface -- a caption is read over a picture gone
+                    // black. First in the list is drawn first.
+                    if (const Sequences::Screen over = host->sequences().screen(host->world(), sequenceAhead);
+                        over.fade > 0.0f || over.bars > 0.0f) {
+                        if (uiDrawList.scissors.empty())
+                            uiDrawList.scissors.push_back(
+                                core::Rect{core::Vec2{-1.0e9f, -1.0e9f}, core::Vec2{1.0e9f, 1.0e9f}});
+                        std::vector<ui::DrawQuad> laid;
+                        const auto flat = [&](core::Vec2 low, core::Vec2 high, core::Color3 colour, f32 alpha) {
+                            ui::DrawQuad quad;
+                            quad.min = low;
+                            quad.max = high;
+                            quad.color = colour;
+                            quad.alpha = alpha;
+                            laid.push_back(quad);
+                        };
+                        if (over.bars > 0.0f) {
+                            // As tall as leaves a picture of the track's shape,
+                            // by how far in they are; none where the window is
+                            // already that wide.
+                            const f32 kept = std::min(uiViewport.y, uiViewport.x / std::max(over.aspect, 1.0f));
+                            const f32 bar = (uiViewport.y - kept) * 0.5f * over.bars;
+                            if (bar > 0.0f) {
+                                const core::Color3 black{0.0f, 0.0f, 0.0f};
+                                flat(core::Vec2{0.0f, 0.0f}, core::Vec2{uiViewport.x, bar}, black, 1.0f);
+                                flat(core::Vec2{0.0f, uiViewport.y - bar}, uiViewport, black, 1.0f);
+                            }
+                        }
+                        if (over.fade > 0.0f)
+                            flat(core::Vec2{0.0f, 0.0f}, uiViewport, over.fadeColor, over.fade);
+                        uiDrawList.quads.insert(uiDrawList.quads.begin(), laid.begin(), laid.end());
+                    }
+                    // Index 0 is "no texture" and every entry after it is a texture the
+                    // UI can name. The glyph atlas is index 1 when a face has been
+                    // rasterised; images follow it.
+                    // Index 0 is "no texture" and resolves to the renderer's white
+                    // pixel; index 1 is the glyph atlas and everything after it is an
+                    // image. The table is rebuilt each frame because a texture handle
+                    // is four bytes and a stale one is a picture from a world that has
+                    // been unloaded.
+                    uiTextures.clear();
+                    uiTextures.push_back(rhi::TextureHandle{});
+                    // The atlas's pages, each a texture (ADR 0169): a quad names
+                    // its page, and one there is none of is nothing.
+                    for (core::u32 page = 0; page < ui::kGlyphPages; ++page)
+                        uiTextures.push_back(uiText.atlasTexture(page));
+                    for (const rhi::TextureHandle image : uiText.images())
+                        uiTextures.push_back(image);
+                    uiGradients.clear();
+                    // A picture for each `CanvasGroup`, before the geometry that is
+                    // drawn into them (ADR 0128).
+                    {
+                        ENG_PROFILE_SCOPE("ui.groups");
+                        uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat,
+                                                ++uiFrame);
+                    }
+                    {
+                        ENG_PROFILE_SCOPE("ui.geometry");
+                        buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
+                                        uiGroupPictures.textures());
+                    }
+
+                    // **The world's UI, into the picture the renderer is about to
+                    // draw**: laid out and drawn by the same code as the screen's,
+                    // placed on its parts and billboards, and sharing the screen's
+                    // glyph atlas and images.
+                    ENG_PROFILE_SCOPE("ui.world");
+                    buildWorldUi(host->world(), host->workspace(), host->uiService(), mainViewport, uiTextures,
+                                 worldUiDrawList, snapshot, &uiGradients, &framePoses);
+                });
+
+                // `[debug] hide` (ADR 0171): out of the frame before anything
+                // counts it or draws it.
+                applyDebugHide(snapshot, debugHide);
+
+                ENG_PROFILE_NEXT(drawing, "draw.submit");
+                frameVisibleObjects = 0;
+                frameTriangles = 0;
+                frameLodDraws = 0;
+                // The SAME level the renderer will choose, from the same function.
+                // Counting level zero here while the backend drew level two would
+                // be a triangle count that describes a frame nobody rendered, and a
+                // stat that lies is worse than one that is missing.
+                const f32 lodPixelsPerUnit =
+                    snapshot.camera.valid && uiViewport.y > 0.0f && !core::isOrthographic(snapshot.camera.projection)
+                        ? 0.5f * uiViewport.y * snapshot.camera.projection.m[1][1]
+                        : 0.0f;
+                for (const render::DrawItem& draw : snapshot.draws) {
+                    // Counted from the snapshot rather than from the backend: it is
+                    // the same number, it costs nothing, and it is available on a
+                    // device that rasterizes nothing.
+                    if (!draw.inCameraFrustum)
+                        continue;
+                    const render::MeshCache::Resolved* resolved = meshCache.resolve(draw.mesh);
+                    if (resolved == nullptr || resolved->lods.empty())
+                        continue;
+                    const core::u32 level = render::selectMeshLod(*resolved, draw.transform, lodPixelsPerUnit);
+                    const render::MeshLodRange& range = resolved->lods[level];
+                    if (draw.section >= range.sectionCount ||
+                        range.firstSection + draw.section >= resolved->sections.size())
+                        continue;
+                    ++frameVisibleObjects;
+                    if (level > 0)
+                        ++frameLodDraws;
+                    frameTriangles += resolved->sections[range.firstSection + draw.section].indexCount / 3u;
+                }
+
+                submitWorld(snapshot, debugDraw);
+
+                // Read AFTER submission, because that is when the renderer knows.
+                // Counted by the renderer rather than derived from the snapshot: a
+                // draw call is a thing a backend issues, and inferring it from the
+                // draw list is exactly the assumption instancing invalidated.
+                const render::RendererStats rendererStats =
+                    renderer != nullptr && renderer->valid() ? renderer->stats() : render::RendererStats{};
+                frameDrawCalls = rendererStats.drawCalls;
+                frameDrawsByKind = rendererStats.drawsByKind;
+                frameInstancedDraws = rendererStats.instancedDraws;
+
+                // Everything in the buffer is in world coordinates until here: the
+                // wire boxes above, and whatever `DebugService` recorded during the
+                // tick, which happened before extraction had decided where the
+                // camera was. The overlay is drawn with the renderer's
+                // camera-relative view-projection, so the buffer has to be moved
+                // into that space -- and for the whole of the first renderer it was not, which put
+                // every debug line the camera's own distance away from where it
+                // belonged. `origin` is zero when no camera resolved, which is
+                // exactly the first window's path this must not disturb.
+                debugDraw.rebaseTo(snapshot.camera.origin);
+
+                // After the rebase and not before it, because these are already in
+                // the space it converts to -- see `submitSelection`. Everything the
+                // editor draws over the world goes here for the same reason -- and
+                // none of it over the game's own view (`Editor::viewportIsGames`):
+                // no box, no ring, no guide.
+                // **Under the overlay in a game, what is `Visible` is drawn** (ADR
+                // 0127): the same lines the editor draws, with nothing selected.
+                if (!(options.editor && !editor.viewportIsGames()) && overlayVisible)
+                    submitConstraints(host->world(), framePoses, {}, snapshot.camera.origin, debugDraw);
+                if (options.editor && !editor.viewportIsGames()) {
+                    // **The wire box only when nothing else marks the selection.**
+                    // The renderer outlines a selected part along its own
+                    // silhouette; a box drawn over that, with a margin of 1% of the
+                    // part's size, stood metres outside a large part -- reported as
+                    // "the selection is outside the part". It stays for the debug
+                    // path, which draws the world as wire boxes and has no outline.
+                    const bool outlinedByRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
+                    if (!outlinedByRenderer)
+                        submitSelection(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
+                                        debugDraw);
+                    if (editing(editor.runState())) {
+                        submitCameraVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, aspect,
+                                            debugDraw);
+                        submitLightVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
+                        submitDetectorVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
+                    }
+                    submitConstraints(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
+                                      debugDraw);
+                    // The manipulator over the outline, because the outline says
+                    // WHAT is selected and the manipulator is the thing being
+                    // aimed at.
+                    if (const std::optional<GizmoFrame> gizmo = editor.gizmoFrame(authored(), inspector);
+                        gizmo.has_value()) {
+                        submitGizmo(*gizmo, editor.gizmoMode(), editor.gizmoHandle(), snapshot.camera.origin,
+                                    debugDraw);
+                    }
+                    // **The aiming ring, in the rebased space like everything else
+                    // here.** Half a millimetre of f32 error at four kilometres
+                    // would land on the one thing in the frame being placed
+                    // precisely, which is why the overlay's header says to submit
+                    // after the rebase rather than with the world-space draws.
+                    if (const std::optional<asset::TerrainHit> aim = editor.brushAim(); aim.has_value()) {
+                        const core::DVec3 origin = snapshot.camera.origin;
+                        const core::Vec3 centre{static_cast<f32>(aim->position.x - origin.x),
+                                                static_cast<f32>(aim->position.y - origin.y),
+                                                static_cast<f32>(aim->position.z - origin.z)};
+                        const Editor::Tool tool = editor.tool();
+                        const Editor::BrushOp op = editor.effectiveBrushOp();
+                        BrushRingStyle style;
+                        style.square = tool == Editor::Tool::Sculpt &&
+                                       editor.brush().shape == Editor::BrushShape::Box &&
+                                       (op == Editor::BrushOp::Add || op == Editor::BrushOp::Subtract);
+                        style.falloff = tool == Editor::Tool::Foliage ||
+                                        (tool == Editor::Tool::Sculpt && op != Editor::BrushOp::Add &&
+                                         op != Editor::BrushOp::Subtract);
+                        // Paint's fade is its softness's share of the radius, so
+                        // half is halfway across that share.
+                        if (tool == Editor::Tool::Paint && editor.brush().falloff > 0.0f) {
+                            style.falloff = true;
+                            style.halfAt = 1.0f - 0.5f * editor.brush().falloff;
+                        }
+                        drawBrushRing(centre, aim->normal, editor.brush().radius, style, debugDraw);
+                    }
+                    // **The cell a block click would change**, as a box a hair
+                    // larger than the block so it is not buried in the faces it
+                    // outlines. Amber to place, red to take away, the brush's
+                    // colour otherwise.
+                    if (const std::optional<std::array<core::i32, 3>> cell = editor.blockTarget(); cell.has_value()) {
+                        const double size = static_cast<double>(editor.voxelBlockSize());
+                        const core::DVec3 origin = snapshot.camera.origin;
+                        const core::Vec3 centre{
+                            static_cast<f32>((static_cast<double>((*cell)[0]) + 0.5) * size - origin.x),
+                            static_cast<f32>((static_cast<double>((*cell)[1]) + 0.5) * size - origin.y),
+                            static_cast<f32>((static_cast<double>((*cell)[2]) + 0.5) * size - origin.z)};
+                        const auto half = static_cast<f32>(size * 0.51);
+                        const render::DebugColor color =
+                            editor.blockOp() == Editor::BlockOp::Break
+                                ? render::DebugColor::fromLinear(0.95f, 0.25f, 0.2f, 1.0f)
+                                : render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 1.0f);
+                        debugDraw.wireBox(centre, core::Vec3{half, half, half}, color);
+                    }
+                    // **The cell a Tiles click would change** (the 2D layer), as a
+                    // flat box on the plane: amber to paint, red to erase.
+                    if (const std::optional<Editor::TileAim> aim = editor.tileAim(); aim.has_value()) {
+                        if (const scene::Tilemap2DComponent* tilemap = authored().tilemaps2d().find(aim->tilemap);
+                            tilemap != nullptr) {
+                            const double size = static_cast<double>(tilemap->cellSize);
+                            const core::DVec3 origin = snapshot.camera.origin;
+                            const core::Vec3 centre{
+                                static_cast<f32>(static_cast<double>(tilemap->position.x) +
+                                                 (static_cast<double>(aim->cell[0]) + 0.5) * size - origin.x),
+                                static_cast<f32>(static_cast<double>(tilemap->position.y) +
+                                                 (static_cast<double>(aim->cell[1]) + 0.5) * size - origin.y),
+                                static_cast<f32>(-origin.z)};
+                            const auto half = static_cast<f32>(size * 0.5);
+                            const render::DebugColor color =
+                                editor.tileOp() == Editor::TileOp::Erase
+                                    ? render::DebugColor::fromLinear(0.95f, 0.25f, 0.2f, 1.0f)
+                                    : render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 1.0f);
+                            debugDraw.wireBox(centre, core::Vec3{half, half, 0.01f}, color);
+                        }
+                    }
+                    // **What the Water tool has in hand and is aiming at**: the
+                    // river's points or the lake's corners, and the stretch or
+                    // the rectangle the next click or this drag would make.
+                    if (editor.tool() == Editor::Tool::Water)
+                        submitWaterGuide(editor.waterGuide(), snapshot.camera.origin, debugDraw);
+                }
+
+                // Uploaded before the render pass opens, because a copy cannot run
+                // inside one -- the seam says so and the backend enforces it. The
+                // mesh loader is here for the same reason and one more: it is the
+                // FrameStart safe point, so a file read cannot land mid-tick.
+                ENG_PROFILE_NEXT(drawing, "draw.uploads");
+                if (debugRenderer.valid())
+                    debugRenderer.upload(*device, *cmd, debugDraw);
+                // Beside the other uploads and for the same reason: this is the
+                // only place in the frame where a copy is legal. Idempotent after
+                // the first success, so the cost is one branch a frame.
+                if (options.editor && !iconAtlas.ready()) {
+                    if (iconAtlas.load(*device, *cmd, platform::paths().contentDir, options.scriptPath))
+                        core::logText(core::LogLevel::Info, iconAtlas.status());
+                    else
+                        core::logText(core::LogLevel::Warn, iconAtlas.status());
+                }
+                // What the browser asked for while it drew LAST frame, answered
+                // here, where a copy is legal -- so a row that showed its icon on
+                // the frame it appeared shows the picture on the next one. A shell
+                // with no browser never asks, and this walks an empty list.
+                if (options.editor)
+                    // **Built on the first frame that has a renderer**, not at declaration:
+                    // it borrows one, and `createRenderer` can fail on a machine whose
+                    // shaders are missing. A cache with no preview renderer refuses a mesh
+                    // at `request` and the row wears its icon, which is what every build did
+                    // before previews existed -- so this arriving late is a picture that
+                    // appears, never a frame that breaks.
+                    if (previewRenderer == nullptr && renderer != nullptr && renderer->valid()) {
+                        previewRenderer = std::make_unique<HostPreviewRenderer>(
+                            host->world().classes(), host->world().enums(), host->world().atoms(), contentRoot,
+                            contentMounts, *renderer);
+                        previewRenderer->setMaterialLibrary(&materialLibrary);
+                        thumbnails.setPreviewRenderer(previewRenderer.get());
+                    }
+                thumbnails.flush(*device, *cmd);
+                if (uiRenderer.valid())
+                    // The atlas first: `buildUiGeometry` has already written UVs
+                    // into it, and uploading after the draw would show this frame's
+                    // new glyphs as last frame's pixels.
+                    uiText.sync(*device, *cmd);
+                uiRenderer.upload(*device, *cmd, uiVertices, uiRuns);
+                // The gradient table, before any pass, for both UIs (ADR 0110).
+                uiRenderer.uploadGradients(*cmd, uiGradients.pixels(), uiGradients.count());
+                snapshot.worldUiGradients = uiRenderer.gradientTable();
+
+                // The real renderer owns the target when there is a camera to look
+                // through. Without one -- an empty project, a world booting, a
+                // camera nobody assigned -- the first window's debug path still draws, which is
+                // what keeps every earlier example and the capture golden working.
+                ENG_PROFILE_NEXT(drawing, "draw.views");
+                const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
+                if (curtains) {
+                    scene::EngineState& engineNow = host->world().engineState();
+                    if (curtainScene.has_value() && *curtainScene != engineNow.sceneLoads) {
+                        curtain.raise();
+                        curtainRaisedNs = nowNs;
+                    }
+                    curtainScene = engineNow.sceneLoads;
+                    if (curtain.up()) {
+                        const bool ground = !snapshot.camera.valid ||
+                                            terrainLoader.areaMeshed(host->world(), core::InstanceId{},
+                                                                     snapshot.camera.origin, CurtainGroundMetres);
+                        const LoadingCurtain::Lift lift = curtain.update({
+                            .nowNs = nowNs,
+                            // And what grows on the ground, which is
+                            // grown off this thread now: a meadow is not lifted
+                            // onto bare.
+                            // **And no room in view still the sky standing in**
+                            // (ADRs 0202, 0203): nobody watches a room light up.
+                            // Its pictures are taken and its bounced light worked
+                            // out behind the curtain, as much a frame as fits.
+                            .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 &&
+                                           uiText.imagesInFlight() == 0 && !foliage.pending() &&
+                                           indirectLight.settled(),
+                            .groundMeshed = ground,
+                            .holds = engineNow.loadingHolds,
                         });
-                    std::vector<BakedLight> kept(named.size());
-                    core::usize whole = 0;
-                    core::InstanceId waiting;
-                    for (core::usize index = 0; index < named.size(); ++index) {
-                        if (indirectLight.keep(lit, named[index], kept[index]))
-                            ++whole;
-                        else if (!waiting.valid())
-                            waiting = named[index];
+                        // **Given up on, and said** (ADR 0159): a hold never
+                        // released, or ground that never came, is the game's to
+                        // know about.
+                        // **Said when it lifts** (ADR 0176): a slow frame is the
+                        // player's only from here, and a report of one cannot be
+                        // read without knowing which side of this line it fell.
+                        if (lift != LoadingCurtain::Lift::Kept) {
+                            const std::array<core::I18nArg, 2> liftArgs{
+                                core::I18nArg{"frame", static_cast<core::i64>(frame.index)},
+                                core::I18nArg{"ms", static_cast<core::f64>(nowNs - curtainRaisedNs) / 1'000'000.0}};
+                            core::log(LogLevel::Info, ENG_TR("engine.info.curtain_lifted"), liftArgs);
+                        }
+                        if (lift == LoadingCurtain::Lift::TimedOut) {
+                            const std::array<core::I18nArg, 2> args{
+                                core::I18nArg{"holds", static_cast<core::i64>(engineNow.loadingHolds)},
+                                core::I18nArg{"ground", std::string_view{ground ? "yes" : "no"}}};
+                            core::log(LogLevel::Warn, ENG_TR("engine.warn.loading_timed_out"), args);
+                            engineNow.loadingHolds = 0;
+                        }
                     }
-                    // Ten minutes of frames is a bake that is not going to end:
-                    // no device to draw a frame with, most likely.
-                    const bool over = (options.frames != 0 && frame.index + 1 >= options.frames) || frame.index > 36000;
-                    if (named.empty()) {
-                        bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_none"));
-                    }
-                    else if (whole == named.size()) {
-                        bakeWritten = true;
-                        for (core::usize index = 0; index < named.size(); ++index) {
-                            if (!writeBaked(lit, named[index], kept[index]) && !bakeFailure.has_value()) {
-                                const std::array<core::I18nArg, 1> args{core::I18nArg{
-                                    "path", lit.atoms().text(lit.irradianceVolumes().find(named[index])->baked)}};
-                                bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_write"), args);
+                    // **Behind the curtain the ground is built flat out**: there is
+                    // no frame of play to keep smooth.
+                    terrainLoader.setBuildsPerSync(curtain.up() || options.screenshotEvery != 0 ? 256u : 4u);
+                    terrainLoader.setFastUploads(curtain.up());
+                    foliage.setFastGrowth(curtain.up());
+                }
+#if ENG_DEBUG_UI
+                // **A screenshot is of the world as it will look** (ADR 0091): the
+                // frame it is taken from waits for surface shaders still compiling,
+                // which no interactive frame ever does.
+                if (useRenderer && surfaceCompiler != nullptr && !options.screenshotPath.empty() &&
+                    options.frames != 0 && frame.index + 1 >= options.frames)
+                    surfaceCompiler->drain();
+#endif
+                // **The camera textures, before the main view** (ADR 0107), so a
+                // feed on a monitor shows this frame's picture. Each is the world
+                // extracted from its camera and drawn with its own renderer state;
+                // a camera that sees its own texture sees the last picture.
+                //
+                // **Whether or not the world has a camera of its own**: a
+                // `ViewportFrame` looks through its own, and a menu -- an empty
+                // world and a screen of item previews -- showed every one empty.
+                if (renderer != nullptr && renderer->valid() && stageOf() == nullptr) {
+                    // **Each running sub-world's content, loaded as the game's
+                    // is** (ADR 0107 §3), whether or not its picture is drawn this
+                    // frame: a mesh that lands also tells its physics what it
+                    // collides as. What unloaded gives its GPU state back.
+                    std::erase_if(subWorldGpu, [&](const std::unique_ptr<SubWorldGpu>& gpu) {
+                        const std::span<const WorldHost::SubWorldRun> runs = host->subWorlds();
+                        if (std::any_of(runs.begin(), runs.end(),
+                                        [&](const WorldHost::SubWorldRun& run) { return run.serial == gpu->serial; }))
+                            return false;
+                        gpu->loader.destroy(*device);
+                        gpu->meshes.destroy(*device);
+                        return true;
+                    });
+                    for (const WorldHost::SubWorldRun& run : host->subWorlds()) {
+                        auto found = std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
+                                                  [&](const auto& gpu) { return gpu->serial == run.serial; });
+                        if (found == subWorldGpu.end()) {
+                            auto made = std::make_unique<SubWorldGpu>();
+                            made->serial = run.serial;
+                            if (made->meshes.create(*device).has_value())
+                                continue;
+                            made->loader.setContentRoot(contentRoot);
+                            made->loader.setContentMounts(&contentMounts);
+                            made->loader.setDeferredTextures(!options.headless);
+                            made->loader.setDeferredMeshes(!options.headless);
+                            subWorldGpu.push_back(std::move(made));
+                            found = subWorldGpu.end() - 1;
+                        }
+                        SubWorldGpu& gpu = **found;
+                        WorldHost& inner = *run.host;
+                        gpu.meshes.beginFrame(*device);
+                        gpu.loader.syncPrimitives(*device, *cmd, inner.world(), gpu.meshes, gpu.library);
+                        (void)gpu.loader.syncTextures(*device, *cmd, inner.world(), gpu.textures);
+                        meshCompletions.clear();
+                        (void)gpu.loader.sync(*device, *cmd, inner.world(), inner.workspace(), gpu.meshes, gpu.library,
+                                              nullptr, &meshCompletions);
+                        if (inner.physics() != nullptr) {
+                            for (const core::NameAtom content : meshCompletions) {
+                                const render::MeshLibrary::Entry* entry = gpu.library.find(content);
+                                if (entry != nullptr && !entry->positions.empty())
+                                    inner.physics()->setCollisionPoints(content, entry->positions);
                             }
                         }
                     }
-                    else if (over) {
-                        const std::array<core::I18nArg, 2> args{
-                            core::I18nArg{"count", static_cast<core::i64>(named.size() - whole)},
-                            core::I18nArg{"name", lit.atoms().text(lit.name(lit.parentOf(waiting)))}};
-                        bakeFailure = core::makeError(ENG_TR("app.err.irradiance_bake_unfinished"), args);
-                    }
-                    if (bakeWritten || bakeFailure.has_value())
-                        quit = true;
-                }
-                // **Said when the rooms in view are lit** (ADRs 0202, 0203):
-                // how long it took, which is what the loading curtain waited.
-                const IndirectLight::Stats& rooms = indirectLight.stats();
-                if (rooms.settledMs != indirectSaidMs) {
-                    indirectSaidMs = rooms.settledMs;
-                    const std::array<core::I18nArg, 8> args{
-                        core::I18nArg{"ms", rooms.settledMs},
-                        core::I18nArg{"probes", static_cast<core::i64>(rooms.probesHeld)},
-                        core::I18nArg{"pictures", static_cast<core::i64>(rooms.picturesDrawn)},
-                        core::I18nArg{"volumes", static_cast<core::i64>(rooms.volumesWhole)},
-                        core::I18nArg{"points", static_cast<core::i64>(rooms.lastVolumePoints)},
-                        core::I18nArg{"rays", rooms.lastVolumeMs},
-                        core::I18nArg{"meshes", static_cast<core::i64>(rooms.tracedMeshes)},
-                        core::I18nArg{"triangles", static_cast<core::i64>(rooms.tracedTriangles)}};
-                    core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_ready"), args);
-                }
-                // And when a volume is lit again under another light, how
-                // long its rays took: what following a sun or a lamp costs.
-                if (rooms.lastRelightMs != indirectRelitMs) {
-                    indirectRelitMs = rooms.lastRelightMs;
-                    const std::array<core::I18nArg, 2> args{
-                        core::I18nArg{"points", static_cast<core::i64>(rooms.lastRelightPoints)},
-                        core::I18nArg{"ms", rooms.lastRelightMs}};
-                    core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_relit"), args);
-                }
-                // And when a level is carried after the camera (ADR 0206):
-                // what walking through the open costs. Said for the first,
-                // and then every sixteenth -- a walk is hundreds of them.
-                if (rooms.carries != indirectCarries) {
-                    indirectCarries = rooms.carries;
-                    if (rooms.carries == 1 || rooms.carries % 16 == 0) {
-                        const std::array<core::I18nArg, 2> args{
-                            core::I18nArg{"ms", rooms.lastCarryMs},
-                            core::I18nArg{"count", static_cast<core::i64>(rooms.carries)}};
-                        core::log(LogLevel::Info, ENG_TR("engine.info.indirect_light_carried"), args);
-                    }
-                }
-            }
-            // The UI is laid out against the TARGET's size rather than the
-            // window's: an offscreen render at 640x360 has to produce the
-            // layout that resolution would, which is the whole of what the
-            // two-resolution goldens check.
-            // The matrices the image was drawn with, not the ones the next
-            // frame will use. A pick taken against a fresher camera lands
-            // wherever the camera moved to between the click and the walk,
-            // which is invisible standing still and wrong while walking.
-            if (options.editor && snapshot.camera.valid)
-                editor.setCamera(snapshot.camera.projection, snapshot.camera.view, snapshot.camera.origin);
-            // **Where terrain is levelled from next frame.** The loader runs
-            // before `extract` has decided this frame's camera, so it is handed
-            // the one this frame was drawn through -- a frame of lag in a
-            // level-of-detail choice is invisible.
-            if (snapshot.camera.valid) {
-                terrainLoader.setFocus(snapshot.camera.origin);
-                // **And from every other view of a shared window** (ADR
-                // 0205): each player's ground is as fine under their own
-                // camera as the first's is.
-                {
-                    std::array<core::DVec3, 4> others;
-                    core::u32 otherCount = 0;
-                    for (core::u32 index = wholeDrawn ? 0 : 1;
-                         split.form != scene::ScreenForm::One && index < split.count; ++index) {
-                        if (const std::optional<render::ViewOverride> lens = lensOf(split.views[index].camera);
-                            lens.has_value())
-                            others[otherCount++] = lens->cframe.position;
-                    }
-                    const std::span<const core::DVec3> foci{others.data(), otherCount};
-                    terrainLoader.setOtherFoci(foci);
-                    voxelLoader.setOtherFoci(foci);
-                    foliage.setOtherFoci(foci);
-                }
-                // **The level of detail by what it looks like** (ADR 0140):
-                // the loader is told how many pixels a metre at a metre's
-                // distance covers -- from the projection and the picture's
-                // height -- and how many a terrain cell may. An orthographic
-                // view keeps the distance rule.
-                // **And how far**: as far as the camera sees (`terrainLodFor`).
-                // **In the pixels the world is rendered at**, not the
-                // target's: at three quarters of the resolution, or under a
-                // handheld's cap, a cell covers that many fewer -- and ground
-                // refined for pixels nobody draws is built, uploaded and
-                // drawn for nothing.
-                const render::GraphicsSettings& graphics = renderer != nullptr ? renderer->settings() : liveGraphics;
-                const f32 worldScale = render::effectiveRenderScale(graphics, targetWidth, targetHeight);
-                reportRenderWidth = static_cast<core::u32>(static_cast<f32>(targetWidth) * worldScale + 0.5f);
-                reportRenderHeight = static_cast<core::u32>(static_cast<f32>(targetHeight) * worldScale + 0.5f);
-                terrainLoader.setLodSettings(render::terrainLodFor(
-                    terrainLoader.lodSettings(), snapshot.camera.projection, snapshot.camera.farPlane,
-                    reportRenderHeight, static_cast<f64>(graphics.terrainPixelError)));
-                voxelLoader.setFocus(snapshot.camera.origin);
-                foliage.setFocus(snapshot.camera.origin);
-            }
-
-            ENG_PROFILE_NEXT(drawing, "draw.interface");
-            const core::Vec2 uiViewport{static_cast<f32>(targetWidth), static_cast<f32>(targetHeight)};
-            host->world().engineState().viewportSize = uiViewport;
-            if (uiViewport != lastUiViewport) {
-                // A scale is a fraction of something that just changed, so
-                // every tree is stale. Marked here rather than in the resize
-                // handler because an offscreen target can change size with no
-                // window event at all.
-                host->world().screenGuis().forEach(
-                    [](core::InstanceId, scene::ScreenGuiComponent& screen) { screen.layoutDirty = true; });
-                lastUiViewport = uiViewport;
-            }
-            // What moves by itself -- a page that is sliding -- by the time
-            // since it last did, in real seconds: drawn, never simulated. No
-            // more than a tenth at once, so a stall is not a jump.
-            {
-                const core::u64 uiNowNs = platform::nowNs();
-                const f64 elapsed = static_cast<f64>(uiNowNs - uiAdvancedNs) / 1.0e9;
-                uiAdvancedNs = uiNowNs;
-                ui::advance(host->world(), static_cast<f32>(std::clamp(elapsed, 0.0, 0.1)));
-            }
-            {
-                ENG_PROFILE_SCOPE("ui.layout");
-                ui::layout(host->world(), host->uiService(), uiViewport);
-            }
-
-            // Interaction reads the rectangles the layout just produced, and it
-            // runs here rather than beside the event pump for that reason: a hit
-            // test against last frame's rectangles is a click that lands where a
-            // button used to be.
-            const input::DeviceState& devices = host->input().snapshot();
-            ui::InteractionInput interaction;
-            // **Where the pointer is, and what it did, from the events that
-            // said so**: a tap's place is the tap's, not the mouse's.
-            uiPointer.fill(interaction, devices.pointer);
-            interaction.pointerLocked = pointerLocked;
-            interaction.text = uiTypedText;
-            interaction.backspace = uiBackspace;
-            interaction.forwardDelete = uiForwardDelete;
-            interaction.caretLeft = uiCaretLeft;
-            interaction.caretRight = uiCaretRight;
-            interaction.caretHome = uiCaretHome;
-            interaction.caretEnd = uiCaretEnd;
-            interaction.submit = uiSubmit;
-            interaction.commands = uiCommands;
-            interaction.composition = uiComposition;
-            interaction.compositionCursor = uiCompositionCursor;
-            interaction.compositionChanged = uiCompositionChanged;
-            interaction.time = static_cast<f64>(platform::nowNs()) / 1.0e9;
-            uiNavigation.fill(host->world(), interaction, interaction.time);
-            for (core::u32 seat = 0; seat < playerNavigationCount; ++seat) {
-                ui::InteractionInput own;
-                playerNavigation[seat].fill(host->world(), own, interaction.time);
-                interaction.players[seat] = ui::PlayerNavigation{.player = playerNavigationOf[seat],
-                                                                 .navigateX = own.navigateX,
-                                                                 .navigateY = own.navigateY,
-                                                                 .activate = own.navigateActivate,
-                                                                 .pageStep = own.pageStep};
-            }
-            interaction.playerCount = playerNavigationCount;
-            interaction.readClipboard = []() { return platform::clipboardText(); };
-            interaction.writeClipboard = [](std::string_view text) { (void)platform::setClipboardText(text); };
-            // **A button printed on a wall is a button**: the pointer's ray
-            // into the world, met with every `SurfaceGui` and `BillboardGui`,
-            // and hidden by anything solid in front of the canvas -- asked of
-            // the physics world, leaving out the part the canvas is on.
-            if (snapshot.camera.valid) {
-                const core::DVec3 cameraOrigin = snapshot.camera.origin;
-                const app::SolidAlong solidAlong = [&host,
-                                                    cameraOrigin](core::Vec3 origin, core::Vec3 direction,
-                                                                  core::InstanceId adornee) -> std::optional<f32> {
-                    const scene::PhysicsSync* physics = host->physics();
-                    if (physics == nullptr)
-                        return std::nullopt;
-                    const std::array<u64, 1> excluded{physics->userDataOf(adornee)};
-                    physics::QueryFilter filter;
-                    filter.mode = physics::QueryFilter::Mode::Exclude;
-                    filter.userData = std::span<const u64>{excluded.data(), adornee.valid() ? 1u : 0u};
-                    constexpr f32 Reach = 2000.0f;
-                    physics::RayHit hit;
-                    const physics::RayD ray{core::DVec3{cameraOrigin.x + static_cast<f64>(origin.x),
-                                                        cameraOrigin.y + static_cast<f64>(origin.y),
-                                                        cameraOrigin.z + static_cast<f64>(origin.z)},
-                                            direction * Reach};
-                    if (!physics->backend().raycast(physics->worldHandle(), ray, filter, hit))
-                        return std::nullopt;
-                    return hit.distance;
-                };
-                // Through the frame's first picture, where the pointer is in
-                // it (ADR 0205): a button on a wall is pressed in the view it
-                // is seen in.
-                const core::Vec2 inMain = interaction.pointer - mainCorner;
-                const bool pointerInMain =
-                    inMain.x >= 0.0f && inMain.y >= 0.0f && inMain.x < mainViewport.x && inMain.y < mainViewport.y;
-                if (const std::optional<app::WorldUiPick> picked =
-                        pointerInMain ? app::pickWorldUi(host->world(), host->workspace(), host->uiService(),
-                                                         mainViewport, snapshot.camera, inMain, solidAlong, &framePoses)
-                                      : std::nullopt)
-                    interaction.worldOver = picked->element;
-            }
-            const ui::InteractionResult uiResult = [&] {
-                ENG_PROFILE_SCOPE("ui.interaction");
-                return ui::updateInteraction(host->world(), host->uiService(), interaction);
-            }();
-            host->input().setPointerCapturedByUi(uiResult.pointerOverUi);
-            // The keyboard half of the same claim (ADR 0041): a focused
-            // `TextInput` eats the keys, so typing into a chat box does not also
-            // drive the character.
-            host->input().setKeyboardCapturedByUi(uiResult.textInputFocused);
-            // And the platform asked for the characters, which nothing did:
-            // on a phone this is what raises the keyboard.
-            if (window != nullptr) {
-                const bool editorTyping = overlay.has_value() && overlay->editorTyping();
-                if (const std::optional<bool> typing = textInputFocus.follow(uiResult.textInputFocused, editorTyping))
-                    platform::setTextInputEnabled(platform::windowId(*window), *typing);
-                // **The keyboard the focused field asks for** (ADR 0139): a
-                // phone raises it, and a new field or a new kind restarts it.
-                const i32 kind =
-                    uiResult.masked ? static_cast<i32>(platform::TextInputKind::Password) : uiResult.keyboardType;
-                if (uiResult.textInputFocused && (uiResult.focusedInput != uiTextInputFor || kind != uiTextInputKind)) {
-                    platform::TextInputOptions keyboard;
-                    keyboard.kind = static_cast<platform::TextInputKind>(kind);
-                    keyboard.multiLine = uiResult.multiLine;
-                    platform::setTextInputEnabled(platform::windowId(*window), true, keyboard);
-                }
-                uiTextInputFor = uiResult.focusedInput;
-                uiTextInputKind = uiResult.textInputFocused ? kind : -1;
-                // Where the caret is, so an input method's candidates open
-                // beside it. The game's own screen only: the editor draws the
-                // game into a panel whose place the interface does not know.
-                if (uiResult.textInputFocused && !overlay.has_value()) {
-                    const core::Rect caret = uiResult.caret;
-                    platform::setTextInputArea(platform::windowId(*window), static_cast<i32>(caret.min.x),
-                                               static_cast<i32>(caret.min.y),
-                                               static_cast<i32>(caret.max.x - caret.min.x) + 1,
-                                               static_cast<i32>(caret.max.y - caret.min.y), 0);
-                }
-            }
-
-            // **Built against the atlas it leaves**: text that filled the
-            // glyph store mid-frame cleared it, and every label built before
-            // the clear drew garbage -- so a frame that cleared is built again.
-            ui::buildWithSettledGlyphs([&] {
-                ENG_PROFILE_SCOPE("ui.drawlist");
-                ui::buildDrawList(host->world(), host->uiService(), uiDrawList);
-                // **What a sequence puts over the picture** (ADR 0204): the
-                // bars of a wider picture, then a fade's colour, UNDER the
-                // game's interface -- a caption is read over a picture gone
-                // black. First in the list is drawn first.
-                if (const Sequences::Screen over = host->sequences().screen(host->world(), sequenceAhead);
-                    over.fade > 0.0f || over.bars > 0.0f) {
-                    if (uiDrawList.scissors.empty())
-                        uiDrawList.scissors.push_back(
-                            core::Rect{core::Vec2{-1.0e9f, -1.0e9f}, core::Vec2{1.0e9f, 1.0e9f}});
-                    std::vector<ui::DrawQuad> laid;
-                    const auto flat = [&](core::Vec2 low, core::Vec2 high, core::Color3 colour, f32 alpha) {
-                        ui::DrawQuad quad;
-                        quad.min = low;
-                        quad.max = high;
-                        quad.color = colour;
-                        quad.alpha = alpha;
-                        laid.push_back(quad);
+                    const auto subWorldRunning = [&](core::InstanceId owner) {
+                        const scene::SubWorldComponent* self = host->world().subWorlds().find(owner);
+                        return self != nullptr && self->running && host->subWorld(owner) != nullptr;
                     };
-                    if (over.bars > 0.0f) {
-                        // As tall as leaves a picture of the track's shape,
-                        // by how far in they are; none where the window is
-                        // already that wide.
-                        const f32 kept = std::min(uiViewport.y, uiViewport.x / std::max(over.aspect, 1.0f));
-                        const f32 bar = (uiViewport.y - kept) * 0.5f * over.bars;
-                        if (bar > 0.0f) {
-                            const core::Color3 black{0.0f, 0.0f, 0.0f};
-                            flat(core::Vec2{0.0f, 0.0f}, core::Vec2{uiViewport.x, bar}, black, 1.0f);
-                            flat(core::Vec2{0.0f, uiViewport.y - bar}, uiViewport, black, 1.0f);
-                        }
+
+                    // **A reflection probe's pictures** (ADR 0202), before any
+                    // view that will read them: the world from the probe's place,
+                    // a quarter turn wide, six ways -- as it is lit, with nothing
+                    // of a camera's own, and nothing that moves by itself.
+                    while (const std::optional<IndirectLight::Face> face = indirectLight.nextFace(*device)) {
+                        const scene::World& world = host->world();
+                        const render::ViewOverride lens{
+                            .cframe = face->lens, .fieldOfView = 90.0f, .nearPlane = 0.05f, .farPlane = 2000.0f};
+                        render::extract(world, host->workspace(), host->lighting(), meshLibrary, 1.0f, shadowRadius,
+                                        host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
+                                        terrainNodes);
+                        terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
+                        skyLoader.append(viewSnapshot);
+                        // A room is what stays: a character, a crate that can be
+                        // pushed and anything with a skeleton are left out, or
+                        // they would stand in every reflection where they stood
+                        // when it was taken.
+                        std::erase_if(viewSnapshot.draws, [&](const render::DrawItem& draw) {
+                            if (draw.boneCount > 0)
+                                return true;
+                            if (draw.motionKey == 0)
+                                return false;
+                            const core::InstanceId id{.index = static_cast<u32>(draw.motionKey & 0xFFFFFFFFull),
+                                                      .generation = static_cast<u32>(draw.motionKey >> 32)};
+                            const scene::RigidBodyComponent* body = world.rigidBodies().find(id);
+                            return (body != nullptr && !body->anchored) || world.characterBodies().find(id) != nullptr;
+                        });
+                        indirectLight.append(viewSnapshot, true);
+                        viewSnapshot.capture = true;
+                        renderer->render(*device, *cmd,
+                                         {.color = face->target,
+                                          .colorFormat = rhi::TextureFormat::Rgba16Float,
+                                          .width = face->size,
+                                          .height = face->size,
+                                          .view = ProbePictureView},
+                                         viewSnapshot, meshCache);
+                        indirectLight.faceDrawn(*device, *cmd, *renderer, viewSnapshot.camera.viewProjection,
+                                                platform::nowNs());
                     }
-                    if (over.fade > 0.0f)
-                        flat(core::Vec2{0.0f, 0.0f}, uiViewport, over.fadeColor, over.fade);
-                    uiDrawList.quads.insert(uiDrawList.quads.begin(), laid.begin(), laid.end());
-                }
-                // Index 0 is "no texture" and every entry after it is a texture the
-                // UI can name. The glyph atlas is index 1 when a face has been
-                // rasterised; images follow it.
-                // Index 0 is "no texture" and resolves to the renderer's white
-                // pixel; index 1 is the glyph atlas and everything after it is an
-                // image. The table is rebuilt each frame because a texture handle
-                // is four bytes and a stale one is a picture from a world that has
-                // been unloaded.
-                uiTextures.clear();
-                uiTextures.push_back(rhi::TextureHandle{});
-                // The atlas's pages, each a texture (ADR 0169): a quad names
-                // its page, and one there is none of is nothing.
-                for (core::u32 page = 0; page < ui::kGlyphPages; ++page)
-                    uiTextures.push_back(uiText.atlasTexture(page));
-                for (const rhi::TextureHandle image : uiText.images())
-                    uiTextures.push_back(image);
-                uiGradients.clear();
-                // A picture for each `CanvasGroup`, before the geometry that is
-                // drawn into them (ADR 0128).
-                {
-                    ENG_PROFILE_SCOPE("ui.groups");
-                    uiGroupPictures.prepare(uiRenderer.valid() ? device.get() : nullptr, uiDrawList, uiColorFormat,
-                                            ++uiFrame);
-                }
-                {
-                    ENG_PROFILE_SCOPE("ui.geometry");
-                    buildUiGeometry(uiDrawList, uiViewport, uiVertices, uiRuns, uiTextures, uiGradients,
-                                    uiGroupPictures.textures());
-                }
 
-                // **The world's UI, into the picture the renderer is about to
-                // draw**: laid out and drawn by the same code as the screen's,
-                // placed on its parts and billboards, and sharing the screen's
-                // glyph atlas and images.
-                ENG_PROFILE_SCOPE("ui.world");
-                buildWorldUi(host->world(), host->workspace(), host->uiService(), mainViewport, uiTextures,
-                             worldUiDrawList, snapshot, &uiGradients, &framePoses);
-            });
-
-            // `[debug] hide` (ADR 0171): out of the frame before anything
-            // counts it or draws it.
-            applyDebugHide(snapshot, debugHide);
-
-            ENG_PROFILE_NEXT(drawing, "draw.submit");
-            frameVisibleObjects = 0;
-            frameTriangles = 0;
-            frameLodDraws = 0;
-            // The SAME level the renderer will choose, from the same function.
-            // Counting level zero here while the backend drew level two would
-            // be a triangle count that describes a frame nobody rendered, and a
-            // stat that lies is worse than one that is missing.
-            const f32 lodPixelsPerUnit =
-                snapshot.camera.valid && uiViewport.y > 0.0f && !core::isOrthographic(snapshot.camera.projection)
-                    ? 0.5f * uiViewport.y * snapshot.camera.projection.m[1][1]
-                    : 0.0f;
-            for (const render::DrawItem& draw : snapshot.draws) {
-                // Counted from the snapshot rather than from the backend: it is
-                // the same number, it costs nothing, and it is available on a
-                // device that rasterizes nothing.
-                if (!draw.inCameraFrustum)
-                    continue;
-                const render::MeshCache::Resolved* resolved = meshCache.resolve(draw.mesh);
-                if (resolved == nullptr || resolved->lods.empty())
-                    continue;
-                const core::u32 level = render::selectMeshLod(*resolved, draw.transform, lodPixelsPerUnit);
-                const render::MeshLodRange& range = resolved->lods[level];
-                if (draw.section >= range.sectionCount ||
-                    range.firstSection + draw.section >= resolved->sections.size())
-                    continue;
-                ++frameVisibleObjects;
-                if (level > 0)
-                    ++frameLodDraws;
-                frameTriangles += resolved->sections[range.firstSection + draw.section].indexCount / 3u;
-            }
-
-            submitWorld(snapshot, debugDraw);
-
-            // Read AFTER submission, because that is when the renderer knows.
-            // Counted by the renderer rather than derived from the snapshot: a
-            // draw call is a thing a backend issues, and inferring it from the
-            // draw list is exactly the assumption instancing invalidated.
-            const render::RendererStats rendererStats =
-                renderer != nullptr && renderer->valid() ? renderer->stats() : render::RendererStats{};
-            frameDrawCalls = rendererStats.drawCalls;
-            frameDrawsByKind = rendererStats.drawsByKind;
-            frameInstancedDraws = rendererStats.instancedDraws;
-
-            // Everything in the buffer is in world coordinates until here: the
-            // wire boxes above, and whatever `DebugService` recorded during the
-            // tick, which happened before extraction had decided where the
-            // camera was. The overlay is drawn with the renderer's
-            // camera-relative view-projection, so the buffer has to be moved
-            // into that space -- and for the whole of the first renderer it was not, which put
-            // every debug line the camera's own distance away from where it
-            // belonged. `origin` is zero when no camera resolved, which is
-            // exactly the first window's path this must not disturb.
-            debugDraw.rebaseTo(snapshot.camera.origin);
-
-            // After the rebase and not before it, because these are already in
-            // the space it converts to -- see `submitSelection`. Everything the
-            // editor draws over the world goes here for the same reason -- and
-            // none of it over the game's own view (`Editor::viewportIsGames`):
-            // no box, no ring, no guide.
-            // **Under the overlay in a game, what is `Visible` is drawn** (ADR
-            // 0127): the same lines the editor draws, with nothing selected.
-            if (!(options.editor && !editor.viewportIsGames()) && overlayVisible)
-                submitConstraints(host->world(), framePoses, {}, snapshot.camera.origin, debugDraw);
-            if (options.editor && !editor.viewportIsGames()) {
-                // **The wire box only when nothing else marks the selection.**
-                // The renderer outlines a selected part along its own
-                // silhouette; a box drawn over that, with a margin of 1% of the
-                // part's size, stood metres outside a large part -- reported as
-                // "the selection is outside the part". It stays for the debug
-                // path, which draws the world as wire boxes and has no outline.
-                const bool outlinedByRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
-                if (!outlinedByRenderer)
-                    submitSelection(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
-                                    debugDraw);
-                if (editing(editor.runState())) {
-                    submitCameraVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, aspect,
-                                        debugDraw);
-                    submitLightVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
-                    submitDetectorVolumes(authored(), inspector.selectionSet(), snapshot.camera.origin, debugDraw);
-                }
-                submitConstraints(authored(), authoredPoses(), inspector.selectionSet(), snapshot.camera.origin,
-                                  debugDraw);
-                // The manipulator over the outline, because the outline says
-                // WHAT is selected and the manipulator is the thing being
-                // aimed at.
-                if (const std::optional<GizmoFrame> gizmo = editor.gizmoFrame(authored(), inspector);
-                    gizmo.has_value()) {
-                    submitGizmo(*gizmo, editor.gizmoMode(), editor.gizmoHandle(), snapshot.camera.origin, debugDraw);
-                }
-                // **The aiming ring, in the rebased space like everything else
-                // here.** Half a millimetre of f32 error at four kilometres
-                // would land on the one thing in the frame being placed
-                // precisely, which is why the overlay's header says to submit
-                // after the rebase rather than with the world-space draws.
-                if (const std::optional<asset::TerrainHit> aim = editor.brushAim(); aim.has_value()) {
-                    const core::DVec3 origin = snapshot.camera.origin;
-                    const core::Vec3 centre{static_cast<f32>(aim->position.x - origin.x),
-                                            static_cast<f32>(aim->position.y - origin.y),
-                                            static_cast<f32>(aim->position.z - origin.z)};
-                    const Editor::Tool tool = editor.tool();
-                    const Editor::BrushOp op = editor.effectiveBrushOp();
-                    BrushRingStyle style;
-                    style.square = tool == Editor::Tool::Sculpt && editor.brush().shape == Editor::BrushShape::Box &&
-                                   (op == Editor::BrushOp::Add || op == Editor::BrushOp::Subtract);
-                    style.falloff =
-                        tool == Editor::Tool::Foliage ||
-                        (tool == Editor::Tool::Sculpt && op != Editor::BrushOp::Add && op != Editor::BrushOp::Subtract);
-                    // Paint's fade is its softness's share of the radius, so
-                    // half is halfway across that share.
-                    if (tool == Editor::Tool::Paint && editor.brush().falloff > 0.0f) {
-                        style.falloff = true;
-                        style.halfAt = 1.0f - 0.5f * editor.brush().falloff;
-                    }
-                    drawBrushRing(centre, aim->normal, editor.brush().radius, style, debugDraw);
-                }
-                // **The cell a block click would change**, as a box a hair
-                // larger than the block so it is not buried in the faces it
-                // outlines. Amber to place, red to take away, the brush's
-                // colour otherwise.
-                if (const std::optional<std::array<core::i32, 3>> cell = editor.blockTarget(); cell.has_value()) {
-                    const double size = static_cast<double>(editor.voxelBlockSize());
-                    const core::DVec3 origin = snapshot.camera.origin;
-                    const core::Vec3 centre{
-                        static_cast<f32>((static_cast<double>((*cell)[0]) + 0.5) * size - origin.x),
-                        static_cast<f32>((static_cast<double>((*cell)[1]) + 0.5) * size - origin.y),
-                        static_cast<f32>((static_cast<double>((*cell)[2]) + 0.5) * size - origin.z)};
-                    const auto half = static_cast<f32>(size * 0.51);
-                    const render::DebugColor color = editor.blockOp() == Editor::BlockOp::Break
-                                                         ? render::DebugColor::fromLinear(0.95f, 0.25f, 0.2f, 1.0f)
-                                                         : render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 1.0f);
-                    debugDraw.wireBox(centre, core::Vec3{half, half, half}, color);
-                }
-                // **The cell a Tiles click would change** (the 2D layer), as a
-                // flat box on the plane: amber to paint, red to erase.
-                if (const std::optional<Editor::TileAim> aim = editor.tileAim(); aim.has_value()) {
-                    if (const scene::Tilemap2DComponent* tilemap = authored().tilemaps2d().find(aim->tilemap);
-                        tilemap != nullptr) {
-                        const double size = static_cast<double>(tilemap->cellSize);
-                        const core::DVec3 origin = snapshot.camera.origin;
-                        const core::Vec3 centre{
-                            static_cast<f32>(static_cast<double>(tilemap->position.x) +
-                                             (static_cast<double>(aim->cell[0]) + 0.5) * size - origin.x),
-                            static_cast<f32>(static_cast<double>(tilemap->position.y) +
-                                             (static_cast<double>(aim->cell[1]) + 0.5) * size - origin.y),
-                            static_cast<f32>(-origin.z)};
-                        const auto half = static_cast<f32>(size * 0.5);
-                        const render::DebugColor color =
-                            editor.tileOp() == Editor::TileOp::Erase
-                                ? render::DebugColor::fromLinear(0.95f, 0.25f, 0.2f, 1.0f)
-                                : render::DebugColor::fromLinear(0.95f, 0.75f, 0.25f, 1.0f);
-                        debugDraw.wireBox(centre, core::Vec3{half, half, 0.01f}, color);
-                    }
-                }
-                // **What the Water tool has in hand and is aiming at**: the
-                // river's points or the lake's corners, and the stretch or
-                // the rectangle the next click or this drag would make.
-                if (editor.tool() == Editor::Tool::Water)
-                    submitWaterGuide(editor.waterGuide(), snapshot.camera.origin, debugDraw);
-            }
-
-            // Uploaded before the render pass opens, because a copy cannot run
-            // inside one -- the seam says so and the backend enforces it. The
-            // mesh loader is here for the same reason and one more: it is the
-            // FrameStart safe point, so a file read cannot land mid-tick.
-            ENG_PROFILE_NEXT(drawing, "draw.uploads");
-            if (debugRenderer.valid())
-                debugRenderer.upload(*device, *cmd, debugDraw);
-            // Beside the other uploads and for the same reason: this is the
-            // only place in the frame where a copy is legal. Idempotent after
-            // the first success, so the cost is one branch a frame.
-            if (options.editor && !iconAtlas.ready()) {
-                if (iconAtlas.load(*device, *cmd, platform::paths().contentDir, options.scriptPath))
-                    core::logText(core::LogLevel::Info, iconAtlas.status());
-                else
-                    core::logText(core::LogLevel::Warn, iconAtlas.status());
-            }
-            // What the browser asked for while it drew LAST frame, answered
-            // here, where a copy is legal -- so a row that showed its icon on
-            // the frame it appeared shows the picture on the next one. A shell
-            // with no browser never asks, and this walks an empty list.
-            if (options.editor)
-                // **Built on the first frame that has a renderer**, not at declaration:
-                // it borrows one, and `createRenderer` can fail on a machine whose
-                // shaders are missing. A cache with no preview renderer refuses a mesh
-                // at `request` and the row wears its icon, which is what every build did
-                // before previews existed -- so this arriving late is a picture that
-                // appears, never a frame that breaks.
-                if (previewRenderer == nullptr && renderer != nullptr && renderer->valid()) {
-                    previewRenderer = std::make_unique<HostPreviewRenderer>(
-                        host->world().classes(), host->world().enums(), host->world().atoms(), contentRoot,
-                        contentMounts, *renderer);
-                    previewRenderer->setMaterialLibrary(&materialLibrary);
-                    thumbnails.setPreviewRenderer(previewRenderer.get());
-                }
-            thumbnails.flush(*device, *cmd);
-            if (uiRenderer.valid())
-                // The atlas first: `buildUiGeometry` has already written UVs
-                // into it, and uploading after the draw would show this frame's
-                // new glyphs as last frame's pixels.
-                uiText.sync(*device, *cmd);
-            uiRenderer.upload(*device, *cmd, uiVertices, uiRuns);
-            // The gradient table, before any pass, for both UIs (ADR 0110).
-            uiRenderer.uploadGradients(*cmd, uiGradients.pixels(), uiGradients.count());
-            snapshot.worldUiGradients = uiRenderer.gradientTable();
-
-            // The real renderer owns the target when there is a camera to look
-            // through. Without one -- an empty project, a world booting, a
-            // camera nobody assigned -- the first window's debug path still draws, which is
-            // what keeps every earlier example and the capture golden working.
-            ENG_PROFILE_NEXT(drawing, "draw.views");
-            const bool useRenderer = renderer != nullptr && renderer->valid() && snapshot.camera.valid;
-            if (curtains) {
-                scene::EngineState& engineNow = host->world().engineState();
-                if (curtainScene.has_value() && *curtainScene != engineNow.sceneLoads) {
-                    curtain.raise();
-                    curtainRaisedNs = nowNs;
-                }
-                curtainScene = engineNow.sceneLoads;
-                if (curtain.up()) {
-                    const bool ground =
-                        !snapshot.camera.valid || terrainLoader.areaMeshed(host->world(), core::InstanceId{},
-                                                                           snapshot.camera.origin, CurtainGroundMetres);
-                    const LoadingCurtain::Lift lift = curtain.update({
-                        .nowNs = nowNs,
-                        // And what grows on the ground, which is
-                        // grown off this thread now: a meadow is not lifted
-                        // onto bare.
-                        // **And no room in view still the sky standing in**
-                        // (ADRs 0202, 0203): nobody watches a room light up.
-                        // Its pictures are taken and its bounced light worked
-                        // out behind the curtain, as much a frame as fits.
-                        .loadersIdle = meshLoader.meshesWaiting() == 0 && meshLoader.texturesInFlight() == 0 &&
-                                       uiText.imagesInFlight() == 0 && !foliage.pending() && indirectLight.settled(),
-                        .groundMeshed = ground,
-                        .holds = engineNow.loadingHolds,
-                    });
-                    // **Given up on, and said** (ADR 0159): a hold never
-                    // released, or ground that never came, is the game's to
-                    // know about.
-                    // **Said when it lifts** (ADR 0176): a slow frame is the
-                    // player's only from here, and a report of one cannot be
-                    // read without knowing which side of this line it fell.
-                    if (lift != LoadingCurtain::Lift::Kept) {
-                        const std::array<core::I18nArg, 2> liftArgs{
-                            core::I18nArg{"frame", static_cast<core::i64>(frame.index)},
-                            core::I18nArg{"ms", static_cast<core::f64>(nowNs - curtainRaisedNs) / 1'000'000.0}};
-                        core::log(LogLevel::Info, ENG_TR("engine.info.curtain_lifted"), liftArgs);
-                    }
-                    if (lift == LoadingCurtain::Lift::TimedOut) {
-                        const std::array<core::I18nArg, 2> args{
-                            core::I18nArg{"holds", static_cast<core::i64>(engineNow.loadingHolds)},
-                            core::I18nArg{"ground", std::string_view{ground ? "yes" : "no"}}};
-                        core::log(LogLevel::Warn, ENG_TR("engine.warn.loading_timed_out"), args);
-                        engineNow.loadingHolds = 0;
-                    }
-                }
-                // **Behind the curtain the ground is built flat out**: there is
-                // no frame of play to keep smooth.
-                terrainLoader.setBuildsPerSync(curtain.up() || options.screenshotEvery != 0 ? 256u : 4u);
-                terrainLoader.setFastUploads(curtain.up());
-                foliage.setFastGrowth(curtain.up());
-            }
-#if ENG_DEBUG_UI
-            // **A screenshot is of the world as it will look** (ADR 0091): the
-            // frame it is taken from waits for surface shaders still compiling,
-            // which no interactive frame ever does.
-            if (useRenderer && surfaceCompiler != nullptr && !options.screenshotPath.empty() && options.frames != 0 &&
-                frame.index + 1 >= options.frames)
-                surfaceCompiler->drain();
-#endif
-            // **The camera textures, before the main view** (ADR 0107), so a
-            // feed on a monitor shows this frame's picture. Each is the world
-            // extracted from its camera and drawn with its own renderer state;
-            // a camera that sees its own texture sees the last picture.
-            //
-            // **Whether or not the world has a camera of its own**: a
-            // `ViewportFrame` looks through its own, and a menu -- an empty
-            // world and a screen of item previews -- showed every one empty.
-            if (renderer != nullptr && renderer->valid() && stageOf() == nullptr) {
-                // **Each running sub-world's content, loaded as the game's
-                // is** (ADR 0107 §3), whether or not its picture is drawn this
-                // frame: a mesh that lands also tells its physics what it
-                // collides as. What unloaded gives its GPU state back.
-                std::erase_if(subWorldGpu, [&](const std::unique_ptr<SubWorldGpu>& gpu) {
-                    const std::span<const WorldHost::SubWorldRun> runs = host->subWorlds();
-                    if (std::any_of(runs.begin(), runs.end(),
-                                    [&](const WorldHost::SubWorldRun& run) { return run.serial == gpu->serial; }))
-                        return false;
-                    gpu->loader.destroy(*device);
-                    gpu->meshes.destroy(*device);
-                    return true;
-                });
-                for (const WorldHost::SubWorldRun& run : host->subWorlds()) {
-                    auto found = std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
-                                              [&](const auto& gpu) { return gpu->serial == run.serial; });
-                    if (found == subWorldGpu.end()) {
-                        auto made = std::make_unique<SubWorldGpu>();
-                        made->serial = run.serial;
-                        if (made->meshes.create(*device).has_value())
+                    for (ViewHost::View* view : viewHost.due(host->world(), frame.index, subWorldRunning)) {
+                        const scene::World& world = host->world();
+                        // **A `SubWorld`** (ADR 0107 §3): its world, from its own
+                        // current camera, with its own meshes -- between its ticks,
+                        // which are this world's (ADR 0134).
+                        if (view->subWorld) {
+                            const scene::SubWorldComponent* self = world.subWorlds().find(view->owner);
+                            const WorldHost::SubWorldRun* run = nullptr;
+                            for (const WorldHost::SubWorldRun& candidate : host->subWorlds()) {
+                                if (candidate.owner == view->owner)
+                                    run = &candidate;
+                            }
+                            const auto gpu =
+                                run == nullptr ? subWorldGpu.end()
+                                               : std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
+                                                              [&](const auto& g) { return g->serial == run->serial; });
+                            if (self == nullptr || gpu == subWorldGpu.end())
+                                continue;
+                            WorldHost& inner = *run->host;
+                            const core::u64 started = platform::nowNs();
+                            render::DrawPoses innerPoses;
+                            // A paused world steps none of its sub-worlds, whose
+                            // history then stands still: drawn at the tick.
+                            const bool innerBetween = drawnBetweenTicks && !world.engineState().paused;
+                            innerPoses.begin(inner.world(), innerBetween ? run->history.get() : nullptr, renderAlpha);
+                            render::extract(inner.world(), inner.workspace(), inner.lighting(), (*gpu)->library,
+                                            static_cast<f32>(view->width) / static_cast<f32>(view->height),
+                                            shadowRadius, inner.animation(), innerPoses, viewSnapshot, nullptr, {},
+                                            &(*gpu)->textures, {});
+                            if (!viewSnapshot.camera.valid)
+                                continue;
+                            if (self->quality == 1) {
+                                viewSnapshot.environment.globalShadows = false;
+                                viewSnapshot.look.bloomGoverned = true;
+                                viewSnapshot.look.bloomEnabled = false;
+                                viewSnapshot.look.graded = false;
+                                viewSnapshot.look.blurSize = 0.0f;
+                                viewSnapshot.look.depthOfField = false;
+                                viewSnapshot.look.sunRays = false;
+                            }
+                            renderer->render(*device, *cmd,
+                                             {.color = view->texture,
+                                              .colorFormat = ViewFormat,
+                                              .width = view->width,
+                                              .height = view->height,
+                                              .view = view->rendererView},
+                                             viewSnapshot, (*gpu)->meshes);
+                            ViewHost::drawn(*view, frame.index,
+                                            static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
                             continue;
-                        made->loader.setContentRoot(contentRoot);
-                        made->loader.setContentMounts(&contentMounts);
-                        made->loader.setDeferredTextures(!options.headless);
-                        made->loader.setDeferredMeshes(!options.headless);
-                        subWorldGpu.push_back(std::move(made));
-                        found = subWorldGpu.end() - 1;
-                    }
-                    SubWorldGpu& gpu = **found;
-                    WorldHost& inner = *run.host;
-                    gpu.meshes.beginFrame(*device);
-                    gpu.loader.syncPrimitives(*device, *cmd, inner.world(), gpu.meshes, gpu.library);
-                    (void)gpu.loader.syncTextures(*device, *cmd, inner.world(), gpu.textures);
-                    meshCompletions.clear();
-                    (void)gpu.loader.sync(*device, *cmd, inner.world(), inner.workspace(), gpu.meshes, gpu.library,
-                                          nullptr, &meshCompletions);
-                    if (inner.physics() != nullptr) {
-                        for (const core::NameAtom content : meshCompletions) {
-                            const render::MeshLibrary::Entry* entry = gpu.library.find(content);
-                            if (entry != nullptr && !entry->positions.empty())
-                                inner.physics()->setCollisionPoints(content, entry->positions);
                         }
-                    }
-                }
-                const auto subWorldRunning = [&](core::InstanceId owner) {
-                    const scene::SubWorldComponent* self = host->world().subWorlds().find(owner);
-                    return self != nullptr && self->running && host->subWorld(owner) != nullptr;
-                };
-
-                // **A reflection probe's pictures** (ADR 0202), before any
-                // view that will read them: the world from the probe's place,
-                // a quarter turn wide, six ways -- as it is lit, with nothing
-                // of a camera's own, and nothing that moves by itself.
-                while (const std::optional<IndirectLight::Face> face = indirectLight.nextFace(*device)) {
-                    const scene::World& world = host->world();
-                    const render::ViewOverride lens{
-                        .cframe = face->lens, .fieldOfView = 90.0f, .nearPlane = 0.05f, .farPlane = 2000.0f};
-                    render::extract(world, host->workspace(), host->lighting(), meshLibrary, 1.0f, shadowRadius,
-                                    host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
-                                    terrainNodes);
-                    terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
-                    skyLoader.append(viewSnapshot);
-                    // A room is what stays: a character, a crate that can be
-                    // pushed and anything with a skeleton are left out, or
-                    // they would stand in every reflection where they stood
-                    // when it was taken.
-                    std::erase_if(viewSnapshot.draws, [&](const render::DrawItem& draw) {
-                        if (draw.boneCount > 0)
-                            return true;
-                        if (draw.motionKey == 0)
-                            return false;
-                        const core::InstanceId id{.index = static_cast<u32>(draw.motionKey & 0xFFFFFFFFull),
-                                                  .generation = static_cast<u32>(draw.motionKey >> 32)};
-                        const scene::RigidBodyComponent* body = world.rigidBodies().find(id);
-                        return (body != nullptr && !body->anchored) || world.characterBodies().find(id) != nullptr;
-                    });
-                    indirectLight.append(viewSnapshot, true);
-                    viewSnapshot.capture = true;
-                    renderer->render(*device, *cmd,
-                                     {.color = face->target,
-                                      .colorFormat = rhi::TextureFormat::Rgba16Float,
-                                      .width = face->size,
-                                      .height = face->size,
-                                      .view = ProbePictureView},
-                                     viewSnapshot, meshCache);
-                    indirectLight.faceDrawn(*device, *cmd, *renderer, viewSnapshot.camera.viewProjection,
-                                            platform::nowNs());
-                }
-
-                for (ViewHost::View* view : viewHost.due(host->world(), frame.index, subWorldRunning)) {
-                    const scene::World& world = host->world();
-                    // **A `SubWorld`** (ADR 0107 §3): its world, from its own
-                    // current camera, with its own meshes -- between its ticks,
-                    // which are this world's (ADR 0134).
-                    if (view->subWorld) {
-                        const scene::SubWorldComponent* self = world.subWorlds().find(view->owner);
-                        const WorldHost::SubWorldRun* run = nullptr;
-                        for (const WorldHost::SubWorldRun& candidate : host->subWorlds()) {
-                            if (candidate.owner == view->owner)
-                                run = &candidate;
-                        }
-                        const auto gpu = run == nullptr
-                                             ? subWorldGpu.end()
-                                             : std::find_if(subWorldGpu.begin(), subWorldGpu.end(),
-                                                            [&](const auto& g) { return g->serial == run->serial; });
-                        if (self == nullptr || gpu == subWorldGpu.end())
+                        // **A `ViewportFrame`** (ADR 0107): the instances inside
+                        // it and nothing else, by its own light, with no sky and
+                        // nothing behind -- only what is inside shows. Nothing in
+                        // it is simulated, so it is drawn as it stands.
+                        if (view->frame) {
+                            const scene::ViewportFrameComponent* self = world.viewportFrames().find(view->owner);
+                            const f32 shape = static_cast<f32>(view->width) / static_cast<f32>(view->height);
+                            const std::optional<render::ViewOverride> lens =
+                                frameLens(world, view->owner, shape, &framePoses);
+                            if (self == nullptr || !lens.has_value())
+                                continue;
+                            const core::u64 started = platform::nowNs();
+                            render::extract(world, view->owner, core::InstanceId{}, meshLibrary, shape, shadowRadius,
+                                            host->animation(), framePoses, viewSnapshot, &*lens, {}, &textureLibrary,
+                                            {});
+                            render::RenderEnvironment& light = viewSnapshot.environment;
+                            const core::Vec3 d = self->lightDirection;
+                            const f32 length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+                            light.sunDirection = core::Vec3{-d.x / length, -d.y / length, -d.z / length};
+                            light.ambient = self->ambient;
+                            light.outdoorAmbient = self->ambient;
+                            light.lightTint = self->lightColor;
+                            light.fogEnd = 0.0f;
+                            light.globalShadows = false;
+                            light.autoExposure = false;
+                            light.exposureCompensation = 0.0f;
+                            light.transparentBackground = true;
+                            viewSnapshot.look = render::RenderLook{};
+                            viewSnapshot.look.bloomGoverned = true;
+                            viewSnapshot.look.bloomEnabled = false;
+                            renderer->render(*device, *cmd,
+                                             {.color = view->texture,
+                                              .colorFormat = ViewFormat,
+                                              .width = view->width,
+                                              .height = view->height,
+                                              .view = view->rendererView},
+                                             viewSnapshot, meshCache);
+                            ViewHost::drawn(*view, frame.index,
+                                            static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
                             continue;
-                        WorldHost& inner = *run->host;
+                        }
+                        const scene::CameraTextureComponent* source = world.cameraTextures().find(view->owner);
+                        const scene::CameraComponent* camera =
+                            source != nullptr ? world.cameras().find(source->camera) : nullptr;
+                        if (camera == nullptr)
+                            continue;
                         const core::u64 started = platform::nowNs();
-                        render::DrawPoses innerPoses;
-                        // A paused world steps none of its sub-worlds, whose
-                        // history then stands still: drawn at the tick.
-                        const bool innerBetween = drawnBetweenTicks && !world.engineState().paused;
-                        innerPoses.begin(inner.world(), innerBetween ? run->history.get() : nullptr, renderAlpha);
-                        render::extract(inner.world(), inner.workspace(), inner.lighting(), (*gpu)->library,
+                        // **A view never samples itself.** A decal or a material
+                        // showing this view's own name, seen by this view's
+                        // camera, would read the texture being drawn into; taken
+                        // out of the library while it draws, it is simply absent
+                        // from its own picture.
+                        const rhi::TextureHandle own = textureLibrary.take(view->urn);
+                        // Where that camera is DRAWN, as the world around it is
+                        // (ADR 0134): a feed from a camera on a moving part
+                        // otherwise jumped a tick at a time.
+                        const render::ViewOverride lens{.cframe = framePoses.camera(source->camera),
+                                                        .fieldOfView = camera->fieldOfView,
+                                                        .nearPlane = camera->nearPlane,
+                                                        .farPlane = camera->farPlane,
+                                                        .projection = camera->projection,
+                                                        .orthographicSize = camera->orthographicSize,
+                                                        .clipPlane = camera->clipPlane,
+                                                        .clipPlaneOn = camera->clipPlaneOn};
+                        render::extract(world, host->workspace(), host->lighting(), meshLibrary,
                                         static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
-                                        inner.animation(), innerPoses, viewSnapshot, nullptr, {}, &(*gpu)->textures,
-                                        {});
-                        if (!viewSnapshot.camera.valid)
-                            continue;
-                        if (self->quality == 1) {
+                                        host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
+                                        terrainNodes);
+                        host->reportSeenSkins(viewSnapshot.seenSkins, false);
+                        terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
+                        particles.append(viewSnapshot, &textureLibrary);
+                        // Built again for this view: a ribbon that faces the
+                        // camera faces THIS one.
+                        ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
+                        skyLoader.append(viewSnapshot);
+                        // A feed of this world shows its rooms lit as they are.
+                        indirectLight.append(viewSnapshot);
+                        viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
+                        // `Simple`: no shadows and none of the look's effects; the
+                        // sky and the air stay, because a feed is of this world.
+                        if (source->quality == 1) {
                             viewSnapshot.environment.globalShadows = false;
                             viewSnapshot.look.bloomGoverned = true;
                             viewSnapshot.look.bloomEnabled = false;
@@ -9176,46 +9367,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             viewSnapshot.look.depthOfField = false;
                             viewSnapshot.look.sunRays = false;
                         }
-                        renderer->render(*device, *cmd,
-                                         {.color = view->texture,
-                                          .colorFormat = ViewFormat,
-                                          .width = view->width,
-                                          .height = view->height,
-                                          .view = view->rendererView},
-                                         viewSnapshot, (*gpu)->meshes);
-                        ViewHost::drawn(*view, frame.index,
-                                        static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
-                        continue;
-                    }
-                    // **A `ViewportFrame`** (ADR 0107): the instances inside
-                    // it and nothing else, by its own light, with no sky and
-                    // nothing behind -- only what is inside shows. Nothing in
-                    // it is simulated, so it is drawn as it stands.
-                    if (view->frame) {
-                        const scene::ViewportFrameComponent* self = world.viewportFrames().find(view->owner);
-                        const f32 shape = static_cast<f32>(view->width) / static_cast<f32>(view->height);
-                        const std::optional<render::ViewOverride> lens =
-                            frameLens(world, view->owner, shape, &framePoses);
-                        if (self == nullptr || !lens.has_value())
-                            continue;
-                        const core::u64 started = platform::nowNs();
-                        render::extract(world, view->owner, core::InstanceId{}, meshLibrary, shape, shadowRadius,
-                                        host->animation(), framePoses, viewSnapshot, &*lens, {}, &textureLibrary, {});
-                        render::RenderEnvironment& light = viewSnapshot.environment;
-                        const core::Vec3 d = self->lightDirection;
-                        const f32 length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-                        light.sunDirection = core::Vec3{-d.x / length, -d.y / length, -d.z / length};
-                        light.ambient = self->ambient;
-                        light.outdoorAmbient = self->ambient;
-                        light.lightTint = self->lightColor;
-                        light.fogEnd = 0.0f;
-                        light.globalShadows = false;
-                        light.autoExposure = false;
-                        light.exposureCompensation = 0.0f;
-                        light.transparentBackground = true;
-                        viewSnapshot.look = render::RenderLook{};
-                        viewSnapshot.look.bloomGoverned = true;
-                        viewSnapshot.look.bloomEnabled = false;
+                        applyDebugHide(viewSnapshot, debugHide);
                         renderer->render(*device, *cmd,
                                          {.color = view->texture,
                                           .colorFormat = ViewFormat,
@@ -9223,385 +9375,328 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                           .height = view->height,
                                           .view = view->rendererView},
                                          viewSnapshot, meshCache);
+                        if (own.valid())
+                            textureLibrary.set(view->urn, own, view->width, view->height);
                         ViewHost::drawn(*view, frame.index,
                                         static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
-                        continue;
                     }
-                    const scene::CameraTextureComponent* source = world.cameraTextures().find(view->owner);
-                    const scene::CameraComponent* camera =
-                        source != nullptr ? world.cameras().find(source->camera) : nullptr;
-                    if (camera == nullptr)
-                        continue;
-                    const core::u64 started = platform::nowNs();
-                    // **A view never samples itself.** A decal or a material
-                    // showing this view's own name, seen by this view's
-                    // camera, would read the texture being drawn into; taken
-                    // out of the library while it draws, it is simply absent
-                    // from its own picture.
-                    const rhi::TextureHandle own = textureLibrary.take(view->urn);
-                    // Where that camera is DRAWN, as the world around it is
-                    // (ADR 0134): a feed from a camera on a moving part
-                    // otherwise jumped a tick at a time.
-                    const render::ViewOverride lens{.cframe = framePoses.camera(source->camera),
-                                                    .fieldOfView = camera->fieldOfView,
-                                                    .nearPlane = camera->nearPlane,
-                                                    .farPlane = camera->farPlane,
-                                                    .projection = camera->projection,
-                                                    .orthographicSize = camera->orthographicSize,
-                                                    .clipPlane = camera->clipPlane,
-                                                    .clipPlaneOn = camera->clipPlaneOn};
-                    render::extract(world, host->workspace(), host->lighting(), meshLibrary,
-                                    static_cast<f32>(view->width) / static_cast<f32>(view->height), shadowRadius,
-                                    host->animation(), framePoses, viewSnapshot, &lens, {}, &textureLibrary,
-                                    terrainNodes);
-                    host->reportSeenSkins(viewSnapshot.seenSkins, false);
-                    terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
-                    particles.append(viewSnapshot, &textureLibrary);
-                    // Built again for this view: a ribbon that faces the
-                    // camera faces THIS one.
-                    ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
-                    skyLoader.append(viewSnapshot);
-                    // A feed of this world shows its rooms lit as they are.
-                    indirectLight.append(viewSnapshot);
-                    viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
-                    // `Simple`: no shadows and none of the look's effects; the
-                    // sky and the air stay, because a feed is of this world.
-                    if (source->quality == 1) {
-                        viewSnapshot.environment.globalShadows = false;
-                        viewSnapshot.look.bloomGoverned = true;
-                        viewSnapshot.look.bloomEnabled = false;
-                        viewSnapshot.look.graded = false;
-                        viewSnapshot.look.blurSize = 0.0f;
-                        viewSnapshot.look.depthOfField = false;
-                        viewSnapshot.look.sunRays = false;
-                    }
-                    applyDebugHide(viewSnapshot, debugHide);
-                    renderer->render(*device, *cmd,
-                                     {.color = view->texture,
-                                      .colorFormat = ViewFormat,
-                                      .width = view->width,
-                                      .height = view->height,
-                                      .view = view->rendererView},
-                                     viewSnapshot, meshCache);
-                    if (own.valid())
-                        textureLibrary.set(view->urn, own, view->width, view->height);
-                    ViewHost::drawn(*view, frame.index,
-                                    static_cast<core::f64>(platform::nowNs() - started) / 1'000'000.0);
                 }
-            }
 
-            ENG_PROFILE_NEXT(drawing, "draw.render");
-            if (useRenderer && curtain.up()) {
-                // **Drawn behind the curtain once nothing is left to wait for**
-                // (ADR 0176). The frame after the curtain lifted was the first
-                // the world was drawn in, and everything a renderer makes at
-                // first use was made in it: 1.3 seconds on a phone,
-                // with the game already running under it. The curtain asks for
-                // three settled frames before it lifts; the world is drawn in
-                // those, and the backdrop over it.
-                if (curtain.settling()) {
-                    ENG_PROFILE_SCOPE("render.world");
-                    if (!curtainWarmed) {
-                        renderer->warm(*device);
-                        curtainWarmed = true;
+                ENG_PROFILE_NEXT(drawing, "draw.render");
+                if (useRenderer && curtain.up()) {
+                    // **Drawn behind the curtain once nothing is left to wait for**
+                    // (ADR 0176). The frame after the curtain lifted was the first
+                    // the world was drawn in, and everything a renderer makes at
+                    // first use was made in it: 1.3 seconds on a phone,
+                    // with the game already running under it. The curtain asks for
+                    // three settled frames before it lifts; the world is drawn in
+                    // those, and the backdrop over it.
+                    if (curtain.settling()) {
+                        ENG_PROFILE_SCOPE("render.world");
+                        if (!curtainWarmed) {
+                            renderer->warm(*device);
+                            curtainWarmed = true;
+                        }
+                        renderer->render(*device, *cmd,
+                                         {.color = target,
+                                          .colorFormat = targetFormat,
+                                          .width = targetWidth,
+                                          .height = targetHeight},
+                                         snapshot, meshCache);
                     }
-                    renderer->render(
-                        *device, *cmd,
-                        {.color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight},
-                        snapshot, meshCache);
+                    else {
+                        curtainWarmed = false;
+                    }
+                    const std::array<rhi::ColorAttachment, 1> backdrop{rhi::ColorAttachment{
+                        .texture = target,
+                        .loadOp = rhi::LoadOp::Clear,
+                        .storeOp = rhi::StoreOp::Store,
+                        .clearColor = {0.0f, 0.0f, 0.0f, 1.0f},
+                    }};
+                    cmd->beginRenderPass({.colorAttachments = backdrop, .debugName = "curtain"});
+                    cmd->endRenderPass();
+                }
+                else if (useRenderer) {
+                    ENG_PROFILE_SCOPE("render.world");
+                    // **Where this frame samples each pixel** (ADR 0158): a
+                    // fraction of a pixel off from the last, for the temporal
+                    // pass, and nowhere else at all.
+                    const render::RenderTarget windowTarget{
+                        .color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight};
+                    // **A view of the window's** (ADR 0205): its own picture at
+                    // the size of its part, and of two across a line the side it
+                    // is seen on -- with what a filter reads past the line.
+                    const auto viewTarget = [&](core::u32 index) {
+                        const scene::ScreenView& view = split.views[index];
+                        render::RenderTarget made{.color = splitPictures[index].texture,
+                                                  .colorFormat = targetFormat,
+                                                  .width = splitPictures[index].width,
+                                                  .height = splitPictures[index].height,
+                                                  .view = SplitViewBase + index,
+                                                  .window = true};
+                        made.sideNormal = view.sideNormal;
+                        made.sideMargin = 0.5f * split.lineThickness + 16.0f * static_cast<f32>(targetHeight) / 1080.0f;
+                        return made;
+                    };
+                    render::RenderTarget mainTarget = windowTarget;
+                    if (splitDrawn && wholeDrawn) {
+                        mainTarget.color = splitPictures[SplitWhole].texture;
+                    }
+                    else if (splitDrawn) {
+                        mainTarget = viewTarget(0);
+                        mainTarget.stepsFrame = true;
+                    }
+                    render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
+                    renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
+
+                    if (splitDrawn) {
+                        // **Every other view**: its own extraction, culled to its
+                        // own camera, with everything the first picture was given
+                        // -- the terrain, the effects, the sky, what a room
+                        // reflects, the interface on the world's walls -- built
+                        // again for THIS camera where it faces one.
+                        for (core::u32 index = wholeDrawn ? 0 : 1; index < split.count; ++index) {
+                            const scene::ScreenView& view = split.views[index];
+                            const std::optional<render::ViewOverride> lens = lensOf(view.camera);
+                            if (!lens.has_value())
+                                continue;
+                            const render::RenderTarget made = viewTarget(index);
+                            const scene::World& world = host->world();
+                            {
+                                ENG_PROFILE_SCOPE("render.extract");
+                                render::extract(world, host->workspace(), host->lighting(), meshLibrary,
+                                                static_cast<f32>(made.width) / static_cast<f32>(made.height),
+                                                shadowRadius, host->animation(), framePoses, viewSnapshot, &*lens, {},
+                                                &textureLibrary, terrainNodes);
+                            }
+                            host->reportSeenSkins(viewSnapshot.seenSkins, false);
+                            terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
+                            particles.append(viewSnapshot, &textureLibrary);
+                            ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
+                            foliage.append(world, meshLibrary, viewSnapshot, &textureLibrary);
+                            skyLoader.append(viewSnapshot);
+                            indirectLight.append(viewSnapshot);
+                            buildWorldUi(host->world(), host->workspace(), host->uiService(),
+                                         core::Vec2{static_cast<f32>(made.width), static_cast<f32>(made.height)},
+                                         uiTextures, worldUiDrawList, viewSnapshot, &uiGradients, &framePoses);
+                            viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
+                            applyDebugHide(viewSnapshot, debugHide);
+                            render::jitterCamera(viewSnapshot.camera, renderer->cameraJitter(viewSnapshot, made));
+                            renderer->render(*device, *cmd, made, viewSnapshot, meshCache);
+                        }
+                        // And the window made of them.
+                        render::ViewComposite composite;
+                        composite.count = split.count;
+                        for (core::u32 index = 0; index < split.count; ++index) {
+                            const core::Rect& rect = split.views[index].rect;
+                            composite.views[index] = render::ComposedView{.picture = splitPictures[index].texture,
+                                                                          .x = static_cast<core::u32>(rect.min.x),
+                                                                          .y = static_cast<core::u32>(rect.min.y),
+                                                                          .width = widthOf(rect),
+                                                                          .height = heightOf(rect)};
+                        }
+                        composite.acrossLine = split.form == scene::ScreenForm::Line;
+                        if (composite.acrossLine)
+                            composite.lineNormal = split.views[0].sideNormal;
+                        composite.lineThickness = split.lineThickness;
+                        composite.lineColor = split.lineColor;
+                        // `--debug-view=side`: the second view whole, with no
+                        // line -- a line with no direction has every pixel on the
+                        // second view's side.
+                        if (composite.acrossLine && renderer->settings().debugView == render::DebugView::Side) {
+                            composite.lineNormal = core::Vec2{};
+                            composite.lineThickness = 0.0f;
+                        }
+                        if (wholeDrawn) {
+                            composite.whole = splitPictures[SplitWhole].texture;
+                            composite.wholeWeight = split.wholeWeight;
+                        }
+                        renderer->composeViews(*device, *cmd, composite, windowTarget);
+                    }
+
+                    // Debug geometry goes on top, in a pass that LOADS rather than
+                    // clears: it is an overlay on the rendered frame, not a
+                    // replacement for it.
+                    if (debugRenderer.valid() && !debugDraw.vertices().empty()) {
+                        const std::array<rhi::ColorAttachment, 1> overlayColors{rhi::ColorAttachment{
+                            .texture = target,
+                            .loadOp = rhi::LoadOp::Load,
+                            .storeOp = rhi::StoreOp::Store,
+                        }};
+                        cmd->pushDebugGroup("debug-draw");
+                        cmd->beginRenderPass({.colorAttachments = overlayColors, .debugName = "debug-draw"});
+                        // Over the frame's first picture, which is a part of the
+                        // window when it is shared (ADR 0205).
+                        cmd->setViewport({
+                            .x = mainCorner.x,
+                            .y = mainCorner.y,
+                            .width = static_cast<f32>(mainWidth),
+                            .height = static_cast<f32>(mainHeight),
+                        });
+                        // Kept to that part, where there is more than one.
+                        if (mainWidth != targetWidth || mainHeight != targetHeight)
+                            cmd->setScissor({.x = static_cast<core::i32>(mainCorner.x),
+                                             .y = static_cast<core::i32>(mainCorner.y),
+                                             .width = static_cast<core::i32>(mainWidth),
+                                             .height = static_cast<core::i32>(mainHeight)});
+                        // Unjittered (ADR 0158): an overlay on the finished
+                        // picture, which the temporal pass has steadied.
+                        debugRenderer.render(*cmd, snapshot.camera.unjitteredViewProjection);
+                        cmd->endRenderPass();
+                        cmd->popDebugGroup();
+                    }
                 }
                 else {
-                    curtainWarmed = false;
-                }
-                const std::array<rhi::ColorAttachment, 1> backdrop{rhi::ColorAttachment{
-                    .texture = target,
-                    .loadOp = rhi::LoadOp::Clear,
-                    .storeOp = rhi::StoreOp::Store,
-                    .clearColor = {0.0f, 0.0f, 0.0f, 1.0f},
-                }};
-                cmd->beginRenderPass({.colorAttachments = backdrop, .debugName = "curtain"});
-                cmd->endRenderPass();
-            }
-            else if (useRenderer) {
-                ENG_PROFILE_SCOPE("render.world");
-                // **Where this frame samples each pixel** (ADR 0158): a
-                // fraction of a pixel off from the last, for the temporal
-                // pass, and nowhere else at all.
-                const render::RenderTarget windowTarget{
-                    .color = target, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight};
-                // **A view of the window's** (ADR 0205): its own picture at
-                // the size of its part, and of two across a line the side it
-                // is seen on -- with what a filter reads past the line.
-                const auto viewTarget = [&](core::u32 index) {
-                    const scene::ScreenView& view = split.views[index];
-                    render::RenderTarget made{.color = splitPictures[index].texture,
-                                              .colorFormat = targetFormat,
-                                              .width = splitPictures[index].width,
-                                              .height = splitPictures[index].height,
-                                              .view = SplitViewBase + index,
-                                              .window = true};
-                    made.sideNormal = view.sideNormal;
-                    made.sideMargin = 0.5f * split.lineThickness + 16.0f * static_cast<f32>(targetHeight) / 1080.0f;
-                    return made;
-                };
-                render::RenderTarget mainTarget = windowTarget;
-                if (splitDrawn && wholeDrawn) {
-                    mainTarget.color = splitPictures[SplitWhole].texture;
-                }
-                else if (splitDrawn) {
-                    mainTarget = viewTarget(0);
-                    mainTarget.stepsFrame = true;
-                }
-                render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
-                renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
 
-                if (splitDrawn) {
-                    // **Every other view**: its own extraction, culled to its
-                    // own camera, with everything the first picture was given
-                    // -- the terrain, the effects, the sky, what a room
-                    // reflects, the interface on the world's walls -- built
-                    // again for THIS camera where it faces one.
-                    for (core::u32 index = wholeDrawn ? 0 : 1; index < split.count; ++index) {
-                        const scene::ScreenView& view = split.views[index];
-                        const std::optional<render::ViewOverride> lens = lensOf(view.camera);
-                        if (!lens.has_value())
-                            continue;
-                        const render::RenderTarget made = viewTarget(index);
-                        const scene::World& world = host->world();
-                        {
-                            ENG_PROFILE_SCOPE("render.extract");
-                            render::extract(world, host->workspace(), host->lighting(), meshLibrary,
-                                            static_cast<f32>(made.width) / static_cast<f32>(made.height), shadowRadius,
-                                            host->animation(), framePoses, viewSnapshot, &*lens, {}, &textureLibrary,
-                                            terrainNodes);
-                        }
-                        host->reportSeenSkins(viewSnapshot.seenSkins, false);
-                        terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
-                        particles.append(viewSnapshot, &textureLibrary);
-                        ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
-                        foliage.append(world, meshLibrary, viewSnapshot, &textureLibrary);
-                        skyLoader.append(viewSnapshot);
-                        indirectLight.append(viewSnapshot);
-                        buildWorldUi(host->world(), host->workspace(), host->uiService(),
-                                     core::Vec2{static_cast<f32>(made.width), static_cast<f32>(made.height)},
-                                     uiTextures, worldUiDrawList, viewSnapshot, &uiGradients, &framePoses);
-                        viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
-                        applyDebugHide(viewSnapshot, debugHide);
-                        render::jitterCamera(viewSnapshot.camera, renderer->cameraJitter(viewSnapshot, made));
-                        renderer->render(*device, *cmd, made, viewSnapshot, meshCache);
-                    }
-                    // And the window made of them.
-                    render::ViewComposite composite;
-                    composite.count = split.count;
-                    for (core::u32 index = 0; index < split.count; ++index) {
-                        const core::Rect& rect = split.views[index].rect;
-                        composite.views[index] = render::ComposedView{.picture = splitPictures[index].texture,
-                                                                      .x = static_cast<core::u32>(rect.min.x),
-                                                                      .y = static_cast<core::u32>(rect.min.y),
-                                                                      .width = widthOf(rect),
-                                                                      .height = heightOf(rect)};
-                    }
-                    composite.acrossLine = split.form == scene::ScreenForm::Line;
-                    if (composite.acrossLine)
-                        composite.lineNormal = split.views[0].sideNormal;
-                    composite.lineThickness = split.lineThickness;
-                    composite.lineColor = split.lineColor;
-                    // `--debug-view=side`: the second view whole, with no
-                    // line -- a line with no direction has every pixel on the
-                    // second view's side.
-                    if (composite.acrossLine && renderer->settings().debugView == render::DebugView::Side) {
-                        composite.lineNormal = core::Vec2{};
-                        composite.lineThickness = 0.0f;
-                    }
-                    if (wholeDrawn) {
-                        composite.whole = splitPictures[SplitWhole].texture;
-                        composite.wholeWeight = split.wholeWeight;
-                    }
-                    renderer->composeViews(*device, *cmd, composite, windowTarget);
-                }
-
-                // Debug geometry goes on top, in a pass that LOADS rather than
-                // clears: it is an overlay on the rendered frame, not a
-                // replacement for it.
-                if (debugRenderer.valid() && !debugDraw.vertices().empty()) {
-                    const std::array<rhi::ColorAttachment, 1> overlayColors{rhi::ColorAttachment{
+                    const std::array<rhi::ColorAttachment, 1> colors{rhi::ColorAttachment{
                         .texture = target,
-                        .loadOp = rhi::LoadOp::Load,
+                        .loadOp = rhi::LoadOp::Clear,
                         .storeOp = rhi::StoreOp::Store,
+                        .clearColor = pulseColor(scheduler.totalTicks(), scheduler.timing().fixedDt),
                     }};
-                    cmd->pushDebugGroup("debug-draw");
-                    cmd->beginRenderPass({.colorAttachments = overlayColors, .debugName = "debug-draw"});
-                    // Over the frame's first picture, which is a part of the
-                    // window when it is shared (ADR 0205).
-                    cmd->setViewport({
-                        .x = mainCorner.x,
-                        .y = mainCorner.y,
-                        .width = static_cast<f32>(mainWidth),
-                        .height = static_cast<f32>(mainHeight),
-                    });
-                    // Kept to that part, where there is more than one.
-                    if (mainWidth != targetWidth || mainHeight != targetHeight)
-                        cmd->setScissor({.x = static_cast<core::i32>(mainCorner.x),
-                                         .y = static_cast<core::i32>(mainCorner.y),
-                                         .width = static_cast<core::i32>(mainWidth),
-                                         .height = static_cast<core::i32>(mainHeight)});
-                    // Unjittered (ADR 0158): an overlay on the finished
-                    // picture, which the temporal pass has steadied.
-                    debugRenderer.render(*cmd, snapshot.camera.unjitteredViewProjection);
+
+                    cmd->pushDebugGroup("frame");
+                    cmd->beginRenderPass({.colorAttachments = colors, .debugName = "clear"});
+
+                    if (debugRenderer.valid() && targetWidth > 0 && targetHeight > 0) {
+                        cmd->setViewport({
+                            .width = static_cast<f32>(targetWidth),
+                            .height = static_cast<f32>(targetHeight),
+                        });
+                        debugRenderer.render(*cmd, orbitCamera(targetWidth, targetHeight));
+                    }
+
                     cmd->endRenderPass();
                     cmd->popDebugGroup();
                 }
-            }
-            else {
 
-                const std::array<rhi::ColorAttachment, 1> colors{rhi::ColorAttachment{
-                    .texture = target,
-                    .loadOp = rhi::LoadOp::Clear,
-                    .storeOp = rhi::StoreOp::Store,
-                    .clearColor = pulseColor(scheduler.totalTicks(), scheduler.timing().fixedDt),
-                }};
-
-                cmd->pushDebugGroup("frame");
-                cmd->beginRenderPass({.colorAttachments = colors, .debugName = "clear"});
-
-                if (debugRenderer.valid() && targetWidth > 0 && targetHeight > 0) {
-                    cmd->setViewport({
-                        .width = static_cast<f32>(targetWidth),
-                        .height = static_cast<f32>(targetHeight),
-                    });
-                    debugRenderer.render(*cmd, orbitCamera(targetWidth, targetHeight));
-                }
-
-                cmd->endRenderPass();
-                cmd->popDebugGroup();
-            }
-
-            // **The frame between this one and the last** (ADR 0165), and
-            // which of the two the window is shown now.
-            bool groupPictures = true;
-            if (generating) {
-                const bool drawn = useRenderer && !curtain.up();
-                const rhi::TextureHandle picture = target;
-                const render::RenderTarget screen{
-                    .color = present, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight};
-                rhi::TextureHandle between{};
-                if (drawn && renderer->generatesFrames(snapshot)) {
-                    ENG_PROFILE_SCOPE("render.frame_generation");
-                    between = renderer->interpolateFrame(*device, *cmd,
-                                                         madeFrames.previous ? madeFrames.picture[madeFrames.turn ^ 1u]
-                                                                             : rhi::TextureHandle{},
-                                                         picture, targetWidth, targetHeight);
-                }
-                madeFrames.previous = drawn;
-                madeFrames.turn ^= 1u;
-                target = present;
-                if (!between.valid()) {
-                    // Nothing made: the drawn frame, as any frame is shown.
-                    renderer->showPicture(*device, *cmd, picture, screen);
-                }
-                else if (options.headless) {
-                    // **Without a window there is nothing to pace**: the made
-                    // frame, then the drawn one, each a frame shown.
-                    renderer->showPicture(*device, *cmd, between, screen);
-                    drawInterface(*cmd, present, uiViewport, true);
-                    groupPictures = false;
-                    device->submitAndPresent();
-                    notePassTimes();
-                    ++madeFrames.made;
-                    if (auto shotError = pictureEvery(frame.index + madeFrames.made); shotError.has_value())
-                        return shotError;
-                    cmd = device->beginFrame();
-                    if (cmd == nullptr) {
-                        if (device->lost())
-                            break;
-                        continue;
+                // **The frame between this one and the last** (ADR 0165), and
+                // which of the two the window is shown now.
+                bool groupPictures = true;
+                if (generating) {
+                    const bool drawn = useRenderer && !curtain.up();
+                    const rhi::TextureHandle picture = target;
+                    const render::RenderTarget screen{
+                        .color = present, .colorFormat = targetFormat, .width = targetWidth, .height = targetHeight};
+                    rhi::TextureHandle between{};
+                    if (drawn && renderer->generatesFrames(snapshot)) {
+                        ENG_PROFILE_SCOPE("render.frame_generation");
+                        between = renderer->interpolateFrame(
+                            *device, *cmd,
+                            madeFrames.previous ? madeFrames.picture[madeFrames.turn ^ 1u] : rhi::TextureHandle{},
+                            picture, targetWidth, targetHeight);
                     }
-                    renderer->showPicture(*device, *cmd, picture, screen);
+                    madeFrames.previous = drawn;
+                    madeFrames.turn ^= 1u;
+                    target = present;
+                    if (!between.valid()) {
+                        // Nothing made: the drawn frame, as any frame is shown.
+                        renderer->showPicture(*device, *cmd, picture, screen);
+                    }
+                    else if (options.headless) {
+                        // **Without a window there is nothing to pace**: the made
+                        // frame, then the drawn one, each a frame shown.
+                        renderer->showPicture(*device, *cmd, between, screen);
+                        drawInterface(*cmd, present, uiViewport, true);
+                        groupPictures = false;
+                        device->submitAndPresent();
+                        notePassTimes();
+                        ++madeFrames.made;
+                        if (auto shotError = pictureEvery(frame.index + madeFrames.made); shotError.has_value())
+                            return shotError;
+                        cmd = device->beginFrame();
+                        if (cmd == nullptr) {
+                            if (device->lost())
+                                break;
+                            continue;
+                        }
+                        renderer->showPicture(*device, *cmd, picture, screen);
+                    }
+                    else {
+                        // The made frame now, and the drawn one when the next
+                        // frame's drawing begins (`madeFrames.waiting`).
+                        renderer->showPicture(*device, *cmd, between, screen);
+                        madeFrames.waiting = picture;
+                        madeFrames.waitingViewport = uiViewport;
+                        ++madeFrames.made;
+                    }
                 }
-                else {
-                    // The made frame now, and the drawn one when the next
-                    // frame's drawing begins (`madeFrames.waiting`).
-                    renderer->showPicture(*device, *cmd, between, screen);
-                    madeFrames.waiting = picture;
-                    madeFrames.waitingViewport = uiViewport;
-                    ++madeFrames.made;
+
+                // The UI, in its own pass that LOADS: it is drawn over the finished
+                // frame whatever produced it, so a project with no camera still has
+                // a menu. Before the debug overlay and after everything else, which
+                // is the order api-design.md §2.2 implies -- game UI is part of the
+                // game, and the ImGui overlay is on top of the game.
+                drawInterface(*cmd, target, uiViewport, groupPictures);
+
+                // Its own pass, on top of the finished frame, after ours closed and
+                // before submit -- the ordering the overlay's contract asks for.
+                //
+                // In the editor it goes to the SCREEN while everything above went
+                // to the panel's texture, and the screen has had nothing written to
+                // it this frame -- so it is cleared first. Without that, whatever
+                // the dockspace leaves transparent shows a previous frame or worse.
+                if (options.editor && present.valid() && present != target) {
+                    const std::array<rhi::ColorAttachment, 1> clear{rhi::ColorAttachment{
+                        .texture = present,
+                        .loadOp = rhi::LoadOp::Clear,
+                        .storeOp = rhi::StoreOp::Store,
+                        .clearColor = {0.06f, 0.06f, 0.07f, 1.0f},
+                    }};
+                    cmd->beginRenderPass({.colorAttachments = clear, .debugName = "editor-backdrop"});
+                    cmd->endRenderPass();
                 }
-            }
 
-            // The UI, in its own pass that LOADS: it is drawn over the finished
-            // frame whatever produced it, so a project with no camera still has
-            // a menu. Before the debug overlay and after everything else, which
-            // is the order api-design.md §2.2 implies -- game UI is part of the
-            // game, and the ImGui overlay is on top of the game.
-            drawInterface(*cmd, target, uiViewport, groupPictures);
-
-            // Its own pass, on top of the finished frame, after ours closed and
-            // before submit -- the ordering the overlay's contract asks for.
-            //
-            // In the editor it goes to the SCREEN while everything above went
-            // to the panel's texture, and the screen has had nothing written to
-            // it this frame -- so it is cleared first. Without that, whatever
-            // the dockspace leaves transparent shows a previous frame or worse.
-            if (options.editor && present.valid() && present != target) {
-                const std::array<rhi::ColorAttachment, 1> clear{rhi::ColorAttachment{
-                    .texture = present,
-                    .loadOp = rhi::LoadOp::Clear,
-                    .storeOp = rhi::StoreOp::Store,
-                    .clearColor = {0.06f, 0.06f, 0.07f, 1.0f},
-                }};
-                cmd->beginRenderPass({.colorAttachments = clear, .debugName = "editor-backdrop"});
-                cmd->endRenderPass();
-            }
-
-            if (overlay.has_value()) {
-                if (options.editor) {
-                    overlay->setEditorTarget(&editor, viewportTarget.texture());
-                    overlay->setIcons(&iconAtlas);
-                    overlay->setThumbnails(&thumbnails);
-                    overlay->setSaves(host->saves());
-                    overlay->setTimeline(&timeline, &host->sequences());
-                    overlay->setProfiler(&profiler);
-                    overlay->setGraphs(&graphs, &graphCommands);
+                if (overlay.has_value()) {
+                    if (options.editor) {
+                        overlay->setEditorTarget(&editor, viewportTarget.texture());
+                        overlay->setIcons(&iconAtlas);
+                        overlay->setThumbnails(&thumbnails);
+                        overlay->setSaves(host->saves());
+                        overlay->setTimeline(&timeline, &host->sequences());
+                        overlay->setProfiler(&profiler);
+                        overlay->setGraphs(&graphs, &graphCommands);
 #if ENG_DEBUG_UI
-                    overlay->setSurfaceCompiler(surfaceCompiler.get());
+                        overlay->setSurfaceCompiler(surfaceCompiler.get());
 #endif
-                    overlay->setScriptEditor(&scripts);
-                    // Re-pointed every frame rather than once: a project open
-                    // or a hot reload builds a new animation system, and a
-                    // pointer set at boot would name the previous one.
-                    overlay->setSkeleton(host->animation());
-                    overlay->setMorphs(host->morphs());
-                    overlay->setAnimation(host->graphHost());
+                        overlay->setScriptEditor(&scripts);
+                        // Re-pointed every frame rather than once: a project open
+                        // or a hot reload builds a new animation system, and a
+                        // pointer set at boot would name the previous one.
+                        overlay->setSkeleton(host->animation());
+                        overlay->setMorphs(host->morphs());
+                        overlay->setAnimation(host->graphHost());
+                    }
+                    // **What the frame cost, handed over before it is drawn**.
+                    // The Stats readout showed frame time, backend and
+                    // drawable size and nothing about the work -- in BOTH shells,
+                    // despite the plan recording that the F3 one had it. Counted
+                    // by the renderer where it can be (`drawCalls`), and by the
+                    // extraction walk where only that knows (`visibleObjects`, the
+                    // coarse-LOD draws and the triangles at the level chosen).
+                    overlay->setRenderCounters({
+                        .drawCalls = frameDrawCalls,
+                        .visibleObjects = frameVisibleObjects,
+                        .instancedDraws = frameInstancedDraws,
+                        .lodDraws = frameLodDraws,
+                        .triangles = static_cast<core::u32>(frameTriangles),
+                        .foliageTiles = foliage.stats().tilesResident,
+                        .foliageInstances = foliage.stats().instancesResident,
+                        .foliageGrown = foliage.stats().tilesGrownLastSync,
+                        .highlights = static_cast<core::u32>(snapshot.highlights.size()),
+                        .highlightsDropped = snapshot.highlightsDropped,
+                        .beams = ribbons.stats().beams,
+                        .trails = ribbons.stats().trails,
+                        .ribbonPieces = ribbons.stats().pieces,
+                        .particles = static_cast<core::u32>(particles.liveCount()),
+                        .terrainEdits = terrainLoader.editLatency().edits,
+                        .terrainEditMs = terrainLoader.editLatency().lastMs,
+                        .terrainEditFrames = terrainLoader.editLatency().lastFrames,
+                        .terrainEditWorstMs = terrainLoader.editLatency().worstMs,
+                        .terrainEditWorstFrames = terrainLoader.editLatency().worstFrames,
+                    });
+                    overlay->render(*cmd, options.editor && present.valid() ? present : target, frame);
                 }
-                // **What the frame cost, handed over before it is drawn**.
-                // The Stats readout showed frame time, backend and
-                // drawable size and nothing about the work -- in BOTH shells,
-                // despite the plan recording that the F3 one had it. Counted
-                // by the renderer where it can be (`drawCalls`), and by the
-                // extraction walk where only that knows (`visibleObjects`, the
-                // coarse-LOD draws and the triangles at the level chosen).
-                overlay->setRenderCounters({
-                    .drawCalls = frameDrawCalls,
-                    .visibleObjects = frameVisibleObjects,
-                    .instancedDraws = frameInstancedDraws,
-                    .lodDraws = frameLodDraws,
-                    .triangles = static_cast<core::u32>(frameTriangles),
-                    .foliageTiles = foliage.stats().tilesResident,
-                    .foliageInstances = foliage.stats().instancesResident,
-                    .foliageGrown = foliage.stats().tilesGrownLastSync,
-                    .highlights = static_cast<core::u32>(snapshot.highlights.size()),
-                    .highlightsDropped = snapshot.highlightsDropped,
-                    .beams = ribbons.stats().beams,
-                    .trails = ribbons.stats().trails,
-                    .ribbonPieces = ribbons.stats().pieces,
-                    .particles = static_cast<core::u32>(particles.liveCount()),
-                    .terrainEdits = terrainLoader.editLatency().edits,
-                    .terrainEditMs = terrainLoader.editLatency().lastMs,
-                    .terrainEditFrames = terrainLoader.editLatency().lastFrames,
-                    .terrainEditWorstMs = terrainLoader.editLatency().worstMs,
-                    .terrainEditWorstFrames = terrainLoader.editLatency().worstFrames,
-                });
-                overlay->render(*cmd, options.editor && present.valid() ? present : target, frame);
             }
         }
 

@@ -9,6 +9,11 @@ namespace engine::script {
 
 int networkServiceTravel(lua_State* L);
 int networkServiceTravelGroup(lua_State* L);
+// ADR 0230: a channel by its number, the world and channel a player is in,
+// and the list of this world's channels.
+int networkServiceSwitchChannel(lua_State* L);
+int networkServiceTravelToPlayer(lua_State* L);
+int networkServiceGetChannelsAsync(lua_State* L);
 
 // Between ticks: who arrived, once their player is in the world, and a
 // client sent elsewhere.

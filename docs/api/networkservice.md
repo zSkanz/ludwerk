@@ -22,6 +22,7 @@ listed on the page of the class that declares them.
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `Authority` | `boolean` | — | read-only | Whether this process decides the state of the world. It is true in single-player, when hosting and on a dedicated server, and false on a client, which shows the state it is sent. |
+| `Channel` | `number` | — | read-only | Which channel of its world this server is: 1 for a world without channels, and for the first of a world with them. A `[[world]]` with `channels = true` in `servers.toml` is copied into channels 2, 3 and on as the open ones fill, each a server of its own. |
 | `JoinCode` | `string` | — | read-only | The code other players use to join this machine's match through a relay. It is eight letters and digits, without 0, 1, I or O, which are easily confused. The relay resolves it to this host wherever the host is, including behind a home router or on a mobile network.<br><br>It is empty until `RelayState` is `Ready`, and on a machine that is not hosting through a relay. It stays the same for as long as the match is hosted, even if the relay restarts, and changes the next time `Host` is called. |
 | `LocalPlayer` | `Player?` | — | read-only | The player at this machine. It exists from startup in single-player, when hosting and when joining. It is nil on a dedicated server. |
 | `MaxPlayers` | `number` | `0` | read/write | The largest number of players in this machine's match, including the host's own player. It is the limit on the length of `GetPlayers()`. The host sets it, to an integer of at least 1, before or after calling `Host`.<br><br>A player who tries to join a full match is refused, and their `JoinFailed` reports that the match is full. Lowering the value removes no one: players already in the match stay until they leave or are removed with `Player:Kick`.<br><br>The value cannot exceed the capacity the match was opened with, which is 32 other players or the `--max-players` flag; that capacity is what it reads while hosting if it was never set. On a machine that joined a match it reads 0, and setting it raises an error. |
@@ -48,6 +49,12 @@ Forgets the key this machine saved for the server at `address`, written as for `
 
 Joining by code saves nothing, so there is nothing to forget.
 
+### `GetChannelsAsync(): { { Channel: number, Players: number, MaxPlayers: number } }`
+
+This method yields: the calling thread waits until it completes.
+
+Returns the open channels of the world this server is, each with how many players it holds and may hold, as the manager last heard. It waits for the manager's answer. For a world without channels, the one entry is this world.
+
 ### `GetLocalAddresses(): {string}`
 
 Returns this machine's IPv4 addresses on its local networks, best first. A host can show them for players on the same network to type.
@@ -62,7 +69,7 @@ Returns the local players on this machine in the order they joined, with the pri
 
 Returns every player in the game, in the order they joined. In single-player it returns the one local player, so code that loops over players works with and without networking.
 
-### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }`
+### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }`
 
 Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.
 
@@ -83,6 +90,8 @@ Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Fiv
 `CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.
 
 `WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages with the transport's headers, acknowledgements, resends and encryption added. They are what a player's connection pays for, and are larger than `BytesSent` and `BytesReceived`.
+
+On an authority, `Deferred` counts the updates its players' budgets held back in the last second (`Player.ReplicationBudget`), and `BudgetUsed` is how much of those budgets that second's snapshots spent, from 0 to 1; above 1 when what may not wait, such as a player joining, spent more. Both are 0 on a client.
 
 `Path` says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet, or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.
 
@@ -116,15 +125,27 @@ The result has `Ping`, the shortest of the three round trips in milliseconds; `M
 
 Removes a guest player from an offline game, firing `PlayerRemoving`. Returns whether the removal was started. It does not remove the primary local player or a remote player.
 
-### `Travel(player: Player, target: string, data: any? = nil)`
+### `SwitchChannel(player: Player, channel: number): boolean`
+
+Sends `player` to channel `channel` of the world this server is, for a channel menu: as `Travel` does, and with `TravelArrived` there. A channel that is not open, or full, leaves them where they are, and a warning says why. Only a world a manager started can call it. Returns whether `player` was asked to go: false for a player who has left.
+
+### `Travel(player: Player, target: string, data: any? = nil): boolean`
 
 Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that one, which fires `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can store, at most 16 KiB. Their character does not travel; the target spawns one.
 
 Only a world a manager started can send players elsewhere: anywhere else, and for a world the manager does not have, this raises at once.
 
-### `TravelGroup(players: {Player}, target: string, data: any? = nil)`
+Returns whether `player` was sent. A player who left while the script waited, for `CreateInstanceAsync` say, is not an error: they are gone, nothing is sent, and it returns false.
+
+### `TravelGroup(players: {Player}, target: string, data: any? = nil): {Player}`
 
 Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.
+
+Returns the players sent, in the order given. Any who left while the script waited are skipped, not an error, and the rest still go together; when none is left, it returns an empty table and sends nobody.
+
+### `TravelToPlayer(player: Player, key: string): boolean`
+
+Sends `player` to the world, and the channel of it, where the player whose `PublicKey` is `key` is now: a friend, a party's leader. When that world is full, or the other player is in none, they stay where they are, and a warning says why. Returns whether `player` was asked to go: false for a player who has left.
 
 ### `VerifyTicket(ticket: string): { [string]: any }?`
 
@@ -140,6 +161,10 @@ inside the call that fired the signal.
 ### `Announced(text: string)`
 
 Fires on every machine of the match when the server's operator says something to everybody, with the console's `say` or as `stop` counts down. The engine writes it to the log and draws nothing: a game shows it its own way, or mounts `@engine/announcements`, which shows each one across the top of the screen for a few seconds.
+
+### `ChannelMerging(seconds: number)`
+
+Fires on a channel the manager is about to merge into another, because it has held under a quarter of its players for a while. In `seconds` its players are moved, all together, to the fullest channel with room. A game can say so first.
 
 ### `Connected()`
 
@@ -166,6 +191,10 @@ Fires when a player joins. A script that connects at its top level and then loop
 ### `PlayerRemoving(player: Player)`
 
 Fires when a player is leaving. The player object is still valid inside the handler, so a game can save that player's data.
+
+### `Queued(position: number, estimateSeconds: number?)`
+
+Fires on a client waiting in line at a full game's front door, with its place and an estimate. The place counts from 1. The estimate is about how many seconds until its turn, measured by how fast the line moved in the last five minutes, and nil before anybody has left it. It fires when the machine joins the line and every five seconds after; `Connected` fires as usual when it is let in. `@engine/travelscreen` shows it.
 
 ### `RelayStateChanged()`
 

@@ -253,4 +253,45 @@ TEST_CASE("two worlds built the same way are the same world, bit for bit")
     }
 }
 
+TEST_CASE("ADR 0231: a phased wall stops a player's body in its phase, and no other player's")
+{
+    // A wall across the way in phase 1 (its bit, 0, plus one), and a body
+    // with no gravity sliding into it: a player's in that phase, a player's
+    // in another, and one that is nobody's.
+    const auto slide = [](bool holder, u64 mask) {
+        const Physics2DResult physics = createBox2DPhysics();
+        const World2DHandle world = physics->createWorld({});
+        Body2DDesc wall;
+        wall.motion = Motion2D::Static;
+        wall.shape.type = Shape2DType::Box;
+        wall.shape.halfExtents = core::Vec2{0.25f, 5.0f};
+        wall.position = core::Vec2{6.0f, 0.0f};
+        wall.userData = 8;
+        const Body2DHandle built = physics->createBody(world, wall);
+        REQUIRE(built.valid());
+        physics->setBodyPhase(world, built, 1, false, 0);
+        Body2DDesc mover;
+        mover.shape.type = Shape2DType::Box;
+        mover.shape.halfExtents = core::Vec2{0.5f, 0.5f};
+        mover.position = core::Vec2{0.0f, 0.0f};
+        mover.linearVelocity = core::Vec2{4.0f, 0.0f};
+        mover.gravityScale = 0.0f;
+        mover.userData = 9;
+        const Body2DHandle body = physics->createBody(world, mover);
+        REQUIRE(body.valid());
+        if (holder)
+            physics->setBodyPhase(world, body, 0, true, mask);
+        for (int at = 0; at < 150; ++at) {
+            physics->setVelocity(world, body, core::Vec2{4.0f, 0.0f}, 0.0f);
+            physics->step(world, Tick);
+        }
+        const f32 x = physics->bodyState(world, body).position.x;
+        physics->destroyWorld(world);
+        return x;
+    };
+    CHECK(slide(true, 0b1) < 6.0f);
+    CHECK(slide(true, 0b10) > 7.0f);
+    CHECK(slide(false, 0) < 6.0f);
+}
+
 #endif

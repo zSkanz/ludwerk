@@ -260,6 +260,11 @@ public:
     // is refiltered.
     virtual void setGroupsCollidable(World2DHandle world, CollisionGroup2D a, CollisionGroup2D b, bool collidable) = 0;
 
+    // **Phases** (ADR 0231), as `IPhysics::setBodyPhase` has them: a body in
+    // a phase -- its bit plus one -- meets only bodies whose mask has that
+    // bit, among those that carry one.
+    virtual void setBodyPhase(World2DHandle, Body2DHandle, core::u8 /*phase*/, bool /*holder*/, core::u64 /*mask*/) {}
+
     // A joint between two bodies of one world, or an invalid handle when either
     // body is not there or both are the same. The weld and the hinge take the
     // bodies' angles at this moment as their reference.

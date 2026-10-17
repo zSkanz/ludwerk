@@ -22,17 +22,44 @@ listed on the page of the class that declares them.
 | `Character2D` | `Part2D?` | — | read/write | The `Part2D` that represents this player on the 2D plane; the 2D counterpart of `Character`. A player has one character: setting either property clears the other, and each reads nil while the other is set. There are two properties so that each has the right type.<br><br>It is used the same way as `Character`. The authority sends each client the instances near its character. On the player's own machine, the character is not drawn from past updates: what local scripts did to it is kept, and the authority's updates correct it by the difference. A client that moves it with the same code the server uses is never corrected; the multiplayer guide shows the pattern. On a client that does not move it, it is at the position of the newest update. |
 | `GamepadId` | `number` | `0` | read/write | The id of the gamepad a local player uses, as numbered by `InputService:GetGamepads`; 0 means none is assigned. It selects which gamepad navigates that player's interfaces (see `ScreenGui.Player`). It does not affect input actions: an `InputContext` has its own `GamepadId`. The game sets it when a gamepad joins. |
 | `PublicKey` | `string` | — | read-only | The key this player's game proved when it joined, in hexadecimal. It is the same on every connection from the same copy of the game, and after the server restarts. On the server every player has one; on a client only its own players do. Empty where the match is not encrypted. Saved data and a ban are kept by it; a player who deletes their game's key file is a new player, so a game with accounts keys what lasts by its own account id. |
+| `ReplicationBudget` | `number` | `0` | read/write | The most of the world's state, in kilobytes (1,024 bytes) a second, this player's machine is sent. 0, the default, is the game's `client_budget_kb_per_second` under `[network]` in `project.toml`, which is 48 unless the game says otherwise.<br><br>When more changes than that, the authority sends what matters most to this player first: their own character and what they own, always; then what is nearest them, times `BasePart.ReplicationPriority`, times `SetReplicationPriority`. What waits keeps growing in priority until it is sent, and a changed part waits no more than about a second while the budget can carry each once a second. Messages a script sends (`RemoteEvent`) and what a player is sent as they join are not counted.<br><br>Only the authority reads it. A player on a weak network, or a spectator, can be given less. |
 | `ReplicationFocus` | `BasePart?` | — | read/write | The part used in place of this player's character to decide what is sent to their machine. For example, set it to a friend's character while a defeated player spectates. With nil, the default, the player's own `Character` is used.<br><br>Only the authority sets it. It controls which parts are streamed to the player and which agents of a replicated `Swarm` are sent. It does not change which character the client predicts. |
 | `UserId` | `number` | — | read-only | The number the authority gives this player. It is 1 for the player on a single-player or hosting machine, and 2 and up for clients in the order they joined. It is never reused within a session, and a player who reconnects while the server runs gets the same one. It is not kept when the server restarts: what lasts is `PublicKey`, and an account id a game gives its players (`NetworkService.OnJoinRequest`). |
 
 ## Methods
 
+### `AddPhase(phase: string)`
+
+Puts this player in `phase`: they see, and collide with, what has that `Phase`. Only the server calls it; the player's own machine is told, and reads it with `HasPhase` and `GetPhases`. A world names at most 64 phases, and the 65th raises.
+
+### `CanSee(instance: Instance): boolean`
+
+Whether this player is in the phase of `instance` and of everything above it: what decides whether it is sent to them. For a game's own hit and interaction code. It says nothing of distance.
+
 ### `GetIntent(action: string): boolean | number | Vector2 | vector`
 
 Returns the value of this player's input action of the given name for the current tick. The type is the one `InputAction:GetState` returns: a boolean, a number, a `Vector2` or a `vector`. For the local player it is this machine's own action; for a remote player it is the value their machine sent. An action the player never sent reads false.
+
+### `GetPhases(): {string}`
+
+The phases this player is in, in no particular order.
+
+### `HasPhase(phase: string): boolean`
+
+Whether this player is in `phase`.
 
 ### `Kick(reason: string? = nil)`
 
 Removes this player from the match. Only the authority can call it, and only on a player who joined: it raises an error on a client, and when a host calls it on its own player.
 
 The player's machine returns to single-player, and its `NetworkService.Disconnected` fires with `reason`: text the game provides, up to 512 bytes, or the engine's default text. That machine does not reconnect by itself. On the authority, `PlayerRemoving` fires at the end of the frame, as for any player who leaves. Nothing stops the player from joining again; to ban a player, keep a list and remove them when they join.
+
+### `RemovePhase(phase: string)`
+
+Takes this player out of `phase`: what has that `Phase` leaves their machine within a snapshot. Only the server calls it.
+
+### `SetReplicationPriority(instance: Instance, priority: number)`
+
+How much `instance`'s changes come first for this player alone, on top of its `BasePart.ReplicationPriority`. Use 4 for a party member's character, and 0.5 for what this player hardly needs. 1 forgets what was set. It matters only when the player's budget (`ReplicationBudget`) cannot carry every change at once.
+
+Only the authority calls it; on a client it raises an error. A player keeps at most 256 of these; the instance being destroyed forgets it.

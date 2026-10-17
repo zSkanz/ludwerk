@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine/app/manager_link.h"
@@ -36,6 +37,10 @@ namespace engine::app {
 inline constexpr std::int64_t CrossWorldOldSeconds = 10;
 inline constexpr std::size_t CrossWorldMostHeld = 1000;
 inline constexpr std::size_t CrossWorldMostBytes = 4u * 1024u * 1024u;
+
+// **Which channel of its world a managed world is** (ADR 0230): `town:3`
+// is 3, and a name with no channel is 1.
+[[nodiscard]] core::u32 channelOf(std::string_view world) noexcept;
 
 class ManagedWorld
 {

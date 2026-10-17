@@ -103,6 +103,10 @@ private:
         core::Vec2 velocity{0.0f, 0.0f};
         core::f32 angularVelocity = 0.0f;
         bool seen = false;
+        // Its phase as last handed to the backend (ADR 0231).
+        core::u8 phase = 0;
+        bool phaseHolder = false;
+        core::u64 phaseMask = 0;
     };
 
     struct TilemapRecord

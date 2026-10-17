@@ -183,3 +183,76 @@ TEST_CASE("no time is made or lost by it, and frames at another rate are counted
         CHECK(hitched.beginFrame(now).simTicks == 1);
     }
 }
+
+TEST_CASE("ADR 0233: a slowed clock owes fewer ticks a second, and the tick is the same")
+{
+    app::FrameScheduler scheduler;
+    scheduler.setTimeScale(0.5);
+    engine::core::u32 ticks = 0;
+    // Two seconds of sixty frames a second.
+    for (engine::core::u64 frame = 0; frame <= 120; ++frame)
+        ticks += scheduler.beginFrame(frame * 16'666'667ull).simTicks;
+    CHECK(ticks >= 59);
+    CHECK(ticks <= 61);
+    CHECK(scheduler.timing().fixedDt == doctest::Approx(1.0 / 60.0));
+    // And back at full speed.
+    scheduler.setTimeScale(1.0);
+    ticks = 0;
+    for (engine::core::u64 frame = 121; frame <= 180; ++frame)
+        ticks += scheduler.beginFrame(frame * 16'666'667ull).simTicks;
+    CHECK(ticks >= 59);
+    CHECK(ticks <= 61);
+}
+
+TEST_CASE("ADR 0233: a world busy past nine tenths of each second is slowed at once to what fits, down to its "
+          "floor, and brought back a step a second under seven")
+{
+    app::TimeDilation dilation;
+    dilation.configure(true, 0.5);
+    constexpr engine::core::u64 Second = 1'000'000'000ull;
+    engine::core::u64 now = Second;
+    // One second with ticks of `tickMs` each, as many as the second holds
+    // at the rate, in sixty frames.
+    const auto second = [&](double tickMs) {
+        const double wanted = 60.0 * dilation.rate();
+        const double ran = std::min(wanted, 1000.0 / tickMs);
+        for (int frame = 0; frame < 60; ++frame) {
+            now += (Second + 59) / 60;
+            dilation.note(now, ran * tickMs / 60.0, frame == 0 ? static_cast<engine::core::u32>(ran) : 0u);
+        }
+    };
+    dilation.note(now, 0.0, 0);
+    CHECK(dilation.rate() == 1.0);
+    // Ticks of 20 ms: a second of them at sixty is 1.2 seconds. What fits
+    // seven tenths of a second is 0.58 -- 0.55 in steps -- at once.
+    second(20.0);
+    CHECK(dilation.rate() == doctest::Approx(0.55));
+    // Where it fits, it stays: 0.55 x 60 x 20 ms is 66% of a second.
+    for (int at = 0; at < 10; ++at)
+        second(20.0);
+    CHECK(dilation.rate() == doctest::Approx(0.55));
+    // Far over: no lower than the floor.
+    second(100.0);
+    CHECK(dilation.rate() == doctest::Approx(0.5));
+    // Between the two: it stays where it is.
+    // Cheap ticks again: back up a twentieth every three calm seconds.
+    second(5.0);
+    second(5.0);
+    CHECK(dilation.rate() == doctest::Approx(0.5));
+    second(5.0);
+    CHECK(dilation.rate() == doctest::Approx(0.55));
+    for (int at = 0; at < 60; ++at)
+        second(5.0);
+    CHECK(dilation.rate() == 1.0);
+
+    // Off, it never moves.
+    app::TimeDilation off;
+    off.configure(false, 0.25);
+    now = Second;
+    off.note(now, 0.0, 0);
+    for (int frame = 0; frame < 600; ++frame) {
+        now += (Second + 59) / 60;
+        off.note(now, 16.0, 1);
+    }
+    CHECK(off.rate() == 1.0);
+}

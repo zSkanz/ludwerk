@@ -32,6 +32,7 @@
 #include <Jolt/Physics/Collision/CollidePointResult.h>
 #include <Jolt/Physics/Collision/CollisionCollector.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -67,12 +68,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -650,6 +653,12 @@ struct CharacterRecord
     JPH::Ref<JPH::CharacterVirtual> character;
     u32 generation = 0;
     bool alive = false;
+    // **What it carries for phases** (ADR 0231): whether it is a player's,
+    // and the bits of the phases that player is in.
+    bool phaseHolder = false;
+    u64 phaseMask = 0;
+    // `CanQuery` on its part: whether a query meets its capsule.
+    bool queryable = true;
     f32 stepHeight = 0.5f;
     u64 userData = 0;
     // The layer the character sweeps the world as -- its own group, moving.
@@ -1152,6 +1161,8 @@ public:
             return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
         {
             const std::lock_guard<std::mutex> guard(m_mutex);
+            if (!m_phases.empty() && !phasesAllowLocked(first.GetUserData(), second.GetUserData()))
+                return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
             if (!m_excluded.empty()) {
                 ContactPair pair{first.GetUserData(), second.GetUserData()};
                 if (pair.second < pair.first) {
@@ -1173,6 +1184,45 @@ public:
             return JPH::ValidateResult::AcceptContact;
         }
         return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+    }
+
+    // **Phases** (ADR 0231), by a body's user data: its phase's bit plus one,
+    // or what a player's body carries. Read on the collision jobs under the
+    // lock, and nearly always empty.
+    struct Phase
+    {
+        u8 phase = 0;
+        bool holder = false;
+        u64 mask = 0;
+    };
+    void setPhase(u64 body, Phase phase)
+    {
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        if (phase.phase == 0 && !phase.holder)
+            m_phases.erase(body);
+        else
+            m_phases[body] = phase;
+        m_anyPhase = !m_phases.empty();
+    }
+    [[nodiscard]] bool anyPhase() const noexcept { return m_anyPhase.load(std::memory_order_relaxed); }
+    // The phase a body is in, 0 for none.
+    [[nodiscard]] u8 phaseOf(u64 body) const
+    {
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        const auto found = m_phases.find(body);
+        return found != m_phases.end() ? found->second.phase : 0;
+    }
+    // Whether a phased body and a player's meet: the player in its phase.
+    [[nodiscard]] bool phasesAllowLocked(u64 first, u64 second) const
+    {
+        const auto one = m_phases.find(first);
+        const auto two = m_phases.find(second);
+        if (one == m_phases.end() || two == m_phases.end())
+            return true;
+        const auto sees = [](const Phase& phased, const Phase& holder) {
+            return phased.phase == 0 || !holder.holder || ((holder.mask >> (phased.phase - 1u)) & 1u) != 0;
+        };
+        return sees(one->second, two->second) && sees(two->second, one->second);
     }
 
     // Sorted on insert, so the validate hook is a binary search rather than a
@@ -1226,7 +1276,7 @@ private:
     }
 
     const SurfaceSource* m_surfaces = nullptr;
-    std::mutex m_mutex;
+    mutable std::mutex m_mutex;
     std::vector<ContactPair> m_pairs;
     std::vector<ContactDetail> m_details;
     // Sorted, and read under the same lock: the validate hook runs on Jolt's
@@ -1234,6 +1284,8 @@ private:
     // between steps writes from the simulation thread and the lock is what makes
     // the two safe against each other.
     std::vector<ContactPair> m_excluded;
+    std::map<u64, Phase> m_phases;
+    std::atomic<bool> m_anyPhase{false};
 };
 
 #ifdef JPH_DEBUG_RENDERER
@@ -1878,6 +1930,27 @@ public:
         }
     }
 
+    void setBodyPhase(BodyHandle handle, u8 phase, bool holder, u64 mask)
+    {
+        if (resolve(handle) == nullptr)
+            return;
+        m_contacts.setPhase(packHandle(handle), ContactRecorder::Phase{phase, holder, mask});
+    }
+
+    void setCharacterQueryable(CharacterHandle handle, bool queryable)
+    {
+        if (CharacterRecord* record = resolve(handle); record != nullptr)
+            record->queryable = queryable;
+    }
+
+    void setCharacterPhase(CharacterHandle handle, bool holder, u64 mask)
+    {
+        if (CharacterRecord* record = resolve(handle); record != nullptr) {
+            record->phaseHolder = holder;
+            record->phaseMask = mask;
+        }
+    }
+
     void setBodyGroup(BodyHandle handle, CollisionGroup group)
     {
         BodyRecord* record = resolve(handle);
@@ -2276,15 +2349,15 @@ public:
             return false;
         }
 
-        const BodyHandle handle = unpackHandle(m_system.GetBodyInterface().GetUserData(collector.hit.mBodyID));
-        const BodyRecord* record = resolve(handle);
-        if (record == nullptr) {
+        const QueryTarget target =
+            queryTarget(collector.hit.mBodyID, m_system.GetBodyInterface().GetUserData(collector.hit.mBodyID));
+        if (!target.found) {
             return false;
         }
 
         const JPH::RVec3 point = cast.GetPointOnRay(collector.hit.mFraction);
-        outHit.body = handle;
-        outHit.userData = record->userData;
+        outHit.body = target.body;
+        outHit.userData = target.userData;
         outHit.position = toWorld(point);
         // The fraction is along the ray as given, and the ray's length is the
         // direction's magnitude -- `Workspace:Raycast(origin, direction)` takes
@@ -2309,17 +2382,167 @@ public:
             return false;
         }
 
-        const BodyHandle handle = unpackHandle(m_system.GetBodyInterface().GetUserData(collector.hit.mBodyID2));
-        const BodyRecord* record = resolve(handle);
-        if (record == nullptr) {
+        const QueryTarget target =
+            queryTarget(collector.hit.mBodyID2, m_system.GetBodyInterface().GetUserData(collector.hit.mBodyID2));
+        if (!target.found) {
             return false;
         }
 
-        outHit.body = handle;
-        outHit.userData = record->userData;
+        outHit.body = target.body;
+        outHit.userData = target.userData;
         outHit.position = toWorld(JPH::RVec3(collector.hit.mContactPointOn2));
         outHit.distance = collector.hit.mFraction * core::length(ray.direction);
         const JPH::Vec3 axis = collector.hit.mPenetrationAxis;
+        outHit.normal = axis.IsNearZero() ? core::Vec3{0.0f, 1.0f, 0.0f} : fromJolt(-axis.Normalized());
+        return true;
+    }
+
+    // **The bodies of a moved cast, where they are moved to** (ADR 0235): each
+    // one the filter lets through, as the shape the simulation has for it.
+    struct Placed
+    {
+        JPH::TransformedShape shape;
+        u64 userData = 0;
+        BodyHandle body;
+    };
+    void placeMoved(std::span<const MovedBody> moved, const QueryFilter& filter, std::vector<JPH::BodyID>& ids,
+                    std::vector<Placed>& placed) const
+    {
+        const BodyFilterAdapter bodyFilter(*this, filter);
+        const LayerFilterAdapter layerFilter(filter);
+        for (const MovedBody& each : moved) {
+            JPH::BodyID id;
+            if (each.body.valid()) {
+                if (const BodyRecord* record = resolve(each.body); record != nullptr)
+                    id = record->id;
+            }
+            else if (const CharacterRecord* record = resolve(each.character);
+                     record != nullptr && record->character != nullptr) {
+                id = record->character->GetInnerBodyID();
+            }
+            if (id.IsInvalid())
+                continue;
+            ids.push_back(id);
+            const JPH::BodyLockRead lock(m_system.GetBodyLockInterface(), id);
+            if (!lock.Succeeded())
+                continue;
+            const JPH::Body& body = lock.GetBody();
+            if (!layerFilter.ShouldCollide(body.GetObjectLayer()) || !bodyFilter.ShouldCollideLocked(body))
+                continue;
+            const QueryTarget target = queryTarget(id, body.GetUserData());
+            const JPH::Quat rotation = toJolt(each.transform.rotation);
+            const JPH::Shape* shape = body.GetShape();
+            const JPH::RVec3 centre = toLocal(each.transform.position) + rotation * shape->GetCenterOfMass();
+            placed.push_back(Placed{JPH::TransformedShape(centre, rotation, shape, id), target.userData, target.body});
+        }
+    }
+
+    [[nodiscard]] bool raycastMoved(const RayD& ray, const QueryFilter& filter, std::span<const MovedBody> moved,
+                                    RayHit& outHit) const
+    {
+        std::vector<JPH::BodyID> ids;
+        std::vector<Placed> placed;
+        placeMoved(moved, filter, ids, placed);
+        const JPH::RRayCast cast{toLocal(ray.origin), toJolt(ray.direction)};
+        JPH::RayCastSettings settings;
+        if (filter.backFaces)
+            settings.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+
+        ClosestRayCollector world;
+        {
+            const BodyFilterAdapter bodyFilter(*this, filter, ids);
+            const LayerFilterAdapter layerFilter(filter);
+            m_system.GetNarrowPhaseQuery().CastRay(cast, settings, world, JPH::BroadPhaseLayerFilter{}, layerFilter,
+                                                   bodyFilter);
+        }
+        // The nearest of the world's hit and each moved body's, the lower body
+        // id on a tie -- the order the world's own collector keeps.
+        const Placed* best = nullptr;
+        JPH::RayCastResult hit = world.hit;
+        bool has = world.has;
+        for (const Placed& each : placed) {
+            ClosestRayCollector one;
+            each.shape.CastRay(cast, settings, one);
+            if (!one.has)
+                continue;
+            if (!has || one.hit.mFraction < hit.mFraction ||
+                (one.hit.mFraction == hit.mFraction &&
+                 one.hit.mBodyID.GetIndexAndSequenceNumber() < hit.mBodyID.GetIndexAndSequenceNumber())) {
+                hit = one.hit;
+                has = true;
+                best = &each;
+            }
+        }
+        if (!has)
+            return false;
+        const JPH::RVec3 point = cast.GetPointOnRay(hit.mFraction);
+        if (best != nullptr) {
+            outHit.body = best->body;
+            outHit.userData = best->userData;
+            outHit.normal = fromJolt(best->shape.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point));
+        }
+        else {
+            const QueryTarget target = queryTarget(hit.mBodyID, m_system.GetBodyInterface().GetUserData(hit.mBodyID));
+            if (!target.found)
+                return false;
+            outHit.body = target.body;
+            outHit.userData = target.userData;
+            outHit.normal = surfaceNormal(hit.mBodyID, hit.mSubShapeID2, point);
+        }
+        outHit.position = toWorld(point);
+        outHit.distance = hit.mFraction * core::length(ray.direction);
+        return true;
+    }
+
+    [[nodiscard]] bool spherecastMoved(const RayD& ray, f32 radius, const QueryFilter& filter,
+                                       std::span<const MovedBody> moved, RayHit& outHit) const
+    {
+        std::vector<JPH::BodyID> ids;
+        std::vector<Placed> placed;
+        placeMoved(moved, filter, ids, placed);
+        const JPH::SphereShape sphere(std::max(radius, 0.005f));
+        const JPH::RShapeCast cast(&sphere, JPH::Vec3::sOne(), JPH::RMat44::sTranslation(toLocal(ray.origin)),
+                                   toJolt(ray.direction));
+
+        ClosestShapeCollector world;
+        {
+            const BodyFilterAdapter bodyFilter(*this, filter, ids);
+            const LayerFilterAdapter layerFilter(filter);
+            m_system.GetNarrowPhaseQuery().CastShape(cast, JPH::ShapeCastSettings{}, JPH::RVec3::sZero(), world,
+                                                     JPH::BroadPhaseLayerFilter{}, layerFilter, bodyFilter);
+        }
+        const Placed* best = nullptr;
+        JPH::ShapeCastResult hit = world.hit;
+        bool has = world.has;
+        for (const Placed& each : placed) {
+            ClosestShapeCollector one;
+            each.shape.CastShape(cast, JPH::ShapeCastSettings{}, JPH::RVec3::sZero(), one);
+            if (!one.has)
+                continue;
+            if (!has || one.hit.mFraction < hit.mFraction ||
+                (one.hit.mFraction == hit.mFraction &&
+                 one.hit.mBodyID2.GetIndexAndSequenceNumber() < hit.mBodyID2.GetIndexAndSequenceNumber())) {
+                hit = one.hit;
+                has = true;
+                best = &each;
+            }
+        }
+        if (!has)
+            return false;
+        if (best != nullptr) {
+            outHit.body = best->body;
+            outHit.userData = best->userData;
+        }
+        else {
+            const QueryTarget target = queryTarget(hit.mBodyID2, m_system.GetBodyInterface().GetUserData(hit.mBodyID2));
+            if (!target.found)
+                return false;
+            outHit.body = target.body;
+            outHit.userData = target.userData;
+        }
+        outHit.position = toWorld(JPH::RVec3(hit.mContactPointOn2));
+        outHit.distance = hit.mFraction * core::length(ray.direction);
+        const JPH::Vec3 axis = hit.mPenetrationAxis;
         outHit.normal = axis.IsNearZero() ? core::Vec3{0.0f, 1.0f, 0.0f} : fromJolt(-axis.Normalized());
         return true;
     }
@@ -2342,11 +2565,8 @@ public:
 
         const usize first = out.size();
         for (const JPH::BodyID& id : collector.bodies) {
-            const BodyHandle handle = unpackHandle(m_system.GetBodyInterface().GetUserData(id));
-            const BodyRecord* record = resolve(handle);
-            if (record != nullptr) {
-                out.push_back(record->userData);
-            }
+            if (const QueryTarget target = queryTarget(id, m_system.GetBodyInterface().GetUserData(id)); target.found)
+                out.push_back(target.userData);
         }
         // One entry per body, in an order the caller can rely on: a collide
         // query reports one hit per sub-shape, and its traversal order is
@@ -2369,11 +2589,8 @@ public:
 
         const usize first = out.size();
         for (const JPH::BodyID& id : collector.bodies) {
-            const BodyHandle handle = unpackHandle(m_system.GetBodyInterface().GetUserData(id));
-            const BodyRecord* record = resolve(handle);
-            if (record != nullptr) {
-                out.push_back(record->userData);
-            }
+            if (const QueryTarget target = queryTarget(id, m_system.GetBodyInterface().GetUserData(id)); target.found)
+                out.push_back(target.userData);
         }
         // As `overlapBox`: one entry a body, in an order the caller can rely on.
         std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
@@ -2459,6 +2676,8 @@ public:
         record.character = new JPH::CharacterVirtual(&settings, toLocal(desc.transform.position),
                                                      toJolt(desc.transform.rotation), desc.userData, &m_system);
         record.character->SetListener(&m_characterContacts);
+        record.queryable = true;
+        m_innerBodies[record.character->GetInnerBodyID().GetIndexAndSequenceNumber()] = slot;
 
         return CharacterHandle{slot, record.generation};
     }
@@ -2471,6 +2690,7 @@ public:
         }
         forgetCharacterPairs(packHandle(handle));
         removeStandIn(*record);
+        m_innerBodies.erase(record->character->GetInnerBodyID().GetIndexAndSequenceNumber());
         record->character = nullptr;
         record->alive = false;
         m_freeCharacters.push_back(handle.index);
@@ -4293,6 +4513,36 @@ private:
         }
     }
 
+    // **What a query met, by the body Jolt names** (ADR 0235's finding): a
+    // body's record, or a character's inner body -- whose Jolt user data is
+    // the character's own, never a body's handle. Taking it for a handle, a ray
+    // that met a character answered with whichever body had that slot, or with
+    // nothing. A stand-in is no query's.
+    struct QueryTarget
+    {
+        u64 userData = 0;
+        BodyHandle body;
+        bool queryable = false;
+        bool found = false;
+        bool character = false;
+    };
+    [[nodiscard]] QueryTarget queryTarget(JPH::BodyID id, u64 joltUserData) const noexcept
+    {
+        if (joltUserData == kStandInUserData)
+            return {};
+        if (const auto inner = m_innerBodies.find(id.GetIndexAndSequenceNumber()); inner != m_innerBodies.end()) {
+            const CharacterRecord& record = m_characters[inner->second];
+            if (!record.alive || record.character == nullptr)
+                return {};
+            return QueryTarget{record.userData, BodyHandle{}, record.queryable, true, true};
+        }
+        const BodyHandle handle = unpackHandle(joltUserData);
+        const BodyRecord* record = resolve(handle);
+        if (record == nullptr)
+            return {};
+        return QueryTarget{record->userData, handle, record->queryable, true};
+    }
+
     // Which character owns this body, when the body is a character's inner one.
     //
     // Linear over the character table, which is a handful of entries and is
@@ -4403,17 +4653,21 @@ private:
     class BodyFilterAdapter final : public JPH::BodyFilter
     {
     public:
-        BodyFilterAdapter(const JoltWorld& world, const QueryFilter& filter) : m_world(world), m_filter(filter) {}
+        BodyFilterAdapter(const JoltWorld& world, const QueryFilter& filter, std::span<const JPH::BodyID> moved = {})
+            : m_world(world), m_filter(filter), m_moved(moved)
+        {}
 
         [[nodiscard]] bool ShouldCollideLocked(const JPH::Body& body) const override
         {
-            const BodyHandle handle = unpackHandle(body.GetUserData());
-            const BodyRecord* record = m_world.resolve(handle);
-            if (record == nullptr || !record->queryable) {
+            const QueryTarget target = m_world.queryTarget(body.GetID(), body.GetUserData());
+            if (!target.found || !target.queryable || (!m_filter.characters && target.character)) {
                 return false;
             }
+            // Met where it was moved to, and not where it is.
+            if (std::find(m_moved.begin(), m_moved.end(), body.GetID()) != m_moved.end())
+                return false;
 
-            const bool listed = std::find(m_filter.userData.begin(), m_filter.userData.end(), record->userData) !=
+            const bool listed = std::find(m_filter.userData.begin(), m_filter.userData.end(), target.userData) !=
                                 m_filter.userData.end();
             return m_filter.mode == QueryFilter::Mode::Exclude ? !listed : listed;
         }
@@ -4421,6 +4675,7 @@ private:
     private:
         const JoltWorld& m_world;
         const QueryFilter& m_filter;
+        std::span<const JPH::BodyID> m_moved;
     };
 
     class LayerFilterAdapter final : public JPH::ObjectLayerFilter
@@ -4446,9 +4701,20 @@ private:
     public:
         explicit CharacterContacts(const JoltWorld& world) : m_world(world) {}
 
-        [[nodiscard]] bool OnContactValidate(const JPH::CharacterVirtual*,
+        [[nodiscard]] bool OnContactValidate(const JPH::CharacterVirtual* character,
                                              const JPH::CharacterContact& contact) override
         {
+            // **A phased body is no obstacle to a player outside its phase**
+            // (ADR 0231 §4): their machine does not have it.
+            if (m_world.m_contacts.anyPhase() && !contact.mBodyB.IsInvalid()) {
+                if (const u8 phase = m_world.m_contacts.phaseOf(contact.mUserData); phase != 0) {
+                    for (const CharacterRecord& own : m_world.m_characters) {
+                        if (own.alive && own.character.GetPtr() == character && own.phaseHolder &&
+                            ((own.phaseMask >> (phase - 1u)) & 1u) == 0)
+                            return false;
+                    }
+                }
+            }
             // **What does not collide is never ground**. The sweep
             // drops a sensor it runs into and is not stopped by it. But what
             // decides what a character STANDS on looks again at every contact
@@ -4561,6 +4827,10 @@ private:
     std::vector<BodyRecord> m_bodies;
     std::vector<u32> m_freeBodies;
     std::vector<CharacterRecord> m_characters;
+    // **Each character's inner body, by its Jolt id** (ADR 0235's finding):
+    // what a query meets when it meets a character. Its Jolt user data is the
+    // character's own, not a body's handle.
+    std::map<u32, u32> m_innerBodies;
     std::vector<u32> m_freeCharacters;
     // Slot-indexed and never compacted, exactly as the bodies are: a handle is
     // an index plus a generation, and Jolt solves in the order constraints were
@@ -4977,6 +5247,24 @@ public:
         }
     }
 
+    void setBodyPhase(WorldHandle handle, BodyHandle body, u8 phase, bool holder, u64 mask) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setBodyPhase(body, phase, holder, mask);
+    }
+
+    void setCharacterQueryable(WorldHandle handle, CharacterHandle character, bool queryable) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setCharacterQueryable(character, queryable);
+    }
+
+    void setCharacterPhase(WorldHandle handle, CharacterHandle character, bool holder, u64 mask) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setCharacterPhase(character, holder, mask);
+    }
+
     [[nodiscard]] BodyState bodyState(WorldHandle handle, BodyHandle body) const override
     {
         const JoltWorld* world = resolve(handle);
@@ -5021,6 +5309,20 @@ public:
     {
         const JoltWorld* world = resolve(handle);
         return world != nullptr && world->spherecast(ray, radius, filter, outHit);
+    }
+
+    [[nodiscard]] bool raycastMoved(WorldHandle handle, const RayD& ray, const QueryFilter& filter,
+                                    std::span<const MovedBody> moved, RayHit& outHit) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr && world->raycastMoved(ray, filter, moved, outHit);
+    }
+
+    [[nodiscard]] bool spherecastMoved(WorldHandle handle, const RayD& ray, f32 radius, const QueryFilter& filter,
+                                       std::span<const MovedBody> moved, RayHit& outHit) const override
+    {
+        const JoltWorld* world = resolve(handle);
+        return world != nullptr && world->spherecastMoved(ray, radius, filter, moved, outHit);
     }
 
     void overlapBox(WorldHandle handle, const core::CFrameD& transform, core::Vec3 size, const QueryFilter& filter,

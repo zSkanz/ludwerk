@@ -72,6 +72,7 @@ public:
         m_authority.emplace(*m_transport);
         m_authority->setMaxPlayers(m_config.maxPeers);
         m_authority->setMaxPeersPerAddress(m_config.maxPeersPerAddress);
+        m_authority->setClientBudget(m_config.clientBudgetBytesPerSecond);
         m_authority->setLuauFlags(m_config.luauFlags);
         m_authority->setUncarriedWarnings(m_config.developer);
         // **A host is a host with or without its relay** (ADR 0178): one that
@@ -116,8 +117,17 @@ public:
         m_tick = tick;
         // **A count of ticks, never milliseconds** (R10): what a peer is told
         // is a function of the simulation, not of how fast this machine ran it.
-        if (m_authority.has_value() && tick % std::max<u32>(1, m_config.ticksPerSnapshot) == 0)
-            m_authority->send(world, root, tick);
+        m_snapshotSent = false;
+        if (m_authority.has_value() && (m_snapshotOwed || tick % std::max<u32>(1, m_config.ticksPerSnapshot) == 0)) {
+            if (m_snapshotsHeld) {
+                m_snapshotOwed = true;
+            }
+            else {
+                m_authority->send(world, root, tick);
+                m_snapshotOwed = false;
+                m_snapshotSent = true;
+            }
+        }
         // Intent every tick: it is small, and a snapshot rate is a choice about
         // the world while an input rate is a choice about how a game feels.
         if (m_replica.has_value()) {
@@ -127,6 +137,9 @@ public:
             m_replica->sendIntent(world, tick);
         }
     }
+
+    void holdSnapshots(bool held) override { m_snapshotsHeld = held; }
+    [[nodiscard]] bool snapshotSent() const override { return m_snapshotSent; }
 
     void sendMessages(scene::World& world) override
     {
@@ -228,6 +241,8 @@ public:
             status.loss = link.loss;
             status.path = static_cast<u8>(m_replica->path());
             status.joinFailure = static_cast<u8>(m_replica->joinFailure());
+            status.timeDilation = m_replica->timeDilation();
+            status.queuePosition = m_replica->queuePosition();
             status.redirects = m_replica->redirects();
             status.redirectAddress = m_replica->redirectAddress();
             status.redirectPort = m_replica->redirectPort();
@@ -372,6 +387,11 @@ private:
     std::function<void(scene::World&)> m_welcomeHandler;
     std::function<ScriptTemplates*()> m_templates;
     u64 m_tick = 0;
+    // Held while the frame loop catches up, owed when one fell due then, and
+    // whether the last send sent one (ADR 0228 §7).
+    bool m_snapshotsHeld = false;
+    bool m_snapshotOwed = false;
+    bool m_snapshotSent = false;
 };
 
 } // namespace

@@ -216,6 +216,10 @@ public:
     [[nodiscard]] core::InstanceId instanceOf(u64 userData) const noexcept;
     // The other direction, for a query filter.
     [[nodiscard]] u64 userDataOf(core::InstanceId id) const noexcept;
+    // **A part's body, placed elsewhere for a query** (ADR 0235): a body's or
+    // a character's, by the handle the backend knows it by. Nothing for a
+    // part without one.
+    [[nodiscard]] std::optional<physics::MovedBody> movedBody(core::InstanceId id, const core::CFrameD& at) const;
 
     // **The shape a part collides as**, for a world that copies it: a cloth's,
     // which is kept out of the anchored parts near it (ADR 0214). False for
@@ -329,6 +333,11 @@ private:
         u64 movingUntilTick = 0;
         // Marked each tick during the sweep; anything unmarked afterwards has
         // left the world and its body is destroyed.
+        // **Its phase, as last handed to the backend** (ADR 0231): the bit
+        // plus one, and what a player's body carries.
+        u8 phase = 0;
+        bool phaseHolder = false;
+        u64 phaseMask = 0;
         bool seen = false;
     };
 
@@ -369,6 +378,12 @@ public:
                                                   const core::DVec3& own, f64 reach, bool overlapping) noexcept;
 
 private:
+    // ADR 0231: whether this world has phases this tick, and each player's
+    // mask by their number and by their character.
+    bool m_phased = false;
+    std::map<u32, u64> m_phaseMasks;
+    std::map<u64, u64> m_characterPhases;
+
     struct CharacterRecord
     {
         physics::CharacterHandle handle;
@@ -379,9 +394,14 @@ private:
         u16 group = 0;
         core::CFrameD written;
         bool seen = false;
+        // `CanQuery`, as last handed to the backend.
+        bool queryable = true;
         // On a replica, a character somebody else plays: it follows the
         // authority's snapshots and is not simulated here (ADR 0076).
         bool follower = false;
+        // What it carries for phases (ADR 0231), as last handed over.
+        bool phaseHolder = false;
+        u64 phaseMask = 0;
         // Whether the backend holds a stand-in for it (ADR 0163).
         bool standIn = false;
         // What the last step that moved it was told, for `lastCommand`.

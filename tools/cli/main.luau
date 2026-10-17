@@ -82,6 +82,8 @@ type Parsed = {
 --- `build --dev-host mygame` builds `mygame`.
 local ValueFlags: { [string]: boolean } = {
     alias = true,
+    behavior = true,
+    bots = true,
     command = true,
     definitions = true,
     high = true,
@@ -90,6 +92,7 @@ local ValueFlags: { [string]: boolean } = {
     locale = true,
     low = true,
     material = true,
+    metrics = true,
     name = true,
     octaves = true,
     out = true,
@@ -402,10 +405,22 @@ local function main(): number
     -- start with the machine, and administered from another one.
     if parsed.command == "server" then
         if
-            not rejectUnknownFlags(
-                parsed,
-                { "port", "name", "out", "key", "server-key", "command", "follow", "admin", "health" }
-            )
+            not rejectUnknownFlags(parsed, {
+                "port",
+                "name",
+                "out",
+                "key",
+                "server-key",
+                "command",
+                "follow",
+                "admin",
+                "health",
+                "bots",
+                "seconds",
+                "behavior",
+                "metrics",
+                "report",
+            })
         then
             return 2
         end
@@ -423,6 +438,11 @@ local function main(): number
             follow = parsed.flags.follow ~= nil,
             admin = parsed.flags.admin ~= nil,
             health = parsed.flags.health ~= nil,
+            bots = parsed.flags.bots,
+            seconds = parsed.flags.seconds,
+            behavior = parsed.flags.behavior,
+            metrics = parsed.flags.metrics,
+            report = parsed.flags.report,
         })
     end
 

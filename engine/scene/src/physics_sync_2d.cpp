@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numbers>
 
+#include "engine/scene/phases.h"
 #include "engine/scene/tile_outline.h"
 #include "engine/scene/world.h"
 
@@ -109,6 +111,16 @@ void PhysicsSync2D::applyScene(f32 fixedDt)
 
     for (auto& [packed, record] : m_parts)
         record.seen = false;
+    // **Whose phases, on what** (ADR 0231): each player's mask, by their
+    // character on the plane.
+    const bool phased = anyPhased(m_scene);
+    std::map<u64, core::u64> characterPhases;
+    if (phased) {
+        m_scene.players().forEach([&](core::InstanceId, const PlayerComponent& player) {
+            if (player.character.valid())
+                characterPhases[packInstance(player.character)] = phaseMask(m_scene, player);
+        });
+    }
     m_scene.parts2d().forEach([&](core::InstanceId id, Part2DComponent& part) {
         if (!inWorld(id))
             return;
@@ -189,6 +201,24 @@ void PhysicsSync2D::applyScene(f32 fixedDt)
         record.rotation = part.rotation;
         record.velocity = part.velocity;
         record.angularVelocity = part.angularVelocity;
+        // **Its phase** (ADR 0231 §4), as a part's in three dimensions.
+        if (record.body.valid() && (phased || record.phase != 0 || record.phaseHolder)) {
+            core::u8 phase = 0;
+            if (phased) {
+                if (const core::NameAtom named = collidingPhase(m_scene, id); named.valid())
+                    if (const std::optional<core::u32> bit = phaseBitOf(m_scene, named); bit.has_value())
+                        phase = static_cast<core::u8>(*bit + 1);
+            }
+            const auto carried = characterPhases.find(packed);
+            const bool holder = carried != characterPhases.end();
+            const core::u64 mask = holder ? carried->second : 0;
+            if (phase != record.phase || holder != record.phaseHolder || mask != record.phaseMask) {
+                m_backend.setBodyPhase(m_world, record.body, phase, holder, mask);
+                record.phase = phase;
+                record.phaseHolder = holder;
+                record.phaseMask = mask;
+            }
+        }
     });
     for (auto at = m_parts.begin(); at != m_parts.end();) {
         if (at->second.seen) {

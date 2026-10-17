@@ -13,6 +13,22 @@
 
 local testing = require("@engine/testing")
 
+local DebugService = game:GetService("DebugService")
+
+--- **A spec that fails as it loads is a failure, not an absence.** One whose
+--- first line could not run -- a module it requires that is not there --
+--- registers no case at all, and the suite used to pass without it, its error
+--- in the log and nowhere in the count. The runner is mounted first (its path
+--- sorts before every spec's), so every error raised before `game.Loaded` is
+--- heard here, and each is a failed case of its own.
+local loadErrors: { string } = {}
+local loading = true
+local listening = DebugService.MessageOut:Connect(function(message: string, level: EnumLogLevel)
+    if loading and level == Enum.LogLevel.Error then
+        table.insert(loadErrors, message)
+    end
+end)
+
 --- A JSON encoder of its own, written before the game VM carried `@std/json`,
 --- and kept: the runner must be able to report a VM whose `@std/json` is the
 --- thing that broke. It only ever sees the two shapes below.
@@ -35,7 +51,16 @@ local function quote(text: string): string
 end
 
 game.Loaded:Connect(function()
+    loading = false
+    listening:Disconnect()
     local report = testing.run()
+    for _, message in loadErrors do
+        local path = { "loading the specs", message }
+        table.insert(report.Cases, { Path = path, Ok = false, Message = message })
+        table.insert(report.Failures, { Path = path, Message = message })
+        report.Total += 1
+        report.Failed += 1
+    end
     print(testing.format(report))
 
     -- The machine-readable half. `ludwerk test` turns this into TAP or JUnit; it

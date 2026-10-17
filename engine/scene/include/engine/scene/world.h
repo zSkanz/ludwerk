@@ -342,6 +342,37 @@ struct EngineState
     // inside `streamingMinRadius` before a focus may advance into them.
     bool streamingEnabled = true;
     f64 streamingLoadRadius = 1024.0;
+    // **What no player is near sleeps** (ADR 0234), on a dedicated server:
+    // `[server] dormant_radius`, metres from every player's focus; nought
+    // never, below nought twice `streamingLoadRadius`. And the players' foci
+    // as the physics step last took them, with whether one of them had none
+    // -- which keeps everything awake.
+    f64 dormantRadius = -1.0;
+    // **How fast this world's clock runs against the wall's** (ADR 0233): 1
+    // at full speed; less while an overloaded authority is slowed, which its
+    // replicas run at too. How often ticks run, never what one does.
+    f64 timeDilation = 1.0;
+    // **The phases this world has named** (ADR 0231), each a bit: its place
+    // here. At most `MostPhases`.
+    std::vector<core::NameAtom> phaseNames;
+    // **Where what can be shot was** (ADR 0235), on an authority: each tick's
+    // transforms of every player's character and every `LagCompensated` part,
+    // oldest first, as many ticks as `rewindCapMs` reaches; and that cap,
+    // `[network] rewind_cap_ms`. The host's, never the simulation's.
+    struct RewindEntry
+    {
+        core::InstanceId id;
+        core::CFrameD cframe;
+    };
+    struct RewindFrame
+    {
+        u64 tick = 0;
+        std::vector<RewindEntry> entries;
+    };
+    std::deque<RewindFrame> rewindFrames;
+    f64 rewindCapMs = 200.0;
+    std::vector<core::DVec3> playerFoci;
+    bool focusless = false;
     f64 streamingMinRadius = 512.0;
     bool streamingPauseOutsideLoadedArea = false;
 
@@ -501,6 +532,11 @@ struct EngineState
         // What the socket carried, headers and encryption in it.
         u64 wireBytesSent = 0;
         u64 wireBytesReceived = 0;
+        // **What the players' budgets held back** (ADR 0229), on an
+        // authority: updates left for later in the last second, and how much
+        // of the budgets that second spent, 0 to 1.
+        u32 deferredPerSecond = 0;
+        f64 budgetUsed = 0.0;
         f64 pingMs = 0.0;
         f64 jitterMs = 0.0;
         f64 lossPercent = 0.0;
@@ -814,9 +850,40 @@ struct EngineState
         std::vector<u32> userIds;
         std::string target;
         std::string data;
+        // ADR 0230: a channel of `target` asked for by its number, or the
+        // player -- by key -- whose world and channel to go to.
+        u32 channel = 0;
+        std::string toPlayer;
     };
     std::vector<TravelRequest> travelRequests;
     u32 nextTravel = 1;
+    // **Channels** (ADR 0230): which this world is, 1 for a world without;
+    // what a script asked the manager of them, and its answers; and each
+    // warning that this channel is to be merged, in seconds.
+    u32 networkChannel = 1;
+    std::vector<u32> channelRequests;
+    struct ChannelInfo
+    {
+        u32 channel = 0;
+        u32 players = 0;
+        u32 maxPlayers = 0;
+    };
+    struct ChannelAnswer
+    {
+        u32 id = 0;
+        std::vector<ChannelInfo> channels;
+    };
+    std::vector<ChannelAnswer> channelAnswers;
+    u32 nextChannelRequest = 1;
+    std::vector<f64> channelMerging;
+    // **In line at the front door** (ADR 0232): each place this machine was
+    // told, with the seconds until its turn, below 0 for none.
+    struct QueueUpdate
+    {
+        u32 position = 0;
+        i64 estimate = -1;
+    };
+    std::vector<QueueUpdate> queueUpdates;
     // **Who arrived with a pass**, for `TravelArrived`: by key, with what
     // they carry and the world they left.
     struct TravelArrival
@@ -1023,6 +1090,8 @@ struct NameIndex
     X(SkyComponent, skies)                                                                                             \
     X(NameIndex, nameIndices)                                                                                          \
     X(AttributeMap, attributes)                                                                                        \
+    X(PhaseComponent, phases)                                                                                          \
+    X(LagCompensatedComponent, lagCompensated)                                                                         \
     X(TagSet, tags)
 // clang-format on
 
@@ -1697,6 +1766,15 @@ public:
     [[nodiscard]] const ComponentPool<VoxelComponent>& voxels() const noexcept { return m_voxels; }
     [[nodiscard]] ComponentPool<PlayerComponent>& players() noexcept { return m_players; }
     [[nodiscard]] const ComponentPool<PlayerComponent>& players() const noexcept { return m_players; }
+    // `Instance.Phase` (ADR 0231): the few instances that have one.
+    [[nodiscard]] ComponentPool<PhaseComponent>& phases() noexcept { return m_phases; }
+    [[nodiscard]] const ComponentPool<PhaseComponent>& phases() const noexcept { return m_phases; }
+    // `BasePart.LagCompensated` (ADR 0235): the few parts that are.
+    [[nodiscard]] ComponentPool<LagCompensatedComponent>& lagCompensated() noexcept { return m_lagCompensated; }
+    [[nodiscard]] const ComponentPool<LagCompensatedComponent>& lagCompensated() const noexcept
+    {
+        return m_lagCompensated;
+    }
 
     [[nodiscard]] ComponentPool<AttachmentComponent>& attachments() noexcept { return m_attachments; }
     [[nodiscard]] const ComponentPool<AttachmentComponent>& attachments() const noexcept { return m_attachments; }

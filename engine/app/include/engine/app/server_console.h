@@ -144,8 +144,15 @@ public:
     struct Health
     {
         core::u64 uptimeSeconds = 0;
+        // Over the last minute of ticks: what a person reads.
         core::f64 tickMeanMs = 0.0;
         core::f64 tickWorstMs = 0.0;
+        // Since the world began, and only growing: what a tool that samples
+        // reads, as it reads the byte counts -- the mean between two of its
+        // samples is the difference of the one over the difference of the
+        // other.
+        core::u64 ticksTotal = 0;
+        core::f64 tickMsTotal = 0.0;
         core::usize players = 0;
         core::u32 maxPlayers = 0;
         core::u64 memoryBytes = 0;
@@ -193,6 +200,8 @@ private:
     std::map<core::u32, Pending> m_pending;
     core::u32 m_nextCall = 1;
     std::deque<core::f64> m_ticks;
+    core::u64 m_ticksTotal = 0;
+    core::f64 m_tickMsTotal = 0.0;
     core::u64 m_startedNs = 0;
     Phase m_phase = Phase::Running;
     core::u64 m_stopAtNs = 0;

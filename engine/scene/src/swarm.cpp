@@ -75,6 +75,8 @@ constexpr f64 GroundReach = 64.0;
     physics::QueryFilter filter;
     filter.mode = physics::QueryFilter::Mode::Exclude;
     filter.userData = std::span<const u64>{excluded.data(), body.valid() ? 1u : 0u};
+    // The ground, not the players it walks among.
+    filter.characters = false;
     const physics::RayD ray{core::DVec3{x, from + GroundReach * 0.5, z},
                             core::Vec3{0.0f, -static_cast<f32>(GroundReach * 1.5), 0.0f}};
     physics::RayHit hit;

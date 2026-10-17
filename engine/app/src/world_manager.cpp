@@ -1,6 +1,7 @@
 #include "engine/app/world_manager.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <utility>
@@ -33,6 +34,25 @@ namespace {
 
 } // namespace
 namespace {
+
+#if ENG_ENABLE_REPLICATION
+// ADR 0232: how often the line is told where it stands, and how far back
+// its places freed are counted for the estimate. A build without the
+// network has no front door to keep a line at.
+constexpr core::u64 QueueTellNs = 5ull * 1'000'000'000ull;
+constexpr core::u64 QueueWindowNs = 300ull * 1'000'000'000ull;
+#endif
+// How long a channel's players are warned before it is merged (ADR 0230 §3).
+constexpr core::u64 MergeWarningNs = 60ull * 1'000'000'000ull;
+
+// **A world's name as a file's**: a channel's (`town:2`) has a colon, which
+// no Windows file name may.
+[[nodiscard]] std::string fileName(std::string_view world)
+{
+    std::string out(world);
+    std::replace(out.begin(), out.end(), ':', '-');
+    return out;
+}
 
 constexpr core::u64 NsPerSecond = 1'000'000'000ull;
 // A world that has said nothing in this long is ended and started again.
@@ -102,6 +122,8 @@ WorldLauncher engineWorldLauncher(std::filesystem::path engine, std::filesystem:
             arguments.push_back("--scene=" + launch.scene);
         if (launch.health)
             arguments.push_back("--health");
+        if (launch.timeDilation)
+            arguments.push_back("--time-dilation");
         if (!launch.logFile.empty())
             arguments.push_back("--log-file=" + launch.logFile.string());
         platform::ProcessOptions options;
@@ -122,6 +144,23 @@ struct WorldManager::Door
     platform::FileLock keyHeld;
     // Who is at the door, and since when.
     std::map<core::u32, core::u64> waiting;
+    // **The line** (ADR 0232): who waits, in the order they came -- by key,
+    // with the ticket they came with, and their connection, or none and
+    // until when their place is kept.
+    struct Waiting
+    {
+        core::u32 peer = 0;
+        std::string key;
+        std::string ticket;
+        core::u64 goneUntilNs = 0;
+    };
+    std::deque<Waiting> line;
+    // When each of the last five minutes' places was given, and when the
+    // line was last told where it stands.
+    std::deque<core::u64> freed;
+    core::u64 toldNs = 0;
+    // Somebody new in line, or a place given: everybody is told at once.
+    bool tellNow = false;
 };
 
 WorldManager::WorldManager(Options options) : m_options(std::move(options))
@@ -197,12 +236,255 @@ std::optional<core::EngineError> WorldManager::start()
     for (const ServersConfig::World& config : m_options.config.worlds) {
         auto world = std::make_unique<World>();
         world->config = config;
+        // Channel 1 of a world with channels is the world itself.
+        if (config.channels) {
+            world->base = config.name;
+            world->channel = 1;
+        }
         m_worlds.push_back(std::move(world));
     }
     for (const std::unique_ptr<World>& world : m_worlds)
         launch(*world);
     topUpWarm();
     return std::nullopt;
+}
+
+void WorldManager::expect(World& to, std::string_view key)
+{
+    const core::u64 now = m_options.clock ? m_options.clock() : 0;
+    to.expected[std::string(key)] = now + static_cast<core::u64>(PassSeconds) * NsPerSecond;
+}
+
+bool WorldManager::roomAt(const World* to) const
+{
+    if (to == nullptr || to->state != State::Ready || to->held() >= to->config.maxPlayers)
+        return false;
+    if (m_options.config.maxPlayers == 0)
+        return true;
+    core::u32 everyone = 0;
+    for (const std::unique_ptr<World>& world : m_worlds) {
+        if (!world->retired && world->state != State::Failed && world->state != State::Stopped)
+            everyone += world->held();
+    }
+    return everyone < m_options.config.maxPlayers;
+}
+
+void WorldManager::line()
+{
+#if ENG_ENABLE_REPLICATION
+    const core::u64 now = m_options.clock ? m_options.clock() : 0;
+    std::deque<Door::Waiting>& waiting = m_door->line;
+    std::erase_if(waiting, [now](const Door::Waiting& one) { return one.peer == 0 && now > one.goneUntilNs; });
+    // **First in, first out, as places free** (§1): the first of the line
+    // still at the door; one whose connection dropped keeps their place, and
+    // does not hold the rest up.
+    const ServersConfig::World* entry = m_options.config.entry();
+    while (!m_stopping && entry != nullptr) {
+        const auto next =
+            std::find_if(waiting.begin(), waiting.end(), [](const Door::Waiting& one) { return one.peer != 0; });
+        if (next == waiting.end())
+            break;
+        World* to = routed(entry->name, 1);
+        if (!roomAt(to))
+            break;
+        const std::string passText = pass(next->key, {}, to->config.name, {}, next->ticket, {});
+        expect(*to, next->key);
+        (void)m_door->transport->send(
+            net::PeerId{next->peer},
+            replication::redirectMessage(m_options.config.publicAddress, to->port, passText, to->key, to->config.name),
+            net::Delivery::Reliable, 0);
+        m_door->waiting[next->peer] = now;
+        waiting.erase(next);
+        m_door->freed.push_back(now);
+        m_door->tellNow = true;
+    }
+    // **Where each stands, every five seconds** (§1, §2): the place, and the
+    // estimate the last five minutes measure -- none before anybody has left
+    // the line.
+    while (!m_door->freed.empty() && m_door->freed.front() + QueueWindowNs < now)
+        m_door->freed.pop_front();
+    if (waiting.empty() || (!m_door->tellNow && now < m_door->toldNs + QueueTellNs))
+        return;
+    m_door->tellNow = false;
+    m_door->toldNs = now;
+    const core::f64 window =
+        m_door->freed.empty() ? 0.0
+                              : static_cast<core::f64>(std::max<core::u64>(now - m_door->freed.front(), QueueTellNs)) /
+                                    static_cast<core::f64>(NsPerSecond);
+    const core::f64 perSecond = window > 0.0 ? static_cast<core::f64>(m_door->freed.size()) / window : 0.0;
+    for (std::size_t at = 0; at < waiting.size(); ++at) {
+        if (waiting[at].peer == 0)
+            continue;
+        const core::u32 position = static_cast<core::u32>(at + 1);
+        core::u32 estimate = replication::NoEstimate;
+        if (perSecond > 0.0)
+            estimate = static_cast<core::u32>(std::ceil(static_cast<core::f64>(position) / perSecond / 60.0) * 60.0);
+        (void)m_door->transport->send(net::PeerId{waiting[at].peer}, replication::queuedMessage(position, estimate),
+                                      net::Delivery::Reliable, 0);
+    }
+#endif
+}
+
+WorldManager::World& WorldManager::startChannel(const ServersConfig::World& config, core::u32 channel)
+{
+    auto world = std::make_unique<World>();
+    world->config = config;
+    world->config.name = config.name + ":" + std::to_string(channel);
+    world->config.entry = false;
+    world->base = config.name;
+    world->channel = channel;
+    World& added = *world;
+    m_worlds.push_back(std::move(world));
+    launch(added);
+    return added;
+}
+
+WorldManager::World* WorldManager::channelFor(std::string_view base, core::u32 travellers, const World* except)
+{
+    // **The fullest with room** (ADR 0230 §2): a crowd feels alive, and fewer
+    // channels stay open.
+    World* best = nullptr;
+    for (const std::unique_ptr<World>& world : m_worlds) {
+        if (world.get() == except || world->retired || world->replacing || world->base != base ||
+            world->state != State::Ready || world->mergeAtNs != 0)
+            continue;
+        const core::u32 held = world->held();
+        if (held + travellers > world->config.maxPlayers)
+            continue;
+        if (best == nullptr || held > best->held() || (held == best->held() && world->channel < best->channel))
+            best = world.get();
+    }
+    return best;
+}
+
+WorldManager::World* WorldManager::routed(std::string_view target, core::u32 travellers)
+{
+    // A world with channels: one of them, by room; else the world itself.
+    const ServersConfig::World* config = nullptr;
+    for (const ServersConfig::World& world : m_options.config.worlds) {
+        if (world.name == target)
+            config = &world;
+    }
+    if (config != nullptr && config->channels) {
+        if (World* channel = channelFor(target, travellers); channel != nullptr)
+            return channel;
+    }
+    return worldNamed(target);
+}
+
+void WorldManager::channels()
+{
+    const core::u64 now = m_options.clock ? m_options.clock() : 0;
+    for (const ServersConfig::World& config : m_options.config.worlds) {
+        if (!config.channels || m_stopping)
+            continue;
+        std::vector<World*> open;
+        std::set<core::u32> used;
+        bool starting = false;
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            if (world->retired || world->base != config.name || world->replacing || world->state == State::Stopped ||
+                world->state == State::Failed)
+                continue;
+            used.insert(world->channel);
+            if (world->state == State::Starting)
+                starting = true;
+            else if (world->state == State::Ready && world->mergeAtNs == 0)
+                open.push_back(world.get());
+        }
+
+        // **Another, when every one open is full enough** (§1): one at a
+        // time, and not past the machine's limits.
+        const auto fullAt = static_cast<core::u32>(std::ceil(config.channelOpenAt * config.maxPlayers));
+        const bool full = !open.empty() && std::all_of(open.begin(), open.end(),
+                                                       [&](const World* world) { return world->held() >= fullAt; });
+        if (full && !starting && used.size() < config.maxChannels) {
+            const core::u64 free = platform::freeMemoryBytes();
+            const bool memory =
+                free == 0 || free >= static_cast<core::u64>(m_options.config.minFreeMegabytes) * 1024u * 1024u;
+            const auto alive =
+                static_cast<core::u32>(std::count_if(m_worlds.begin(), m_worlds.end(), [](const auto& w) {
+                    return !w->retired && !w->warm && w->state != State::Failed && w->state != State::Stopped;
+                }));
+            if (memory && (m_options.mostWorlds == 0 || alive < m_options.mostWorlds)) {
+                core::u32 next = 2;
+                while (used.contains(next))
+                    ++next;
+                World& opened = startChannel(config, next);
+                const std::array<core::I18nArg, 2> args{
+                    core::I18nArg{"world", std::string_view{config.name}},
+                    core::I18nArg{"channel", static_cast<core::i64>(opened.channel)}};
+                core::log(core::LogLevel::Info, ENG_TR("manager.info.channel_opening"), args);
+            }
+        }
+
+        // **Fewer when the crowd goes** (§3): another than the first stopped
+        // once empty for its while; one long under a quarter full, warned,
+        // then its players moved to the fullest with room.
+        for (World* world : open) {
+            if (world->channel <= 1)
+                continue;
+            const core::u32 held = world->held();
+            if (held == 0 && world->present.empty()) {
+                if (world->emptySinceChannelNs == 0)
+                    world->emptySinceChannelNs = now;
+                else if (now >= world->emptySinceChannelNs + config.channelCloseSeconds * NsPerSecond) {
+                    world->stopAsked = true;
+                    world->retired = true;
+                    core::JsonWriter stop(core::JsonLayout::Compact);
+                    stop.beginObject();
+                    stop.field("type", "stop");
+                    stop.endObject();
+                    send(*world, stop);
+                    const std::array<core::I18nArg, 1> args{
+                        core::I18nArg{"world", std::string_view{world->config.name}}};
+                    core::log(core::LogLevel::Info, ENG_TR("manager.info.channel_closing"), args);
+                }
+                continue;
+            }
+            world->emptySinceChannelNs = 0;
+            if (config.mergeMinutes > 0.0 && held * 4 < config.maxPlayers) {
+                if (world->lowSinceNs == 0) {
+                    world->lowSinceNs = now;
+                }
+                else if (now >= world->lowSinceNs + static_cast<core::u64>(config.mergeMinutes * 60.0 *
+                                                                           static_cast<core::f64>(NsPerSecond))) {
+                    world->mergeAtNs = now + MergeWarningNs;
+                    core::JsonWriter merging(core::JsonLayout::Compact);
+                    merging.beginObject();
+                    merging.field("type", "channel-merging");
+                    merging.field("seconds",
+                                  static_cast<core::f64>(MergeWarningNs) / static_cast<core::f64>(NsPerSecond));
+                    merging.endObject();
+                    send(*world, merging);
+                    const std::array<core::I18nArg, 1> args{
+                        core::I18nArg{"world", std::string_view{world->config.name}}};
+                    core::log(core::LogLevel::Info, ENG_TR("manager.info.channel_merging"), args);
+                }
+            }
+            else {
+                world->lowSinceNs = 0;
+            }
+        }
+        // A merge warned of, due: everybody to the fullest channel with room
+        // for them all -- a party stays together.
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            if (world->base != config.name || world->mergeAtNs == 0 || world->retired || world->state != State::Ready ||
+                now < world->mergeAtNs)
+                continue;
+            World* into = channelFor(config.name, static_cast<core::u32>(world->present.size()), world.get());
+            if (into == nullptr) {
+                // Nowhere with room: it stays open, and is looked at again.
+                world->mergeAtNs = 0;
+                world->lowSinceNs = now;
+                continue;
+            }
+            for (const auto& [key, account] : world->present)
+                expect(*into, key);
+            world->state = State::Draining;
+            world->drainedSinceNs = now;
+            moveAll(*world, *into);
+        }
+    }
 }
 
 WorldManager::World& WorldManager::startInstance(const ServersConfig::Instance& config, bool warm)
@@ -386,6 +668,7 @@ void WorldManager::instances()
         }
     }
     std::erase_if(m_returns, [now](const auto& entry) { return entry.second.untilNs < now; });
+    std::erase_if(m_recent, [now](const auto& entry) { return entry.second.untilNs < now; });
 }
 
 core::u16 WorldManager::freePort() const
@@ -428,9 +711,11 @@ void WorldManager::launch(World& world)
     launch.port = world.port;
     launch.maxPlayers = world.config.maxPlayers;
     launch.managerKey = core::base64Encode(m_signing.pub);
-    launch.saves = m_options.root / "saves" / world.config.name;
+    // **A channel's saves are its world's** (ADR 0230 §4).
+    launch.saves = m_options.root / "saves" / (world.base.empty() ? world.config.name : world.base);
     launch.health = m_options.config.health;
-    launch.logFile = m_options.root / m_options.config.logs / world.config.name / "engine.log";
+    launch.timeDilation = world.config.timeDilation;
+    launch.logFile = m_options.root / m_options.config.logs / fileName(world.config.name) / "engine.log";
     world.state = State::Starting;
     world.partial.clear();
     world.players = 0;
@@ -438,6 +723,9 @@ void WorldManager::launch(World& world)
     world.stopAsked = false;
     world.startedNs = m_options.clock ? m_options.clock() : 0;
     world.lastHeartbeatNs = world.startedNs;
+    // **Its log's folder, before it opens its log**: a world new to this
+    // game -- a channel, an instance -- had none, and wrote no log at all.
+    (void)platform::createDirectories(launch.logFile.parent_path());
     world.process = world.port == 0 || !m_options.launcher ? nullptr : m_options.launcher(launch);
     const std::array<core::I18nArg, 2> args{core::I18nArg{"world", std::string_view{world.config.name}},
                                             core::I18nArg{"port", static_cast<core::i64>(world.port)}};
@@ -470,18 +758,19 @@ void WorldManager::log(const World& world, std::string_view line)
 {
     // **One folder a world, its file started anew past its size** (ADR 0220
     // §6), the last few kept.
-    const std::filesystem::path folder = m_options.root / m_options.config.logs / world.config.name;
-    const std::filesystem::path file = folder / (world.config.name + ".log");
+    const std::string named = fileName(world.config.name);
+    const std::filesystem::path folder = m_options.root / m_options.config.logs / named;
+    const std::filesystem::path file = folder / (named + ".log");
     std::error_code ec;
     if (std::filesystem::exists(file, ec) &&
         std::filesystem::file_size(file, ec) >= static_cast<core::u64>(m_options.config.logMegabytes) * 1024u * 1024u) {
         for (core::u32 at = m_options.config.logFiles; at > 1; --at) {
-            const std::filesystem::path older = folder / (world.config.name + "." + std::to_string(at - 1) + ".log");
-            const std::filesystem::path oldest = folder / (world.config.name + "." + std::to_string(at) + ".log");
+            const std::filesystem::path older = folder / (named + "." + std::to_string(at - 1) + ".log");
+            const std::filesystem::path oldest = folder / (named + "." + std::to_string(at) + ".log");
             if (std::filesystem::exists(older, ec))
                 std::filesystem::rename(older, oldest, ec);
         }
-        std::filesystem::rename(file, folder / (world.config.name + ".1.log"), ec);
+        std::filesystem::rename(file, folder / (named + ".1.log"), ec);
     }
     if (!platform::createDirectories(folder))
         return;
@@ -549,6 +838,7 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
     if (type == "heartbeat") {
         world.lastHeartbeatNs = now;
         world.players = static_cast<core::u32>(root["players"].asInteger(0));
+        std::erase_if(world.expected, [now](const auto& entry) { return entry.second < now; });
         world.tickMs = root["tickMs"].asNumber(0.0);
         return;
     }
@@ -573,6 +863,9 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
             }
         }
         world.present[key] = account;
+        world.expected.erase(key);
+        // In a world again: nothing to come back to.
+        m_recent.erase(key);
         if (world.instance)
             m_members[key] = world.config.name;
         else
@@ -580,7 +873,13 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
         return;
     }
     if (type == "player-left") {
-        world.present.erase(std::string(root["key"].asString()));
+        const std::string key(root["key"].asString());
+        world.present.erase(key);
+        // **Free to come back** without waiting in line, a while (ADR 0232
+        // §3): a dropped connection, not one who chose another world.
+        if (!world.instance && !world.retired)
+            m_recent[key] = Return{world.config.name,
+                                   now + static_cast<core::u64>(m_options.config.queueGraceSeconds) * NsPerSecond};
         return;
     }
     // **Events between worlds** (ADR 0223): kept nowhere, delivered to every
@@ -633,11 +932,51 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
                                                              static_cast<core::f64>(NsPerSecond));
         return;
     }
+    if (type == "channels") {
+        // **The channels of the world this one is** (ADR 0230 §4), for a menu.
+        const std::string base = world.base.empty() ? world.config.name : world.base;
+        core::JsonWriter answer(core::JsonLayout::Compact);
+        answer.beginObject();
+        answer.field("type", "channels");
+        answer.field("id", root["id"].asInteger(0));
+        answer.key("channels");
+        answer.beginArray();
+        for (const std::unique_ptr<World>& other : m_worlds) {
+            const bool same = world.base.empty() ? other.get() == &world : other->base == base;
+            if (!same || other->retired || other->replacing || other->state != State::Ready)
+                continue;
+            answer.beginObject();
+            answer.field("channel", static_cast<core::i64>(std::max<core::u32>(other->channel, 1)));
+            answer.field("players", static_cast<core::i64>(other->players));
+            answer.field("max", static_cast<core::i64>(other->config.maxPlayers));
+            answer.endObject();
+        }
+        answer.endArray();
+        answer.endObject();
+        send(world, answer);
+        return;
+    }
     if (type == "travel") {
         // **A world sends players on** (ADR 0222): a pass each, for the
-        // world named.
+        // world named -- or, for a world with channels, the one of them the
+        // players go to (ADR 0230 §2): the one asked for, the one a player
+        // is in, or the fullest with room for them all.
         const std::string target(root["target"].asString());
-        World* to = worldNamed(target);
+        const auto travellers = static_cast<core::u32>(root["players"].size());
+        World* to = nullptr;
+        if (const std::string toPlayer(root["toPlayer"].asString()); !toPlayer.empty()) {
+            for (const std::unique_ptr<World>& other : m_worlds) {
+                if (!other->retired && other->state == State::Ready && other->present.contains(toPlayer) &&
+                    other->held() + travellers <= other->config.maxPlayers)
+                    to = other.get();
+            }
+        }
+        else if (const auto channel = static_cast<core::u32>(root["channel"].asInteger(0)); channel > 0) {
+            to = worldNamed(channel == 1 ? target : target + ":" + std::to_string(channel));
+        }
+        else {
+            to = routed(target, travellers);
+        }
         if (to != nullptr && to->instance) {
             bool allowed = !to->warm;
             for (core::usize at = 0; at < root["players"].size() && allowed; ++at)
@@ -665,6 +1004,8 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
             send(world, answer);
             return;
         }
+        for (core::usize at = 0; at < root["players"].size(); ++at)
+            expect(*to, root["players"].at(at)["key"].asString());
         answer.field("type", "passes");
         answer.field("address", std::string_view{m_options.config.publicAddress});
         answer.field("port", static_cast<core::i64>(to->port));
@@ -767,6 +1108,14 @@ void WorldManager::frame()
             }
             if (event.kind == net::TransportEvent::Kind::Disconnected) {
                 m_door->waiting.erase(event.peer.value);
+                // **Gone from the line, their place kept a while** (§3).
+                for (Door::Waiting& waiting : m_door->line) {
+                    if (waiting.peer == event.peer.value) {
+                        waiting.peer = 0;
+                        waiting.goneUntilNs =
+                            now + static_cast<core::u64>(m_options.config.queueGraceSeconds) * NsPerSecond;
+                    }
+                }
                 continue;
             }
             if (event.kind != net::TransportEvent::Kind::Message)
@@ -780,7 +1129,7 @@ void WorldManager::frame()
                 continue;
             }
             const ServersConfig::World* entry = m_options.config.entry();
-            World* to = entry != nullptr ? worldNamed(entry->name) : nullptr;
+            World* to = entry != nullptr ? routed(entry->name, 1) : nullptr;
             const std::optional<std::array<core::u8, 32>> key = m_door->transport->remoteKey(event.peer);
             std::string reason;
             if (key.has_value()) {
@@ -800,6 +1149,41 @@ void WorldManager::frame()
                         to = instance;
                 }
             }
+            // **Back to where they were**, within the grace (ADR 0232 §3).
+            if (key.has_value() && reason.empty()) {
+                if (const auto recent = m_recent.find(core::toHex(*key)); recent != m_recent.end()) {
+                    if (World* back = worldNamed(recent->second.origin); back != nullptr && roomAt(back))
+                        to = back;
+                    m_recent.erase(recent);
+                }
+            }
+            // **In line** (ADR 0232): nobody has room, or others wait before
+            // them. One already in line has come back to their place.
+            if (!m_stopping && key.has_value() && to != nullptr && reason.empty() &&
+                m_members.find(core::toHex(*key)) == m_members.end() && (!roomAt(to) || !m_door->line.empty())) {
+                const std::string hex = core::toHex(*key);
+                const auto mine = std::find_if(m_door->line.begin(), m_door->line.end(),
+                                               [&](const Door::Waiting& waiting) { return waiting.key == hex; });
+                if (mine == m_door->line.end() && m_door->line.size() >= m_options.config.queueMax) {
+                    (void)m_door->transport->send(event.peer,
+                                                  replication::refusalMessage(replication::RefusedByGame,
+                                                                              phrase(ENG_TR("manager.err.queue_full"))),
+                                                  net::Delivery::Reliable, 0);
+                    continue;
+                }
+                if (mine != m_door->line.end()) {
+                    mine->peer = event.peer.value;
+                    mine->goneUntilNs = 0;
+                    mine->ticket = hello->ticket;
+                }
+                else {
+                    m_door->line.push_back(Door::Waiting{event.peer.value, hex, hello->ticket, 0});
+                }
+                // Held, and not let go after the door's five seconds.
+                m_door->waiting.erase(event.peer.value);
+                m_door->tellNow = true;
+                continue;
+            }
             if (m_stopping || to == nullptr || to->state != State::Ready || !key.has_value()) {
                 (void)m_door->transport->send(
                     event.peer,
@@ -808,11 +1192,13 @@ void WorldManager::frame()
                 continue;
             }
             const std::string passText = pass(core::toHex(*key), {}, to->config.name, {}, hello->ticket, reason);
+            expect(*to, core::toHex(*key));
             (void)m_door->transport->send(event.peer,
                                           replication::redirectMessage(m_options.config.publicAddress, to->port,
                                                                        passText, to->key, to->config.name),
                                           net::Delivery::Reliable, 0);
         }
+        line();
         // Who was answered and has not gone is let go.
         for (auto at = m_door->waiting.begin(); at != m_door->waiting.end();) {
             if (now > at->second + DoorHoldNs) {
@@ -834,6 +1220,7 @@ void WorldManager::frame()
         health(world);
     }
     instances();
+    channels();
     // **An update, a world at a time** (ADR 0220 §7).
     for (std::size_t at = 0; at < m_worlds.size(); ++at) {
         World& old = *m_worlds[at];
@@ -955,6 +1342,8 @@ void WorldManager::update(const std::filesystem::path& folder)
             continue;
         auto next = std::make_unique<World>();
         next->config = old.config;
+        next->base = old.base;
+        next->channel = old.channel;
         next->replacing = true;
         old.successor = next.get();
         World& added = *next;

@@ -128,6 +128,10 @@ public:
     // This machine dropped simulated time this frame: a replica tells
     // its authority.
     void noteTimeDropped();
+    // **Snapshots held while a server catches up** (ADR 0228 §7), and whether
+    // the last send sent one: the frame loop paces them by real time.
+    void holdSnapshots(bool held);
+    [[nodiscard]] bool snapshotSent() const;
     // The own character's drawn offset after a correction (a replica's), for
     // the renderer's transform history.
     [[nodiscard]] replication::VisualCorrection visualCorrection(core::usize seat = 0) const;
@@ -202,6 +206,8 @@ private:
     // A join waiting for its welcome, and when it began.
     bool m_connecting = false;
     core::u64 m_joinStartedNs = 0;
+    // The last place in a front door's line this join was told (ADR 0232).
+    core::u32 m_queuedAt = 0;
     // **A connection that went, being dialled again**: since when, by
     // the clock, or zero while the server is there. And how many fresh joins
     // the replica had counted when this machine last heard `Connected`.

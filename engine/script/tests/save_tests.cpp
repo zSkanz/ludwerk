@@ -5,6 +5,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "engine/core/sequence.h"
 #include "engine/platform/file.h"
@@ -429,4 +430,52 @@ TEST_CASE("a slot read from its backup keeps that backup through the next save")
         REQUIRE(slot->values.contains("level"));
         CHECK(std::get<core::f64>(slot->values.at("level").scalar) == doctest::Approx(3.0));
     }
+}
+
+TEST_CASE("two writers of one slot at once, as two channels of a world are, leave a whole slot and a whole backup")
+{
+    // ADR 0230 §4: the channels of a world are processes of their own with
+    // one saves folder. Two stores here are two writers, each with its own
+    // handle on the slot's lock, as two processes have.
+    TempFolder folder;
+    const auto writer = [&](double who) {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        SaveSlotData* slot = store.open("world");
+        REQUIRE(slot != nullptr);
+        for (int at = 0; at < 150; ++at) {
+            slot->values["writer"] = scalar(scene::Value{core::f64{who}});
+            slot->values["count"] = scalar(scene::Value{core::f64{static_cast<double>(at)}});
+            // Enough of a payload that a write takes a moment.
+            for (int field = 0; field < 64; ++field)
+                slot->values["field" + std::to_string(field)] = scalar(scene::Value{core::f64{at * 64.0 + field}});
+            ++slot->generation;
+            store.flush(1.0);
+        }
+    };
+    std::thread first(writer, 1.0);
+    std::thread second(writer, 2.0);
+    first.join();
+    second.join();
+
+    // The slot is one writer's last save, whole.
+    {
+        SaveStore store(SaveStore::Options{.directory = folder.path});
+        script::SaveDamage damage = script::SaveDamage::None;
+        SaveSlotData* slot = store.open("world", &damage);
+        REQUIRE(slot != nullptr);
+        CHECK(damage == script::SaveDamage::None);
+        const double who = std::get<core::f64>(slot->values.at("writer").scalar);
+        CHECK((who == 1.0 || who == 2.0));
+        CHECK(std::get<core::f64>(slot->values.at("count").scalar) == doctest::Approx(149.0));
+    }
+    // And the backup the last save left is whole too.
+    std::error_code error;
+    std::filesystem::remove(folder.path / "world.save", error);
+    REQUIRE_FALSE(error);
+    SaveStore store(SaveStore::Options{.directory = folder.path});
+    script::SaveDamage damage = script::SaveDamage::None;
+    SaveSlotData* slot = store.open("world", &damage);
+    REQUIRE(slot != nullptr);
+    CHECK(slot->recovered);
+    CHECK(slot->values.contains("writer"));
 }

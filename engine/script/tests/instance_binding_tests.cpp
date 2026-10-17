@@ -606,8 +606,15 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 340: `NetworkService`'s `Travel` and `TravelGroup` (ADR 0222), and
     // `InstanceService`'s five (ADR 0221).
     // 343: `CrossWorldService`'s `Publish`, `Subscribe` and `Unsubscribe` (ADR 0223).
-    CHECK(coverage.declared == 343);
-    CHECK(coverage.bound == 343);
+    // 344: `Player:SetReplicationPriority` (ADR 0229).
+    // 345: `Workspace:GetNearestPlayerDistance` (ADR 0234).
+    // 348: `NetworkService`'s `SwitchChannel`, `TravelToPlayer` and
+    // `GetChannelsAsync` (ADR 0230).
+    // 353: `Player`'s `AddPhase`, `RemovePhase`, `HasPhase`, `GetPhases` and
+    // `CanSee` (ADR 0231).
+    // 355: `Workspace`'s `RaycastAsSeenBy` and `SpherecastAsSeenBy` (ADR 0235).
+    CHECK(coverage.declared == 355);
+    CHECK(coverage.bound == 355);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

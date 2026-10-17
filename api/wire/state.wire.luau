@@ -3428,6 +3428,19 @@ local Classes: { Schema.Class } = {
             .. "replication is affordable at all. `Part` and `MeshPart` inherit it.",
         Fields = BasePartFields,
         Retired = BasePartRetired,
+        Withheld = {
+            {
+                Name = "Dormancy",
+                Reason = "Whether a part may sleep is decided by a dedicated server alone, from where its "
+                    .. "players are (ADR 0234). A replica puts nothing to sleep: it is sent the part's place.",
+            },
+            {
+                Name = "PhaseCollision",
+                Reason = "A replica holds only what its own players see, phased parts among them, and they "
+                    .. "collide with all of it -- which is what this decides for them on the authority "
+                    .. "(ADR 0231). Players outside the phase are never sent the part.",
+            },
+        },
     },
     {
         Name = "Part",
@@ -4559,6 +4572,15 @@ local Messages: { Schema.Message } = {
                     .. "in transit is not the replica's clock.",
             },
             {
+                Name = "drawnTick",
+                Type = "u16",
+                Doc = "**The authority's tick the replica is drawing everyone else at** (protocol 55, ADR "
+                    .. "0235): its newest snapshot's tick less its interpolation delay, in its low sixteen "
+                    .. "bits -- the authority knows the rest from its own tick, never more than a minute "
+                    .. "ahead -- and 0 for none. An authority checks this player's shots against the world "
+                    .. "as it was then.",
+            },
+            {
                 Name = "tickCount",
                 Type = "u8",
                 Doc = "How many ticks this message carries, 1 to 4: the newest and the ones before it "
@@ -5017,6 +5039,36 @@ local Messages: { Schema.Message } = {
         Doc = "Go there instead (protocol 54, ADRs 0220 and 0222): the front door sending a joiner to a "
             .. "world, and a world sending a traveller to the next. The replica leaves this connection and "
             .. "joins the one named, with the pass in its hello.",
+    },
+    {
+        Name = "Phases",
+        Id = 38,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "seat", Type = "u8", Doc = "0 the machine's first player, 1 to 3 a guest." },
+            { Name = "count", Type = "u16" },
+            { Name = "phases", Type = "repeat", Count = "count", Each = { { Name = "name", Type = "text" } } },
+        },
+        Doc = "The phases one of this machine's players is in (protocol 55, ADR 0231), whole, whenever they "
+            .. "change: what `Player:HasPhase` reads there. Nothing else of a phase crosses the network.",
+    },
+    {
+        Name = "Queued",
+        Id = 37,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "position", Type = "u32", Doc = "Its place in the line, from 1." },
+            {
+                Name = "estimate",
+                Type = "u32",
+                Doc = "Seconds until its turn, in whole minutes, as the line has moved in the last five "
+                    .. "minutes; 4294967295 when nobody has left the line yet to measure by.",
+            },
+        },
+        Doc = "Waiting at the front door (protocol 55, ADR 0232): the game is full, and this machine is in "
+            .. "line. Said when it joins the line and every five seconds after; its turn is a `Redirect`.",
     },
     {
         Name = "Announce",

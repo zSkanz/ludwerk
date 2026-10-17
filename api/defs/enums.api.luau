@@ -203,6 +203,24 @@ local Definition: Schema.Definition = {
             },
         },
         {
+            Name = "Dormancy",
+            Records = { "ADR 0234" },
+            Doc = "Whether a part may sleep where no player is near, set by `BasePart.Dormancy`.",
+            Items = {
+                {
+                    Name = "Auto",
+                    Value = 0,
+                    Doc = "It sleeps on a dedicated server when no player's focus is within the game's "
+                        .. "`dormant_radius`: a `CharacterBody` does not walk, and what it was asked waits.",
+                },
+                {
+                    Name = "Never",
+                    Value = 1,
+                    Doc = "It stays awake wherever it is: a train, a projectile, a boss that roams.",
+                },
+            },
+        },
+        {
             Name = "RunContext",
             Records = { "ADR 0138" },
             Doc = "Where a `Script` runs, set by `Script.RunContext`. Inside a script service, the service "

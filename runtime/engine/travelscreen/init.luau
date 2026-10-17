@@ -124,6 +124,21 @@ function TravelScreen.mount(options: Options?): Display
         gui.Enabled = false
     end
 
+    -- **In line at a full game's door** (ADR 0232): the place, and the
+    -- minutes when they are known.
+    local function queued(position: number, estimateSeconds: number?)
+        if estimateSeconds then
+            words.Text = LocalizationService:Translate("engine.travelscreen.queued_estimate", {
+                position = position,
+                minutes = math.max(1, math.ceil(estimateSeconds / 60)),
+            })
+        else
+            words.Text = LocalizationService:Translate("engine.travelscreen.queued", { position = position })
+        end
+        showing = true
+        gui.Enabled = true
+    end
+
     -- **The bar moves while the world loads**: how long a hop takes is not
     -- known ahead, so it sweeps rather than fills.
     local function sweep(dt: number)
@@ -136,6 +151,7 @@ function TravelScreen.mount(options: Options?): Display
 
     local connections: { Connection } = {
         NetworkService.TravelStarted:Connect(show),
+        NetworkService.Queued:Connect(queued),
         NetworkService.Connected:Connect(hide),
         -- A hop that fails ends on the machine's own world: nothing to cover.
         NetworkService.Disconnected:Connect(hide),

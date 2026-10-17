@@ -37,6 +37,10 @@ Returns every part that overlaps an oriented box, as a new array in a stable ord
 
 Returns every part that overlaps a sphere, as a new array in a stable order, with one entry per part. Use it to find what an explosion reaches or what is within arm's length.
 
+### `GetNearestPlayerDistance(position: vector): number`
+
+Returns the distance in meters from `position` to the nearest player's focus, or `math.huge` when no player has one. A focus is their `ReplicationFocus`, or their character, as the physics step last took them. Use it to decide how much a far thing needs to do; `@engine/npclod` calls an NPC's code by it.
+
 ### `GetWindAt(position: vector): vector`
 
 Returns the wind at a point at the current simulation time, in meters per second: `GlobalWind` with its gusts and turbulence. The renderer uses the same function, so a flag, a sail or a sound driven by this value matches what is drawn.
@@ -49,6 +53,16 @@ Returns the nearest thing that a ray from `origin` hits, or nil. The length of `
 
 Returns the nearest `Part2D` or `Tilemap2D` that a ray on the 2D plane hits, or nil. The length of `direction` is the length of the ray. Sensors and parts with `CanCollide` off are ignored. When two hits are at the same distance, the result is the same on every run.
 
+### `RaycastAsSeenBy(player: Player, origin: vector, direction: vector, params: RaycastParams? = nil): RaycastResult?`
+
+Returns what a ray hits in the world as `player`'s machine was drawing it. Every other player's `Character`, and every part with `BasePart.LagCompensated`, is placed where that machine drew it, at the moment it was showing; everything else is as it is now. Check a shot with it on the server, and a player with real latency hits the moving target they aimed at.
+
+The rewind is at most `rewind_cap_ms` under `[network]` in `project.toml`, 200 by default: a slower shooter's shot is checked against the world that long ago, so a target who reached cover more than that long ago is safe. The shooter's own character is where it is now. Only the server calls it; on a client it raises.
+
 ### `Spherecast(origin: vector, radius: number, direction: vector, params: RaycastParams? = nil): RaycastResult?`
 
 Returns the nearest thing that a sphere moved along a ray hits, or nil. Use it instead of `Raycast` for a camera boom or a character's ground check, where a thin ray would pass through a gap that the object itself does not fit through.
+
+### `SpherecastAsSeenBy(player: Player, origin: vector, radius: number, direction: vector, params: RaycastParams? = nil): RaycastResult?`
+
+`RaycastAsSeenBy` for a sphere moved along the ray: a thick projectile, or a melee swing, checked against what its player saw.

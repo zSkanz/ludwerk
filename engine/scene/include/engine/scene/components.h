@@ -102,6 +102,12 @@ struct PartComponent
     // own picture, 0 to 1. This machine's alone: never on the wire, never in
     // a file, never in the world's hash.
     f32 fade = 0.0f;
+    // `BasePart.ReplicationPriority` (ADR 0229): how much its changes come
+    // first within a player's budget. The authority's; never on the wire,
+    // never in the world's hash.
+    f32 replicationPriority = 1.0f;
+    // `BasePart.Dormancy` (ADR 0234): `Enum.Dormancy`'s value, 0 `Auto`.
+    i32 dormancy = 0;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and
@@ -243,6 +249,9 @@ struct CharacterBodyComponent
 
     // Reported by the controller after each tick.
     bool grounded = false;
+    // **Asleep this tick** (ADR 0234): no player near, so not stepped;
+    // decided where the physics step begins.
+    bool dormant = false;
     // `Enum.CharacterState`'s value, stored raw for the same reason
     // `PartComponent::shape` is.
     i32 state = 1;
@@ -2010,6 +2019,21 @@ struct PlayerIntent
     u8 seat = 0;
 };
 
+// `Instance.Phase` and `BasePart.PhaseCollision` (ADR 0231): a thing only
+// the players in its phase see. Held only by the few instances that have one.
+struct PhaseComponent
+{
+    core::NameAtom phase;
+    bool collision = true;
+};
+
+// `BasePart.LagCompensated` (ADR 0235): a part a shot is checked against
+// where its shooter saw it. Held only by the parts that are.
+struct LagCompensatedComponent
+{
+    bool on = true;
+};
+
 // `Player`: somebody taking part in this world, local or not.
 struct PlayerComponent
 {
@@ -2032,6 +2056,20 @@ struct PlayerComponent
     // `Player.ReplicationFocus` (ADR 0162): the part what they are sent is
     // measured from, in place of their character. The authority's.
     core::InstanceId replicationFocus;
+    // `Player.ReplicationBudget` (ADR 0229), kilobytes a second, nought the
+    // game's; and what `SetReplicationPriority` said, by instance. The
+    // authority's.
+    f32 replicationBudgetKb = 0.0f;
+    std::vector<std::pair<core::InstanceId, f32>> replicationPriorities;
+    // **The phases they are in** (ADR 0231): the authority's to set, and
+    // their own machine's copy of it.
+    std::vector<core::NameAtom> phases;
+    // **How far behind the authority their machine draws everyone else**
+    // (ADR 0235), in ticks: from the tick it last said it was drawing to the
+    // tick the authority heard it say so. The authority's; nothing known for
+    // one whose machine has said nothing -- the authority's own player.
+    u64 viewBehind = 0;
+    bool viewKnown = false;
     // `Player.Camera` (ADR 0205): what a local player looks through, when the
     // window is shared between this machine's players. This machine's own.
     core::InstanceId camera;

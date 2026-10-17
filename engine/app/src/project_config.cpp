@@ -758,6 +758,14 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.serverAdminAllow.push_back(address);
     if (const std::optional<bool> value = document.boolean("server.health"))
         config.serverHealth = *value;
+    if (const std::optional<bool> value = document.boolean("server.time_dilation"))
+        config.serverTimeDilation = *value;
+    if (const std::optional<f64> value = document.number("server.time_dilation_floor");
+        value.has_value() && *value >= 0.05 && *value <= 1.0)
+        config.serverTimeDilationFloor = *value;
+    if (const std::optional<f64> value = document.number("server.dormant_radius");
+        value.has_value() && *value >= 0.0 && *value <= 1.0e6)
+        config.serverDormantRadius = *value;
     if (const std::optional<f64> value = document.number("server.health_port");
         value.has_value() && *value >= 1.0 && *value <= 65535.0)
         config.serverHealthPort = static_cast<core::u16>(*value);
@@ -776,6 +784,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("save.max_slots", 1, 4096, config.saveMaxSlots);
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
     count("network.max_connections_per_address", 0, 4095, config.networkMaxPerAddress);
+    count("network.client_budget_kb_per_second", 0, 65536, config.networkClientBudgetKb);
+    count("network.rewind_cap_ms", 0, 1000, config.networkRewindCapMs);
     for (const std::string& name : document.keys("luau.flags.")) {
         // A flag's name is one word; a dotted one is a table under it, and
         // no flag.

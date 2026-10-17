@@ -22,6 +22,7 @@
 #include "engine/replication/script_templates.h"
 #include "engine/scene/class_registry.h"
 #include "engine/scene/components.h"
+#include "engine/scene/phases.h"
 #include "engine/scene/players.h"
 #include "engine/scene/swarm.h"
 #include "engine/scene/voxel_fluid.h"
@@ -109,6 +110,7 @@ namespace {
 using core::f32;
 using core::f64;
 using core::i32;
+using core::i64;
 using core::InstanceId;
 using generated::MessageType;
 
@@ -123,6 +125,26 @@ constexpr u8 SwarmChannel = 5;
 
 // A snapshot record whose fields are the whole set rather than a diff.
 constexpr u8 FullRecord = 1;
+// **A record of a part that waited for its turn** (ADR 0229, protocol 55):
+// the replica draws it further in the past, between the states it was sent.
+constexpr u8 HeldBackRecord = 2;
+// The furthest further back a part that waits is drawn: a second, the
+// longest a changed part waits while its budget can carry it.
+constexpr f64 MaxPartLagTicks = 60.0;
+// **A player's budget** (ADR 0229): half a second of it may be spent at
+// once; a part's turn comes at full rate within this many metres of the
+// peer's focus, falling to this fraction at the edge of the load radius;
+// and one that has waited three quarters of a second goes before any that has
+// not -- so that, while the budget can carry each changed part once a second,
+// none waits longer.
+constexpr f64 BudgetBurstSeconds = 0.5;
+constexpr f64 TicksPerSecond = 60.0;
+constexpr f64 BudgetNearMetres = 15.0;
+// What is this close to one of a peer's own characters is sent with it,
+// whatever the budget: what the character can touch next.
+constexpr f64 BudgetReachMetres = 8.0;
+constexpr f64 BudgetFarRate = 0.1;
+constexpr u64 BudgetStaleTicks = 45;
 // **An intent as it crosses** (protocol 40). Its byte: the action's type in
 // the low three bits, whether it is pressed, and which of its three axes are
 // not zero -- only those follow. And, in place of a tick's count of intents,
@@ -2605,6 +2627,8 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 // **Whether its clock moved**: how many times it has
                 // dropped simulated time, which changes only when it did.
                 const u32 epoch = reader.u32v();
+                // What its machine draws everyone else at (ADR 0235).
+                const u16 drawn = reader.u16v();
                 // **Up to four ticks, oldest first** (protocol 22): read whole,
                 // then queued -- a tick already applied or already queued is a
                 // redundant copy, and nothing.
@@ -2707,6 +2731,22 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     if (peer->unnamedIntents.size() >= MaxUnnamedIntents)
                         break;
                     peer->unnamedIntents.push_back(each);
+                }
+                // **How far behind it draws the world** (ADR 0235): from the
+                // tick it was drawing to the newest this authority has run,
+                // which is when it heard. Every seat at the machine sees one
+                // screen's world.
+                if (const u64 heard = world.engineState().tick; drawn != 0) {
+                    // Its low sixteen bits: the tick at or before this one
+                    // that has them.
+                    const u64 behind = static_cast<u16>(static_cast<u16>(heard & 0xFFFFu) - drawn);
+                    for (u8 seat = 0; seat <= peer->guests.size(); ++seat) {
+                        if (scene::PlayerComponent* seated = world.players().find(peer->playerIn(seat));
+                            seated != nullptr) {
+                            seated->viewBehind = std::min<u64>(behind, MaxViewBehindTicks);
+                            seated->viewKnown = true;
+                        }
+                    }
                 }
                 // **Intents that are late whole, tick after tick, are a clock
                 // that moved and not a packet that was slow**. A replica
@@ -3695,8 +3735,29 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             // then read.
             SharedFields fields;
             u64 keptHash = 0;
-            u64 source = sourceDigestOf(world, id, *desc);
-            if (source != 0) {
+            u64 source = 0;
+            // **Asleep, and asleep at the capture before** (ADR 0234): no
+            // player is near, so the step did not move it, and nothing wrote
+            // it -- kept without its components even being looked at. Most
+            // of a large world's characters, every tick, where reading them to
+            // find nothing changed was the largest part of a capture.
+            const scene::CharacterBodyComponent* sleeper = world.characterBodies().find(id);
+            const bool asleep = sleeper != nullptr && sleeper->dormant;
+            if (asleep && known && before != nullptr && world.writtenAt(id) <= writtenBefore &&
+                (turn + netId) % RereadEvery != 0 &&
+                std::binary_search(m_asleepBefore.begin(), m_asleepBefore.end(), netId)) {
+                const EntityState* held = findEntity(*before, netId);
+                if (held != nullptr && held->schema == schema && held->hash != 0 &&
+                    asU32(held->fields[nameField]) == world.name(id).id &&
+                    asU32(held->fields[parentField]) == next.parentNet) {
+                    fields = held->fields;
+                    keptHash = held->hash;
+                    source = held->source;
+                }
+            }
+            if (keptHash == 0)
+                source = sourceDigestOf(world, id, *desc);
+            if (keptHash == 0 && source != 0) {
                 for (const usize at : referencesOf(schema)) {
                     const InstanceId target = referenceAt(world, id, *desc, at);
                     u64 named = 0;
@@ -3712,7 +3773,7 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
                 if (source == 0)
                     source = 1;
             }
-            if (known && before != nullptr && source != 0 && world.writtenAt(id) <= writtenBefore &&
+            if (keptHash == 0 && known && before != nullptr && source != 0 && world.writtenAt(id) <= writtenBefore &&
                 (turn + netId) % RereadEvery != 0) {
                 const EntityState* held = findEntity(*before, netId);
                 if (held != nullptr && held->schema == schema && held->hash != 0 && held->source == source &&
@@ -3741,6 +3802,8 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
                 m_classNames[netId] = world.classes().find(world.classOf(id))->name;
             }
             seen.emplace_back(key, netId);
+            if (asleep)
+                m_asleepNow.push_back(netId);
 
             state->entities.push_back(EntityState{NetId{netId}, schema, std::move(fields), keptHash, source});
             const auto order = static_cast<i32>(m_order.size());
@@ -3748,6 +3811,7 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
             pushChildren(id, netId, order);
         }
     };
+    m_asleepNow.clear();
     walk(root, RootNetId.value, -1, false);
 
     // **The services whose properties travel** (`Service = true` in the wire
@@ -3779,6 +3843,8 @@ void AuthoritySession::capture(const scene::World& world, InstanceId root, u64 t
     // In id order from here: what a reference is looked up in, and what the
     // next capture finds its instances' ids in.
     std::sort(seen.begin(), seen.end());
+    std::sort(m_asleepNow.begin(), m_asleepNow.end());
+    std::swap(m_asleepBefore, m_asleepNow);
 
     // **What a joint names, as a network id** -- after the walk, since a
     // joint may name what is captured after it. An instance that was not
@@ -3862,6 +3928,17 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
 {
     m_world = &world;
     m_tick = tick;
+    // **The budget's numbers, a second at a time** (ADR 0229).
+    if (m_budgetWindowTick == 0 || tick < m_budgetWindowTick)
+        m_budgetWindowTick = tick;
+    if (tick >= m_budgetWindowTick + static_cast<u64>(TicksPerSecond)) {
+        m_stats.deferredLastSecond = m_windowDeferred;
+        m_stats.budgetUsedLastSecond = m_windowGiven > 0.0 ? m_windowSpent / m_windowGiven : 0.0;
+        m_windowDeferred = 0;
+        m_windowSpent = 0.0;
+        m_windowGiven = 0.0;
+        m_budgetWindowTick = tick;
+    }
     // What a send spends, by what it is doing: reading the world, finding
     // what changed off the entities, and telling each peer.
     core::profile::Sections stretch;
@@ -3890,6 +3967,7 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
         roster.push_back(player->character.valid() ? netIdOf(player->character).value : 0u);
     }
 
+    indexInterest(world);
     for (Peer& peer : m_peers) {
         if (!peer.welcomed)
             continue;
@@ -3905,15 +3983,20 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
                 continue;
             peer.begun = true;
         }
-        // What this peer owns (ADR 0099), in network-id order.
+        // What this peer owns (ADR 0099), in network-id order: from the
+        // entries that have an owner at all, not from every entry.
         std::vector<u32> owned;
-        for (const Captured& entry : m_order) {
-            const scene::RigidBodyComponent* body = world.rigidBodies().find(entry.id);
-            if (body != nullptr && peer.has(body->networkOwner))
-                owned.push_back(entry.netId);
+        for (const auto& [index, owner] : m_interest.owners) {
+            if (peer.has(owner))
+                owned.push_back(m_order[index].netId);
         }
         std::sort(owned.begin(), owned.end());
-        const std::vector<u32> relevant = interestOf(world, peer);
+        std::vector<u32> relevant;
+        {
+            ENG_PROFILE_SCOPE("net.peer.interest");
+            relevant = interestOf(world, peer);
+        }
+        ENG_PROFILE_SCOPE("net.peer.send");
         sendTo(peer, current, roster, relevant, owned);
     }
 }
@@ -3934,6 +4017,93 @@ static std::optional<core::DVec3> focusOf(const scene::World& world, const scene
     return std::nullopt;
 }
 
+namespace {
+
+// A cell's key: three signed cell coordinates, 21 bits each.
+[[nodiscard]] u64 cellKey(i64 x, i64 y, i64 z) noexcept
+{
+    constexpr i64 Mask = (i64{1} << 21) - 1;
+    return (static_cast<u64>(x & Mask) << 42) | (static_cast<u64>(y & Mask) << 21) | static_cast<u64>(z & Mask);
+}
+
+// Where an entry is and how far it reaches from there: a part's box, as the
+// sphere round it; a sprite's rectangle, the circle round it.
+[[nodiscard]] std::optional<std::pair<core::DVec3, f64>> boundsOf(const scene::World& world, core::InstanceId id)
+{
+    if (const scene::PartComponent* part = world.parts().find(id); part != nullptr) {
+        const f64 x = static_cast<f64>(part->size.x);
+        const f64 y = static_cast<f64>(part->size.y);
+        const f64 z = static_cast<f64>(part->size.z);
+        return std::pair{part->cframe.position, 0.5 * std::sqrt(x * x + y * y + z * z)};
+    }
+    if (const scene::Part2DComponent* sprite = world.parts2d().find(id); sprite != nullptr) {
+        return std::pair{core::DVec3{static_cast<f64>(sprite->position.x), static_cast<f64>(sprite->position.y), 0.0},
+                         0.5 * std::hypot(static_cast<f64>(sprite->size.x), static_cast<f64>(sprite->size.y))};
+    }
+    return std::nullopt;
+}
+
+// How many cells one entry may be put in: past this it is measured by every
+// peer, as before -- a floor of kilometres under a tiny radius.
+constexpr i64 MostCellsAnEntry = 4096;
+
+} // namespace
+
+void AuthoritySession::indexInterest(const scene::World& world)
+{
+    InterestIndex& index = m_interest;
+    const usize count = m_order.size();
+    index.positioned.assign(count, 0);
+    index.cells.clear();
+    index.owners.clear();
+    const f64 keep = world.engineState().streamingLoadRadius * 1.25;
+    // A radius the grid cannot hold -- none, or one beyond the world -- is
+    // measured entry by entry, as it always was.
+    index.everything = !(keep > 1.0 && keep < 1.0e6);
+    index.cell = keep;
+    // **Phases** (ADR 0231): each entry's own, read only in a world that has
+    // any.
+    index.phased = scene::anyPhased(world);
+    index.phase.assign(index.phased ? count : 0, 0u);
+    if (index.phased) {
+        for (usize at = 0; at < count; ++at) {
+            if (const scene::PhaseComponent* own = world.phases().find(m_order[at].id); own != nullptr)
+                index.phase[at] = own->phase.id;
+        }
+    }
+    for (usize at = 0; at < count; ++at) {
+        const core::InstanceId id = m_order[at].id;
+        if (const scene::RigidBodyComponent* body = world.rigidBodies().find(id);
+            body != nullptr && body->networkOwner != 0)
+            index.owners.emplace_back(static_cast<u32>(at), body->networkOwner);
+        const std::optional<std::pair<core::DVec3, f64>> bounds = boundsOf(world, id);
+        if (!bounds.has_value())
+            continue;
+        index.positioned[at] = 1;
+        if (index.everything)
+            continue;
+        const auto [centre, reach] = *bounds;
+        const auto low = [&](f64 v) { return static_cast<i64>(std::floor((v - reach) / index.cell)); };
+        const auto high = [&](f64 v) { return static_cast<i64>(std::floor((v + reach) / index.cell)); };
+        const i64 x0 = low(centre.x);
+        const i64 x1 = high(centre.x);
+        const i64 y0 = low(centre.y);
+        const i64 y1 = high(centre.y);
+        const i64 z0 = low(centre.z);
+        const i64 z1 = high(centre.z);
+        if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > MostCellsAnEntry) {
+            // Too big to cell: every peer measures it, in the list kept
+            // under the key nothing else has.
+            index.cells[~u64{0}].push_back(static_cast<u32>(at));
+            continue;
+        }
+        for (i64 x = x0; x <= x1; ++x)
+            for (i64 y = y0; y <= y1; ++y)
+                for (i64 z = z0; z <= z1; ++z)
+                    index.cells[cellKey(x, y, z)].push_back(static_cast<u32>(at));
+    }
+}
+
 std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const Peer& peer) const
 {
     std::vector<u32> relevant;
@@ -3943,10 +4113,35 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
     // with none has nothing to measure from and is sent everything, which is
     // what every session did before interest existed.
     const scene::PlayerComponent* player = peer.player.valid() ? world.players().find(peer.player) : nullptr;
+    // **And in phase** (ADR 0231 §3): an entry whose phase, or a phase above
+    // it, none of the machine's players is in is not sent at all.
+    std::vector<u8> unseen;
+    if (m_interest.phased) {
+        std::vector<u32> held;
+        for (u8 seat = 0; seat <= peer.guests.size(); ++seat) {
+            const InstanceId seated = peer.playerIn(seat);
+            if (const scene::PlayerComponent* sitting = seated.valid() ? world.players().find(seated) : nullptr;
+                sitting != nullptr)
+                for (const core::NameAtom phase : sitting->phases)
+                    held.push_back(phase.id);
+        }
+        std::sort(held.begin(), held.end());
+        unseen.assign(m_order.size(), 0);
+        for (usize at = 0; at < m_order.size(); ++at) {
+            const u32 own = at < m_interest.phase.size() ? m_interest.phase[at] : 0u;
+            const i32 parent = m_order[at].parent;
+            unseen[at] = (own != 0 && !std::binary_search(held.begin(), held.end(), own)) ||
+                                 (parent >= 0 && unseen[static_cast<usize>(parent)])
+                             ? 1
+                             : 0;
+        }
+    }
     const std::optional<core::DVec3> body = focusOf(world, player);
     if (!body.has_value()) {
-        for (const Captured& entry : m_order)
-            relevant.push_back(entry.netId);
+        for (usize at = 0; at < m_order.size(); ++at) {
+            if (unseen.empty() || !unseen[at])
+                relevant.push_back(m_order[at].netId);
+        }
         std::sort(relevant.begin(), relevant.end());
         return relevant;
     }
@@ -3969,9 +4164,12 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
 
     const usize count = m_order.size();
     std::vector<u8> inRange(count, 0);
-    std::vector<u8> positioned(count, 0);
+    std::vector<u8> positioned = m_interest.positioned;
+    positioned.resize(count, 0);
     std::vector<u8> marked(count, 0);
-    for (usize at = 0; at < count; ++at) {
+    // **Measured exactly, but only what could be in reach** (ADR 0228 §2):
+    // the entries in the cells round each focus, once each.
+    const auto measure = [&](usize at) {
         // The nearest of the machine's players, to the nearest edge
         // (`reachSquared`).
         std::optional<f64> nearest;
@@ -3982,14 +4180,42 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
             nearest = nearest.has_value() ? std::min(*nearest, *squared) : *squared;
         }
         if (!nearest.has_value())
-            continue;
-        positioned[at] = 1;
+            return;
         const f64 distance = *nearest;
         const f64 reach = std::binary_search(peer.known.begin(), peer.known.end(), m_order[at].netId) ? keep : radius;
         inRange[at] = distance <= reach * reach ? 1 : 0;
-        // What the peer owns it simulates, so it has it wherever it is.
-        if (const scene::RigidBodyComponent* owned = world.rigidBodies().find(m_order[at].id);
-            owned != nullptr && peer.has(owned->networkOwner))
+    };
+    if (m_interest.everything) {
+        for (usize at = 0; at < count; ++at)
+            measure(at);
+    }
+    else {
+        std::vector<u8> measured(count, 0);
+        const auto visit = [&](const std::vector<u32>& entries) {
+            for (const u32 at : entries) {
+                if (at < count && !measured[at]) {
+                    measured[at] = 1;
+                    measure(at);
+                }
+            }
+        };
+        if (const auto huge = m_interest.cells.find(~u64{0}); huge != m_interest.cells.end())
+            visit(huge->second);
+        const f64 cell = m_interest.cell;
+        for (usize from = 0; from < fociCount; ++from) {
+            const core::DVec3& focus = foci[from];
+            const auto low = [&](f64 v) { return static_cast<i64>(std::floor((v - keep) / cell)); };
+            const auto high = [&](f64 v) { return static_cast<i64>(std::floor((v + keep) / cell)); };
+            for (i64 x = low(focus.x); x <= high(focus.x); ++x)
+                for (i64 y = low(focus.y); y <= high(focus.y); ++y)
+                    for (i64 z = low(focus.z); z <= high(focus.z); ++z)
+                        if (const auto found = m_interest.cells.find(cellKey(x, y, z)); found != m_interest.cells.end())
+                            visit(found->second);
+        }
+    }
+    // What the peer owns it simulates, so it has it wherever it is.
+    for (const auto& [at, owner] : m_interest.owners) {
+        if (at < count && peer.has(owner))
             inRange[at] = 1;
     }
 
@@ -4028,11 +4254,171 @@ std::vector<u32> AuthoritySession::interestOf(const scene::World& world, const P
 
     // What a service keeps for everybody is everybody's, near or far.
     for (usize at = 0; at < count; ++at) {
-        if (marked[at] || m_order[at].pinned)
+        if ((marked[at] || m_order[at].pinned) && (unseen.empty() || !unseen[at]))
             relevant.push_back(m_order[at].netId);
     }
     std::sort(relevant.begin(), relevant.end());
     return relevant;
+}
+
+// **What goes now and what waits** (ADR 0229). What may not wait goes first
+// whatever it costs: a record whole (a part new to the peer), its own
+// players' characters, what it owns, and what is within reach of one of its
+// characters. Then what has waited longest past
+// `BudgetStaleTicks`, oldest first; then the rest by a priority that grows each snapshot it waits --
+// by how near it is to the peer's focus, times the part's
+// `ReplicationPriority`, times what the game said for this player -- until
+// the budget is spent. What does not fit waits, its priority kept.
+void AuthoritySession::chooseWithinBudget(Peer& peer, const scene::PlayerComponent* player,
+                                          std::span<const RecordFacts> records, std::span<const usize> starts,
+                                          std::vector<u8>& chosen, std::vector<u32>& heldBack)
+{
+    const scene::World& world = *m_world;
+    const u64 now = m_tick;
+    std::vector<u32> own;
+    // Where this machine's characters are: what is within reach of one of
+    // them may not wait, since what its prediction collides with has to be
+    // where the authority has it.
+    std::vector<core::DVec3> bodies;
+    for (u8 seat = 0; seat <= peer.guests.size(); ++seat) {
+        const InstanceId seated = peer.playerIn(seat);
+        const scene::PlayerComponent* sitting = seated.valid() ? world.players().find(seated) : nullptr;
+        if (sitting == nullptr || !sitting->character.valid())
+            continue;
+        own.push_back(netIdOf(sitting->character).value);
+        if (const std::optional<core::DVec3> place = placeOf(world, sitting->character); place.has_value())
+            bodies.push_back(*place);
+    }
+    const auto withinReach = [&](const std::optional<core::DVec3>& place) {
+        if (!place.has_value())
+            return false;
+        for (const core::DVec3& body : bodies) {
+            const core::DVec3 apart = *place - body;
+            if (apart.x * apart.x + apart.y * apart.y + apart.z * apart.z <= BudgetReachMetres * BudgetReachMetres)
+                return true;
+        }
+        return false;
+    };
+    const std::optional<core::DVec3> focus = focusOf(world, player);
+    const f64 radius = std::max(world.engineState().streamingLoadRadius, BudgetNearMetres + 1.0);
+    // How fast a part's turn comes for this peer.
+    const auto rateOf = [&](u32 id) {
+        const InstanceId instance = instanceOfNet(world, id);
+        f64 rate = 1.0;
+        if (!instance.valid())
+            return rate;
+        if (const scene::PartComponent* part = world.parts().find(instance); part != nullptr)
+            rate *= static_cast<f64>(part->replicationPriority);
+        if (player != nullptr) {
+            for (const auto& [named, priority] : player->replicationPriorities) {
+                if (named == instance)
+                    rate *= static_cast<f64>(priority);
+            }
+        }
+        if (focus.has_value()) {
+            if (const std::optional<core::DVec3> place = placeOf(world, instance); place.has_value()) {
+                const core::DVec3 apart = *place - *focus;
+                const f64 distance = std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z);
+                if (distance > BudgetNearMetres) {
+                    const f64 along = std::min(1.0, (distance - BudgetNearMetres) / (radius - BudgetNearMetres));
+                    rate *= 1.0 - (1.0 - BudgetFarRate) * along;
+                }
+            }
+        }
+        return rate;
+    };
+
+    struct Turn
+    {
+        usize at = 0;
+        bool must = false;
+        bool waited = false;
+        bool stale = false;
+        f32 priority = 0.0f;
+        u64 since = 0;
+        u32 id = 0;
+    };
+    std::vector<Turn> turns;
+    turns.reserve(records.size());
+    for (usize at = 0; at < records.size(); ++at) {
+        const u32 id = records[at].id;
+        Turn turn;
+        turn.at = at;
+        turn.id = id;
+        turn.must = records[at].full || std::find(own.begin(), own.end(), id) != own.end() ||
+                    std::binary_search(peer.owned.begin(), peer.owned.end(), id);
+        if (!turn.must && !bodies.empty()) {
+            const InstanceId instance = instanceOfNet(world, id);
+            turn.must = instance.valid() && withinReach(placeOf(world, instance));
+        }
+        const auto was = std::lower_bound(peer.waiting.begin(), peer.waiting.end(), id,
+                                          [](const Peer::Waiting& waiting, u32 probe) { return waiting.id < probe; });
+        turn.waited = was != peer.waiting.end() && was->id == id;
+        turn.priority = turn.waited ? was->priority : 0.0f;
+        turn.since = turn.waited ? was->since : now;
+        if (!turn.must)
+            turn.priority += static_cast<f32>(rateOf(id));
+        turn.stale = now >= turn.since + BudgetStaleTicks;
+        turns.push_back(turn);
+    }
+    // **In three goes.** What may not wait; then what has waited past
+    // `BudgetStaleTicks`, oldest first, with at most half of what is left --
+    // were it all, a budget that barely carries everything would be spent in
+    // order of age and what the game put first would wait its turn like the
+    // rest; then everything else, the old that did not fit among it, by
+    // priority.
+    const auto byPriority = [](const Turn& a, const Turn& b) {
+        if (a.priority != b.priority)
+            return a.priority > b.priority;
+        return a.id < b.id;
+    };
+    std::vector<Turn> stale;
+    std::vector<Turn> rest;
+    std::vector<Peer::Waiting> waiting;
+    f64 left = peer.budgetBytes;
+    const auto take = [&](const Turn& turn) {
+        chosen[turn.at] = 1;
+        left -= records[turn.at].full ? 0.0 : static_cast<f64>(starts[turn.at + 1] - starts[turn.at]);
+        // What may not wait is drawn on time from here: within reach of
+        // the peer's character, its prediction meets it where it is.
+        if (turn.waited && !turn.must)
+            heldBack.push_back(turn.id);
+    };
+    for (const Turn& turn : turns) {
+        if (turn.must)
+            take(turn);
+        else if (turn.stale)
+            stale.push_back(turn);
+        else
+            rest.push_back(turn);
+    }
+    std::sort(stale.begin(), stale.end(),
+              [](const Turn& a, const Turn& b) { return a.since != b.since ? a.since < b.since : a.id < b.id; });
+    const f64 staleShare = left * 0.5;
+    f64 staleSpent = 0.0;
+    for (const Turn& turn : stale) {
+        const f64 size = static_cast<f64>(starts[turn.at + 1] - starts[turn.at]);
+        if (staleSpent + size <= staleShare && size <= left) {
+            staleSpent += size;
+            take(turn);
+            continue;
+        }
+        rest.push_back(turn);
+    }
+    std::sort(rest.begin(), rest.end(), byPriority);
+    for (const Turn& turn : rest) {
+        const f64 size = static_cast<f64>(starts[turn.at + 1] - starts[turn.at]);
+        if (size <= left) {
+            take(turn);
+            continue;
+        }
+        chosen[turn.at] = 0;
+        waiting.push_back(Peer::Waiting{turn.id, turn.priority, turn.since});
+    }
+    std::sort(waiting.begin(), waiting.end(),
+              [](const Peer::Waiting& a, const Peer::Waiting& b) { return a.id < b.id; });
+    std::sort(heldBack.begin(), heldBack.end());
+    peer.waiting = std::move(waiting);
 }
 
 void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const std::vector<u32>& roster,
@@ -4050,14 +4436,18 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     std::vector<const EntityState*> current;
     current.reserve(relevant.size());
     {
-        auto wanted = relevant.begin();
-        for (const EntityState& entity : everything.entities) {
-            while (wanted != relevant.end() && *wanted < entity.id.value)
-                ++wanted;
-            if (wanted == relevant.end())
+        // **Looked up, not walked** (ADR 0228 §2): a peer holds tens of what
+        // the world has thousands of, and a walk of the whole for each peer
+        // was the cost of every peer again. Both are in id order, so each
+        // search starts where the last one ended.
+        auto from = everything.entities.begin();
+        for (const u32 wanted : relevant) {
+            from = std::lower_bound(from, everything.entities.end(), wanted,
+                                    [](const EntityState& entity, u32 id) { return entity.id.value < id; });
+            if (from == everything.entities.end())
                 break;
-            if (*wanted == entity.id.value)
-                current.push_back(&entity);
+            if (from->id.value == wanted)
+                current.push_back(&*from);
         }
     }
 
@@ -4071,6 +4461,30 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         sendBytes(m_transport, peer.id, players.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
         peer.roster = roster;
         peer.rosterSent = true;
+    }
+
+    // --- **The phases its players are in** (ADR 0231), whole, when they
+    // changed: what `HasPhase` reads on that machine.
+    for (u8 seat = 0; seat <= peer.guests.size(); ++seat) {
+        const InstanceId seated = peer.playerIn(seat);
+        const scene::PlayerComponent* sitting = seated.valid() ? m_world->players().find(seated) : nullptr;
+        if (sitting == nullptr)
+            continue;
+        std::vector<std::string> names;
+        for (const core::NameAtom phase : sitting->phases)
+            names.emplace_back(m_world->atoms().text(phase));
+        std::sort(names.begin(), names.end());
+        if (peer.phasesTold[seat] && peer.phasesSent[seat] == names)
+            continue;
+        Writer phases;
+        phases.u8v(static_cast<u8>(MessageType::Phases));
+        phases.u8v(seat);
+        phases.u16v(static_cast<u16>(std::min<usize>(names.size(), 0xFFFF)));
+        for (const std::string& name : names)
+            phases.text(name);
+        sendBytes(m_transport, peer.id, phases.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+        peer.phasesSent[seat] = std::move(names);
+        peer.phasesTold[seat] = true;
     }
 
     // --- The scene the authority is in (ADR 0106), before anything of it is
@@ -4205,20 +4619,49 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         return;
 
     // --- The snapshot, against what this peer last proved it holds.
+    // A state its budget held something back at, which an acknowledgement has
+    // passed, is a baseline no more (ADR 0229).
+    while (!peer.heldStates.empty() && peer.heldStates.front().first < peer.acked)
+        peer.heldStates.pop_front();
     const WorldState* baseline = peer.acked != 0 ? historyAt(peer.acked) : nullptr;
     const std::vector<u32>* heldThen = nullptr;
     for (const PeerInterest& held : peer.interest) {
         if (held.tick == peer.acked)
             heldThen = &held.ids;
     }
+    // **What it holds there, where its budget held something back**: not
+    // the authority's state then, but that with the parts it was not sent
+    // as they were before.
+    const std::vector<EntityState>* heldState = nullptr;
+    for (const auto& [tick, state] : peer.heldStates) {
+        if (tick == peer.acked)
+            heldState = state.get();
+    }
     // The one sent in parts, which the history may have dropped by now.
     if ((baseline == nullptr || heldThen == nullptr) && peer.acked != 0 && peer.acked == peer.pinnedTick &&
         peer.pinnedState != nullptr) {
         baseline = peer.pinnedState.get();
         heldThen = &peer.pinnedHeld;
+        if (heldState == nullptr)
+            heldState = peer.pinnedHeldState.get();
     }
-    if (heldThen == nullptr)
+    if (heldThen == nullptr) {
         baseline = nullptr;
+        heldState = nullptr;
+    }
+    const bool based = heldThen != nullptr && (baseline != nullptr || heldState != nullptr);
+    if (!based)
+        m_stats.snapshotsWhole += 1;
+    // What the peer holds of `id` at the baseline.
+    const auto heldOf = [&](u32 id) -> const EntityState* {
+        if (heldState != nullptr) {
+            const auto at =
+                std::lower_bound(heldState->begin(), heldState->end(), id,
+                                 [](const EntityState& entity, u32 probe) { return entity.id.value < probe; });
+            return at != heldState->end() && at->id.value == id ? &*at : nullptr;
+        }
+        return findEntity(*baseline, id);
+    };
 
     struct Record
     {
@@ -4227,26 +4670,26 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         std::vector<usize> fields;
         // What the peer holds of it, when the record is a diff.
         const EntityState* before = nullptr;
+        // The names its fields mention, by the authority's atom.
+        std::vector<u32> names;
     };
     std::vector<Record> records;
-    std::set<u32> atoms;
     const usize nameField = commonIndex("Name");
     for (const EntityState* each : current) {
         const EntityState& entity = *each;
         // Diffed only against what this peer HAD at the baseline -- and whole
         // when it is entering now, whatever the baseline says: the replica
         // scrubbed it from every stored state when it left.
-        const bool held =
-            baseline != nullptr && std::binary_search(heldThen->begin(), heldThen->end(), entity.id.value);
+        const bool held = based && std::binary_search(heldThen->begin(), heldThen->end(), entity.id.value);
         const bool entered = std::binary_search(entering.begin(), entering.end(), entity.id.value);
-        const EntityState* before = held && !entered ? findEntity(*baseline, entity.id.value) : nullptr;
+        const EntityState* before = held && !entered ? heldOf(entity.id.value) : nullptr;
         // **What comes to the same number is the same** -- nearly all of a
         // world, every tick -- and is left without a field of it compared.
         if (before != nullptr && before->schema == entity.schema && before->hash != 0 && before->hash == entity.hash)
             continue;
         if (before != nullptr)
             m_stats.entitiesCompared += 1;
-        Record record{&entity, before == nullptr || before->schema != entity.schema, {}, before};
+        Record record{&entity, before == nullptr || before->schema != entity.schema, {}, before, {}};
         const generated::ClassDesc& described = generated::Classes[entity.schema];
         // **The fields, and not the cells past them** (protocol 44): those
         // are their sequences', compared with them and sent as one value.
@@ -4261,16 +4704,142 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         for (const usize at : record.fields) {
             const generated::FieldDesc* field = fieldAt(described, at);
             if (at == nameField || (field != nullptr && field->encoding == generated::Encoding::NameAtom))
-                atoms.insert(asU32(entity.fields[at]));
+                record.names.push_back(asU32(entity.fields[at]));
         }
         records.push_back(std::move(record));
+    }
+
+    // **Each record's bytes, in id order**, where it begins kept: what the
+    // budget weighs, and what is copied out of here into the snapshot.
+    Writer body;
+    std::vector<usize> starts;
+    starts.reserve(records.size() + 1);
+    for (const Record& record : records) {
+        starts.push_back(body.bytes.size());
+        const generated::ClassDesc& desc = generated::Classes[record.entity->schema];
+        body.u32v(record.entity->id.value);
+        body.u8v(record.entity->schema);
+        body.u8v(record.full ? FullRecord : 0);
+        body.u16v(static_cast<u16>(record.fields.size()));
+        for (const usize at : record.fields) {
+            const generated::Encoding encoding = fieldAt(desc, at)->encoding;
+            if (encoding == generated::Encoding::CFrameD && !record.full &&
+                sameRotation(record.before->fields[at], record.entity->fields[at])) {
+                body.u16v(static_cast<u16>(wireIdAt(desc, at) | PositionAlone));
+                encodePosition(body.bytes, record.entity->fields[at]);
+                continue;
+            }
+            body.u16v(wireIdAt(desc, at));
+            if (isSequence(encoding)) {
+                encodeSequenceField(body.bytes, desc, at, record.entity->fields.view());
+                continue;
+            }
+            encodeField(body.bytes, encoding, record.entity->fields[at]);
+        }
+    }
+    starts.push_back(body.bytes.size());
+
+    // --- **Within its budget** (ADR 0229): what matters most to this peer
+    // first, and the rest when its turn comes.
+    std::vector<u8> chosen(records.size(), 1);
+    // The records sent now that had waited.
+    std::vector<u32> heldBack;
+    std::shared_ptr<std::vector<EntityState>> heldNow;
+    u32 deferred = 0;
+    const scene::PlayerComponent* player = peer.player.valid() ? m_world->players().find(peer.player) : nullptr;
+    const f64 perSecond = player != nullptr && player->replicationBudgetKb > 0.0f
+                              ? static_cast<f64>(player->replicationBudgetKb) * 1024.0
+                              : static_cast<f64>(m_clientBudget);
+    if (perSecond <= 0.0) {
+        peer.waiting.clear();
+    }
+    else {
+        const f64 most = perSecond * BudgetBurstSeconds;
+        const u64 since = peer.budgetTick != 0 && currentTick > peer.budgetTick ? currentTick - peer.budgetTick : 0;
+        const f64 given = peer.budgetTick == 0 ? most : perSecond * static_cast<f64>(since) / TicksPerSecond;
+        peer.budgetBytes = std::min(most, peer.budgetBytes + given);
+        peer.budgetTick = currentTick;
+        m_windowGiven += perSecond * static_cast<f64>(since) / TicksPerSecond;
+        // **A part new to the peer is not counted** (ADR 0229 §1): sent
+        // whole, at once, as the rest of what a newcomer is sent is.
+        f64 whole = 0.0;
+        for (usize at = 0; at < records.size(); ++at) {
+            if (records[at].full)
+                whole += static_cast<f64>(starts[at + 1] - starts[at]);
+        }
+        const f64 total = static_cast<f64>(body.bytes.size()) - whole;
+        if (total <= peer.budgetBytes) {
+            peer.budgetBytes -= total;
+            m_windowSpent += total;
+            peer.waiting.clear();
+        }
+        else {
+            std::vector<RecordFacts> facts;
+            facts.reserve(records.size());
+            for (const Record& record : records)
+                facts.push_back(RecordFacts{record.entity->id.value, record.full});
+            chooseWithinBudget(peer, player, facts, starts, chosen, heldBack);
+            for (usize at = 0; at < records.size(); ++at) {
+                if (chosen[at] == 0) {
+                    deferred += 1;
+                    continue;
+                }
+                if (records[at].full)
+                    continue;
+                const f64 size = static_cast<f64>(starts[at + 1] - starts[at]);
+                peer.budgetBytes -= size;
+                m_windowSpent += size;
+            }
+            peer.budgetBytes = std::max(peer.budgetBytes, -most);
+        }
+    }
+    // **A record that waited says so** (protocol 55): the replica draws that
+    // part further in the past, between the states it was sent.
+    for (usize at = 0; at < records.size(); ++at) {
+        if (chosen[at] != 0 && std::binary_search(heldBack.begin(), heldBack.end(), records[at].entity->id.value))
+            body.bytes[starts[at] + 5] |= HeldBackRecord;
+    }
+    if (deferred != 0) {
+        m_stats.updatesDeferred += deferred;
+        m_windowDeferred += deferred;
+        // What the peer will hold at this snapshot: what it was sent, and
+        // what it was not as it holds it now.
+        heldNow = std::make_shared<std::vector<EntityState>>();
+        heldNow->reserve(current.size());
+        usize at = 0;
+        for (const EntityState* entity : current) {
+            if (at < records.size() && records[at].entity == entity) {
+                heldNow->push_back(chosen[at] != 0 ? *entity : *records[at].before);
+                ++at;
+                continue;
+            }
+            heldNow->push_back(*entity);
+        }
+    }
+
+    std::set<u32> atoms;
+    u32 sending = 0;
+    for (usize at = 0; at < records.size(); ++at) {
+        if (chosen[at] == 0)
+            continue;
+        sending += 1;
+        atoms.insert(records[at].names.begin(), records[at].names.end());
     }
 
     Writer snapshot;
     snapshot.u8v(static_cast<u8>(MessageType::Snapshot));
     snapshot.u64v(currentTick);
-    snapshot.u64v(baseline != nullptr ? baseline->tick : 0);
-    snapshot.u64v(checksumOf(std::span<const EntityState* const>(current)));
+    snapshot.u64v(based ? peer.acked : 0);
+    if (heldNow != nullptr) {
+        std::vector<const EntityState*> holding;
+        holding.reserve(heldNow->size());
+        for (const EntityState& entity : *heldNow)
+            holding.push_back(&entity);
+        snapshot.u64v(checksumOf(std::span<const EntityState* const>(holding)));
+    }
+    else {
+        snapshot.u64v(checksumOf(std::span<const EntityState* const>(current)));
+    }
     // The last of this peer's intents the authority applied, for its
     // prediction to reconcile against (ADR 0076).
     snapshot.u64v(peer.intentTick);
@@ -4281,6 +4850,9 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         snapshot.u8v(static_cast<u8>(std::min<u64>(newest > peer.appliedTick ? newest - peer.appliedTick : 0, 255)));
         snapshot.u32v(static_cast<u32>(std::min<u64>(peer.starvations, 0xFFFFFFFFu)));
     }
+    // **The rate the world runs at** (ADR 0233, protocol 55), in ten
+    // thousandths: the replica's clock runs at it too.
+    snapshot.u16v(static_cast<u16>(std::lround(std::clamp(m_world->engineState().timeDilation, 0.0, 1.0) * 10000.0)));
     // **Its own character's predicted attributes** (protocol 37): what
     // the steps of this peer's ticks wrote, as they stand after the one this
     // state answers -- the replica's prediction of them is checked against
@@ -4347,28 +4919,16 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         snapshot.u32v(atom);
         snapshot.text(m_world->atoms().text(core::NameAtom{atom}));
     }
-    snapshot.u32v(static_cast<u32>(records.size()));
-    for (const Record& record : records) {
-        const generated::ClassDesc& desc = generated::Classes[record.entity->schema];
-        snapshot.u32v(record.entity->id.value);
-        snapshot.u8v(record.entity->schema);
-        snapshot.u8v(record.full ? FullRecord : 0);
-        snapshot.u16v(static_cast<u16>(record.fields.size()));
-        for (const usize at : record.fields) {
-            const generated::Encoding encoding = fieldAt(desc, at)->encoding;
-            if (encoding == generated::Encoding::CFrameD && !record.full &&
-                sameRotation(record.before->fields[at], record.entity->fields[at])) {
-                snapshot.u16v(static_cast<u16>(wireIdAt(desc, at) | PositionAlone));
-                encodePosition(snapshot.bytes, record.entity->fields[at]);
-                continue;
-            }
-            snapshot.u16v(wireIdAt(desc, at));
-            if (isSequence(encoding)) {
-                encodeSequenceField(snapshot.bytes, desc, at, record.entity->fields.view());
-                continue;
-            }
-            encodeField(snapshot.bytes, encoding, record.entity->fields[at]);
-        }
+    snapshot.u32v(sending);
+    for (usize at = 0; at < records.size(); ++at) {
+        if (chosen[at] != 0)
+            snapshot.bytes.insert(snapshot.bytes.end(), body.bytes.begin() + static_cast<std::ptrdiff_t>(starts[at]),
+                                  body.bytes.begin() + static_cast<std::ptrdiff_t>(starts[at + 1]));
+    }
+    if (heldNow != nullptr) {
+        peer.heldStates.emplace_back(currentTick, heldNow);
+        while (peer.heldStates.size() > StateHistory)
+            peer.heldStates.pop_front();
     }
     peer.sentTicks.push_back(currentTick);
     while (peer.sentTicks.size() > StateHistory)
@@ -4403,6 +4963,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     m_stats.snapshotsInParts += 1;
     peer.pinnedState = m_history.back();
     peer.pinnedHeld = peer.known;
+    peer.pinnedHeldState = heldNow;
     peer.pinnedTick = currentTick;
     peer.pinnedPending = true;
 }
@@ -4462,6 +5023,10 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_lost = true;
             if (event.failure != net::ConnectFailure::None)
                 m_joinFailure = event.failure;
+            if (event.failure == net::ConnectFailure::KeyChanged)
+                m_refused = RefusedServerKey;
+            else if (event.failure == net::ConnectFailure::Insecure)
+                m_refused = RefusedNotEncrypted;
             continue;
         }
         if (event.kind != net::TransportEvent::Kind::Message || event.payload.empty())
@@ -4564,6 +5129,38 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_redirectKey.assign(key.substr(0, 64));
             ++m_redirects;
             m_transport.disconnect(m_authority);
+            break;
+        }
+        case MessageType::Phases: {
+            // **The phases one of this machine's players is in** (ADR 0231).
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const u8 seat = reader.u8v();
+            const u16 count = reader.u16v();
+            std::vector<core::NameAtom> phases;
+            for (u16 at = 0; at < count && reader.ok() && at < scene::MostPhases; ++at)
+                phases.push_back(world.atoms().intern(reader.text()));
+            if (!reader.ok())
+                break;
+            std::vector<InstanceId> here;
+            scene::localPlayers(world, here);
+            if (seat < here.size())
+                if (scene::PlayerComponent* player = world.players().find(here[seat]); player != nullptr)
+                    player->phases = std::move(phases);
+            break;
+        }
+        case MessageType::Queued: {
+            // **In line at the front door** (ADR 0232): the game is full; the
+            // turn is a `Redirect`.
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const u32 position = reader.u32v();
+            const u32 estimate = reader.u32v();
+            if (!reader.ok() || position == 0)
+                break;
+            m_queuePosition = position;
+            world.engineState().queueUpdates.push_back(
+                scene::EngineState::QueueUpdate{position, estimate == NoEstimate ? -1 : static_cast<i64>(estimate)});
             break;
         }
         case MessageType::Announce: {
@@ -5250,11 +5847,14 @@ void ReplicaSession::interpolate(scene::World& world)
     // moment being drawn, and the motion between them is a line.
     if (m_interpolationDelay == 0)
         return;
-    const u64 target = m_serverClock > m_interpolationDelay ? m_serverClock - m_interpolationDelay : 0;
+    const u64 drawn = m_serverClock > m_interpolationDelay ? m_serverClock - m_interpolationDelay : 0;
     for (auto& [netId, samples] : m_samples) {
         // Its own character is predicted, never drawn from the past.
         if (samples.empty() || ownsNet(netId) || m_ownedParts.contains(netId) || m_drivenWheels.contains(netId))
             continue;
+        // A part that waits for its turn is drawn as far behind as it waits.
+        const u64 behind = static_cast<u64>(std::lround(samples.back().lag));
+        const u64 target = drawn > behind ? drawn - behind : 0;
         const auto local = m_locals.find(netId);
         scene::PartComponent* part =
             local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
@@ -5328,6 +5928,7 @@ void ReplicaSession::interpolate(scene::World& world)
 
     // **Sprites the same way** (ADR 0103), by the same rules: past the newest
     // sample the newest, and nothing this machine owns.
+    const u64 target = drawn;
     for (auto& [netId, samples] : m_samples2d) {
         if (samples.empty() || ownsNet(netId) || m_ownedParts.contains(netId))
             continue;
@@ -6446,6 +7047,12 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
     Writer intent;
     intent.u8v(static_cast<u8>(MessageType::Intent));
     intent.u32v(m_timeEpoch);
+    // **The tick it draws everyone else at** (protocol 55, ADR 0235): what
+    // `interpolate` draws, or with no delay, the newest snapshot as applied.
+    const u64 drawn = m_interpolationDelay == 0              ? m_lastSnapshotTick
+                      : m_serverClock > m_interpolationDelay ? m_serverClock - m_interpolationDelay
+                                                             : 0;
+    intent.u16v(static_cast<u16>(drawn & 0xFFFFu));
     intent.u8v(static_cast<u8>(m_sentIntents.size()));
     for (usize at = 0; at < m_sentIntents.size(); ++at) {
         const auto& [sentTick, bytes] = m_sentIntents[at];
@@ -6696,6 +7303,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     const u64 intentTick = reader.u64v();
     const u8 intentDepth = reader.u8v();
     const u32 intentStarvations = reader.u32v();
+    const u16 dilation = reader.u16v();
     // Its own characters' predicted attributes, a seat at a time: the
     // first player's always, then each guest's that has any (protocol 51).
     std::array<scene::PredictedAttributes, 4> predicted;
@@ -6748,6 +7356,8 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
         return;
     m_stats.intentDepth = intentDepth;
     m_stats.intentStarvations = intentStarvations;
+    if (dilation > 0 && dilation <= 10000)
+        m_timeDilation = static_cast<f64>(dilation) / 10000.0;
 
     const WorldState* base = baseTick != 0 ? stateAt(baseTick) : nullptr;
     if (baseTick != 0 && base == nullptr)
@@ -6771,6 +7381,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     state->tick = tick;
     if (base != nullptr)
         state->entities = base->entities;
+    m_heldBackNow.clear();
 
     // **Records in ascending id order, as the authority writes them**, and the
     // new ones kept aside and merged once: inserted one by one into the sorted
@@ -6788,6 +7399,8 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
             break;
         }
         previous = id;
+        if ((flags & HeldBackRecord) != 0)
+            m_heldBackNow.push_back(id);
         const generated::ClassDesc& desc = generated::Classes[schema];
         EntityState* at = nullptr;
         if (const auto held = findEntity(state->entities, id); held != state->entities.end() && held->id.value == id) {
@@ -7217,6 +7830,15 @@ std::vector<u8> redirectMessage(std::string_view address, u16 port, std::string_
     said.text(pass.substr(0, MaxPassBytes));
     said.text(key.substr(0, 64));
     said.text(world.substr(0, 64));
+    return std::move(said.bytes);
+}
+
+std::vector<u8> queuedMessage(u32 position, u32 estimateSeconds)
+{
+    Writer said;
+    said.u8v(static_cast<u8>(MessageType::Queued));
+    said.u32v(position);
+    said.u32v(estimateSeconds);
     return std::move(said.bytes);
 }
 
@@ -7946,7 +8568,23 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
             }
             else if (cframe && m_interpolationDelay > 0) {
                 std::deque<Sample>& samples = m_samples[entity.id.value];
-                samples.push_back(Sample{state.tick, asCFrame(value), std::nullopt});
+                // **Further in the past for a part that waited** (ADR 0229
+                // §3): by how much later than a snapshot's interval its
+                // states come, eased in and out.
+                core::f32 lag = 0.0f;
+                if (!samples.empty()) {
+                    const bool waited = std::binary_search(m_heldBackNow.begin(), m_heldBackNow.end(), entity.id.value);
+                    const f64 gap =
+                        state.tick > samples.back().tick ? static_cast<f64>(state.tick - samples.back().tick) : 0.0;
+                    const f64 late = waited ? std::clamp(gap - m_snapshotInterval, 0.0, MaxPartLagTicks) : 0.0;
+                    // Eased in as it waits; back on time twice as fast
+                    // once it is sent on time again.
+                    lag = static_cast<core::f32>(waited ? 0.7 * static_cast<f64>(samples.back().lag) + 0.3 * late
+                                                        : 0.5 * static_cast<f64>(samples.back().lag));
+                    if (!waited && lag < 0.05f)
+                        lag = 0.0f;
+                }
+                samples.push_back(Sample{state.tick, asCFrame(value), std::nullopt, lag});
                 while (samples.size() > InterpolationSamples)
                     samples.pop_front();
                 continue;

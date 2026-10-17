@@ -21,9 +21,11 @@
 #include "engine/app/admin_client.h"
 #include "engine/app/backends.h"
 #include "engine/app/bench.h"
+#include "engine/app/bots.h"
 #include "engine/app/debug_measure.h"
 #include "engine/app/engine.h"
 #include "engine/app/manager_main.h"
+#include "engine/app/network_session.h"
 #include "engine/app/project_config.h"
 #include "engine/app/replay.h"
 #include "engine/app/script_package.h"
@@ -296,11 +298,11 @@ void sayStartFailure(int code)
 // closed without a word.
 [[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
 {
-    constexpr std::array<std::string_view, 19> Quiet{
-        "--headless",      "--serve",        "--version",         "--run-tests",       "--check-scripts",
-        "--replay",        "--bench",        "--write-types",     "--import-",         "--partition",
-        "--save-scene",    "--capture-out",  "--two-worlds",      "--replica-gate",    "--reads-mesh-format",
-        "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags"};
+    constexpr std::array<std::string_view, 20> Quiet{
+        "--headless",      "--serve",        "--version",         "--run-tests",        "--check-scripts",
+        "--replay",        "--bench",        "--write-types",     "--import-",          "--partition",
+        "--save-scene",    "--capture-out",  "--two-worlds",      "--replica-gate",     "--reads-mesh-format",
+        "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags", "--bots="};
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];
         for (const std::string_view quiet : Quiet) {
@@ -538,6 +540,54 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         // admin = true` says, for one run.
         if (arg == "--admin") {
             options.adminListen = true;
+            continue;
+        }
+        // **Light bots** (ADR 0236): this process is `N` players joining
+        // `--join`'s address, running nothing of the game but a behavior.
+        if (arg.starts_with("--bots=") || arg.starts_with("--bot-seconds=")) {
+            engine::core::u64 value = 0;
+            if (!numericValue(arg.substr(arg.find('=') + 1), value) || value > 1000000u) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            if (arg.starts_with("--bots="))
+                options.botCount = static_cast<engine::core::u32>(value);
+            else
+                options.botSeconds = static_cast<engine::core::f64>(value);
+            continue;
+        }
+        if (arg.starts_with("--bot-behavior=")) {
+            const std::string_view behavior = arg.substr(std::string_view("--bot-behavior=").size());
+            if (behavior != "wander" && behavior != "crowd" && behavior != "travel" && behavior != "idle" &&
+                !behavior.ends_with(".luau")) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.botBehavior = std::string(behavior);
+            continue;
+        }
+        // **An overloaded world slows its clock** (ADR 0233), down to the
+        // floor given, a quarter of full speed unless said.
+        if (arg == "--time-dilation" || arg.starts_with("--time-dilation=")) {
+            options.timeDilation = true;
+            if (arg.starts_with("--time-dilation=")) {
+                const std::string text(arg.substr(std::string_view("--time-dilation=").size()));
+                char* end = nullptr;
+                const double floor = std::strtod(text.c_str(), &end);
+                if (text.empty() || end != text.c_str() + text.size() || !(floor >= 0.05 && floor <= 1.0)) {
+                    const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                    engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                    return kExitUsage;
+                }
+                options.timeDilationFloor = floor;
+                options.timeDilationFromFlag = true;
+            }
+            continue;
+        }
+        if (arg.starts_with("--bot-intent=")) {
+            options.botIntent = std::string(arg.substr(std::string_view("--bot-intent=").size()));
             continue;
         }
         // **A world's health for whatever watches it** (ADR 0220): what
@@ -1949,12 +1999,19 @@ static int hostMain(int argc, char** argv)
         // The run's own number wins over the project's.
         if (!options.maxPerAddressFromFlag)
             options.network.maxPeersPerAddress = config.networkMaxPerAddress;
+        options.network.clientBudgetBytesPerSecond = config.networkClientBudgetKb * 1024u;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxHighlights = config.maxHighlights;
         options.foliageDensity = config.foliageDensity;
         options.foliageShadowDistance = config.foliageShadowDistance;
         options.maxViewResolution = config.maxViewResolution;
         options.maxSubWorlds = config.maxSubWorlds;
+        options.dormantRadius = config.serverDormantRadius;
+        options.rewindCapMs = static_cast<double>(config.networkRewindCapMs);
+        // The run's own word, or the project's.
+        options.timeDilation = options.timeDilation || config.serverTimeDilation;
+        if (!options.timeDilationFromFlag)
+            options.timeDilationFloor = config.serverTimeDilationFloor;
 
         // **Where a game's saves go** (ADR 0111): a player's own folder, named
         // by the game's company and name, for the PACKAGED game; the project's
@@ -2303,6 +2360,32 @@ static int hostMain(int argc, char** argv)
     if ((options.checkScriptsOnly || options.writeTypesOnly) && !options.backendChosen) {
         if (const std::optional<engine::rhi::BackendId> none = engine::app::parseBackendId("null"); none.has_value())
             options.backend = *none;
+    }
+
+    // **Light bots** (ADR 0236): the project read for its id and its Luau
+    // flags, and nothing of it run.
+    if (options.botCount > 0) {
+        if (options.network.topology != engine::replication::Topology::Replica) {
+            engine::core::log(LogLevel::Error, ENG_TR("bots.err.no_join"));
+            return kExitUsage;
+        }
+        engine::app::BotOptions bots;
+        bots.address = options.network.address;
+        bots.port = options.network.port;
+        bots.count = options.botCount;
+        bots.behavior = options.botBehavior;
+        // **A game's own behavior** (ADR 0236 section 3): a Luau file, read
+        // here, run by every bot of the process.
+        if (bots.behavior.ends_with(".luau") && !engine::platform::readTextFile(bots.behavior, bots.script)) {
+            const std::array<I18nArg, 1> missing{I18nArg{"path", bots.behavior}};
+            engine::core::log(LogLevel::Error, ENG_TR("bots.err.behavior_file"), missing);
+            return kExitUsage;
+        }
+        bots.seconds = options.botSeconds;
+        bots.intent = options.botIntent;
+        bots.prologue = engine::app::NetworkSession::prologueFor(options.projectId);
+        bots.encrypt = options.encryptMatches;
+        return engine::app::runBots(bots);
     }
 
     if (const std::optional<engine::core::EngineError> error = engine::app::run(options)) {

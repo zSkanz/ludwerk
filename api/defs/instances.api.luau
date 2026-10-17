@@ -74,6 +74,21 @@ local Classes: { Schema.Class } = {
                     .. "`ClassName` or `IsA` to tell classes apart.",
             },
             {
+                Name = "Phase",
+                Type = "string",
+                Default = '""',
+                ErrorKey = "scene.err.phase_name",
+                Records = { "ADR 0231" },
+                Doc = "The phase this instance and everything under it belong to, seen only by the players in "
+                    .. "it. Empty, the default, is everybody's. A player not in the phase (`Player:AddPhase`) is "
+                    .. "not sent the instance at all: it is absent on their machine, not hidden. It leaves their "
+                    .. "machine when they leave the phase, as a thing out of range does. It is the server's to "
+                    .. "say and is not itself sent.\n\n"
+                    .. "A phased part collides with the characters, and the parts, of the players in its phase, "
+                    .. "and never with those of players who are not; everything else collides with it as with "
+                    .. "any part (`BasePart.PhaseCollision`). A world names at most 64 phases.",
+            },
+            {
                 Name = "Local",
                 Type = "boolean",
                 ReadOnly = true,
@@ -570,6 +585,69 @@ local Classes: { Schema.Class } = {
                     .. "effects that should not darken the scene, such as a muzzle flash, a trail or a marker on "
                     .. "the ground. The part is still drawn and lit, and still receives shadows. A transparent "
                     .. "part casts no shadow regardless of this value.",
+            },
+            {
+                Name = "PhaseCollision",
+                Type = "boolean",
+                Default = "true",
+                Records = { "ADR 0231" },
+                Doc = "Whether this part's phase decides what it collides with. On, the default, it never "
+                    .. "collides with the characters and owned parts of players outside its phase, and does with "
+                    .. "those inside it. Off, it collides as any part does, and the game decides with "
+                    .. "`CollisionGroup` who stands on what.",
+            },
+            {
+                Name = "Dormancy",
+                Type = "Enum.Dormancy",
+                Default = "Enum.Dormancy.Auto",
+                Records = { "ADR 0234" },
+                Doc = "Whether the part may sleep where no player is near. On a dedicated server, a "
+                    .. "`CharacterBody` with no player's focus within `dormant_radius` (`[server]` in "
+                    .. "`project.toml`; twice `StreamingService.LoadRadius` unless the game says) does not walk, "
+                    .. "and what it was asked to do (`Move`) waits until a player comes near. A player sees "
+                    .. "only within the load radius, so a character wakes before anybody can see it. `Never` "
+                    .. "keeps the part awake wherever it is.\n\n"
+                    .. "A host and a single-player game never sleep anything, nor does a world one of whose "
+                    .. "players has no character or focus: that player is sent the whole world.",
+            },
+            {
+                Name = "Dormant",
+                Type = "boolean",
+                ReadOnly = true,
+                Records = { "ADR 0234" },
+                Doc = "Whether the part is asleep this tick because no player is near it (`Dormancy`). "
+                    .. "Decided where the physics step begins, from where the players were then.",
+            },
+            {
+                Name = "LagCompensated",
+                Type = "boolean",
+                Default = "false",
+                Records = { "ADR 0235" },
+                -- What the authority's rewound queries place where a shooter
+                -- saw it: it moves nothing a world's trace records.
+                Presentation = true,
+                Doc = "Whether `Workspace:RaycastAsSeenBy` checks a shot against this part where the shooter's "
+                    .. "machine drew it, rather than where it is now. Every player's `Character` is checked that "
+                    .. "way without it. Set it on a moving target that is not a player's, such as an NPC, a "
+                    .. "vehicle or a dummy.\n\n"
+                    .. "Only the authority reads it, and it is not replicated.",
+            },
+            {
+                Name = "ReplicationPriority",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Records = { "ADR 0229" },
+                -- The authority's word on what its players' budgets spend
+                -- first: it moves nothing a world's trace records.
+                Presentation = true,
+                Doc = "How much this part's changes come first when a player's budget cannot carry every change "
+                    .. "at once (`Player.ReplicationBudget`). 1 by default; 3 makes the part's turn come three "
+                    .. "times as fast, 0.25 four times as slowly, and 0 only once a second. A part a player's "
+                    .. "machine waits for is drawn where it was last sent, moving smoothly between the states "
+                    .. "it was sent, a little behind.\n\n"
+                    .. "Only the authority reads it, and it is not replicated. A part that does not change "
+                    .. "costs nothing, whatever its priority.",
             },
             {
                 Name = "Fade",

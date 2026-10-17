@@ -12,6 +12,7 @@
 #include <doctest/doctest.h>
 #include <limits>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <thread>
@@ -34,6 +35,7 @@
 #include "engine/scene/collision_groups.h"
 #include "engine/scene/components.h"
 #include "engine/scene/enum_registry.h"
+#include "engine/scene/phases.h"
 #include "engine/scene/players.h"
 #include "engine/scene/swarm.h"
 #include "engine/scene/world.h"
@@ -792,6 +794,79 @@ TEST_CASE("a replica is sent what is near its character, and nothing far from it
     REQUIRE(match.copyOf(far).valid());
     match.run(8);
     CHECK(match.client.world.parts().find(match.copyOf(far))->cframe.position.x == doctest::Approx(20.0));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("the grid sends a player exactly what measuring every part would: near, far, huge, turned")
+{
+    // **ADR 0228 §2**: a peer measured only against the cells round it must
+    // be sent the same parts as one measured against the whole world. Four
+    // hundred parts over two kilometres -- small, long, turned, a floor of
+    // kilometres, one under the ground -- and the player in several places,
+    // checked against the rule itself: inside the radius, sent; past the
+    // hysteresis, not.
+    PlayedMatch match;
+    constexpr double Radius = 100.0;
+    match.server.world.engineState().streamingLoadRadius = Radius;
+    std::mt19937 random(20261017);
+    std::uniform_real_distribution<double> across(-1000.0, 1000.0);
+    std::uniform_real_distribution<double> height(-30.0, 60.0);
+    std::uniform_real_distribution<float> size(0.5f, 12.0f);
+    std::uniform_real_distribution<float> angle(0.0f, 6.2831853f);
+    std::vector<core::InstanceId> parts;
+    for (int at = 0; at < 400; ++at) {
+        const core::InstanceId id =
+            match.part("P" + std::to_string(at), core::DVec3{across(random), height(random), across(random)});
+        scene::PartComponent& part = *match.server.world.parts().find(id);
+        part.size = core::Vec3{size(random), size(random), size(random)};
+        // A tenth of them long, so one part crosses several cells.
+        if (at % 10 == 0)
+            part.size.x = 250.0f;
+        part.cframe.rotation = core::fromEulerYxz(core::Vec3{angle(random), angle(random), angle(random)});
+        parts.push_back(id);
+    }
+    // A floor of four kilometres: too big for the grid, measured by everyone.
+    const core::InstanceId floor = match.part("Floor", core::DVec3{0.0, -1.0, 0.0});
+    match.server.world.parts().find(floor)->size = core::Vec3{4000.0f, 1.0f, 4000.0f};
+    parts.push_back(floor);
+    const core::InstanceId racer = match.part("Racer", core::DVec3{0.0, 1.0, 0.0});
+    match.server.world.players().find(match.remote())->character = racer;
+
+    // The rule, as `reachSquared` states it: a part is its box, turned.
+    const auto reach = [&](core::InstanceId id, const core::DVec3& from) {
+        const scene::PartComponent& part = *match.server.world.parts().find(id);
+        const core::DVec3 delta = from - part.cframe.position;
+        const double half[3] = {0.5 * static_cast<double>(part.size.x), 0.5 * static_cast<double>(part.size.y),
+                                0.5 * static_cast<double>(part.size.z)};
+        double squared = 0.0;
+        for (int axis = 0; axis < 3; ++axis) {
+            const core::Mat3& axes = part.cframe.rotation;
+            const double along = static_cast<double>(axes.m[axis][0]) * delta.x +
+                                 static_cast<double>(axes.m[axis][1]) * delta.y +
+                                 static_cast<double>(axes.m[axis][2]) * delta.z;
+            const double beyond = std::max(std::abs(along) - half[axis], 0.0);
+            squared += beyond * beyond;
+        }
+        return std::sqrt(squared);
+    };
+    std::size_t checked = 0;
+    for (const core::DVec3 place : {core::DVec3{0.0, 1.0, 0.0}, core::DVec3{430.0, 5.0, -220.0},
+                                    core::DVec3{-760.0, 1.0, 610.0}, core::DVec3{95.0, -20.0, 940.0}}) {
+        match.server.world.parts().find(racer)->cframe.position = place;
+        match.run(6);
+        for (const core::InstanceId id : parts) {
+            const double distance = reach(id, place);
+            if (distance <= Radius) {
+                CHECK_MESSAGE(match.copyOf(id).valid(), "a part ", distance, " m away was not sent");
+                ++checked;
+            }
+            else if (distance > Radius * 1.25) {
+                CHECK_FALSE_MESSAGE(match.copyOf(id).valid(), "a part ", distance, " m away was sent");
+                ++checked;
+            }
+        }
+    }
+    CHECK(checked > 1000);
     CHECK(match.replica->checksumFailures() == 0);
 }
 
@@ -2417,12 +2492,12 @@ TEST_CASE("a client's input, held the same, is said once a message and not four 
     me->intents = {scene::PlayerIntent{move, 2, core::Vec3{}, false},
                    scene::PlayerIntent{jump, 0, core::Vec3{}, false}};
     match.run(6);
-    CHECK(perTick(10) <= 28);
+    CHECK(perTick(10) <= 30);
     // Held over: the two axes once, and three "the same".
     me->intents = {scene::PlayerIntent{move, 2, core::Vec3{0.6f, -0.8f, 0.0f}, false},
                    scene::PlayerIntent{jump, 0, core::Vec3{}, false}};
     match.run(6);
-    CHECK(perTick(10) <= 36);
+    CHECK(perTick(10) <= 38);
     const scene::PlayerComponent* theirs = match.server.world.players().find(match.remote());
     REQUIRE(theirs != nullptr);
     const auto heard = [&](core::NameAtom action) -> const scene::PlayerIntent* {
@@ -2982,7 +3057,7 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     const core::u64 droppedBefore = match.authority->stats().messagesDropped;
     for (core::u32 at = 1; at <= 40; ++at) {
         Bytes intent;
-        intent.u8v(7).u32v(0).u8v(1).u64v(100000 + at).u16v(1).intent(0, 2, static_cast<float>(at), true);
+        intent.u8v(7).u32v(0).u16v(0).u8v(1).u64v(100000 + at).u16v(1).intent(0, 2, static_cast<float>(at), true);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
     }
@@ -2992,11 +3067,11 @@ TEST_CASE("a peer's intents and owned states are bounded a tick, and an owned st
     // More ticks than a message carries, or more entries than an input map
     // has, is refused whole.
     Bytes five;
-    five.u8v(7).u32v(0).u8v(5);
+    five.u8v(7).u32v(0).u16v(0).u8v(5);
     for (core::u64 at = 0; at < 5; ++at)
         five.u64v(200000 + at).u16v(0);
     Bytes many;
-    many.u8v(7).u32v(0).u8v(1).u64v(300000).u16v(300);
+    many.u8v(7).u32v(0).u16v(0).u8v(1).u64v(300000).u16v(300);
     for (int at = 0; at < 300; ++at)
         many.u16v(0).u8v(2).f32v(9.0f).f32v(0.0f).f32v(0.0f).u8v(1);
     REQUIRE_FALSE(match.clientTransport->send(match.toServer, five.data, net::Delivery::Unreliable, 2).has_value());
@@ -3083,7 +3158,7 @@ TEST_CASE("a press whose intent came after its tick was stood in for is applied 
     core::u32 epoch = 0;
     const auto send = [&](core::u64 tick, bool jump) {
         Bytes intent;
-        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u16v(0).u8v(1).u64v(tick);
         if (jump)
             intent.u16v(1).intent(1, 0, 0.0f, true);
         else
@@ -3127,7 +3202,7 @@ TEST_CASE("an action's name crosses once, an intent that overtakes it waits for 
     REQUIRE(player != nullptr);
     const auto send = [&](core::u64 tick, bool jump) {
         Bytes intent;
-        intent.u8v(7).u32v(0).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(0).u16v(0).u8v(1).u64v(tick);
         if (jump)
             intent.u16v(1).intent(5, 0, 0.0f, true);
         else
@@ -3247,7 +3322,7 @@ struct MoveStream
     void send(core::u64 tick, float x)
     {
         Bytes intent;
-        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u16v(0).u8v(1).u64v(tick);
         intent.u16v(1).intent(0, 2, x, false);
         REQUIRE_FALSE(
             match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
@@ -3418,7 +3493,7 @@ TEST_CASE("a press made in the ticks before the stream is anchored again is appl
     core::u32 epoch = 0;
     const auto send = [&](core::u64 tick, bool jump) {
         Bytes intent;
-        intent.u8v(7).u32v(epoch).u8v(1).u64v(tick);
+        intent.u8v(7).u32v(epoch).u16v(0).u8v(1).u64v(tick);
         if (jump)
             intent.u16v(1).intent(1, 0, 0.0f, true);
         else
@@ -3494,7 +3569,7 @@ struct FramedReplica
         while (sent.size() > IntentRedundancy)
             sent.pop_front();
         Bytes intent;
-        intent.u8v(7).u32v(epoch).u8v(static_cast<core::u8>(sent.size()));
+        intent.u8v(7).u32v(epoch).u16v(0).u8v(static_cast<core::u8>(sent.size()));
         core::u64 before = 0;
         for (const Sent& each : sent) {
             // The first by its tick, each after by how far on it is.
@@ -6639,4 +6714,285 @@ TEST_CASE("what no stamp and no byte shows reaches a replica within the periodic
               doctest::Approx(-0.5));
     }
     CHECK(match.replica->checksumFailures() == 0);
+}
+
+// --- ADR 0229: each player is sent what matters most, within a budget -------
+
+namespace {
+
+// A row of parts all moving every tick: more changes than a small budget
+// carries at once.
+std::vector<core::InstanceId> movingRow(Match& match, int count)
+{
+    std::vector<core::InstanceId> row;
+    for (int at = 0; at < count; ++at) {
+        const std::string name = "Mover" + std::to_string(at);
+        row.push_back(match.server.part(name, core::DVec3{static_cast<double>(at), 0.0, 0.0}, match.server.root));
+    }
+    return row;
+}
+
+void moveRow(Match& match, const std::vector<core::InstanceId>& row)
+{
+    for (const core::InstanceId id : row)
+        match.server.world().parts().find(id)->cframe.position.z = static_cast<double>(match.tick) * 0.1;
+}
+
+} // namespace
+
+TEST_CASE("ADR 0229: a budget sends what fits, each changed part at least once a second, and the replica ends "
+          "with the authority's world")
+{
+    Match match;
+    // Ten kilobytes a second: about three hundred of these records, for two
+    // hundred parts changing sixty times a second.
+    match.authority->setClientBudget(10 * 1024);
+    const std::vector<core::InstanceId> row = movingRow(match, 200);
+    match.run(4);
+    REQUIRE(match.replica->welcomed());
+
+    // Where each part is on the replica, and the tick it last changed there.
+    std::vector<core::InstanceId> copies;
+    for (int at = 0; at < 200; ++at) {
+        copies.push_back(match.client.child(match.client.root, "Mover" + std::to_string(at)));
+        REQUIRE(copies.back().valid());
+    }
+    std::vector<double> seen(row.size(), 0.0);
+    std::vector<core::u64> changedAt(row.size(), match.tick);
+    core::u64 longestWait = 0;
+    const core::u64 sentBefore = match.authority->stats().bytesSent;
+    const core::u64 startedAt = match.tick;
+    for (int at = 0; at < 300; ++at) {
+        moveRow(match, row);
+        match.step();
+        for (std::size_t part = 0; part < row.size(); ++part) {
+            const double z = match.client.world().parts().find(copies[part])->cframe.position.z;
+            if (z != seen[part]) {
+                seen[part] = z;
+                longestWait = std::max(longestWait, match.tick - changedAt[part]);
+                changedAt[part] = match.tick;
+            }
+        }
+    }
+    const double seconds = static_cast<double>(match.tick - startedAt) / 60.0;
+    const double perSecond = static_cast<double>(match.authority->stats().bytesSent - sentBefore) / seconds;
+    MESSAGE("sent " << perSecond << " bytes a second; the longest wait was " << longestWait << " ticks; "
+                    << match.authority->stats().updatesDeferred << " updates deferred; snapshots sent "
+                    << match.authority->stats().snapshotsSent << ", applied "
+                    << match.replica->stats().snapshotsReceived << ", whole " << match.authority->stats().snapshotsWhole
+                    << ", in parts " << match.authority->stats().snapshotsInParts);
+    CHECK(match.replica->checksumFailures() == 0);
+    CHECK(match.authority->stats().updatesDeferred > 0);
+    // The budget, and the headers of sixty snapshots a second beside it.
+    CHECK(perSecond < 10.0 * 1024.0 * 1.1 + 60.0 * 64.0);
+    // A part changing every tick is sent at least once a second.
+    CHECK(longestWait <= 62);
+
+    // Still: everything arrives, and the replica holds what the authority does.
+    match.run(120);
+    CHECK(match.replica->checksumFailures() == 0);
+    for (std::size_t part = 0; part < row.size(); ++part) {
+        CHECK(match.client.world().parts().find(copies[part])->cframe.position.z ==
+              doctest::Approx(match.server.world().parts().find(row[part])->cframe.position.z));
+    }
+}
+
+TEST_CASE("ADR 0229: what the game puts first is sent first, and with no budget nothing waits")
+{
+    Match match;
+    match.authority->setClientBudget(6 * 1024);
+    const std::vector<core::InstanceId> row = movingRow(match, 150);
+    // **A boss everybody should see moving**: ten times the turn of the rest.
+    match.server.world().parts().find(row[75])->replicationPriority = 10.0f;
+    match.run(4);
+    const core::InstanceId boss = match.client.child(match.client.root, "Mover75");
+    const core::InstanceId plain = match.client.child(match.client.root, "Mover10");
+    REQUIRE(boss.valid());
+    REQUIRE(plain.valid());
+    // How many times each changed on the replica: its turns.
+    int bossTurns = 0;
+    int plainTurns = 0;
+    double bossWas = 0.0;
+    double plainWas = 0.0;
+    for (int at = 0; at < 240; ++at) {
+        moveRow(match, row);
+        match.step();
+        const double bossNow = match.client.world().parts().find(boss)->cframe.position.z;
+        const double plainNow = match.client.world().parts().find(plain)->cframe.position.z;
+        bossTurns += bossNow != bossWas ? 1 : 0;
+        plainTurns += plainNow != plainWas ? 1 : 0;
+        bossWas = bossNow;
+        plainWas = plainNow;
+    }
+    MESSAGE("in four seconds the boss was sent " << bossTurns << " times, a plain part " << plainTurns);
+    CHECK(plainTurns >= 4);
+    CHECK(bossTurns >= 5 * plainTurns);
+    CHECK(match.replica->checksumFailures() == 0);
+
+    // No budget: every change goes at once.
+    match.authority->setClientBudget(0);
+    const core::u64 deferredBefore = match.authority->stats().updatesDeferred;
+    for (int at = 0; at < 30; ++at) {
+        moveRow(match, row);
+        match.step();
+    }
+    CHECK(match.authority->stats().updatesDeferred == deferredBefore);
+    CHECK(match.client.world().parts().find(boss)->cframe.position.z ==
+          doctest::Approx(match.server.world().parts().find(row[75])->cframe.position.z));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("ADR 0229: a part that waits for its turn is drawn moving between the states it was sent")
+{
+    Match match;
+    match.replica->setInterpolationDelay(4);
+    // Each of a hundred parts sent every six or seven ticks.
+    match.authority->setClientBudget(32 * 1024);
+    const std::vector<core::InstanceId> row = movingRow(match, 100);
+    match.run(4);
+    const core::InstanceId watched = match.client.child(match.client.root, "Mover50");
+    REQUIRE(watched.valid());
+    // Long enough for every part to have waited and been sent a few times.
+    for (int at = 0; at < 120; ++at) {
+        moveRow(match, row);
+        match.step();
+    }
+    // It moves a tenth of a metre a tick. Drawn from the states it was sent,
+    // a few a second, it should move about that much every tick -- not stand,
+    // then jump to where it is now.
+    double was = match.client.world().parts().find(watched)->cframe.position.z;
+    double furthest = 0.0;
+    int stood = 0;
+    int backwards = 0;
+    for (int at = 0; at < 240; ++at) {
+        moveRow(match, row);
+        match.step();
+        const double now = match.client.world().parts().find(watched)->cframe.position.z;
+        furthest = std::max(furthest, now - was);
+        stood += now == was ? 1 : 0;
+        backwards += now < was - 1.0e-9 ? 1 : 0;
+        was = now;
+    }
+    MESSAGE("largest step " << furthest << " m, stood " << stood << " of 240 ticks, " << backwards << " backwards");
+    CHECK(match.authority->stats().updatesDeferred > 0);
+    CHECK(backwards == 0);
+    CHECK(stood <= 24);
+    CHECK(furthest <= 0.35);
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("ADR 0233: a replica is told the rate its authority's world runs at")
+{
+    Match match;
+    (void)match.server.part("Crate", {0.0, 0.0, 0.0}, match.server.root);
+    match.run(4);
+    CHECK(match.replica->timeDilation() == doctest::Approx(1.0));
+    match.server.world().engineState().timeDilation = 0.6;
+    match.server.world().parts().find(match.server.child(match.server.root, "Crate"))->cframe.position.x = 2.0;
+    match.run(3);
+    CHECK(match.replica->timeDilation() == doctest::Approx(0.6));
+    CHECK(match.replica->checksumFailures() == 0);
+}
+
+TEST_CASE("ADR 0233: a replica corrected across a change of rate re-simulates to the world it would have had")
+{
+    // The prediction walks through a wall the authority has, and is corrected
+    // again and again -- once with the authority at full speed throughout,
+    // once with it slowed to half in the middle of the corrections. A tick is
+    // the same tick at any rate, so the two replicas end in the same world.
+    const auto play = [](bool slowed) {
+        PlayedMatch match;
+        WalledReplay walls;
+        match.replica->setCharacterReplay(&walls);
+        const core::InstanceId racer = match.part("Racer", core::DVec3{0.0, 1.0, 0.0});
+        match.server.world.players().find(match.remote())->character = racer;
+        match.run(3);
+        const core::InstanceId mine = match.copyOf(racer);
+        REQUIRE(mine.valid());
+        const core::NameAtom move = match.client.atoms.intern("Move");
+        match.client.world.players().find(match.me)->intents = {scene::PlayerIntent{move, 0, core::Vec3{}, true}};
+        for (int frame = 1; frame <= 40; ++frame) {
+            if (slowed && frame == 18)
+                match.server.world.engineState().timeDilation = 0.5;
+            match.tick += 1;
+            match.authority->receive(match.server.world, match.server.workspace);
+            for (const scene::PlayerIntent& intent : match.server.world.players().find(match.remote())->intents) {
+                if (intent.pressed) {
+                    double& x = match.server.world.parts().find(racer)->cframe.position.x;
+                    x = std::min(x + 0.5, 5.0);
+                }
+            }
+            match.authority->send(match.server.world, match.server.workspace, match.tick);
+            if (frame % 4 == 0)
+                match.replica->receive(match.client.world, match.client.workspace);
+            match.client.world.parts().find(mine)->cframe.position.x += 0.5;
+            match.replica->sendIntent(match.client.world, match.tick);
+        }
+        struct Ended
+        {
+            core::u64 hash = 0;
+            core::u64 replays = 0;
+            double rate = 1.0;
+            core::u64 checksumFailures = 0;
+        };
+        return Ended{match.client.world.worldHash(), match.replica->stats().replays, match.replica->timeDilation(),
+                     match.replica->checksumFailures()};
+    };
+    const auto steady = play(false);
+    const auto changed = play(true);
+    CHECK(steady.replays >= 1);
+    CHECK(changed.replays == steady.replays);
+    // It was told of the change, and it changed nothing of the world.
+    CHECK(steady.rate == doctest::Approx(1.0));
+    CHECK(changed.rate == doctest::Approx(0.5));
+    CHECK(changed.hash == steady.hash);
+    CHECK(changed.checksumFailures == 0);
+}
+
+TEST_CASE("ADR 0231: a phased thing is on the machines of the players in its phase and nowhere else")
+{
+    PlayedMatch match;
+    const core::InstanceId fixed = match.part("FixedBridge", core::DVec3{0.0, 1.0, 0.0});
+    const core::InstanceId broken = match.part("BrokenBridge", core::DVec3{0.0, 1.0, 0.0});
+    const core::NameAtom fixedPhase = match.server.atoms.intern("bridge-fixed");
+    const core::NameAtom brokenPhase = match.server.atoms.intern("bridge-broken");
+    REQUIRE(scene::phaseBit(match.server.world, fixedPhase).has_value());
+    REQUIRE(scene::phaseBit(match.server.world, brokenPhase).has_value());
+    match.server.world.phases().add(fixed, scene::PhaseComponent{fixedPhase, true});
+    match.server.world.phases().add(broken, scene::PhaseComponent{brokenPhase, true});
+    // A child of a phased thing is in its phase too.
+    const core::InstanceId plank = match.part("Plank", core::DVec3{0.0, 1.5, 0.0});
+    REQUIRE_FALSE(match.server.world.setParent(plank, fixed).has_value());
+
+    // The player has not repaired it: the broken bridge only.
+    scene::PlayerComponent* remote = match.server.world.players().find(match.remote());
+    REQUIRE(remote != nullptr);
+    remote->phases = {brokenPhase};
+    match.run(4);
+    CHECK_FALSE(match.copyOf(fixed).valid());
+    CHECK_FALSE(match.copyOf(plank).valid());
+    CHECK(match.copyOf(broken).valid());
+    // And their machine knows which phases it is in.
+    const scene::PlayerComponent* mine = match.client.world.players().find(match.me);
+    REQUIRE(mine != nullptr);
+    REQUIRE(mine->phases.size() == 1);
+    CHECK(match.client.atoms.text(mine->phases[0]) == "bridge-broken");
+
+    // Repaired: the fixed one comes, with its plank, and the broken one goes
+    // within a snapshot.
+    remote->phases = {fixedPhase};
+    match.run(2);
+    CHECK(match.copyOf(fixed).valid());
+    CHECK(match.copyOf(plank).valid());
+    // Gone from the replica's world: no copy, or one taken out of it.
+    const core::InstanceId was = match.copyOf(broken);
+    CHECK((!was.valid() || !match.client.world.alive(was) || !match.client.world.parentOf(was).valid()));
+    REQUIRE(mine->phases.size() == 1);
+    CHECK(match.client.atoms.text(mine->phases[0]) == "bridge-fixed");
+    CHECK(match.replica->checksumFailures() == 0);
+
+    // The 65th phase a world names is refused.
+    for (int at = 0; at < 62; ++at)
+        REQUIRE(scene::phaseBit(match.server.world, match.server.atoms.intern("p" + std::to_string(at))).has_value());
+    CHECK_FALSE(scene::phaseBit(match.server.world, match.server.atoms.intern("one-too-many")).has_value());
 }

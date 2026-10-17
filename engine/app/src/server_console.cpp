@@ -424,6 +424,8 @@ ServerConsole::Health ServerConsole::health(const Host& host) const
         out.tickWorstMs = std::max(out.tickWorstMs, ms);
     }
     out.tickMeanMs = m_ticks.empty() ? 0.0 : out.tickMeanMs / static_cast<core::f64>(m_ticks.size());
+    out.ticksTotal = m_ticksTotal;
+    out.tickMsTotal = m_tickMsTotal;
     out.uptimeSeconds = host.nowNs > m_startedNs ? (host.nowNs - m_startedNs) / NsPerSecond : 0;
     out.memoryBytes = platform::residentBytes();
     out.stopping = m_phase != Phase::Running;
@@ -438,6 +440,8 @@ ServerConsole::Health ServerConsole::health(const Host& host) const
 
 void ServerConsole::noteTick(core::f64 ms)
 {
+    m_ticksTotal += 1;
+    m_tickMsTotal += ms;
     m_ticks.push_back(ms);
     while (m_ticks.size() > TicksKept)
         m_ticks.pop_front();

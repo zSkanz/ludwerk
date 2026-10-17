@@ -995,6 +995,57 @@ TEST_CASE("a join waits by the clock, not by frames, and one from the command li
     CHECK(dialler.topology() == scene::NetworkTopology::Replica);
 }
 
+TEST_CASE("a server whose key is not the one expected is a refusal, said as such, and not dialled again")
+{
+    // A machine that met another server at this address before -- here, one
+    // told the game's own server's key -- meets one with another key. It is
+    // told so, and stops: it said "connection lost" and dialled for ever.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/client/host.luau", R"(game:GetService("NetworkService"):Host(47103))");
+    server.boot(wire, scene::NetworkTopology::Solo, {}, 1);
+    // Hosting by the time anybody dials.
+    for (int at = 0; at < 5; ++at)
+        server.frame();
+
+    app::NetworkSession::MatchSecurity expecting;
+    expecting.server = "memory:47103";
+    expecting.serverKey = core::x25519Generate().pub;
+
+    // From the command line: it would dial until answered, and this is one.
+    Machine dialler;
+    dialler.boot(wire, scene::NetworkTopology::Replica);
+    dialler.network->setSecurity(expecting);
+    const std::optional<core::EngineError> dialled =
+        dialler.network->start(replication::Topology::Replica, "memory", 47103);
+    REQUIRE_MESSAGE(!dialled.has_value(), (dialled.has_value() ? dialled->message : std::string{}));
+    for (int at = 0; at < 120; ++at) {
+        server.frame();
+        dialler.frame();
+    }
+    CHECK(dialler.topology() == scene::NetworkTopology::Solo);
+    CHECK(log.contains("key is not the one this machine saw"));
+    CHECK_FALSE(log.contains("connection to the server was lost"));
+
+    // From a script: `JoinFailed`, with the same words.
+    Machine joiner;
+    joiner.project.write("src/client/join.luau", R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.JoinFailed:Connect(function(reason: string)
+            print(`refused-because:{reason}`)
+        end)
+        NetworkService:Join("memory:47103")
+    )");
+    joiner.boot(wire);
+    joiner.network->setSecurity(expecting);
+    for (int at = 0; at < 120; ++at) {
+        server.frame();
+        joiner.frame();
+    }
+    CHECK(log.contains("refused-because:This server's key is not the one"));
+}
+
 TEST_CASE("a script reads how the connection is doing (multiplayer smoothness)")
 {
     Captured log;
@@ -3405,4 +3456,313 @@ end)
             here.parts().find(mine)->cframe.position - there.parts().find(theirs)->cframe.position;
         CHECK(std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z) < 0.05);
     }
+}
+
+TEST_CASE("a server catching up holds its snapshots, and its player is then told everything with nothing resent whole")
+{
+    // **ADR 0228 §7**: a frame running ticks back to back sends at the
+    // snapshot rate of real time, so some ticks send nothing. The next
+    // snapshot is against the baseline the player acknowledged, and answers
+    // every input the held ticks consumed -- so nothing is sent whole again,
+    // and the player's prediction is corrected no more than without the burst.
+    const auto drive = [](bool burst) {
+        // Eight frames each way: a player a quarter of a second away.
+        Pair pair(8);
+        pair.go();
+        run(pair.server, pair.client, 60);
+        const replication::Stats before = pair.server.network->replication()->stats();
+        const replication::Stats clientBefore = pair.client.network->replication()->stats();
+        // A spike: twenty ticks run with the snapshots held, the player
+        // driving all along.
+        if (burst)
+            pair.server.network->holdSnapshots(true);
+        run(pair.server, pair.client, 20);
+        pair.server.network->holdSnapshots(false);
+        run(pair.server, pair.client, 120);
+        const replication::Stats after = pair.server.network->replication()->stats();
+        const replication::Stats clientAfter = pair.client.network->replication()->stats();
+        CHECK(pair.client.state() == Connected);
+        return std::pair{after.snapshotsWhole - before.snapshotsWhole,
+                         clientAfter.corrections - clientBefore.corrections};
+    };
+    const auto [wholeSteady, correctedSteady] = drive(false);
+    const auto [wholeBurst, correctedBurst] = drive(true);
+    MESSAGE("corrections: steady ", correctedSteady, ", across the burst ", correctedBurst);
+    CHECK(wholeSteady == 0);
+    CHECK(wholeBurst == 0);
+    CHECK(correctedBurst <= correctedSteady + 1);
+}
+
+TEST_CASE("ADR 0231: a player out of a wall's phase walks through it, one in it is stopped, and neither is corrected")
+{
+    // A wall across the way, in a phase. Out of it, the player's machine has
+    // no wall and the authority lets their character through; in it, both
+    // have the wall and both stop there. Either way the prediction is right.
+    std::string withWall(PairServer);
+    const std::string floorEnd = "floor.Parent = workspace\n";
+    const auto at = withWall.find(floorEnd);
+    REQUIRE(at != std::string::npos);
+    withWall.insert(at + floorEnd.size(), R"(
+local wall = Instance.new("Part")
+wall.Name = "PhasedWall"
+wall.Anchored = true
+wall.Size = vector.create(40, 6, 1)
+wall.Position = vector.create(0, 3, -6)
+wall.Phase = "walled"
+wall.Parent = workspace
+)");
+    std::string inPhase = withWall;
+    const std::string seat = "player.Character = body";
+    const auto seated = inPhase.find(seat);
+    REQUIRE(seated != std::string::npos);
+    inPhase.insert(seated + seat.size(), "\n            player:AddPhase(\"walled\")");
+
+    const auto walk = [](std::string_view server) {
+        Pair pair(3, server, PairClient, 1);
+        pair.go();
+        for (int frame = 0; frame < 150; ++frame) {
+            pair.server.frame();
+            pair.client.frame();
+        }
+        struct Walked
+        {
+            double z = 0.0;
+            core::u64 corrections = 0;
+            bool hasWall = false;
+        };
+        const scene::World& world = pair.client.host->world();
+        return Walked{pair.at(pair.first).z, pair.stats().corrections,
+                      world.findFirstChild(pair.client.host->workspace(), world.atoms().lookup("PhasedWall")).valid()};
+    };
+    const auto outside = walk(withWall);
+    MESSAGE("out of the phase: z " << outside.z << ", corrections " << outside.corrections);
+    CHECK_FALSE(outside.hasWall);
+    CHECK(outside.z < -8.0);
+    CHECK(outside.corrections == 0);
+    const auto inside = walk(inPhase);
+    MESSAGE("in the phase: z " << inside.z << ", corrections " << inside.corrections);
+    CHECK(inside.hasWall);
+    CHECK(inside.z > -5.0);
+    CHECK(inside.corrections == 0);
+}
+
+namespace {
+
+// **A target running across a shooter's view** (ADR 0235): a part the
+// authority moves at six metres a second, back and forth, and a joiner that
+// fires at where its own machine draws it. The authority checks each shot as
+// the shooter saw it and as it is now, and counts.
+constexpr std::string_view RangeServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+NetworkService:Host(47136)
+local fire = Instance.new("RemoteEvent")
+fire.Name = "Fire"
+fire.Parent = workspace
+local target = Instance.new("Part")
+target.Name = "Target"
+target.Anchored = true
+target.Size = vector.create(1, 2, 1)
+target.Position = vector.create(-6, 1, 0)
+target.LagCompensated = true
+target.Parent = workspace
+if @WALL@ then
+    -- Cover, between the shooter and where the target runs to.
+    local wall = Instance.new("Part")
+    wall.Name = "Wall"
+    wall.Anchored = true
+    wall.Size = vector.create(30, 4, 0.2)
+    wall.Position = vector.create(16.5, 2, -2)
+    wall.Parent = workspace
+end
+RunService.Heartbeat:Connect(function()
+    -- A triangle between -6 and 6 at six metres a second.
+    local t = (RunService.SimTime * 6) % 24
+    local x = if t < 12 then -6 + t else 18 - t
+    target.Position = vector.create(x, 1, 0)
+end)
+local shots, seen, now, wall = 0, 0, 0, 0
+fire.ServerReceived:Connect(function(player: Player, aim: vector)
+    local origin = vector.create(0, 1, -20)
+    local direction = (aim - origin) * 2
+    shots += 1
+    local rewound = workspace:RaycastAsSeenBy(player, origin, direction)
+    if rewound and rewound.Instance == target then
+        seen += 1
+    elseif rewound and rewound.Instance.Name == "Wall" then
+        wall += 1
+    end
+    local present = workspace:Raycast(origin, direction)
+    if present and present.Instance == target then
+        now += 1
+    end
+    workspace:SetAttribute("Shots", shots)
+    workspace:SetAttribute("Seen", seen)
+    workspace:SetAttribute("Now", now)
+    workspace:SetAttribute("WallHits", wall)
+end)
+)";
+
+// Fires every `@EVERY@` ticks while the target, as this machine draws it, is
+// in `[@LOW@, @HIGH@]` and running to the right.
+constexpr std::string_view RangeClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+NetworkService:Join("memory:47136")
+while NetworkService.State ~= Enum.NetworkState.Connected do
+    task.wait()
+end
+local fire = workspace:WaitForChild("Fire") :: RemoteEvent
+-- Only the server checks a shot as its shooter saw it.
+local asked = pcall(function()
+    return workspace:RaycastAsSeenBy(NetworkService.LocalPlayer :: Player, vector.zero, vector.create(0, 0, 1))
+end)
+workspace:SetAttribute("Refused", not asked)
+local target = workspace:WaitForChild("Target") :: Part
+local last = target.Position.X
+local ticks = 0
+RunService.Heartbeat:Connect(function()
+    ticks += 1
+    local x = target.Position.X
+    local running = x > last
+    last = x
+    if ticks % @EVERY@ == 0 and running and x >= @LOW@ and x <= @HIGH@ then
+        fire:FireServer(target.Position)
+    end
+end)
+)";
+
+struct Range
+{
+    core::i64 shots = 0;
+    core::i64 seen = 0;
+    core::i64 now = 0;
+    core::i64 wall = 0;
+    core::u64 behind = 0;
+    bool refused = false;
+};
+
+[[nodiscard]] Range shootAt(core::u32 polls, core::f64 capMs, bool wall, std::string_view low, std::string_view high,
+                            std::string_view every = "5")
+{
+    const auto put = [](std::string text, std::string_view key, std::string_view value) {
+        for (auto at = text.find(key); at != std::string::npos; at = text.find(key))
+            text.replace(at, key.size(), value);
+        return text;
+    };
+    Machine server;
+    Machine client;
+    const std::shared_ptr<net::MemoryNetwork> wire = net::createMemoryNetwork();
+    server.project.write("src/server/init.luau", put(std::string(RangeServer), "@WALL@", wall ? "true" : "false"));
+    client.project.write("src/client/init.luau",
+                         put(put(put(std::string(RangeClient), "@LOW@", low), "@HIGH@", high), "@EVERY@", every));
+    server.bootDelayed(wire, polls);
+    client.bootDelayed(wire, polls);
+    server.host->world().engineState().rewindCapMs = capMs;
+    // Joined and settled, then twelve seconds: three runs to the right.
+    run(server, client, 240);
+    const scene::World& world = server.host->world();
+    const core::InstanceId root = server.host->workspace();
+    const auto count = [&](const char* name) {
+        const scene::Value value = world.getAttribute(root, world.atoms().lookup(name));
+        return std::holds_alternative<core::f64>(value) ? static_cast<core::i64>(std::get<core::f64>(value)) : 0;
+    };
+    const core::i64 before = count("Shots");
+    const core::i64 seenBefore = count("Seen");
+    const core::i64 nowBefore = count("Now");
+    const core::i64 wallBefore = count("WallHits");
+    run(server, client, 720);
+    Range range;
+    range.shots = count("Shots") - before;
+    range.seen = count("Seen") - seenBefore;
+    range.now = count("Now") - nowBefore;
+    range.wall = count("WallHits") - wallBefore;
+    const scene::World& joiner = client.host->world();
+    const scene::Value refused = joiner.getAttribute(client.host->workspace(), joiner.atoms().lookup("Refused"));
+    range.refused = std::holds_alternative<bool>(refused) && std::get<bool>(refused);
+    world.players().forEach([&](core::InstanceId, const scene::PlayerComponent& player) {
+        if (player.viewKnown)
+            range.behind = player.viewBehind;
+    });
+    return range;
+}
+
+} // namespace
+
+TEST_CASE("ADR 0235: a shot at a running target hits where the shooter saw it, up to the cap")
+{
+    // About 150 ms each way and back -- four frames each way, and the
+    // interpolation delay -- within the cap: every shot aimed at the drawn
+    // target hits it, and checked against now most miss.
+    const Range near = shootAt(4, 200.0, false, "-4", "4");
+    MESSAGE("4 frames each way: " << near.shots << " shots, " << near.seen << " hit as seen, " << near.now
+                                  << " hit now, " << near.behind << " ticks behind");
+    REQUIRE(near.shots >= 20);
+    CHECK(near.refused);
+    CHECK(near.behind <= 12);
+    CHECK(near.seen == near.shots);
+    CHECK(near.now * 4 < near.shots);
+
+    // 300 ms and back: the shooter draws the target further back than the
+    // cap. Rewound 200 ms, the shot lands where the target was then -- a
+    // metre and more behind where it was aimed -- and misses; with a cap past
+    // the shooter's delay, it hits.
+    const Range far = shootAt(9, 200.0, false, "-4", "4");
+    const Range uncapped = shootAt(9, 600.0, false, "-4", "4");
+    MESSAGE("9 frames each way, capped at 200 ms: " << far.shots << " shots, " << far.seen << " hit as seen, "
+                                                    << far.behind << " ticks behind");
+    MESSAGE("9 frames each way, capped at 600 ms: " << uncapped.shots << " shots, " << uncapped.seen << " hit as seen");
+    REQUIRE(far.shots >= 20);
+    CHECK(far.behind > 12);
+    CHECK(far.seen * 4 < far.shots);
+    CHECK(uncapped.seen == uncapped.shots);
+
+    // **Cover**: the shooter fires at the target as it still runs in the
+    // open on their screen; on the authority's clock it is behind the wall,
+    // and 200 ms back it is still a metre past where the shot went. Not hit.
+    // With a cap past the shooter's delay, every one hits a target the
+    // authority had behind cover -- the shot "around the corner" the cap is
+    // there to bound.
+    const Range covered = shootAt(9, 200.0, true, "0.3", "1.2", "1");
+    const Range around = shootAt(9, 600.0, true, "0.3", "1.2", "1");
+    MESSAGE("behind cover, capped at 200 ms: " << covered.shots << " shots, " << covered.seen << " hit, "
+                                               << covered.wall << " met the wall, " << covered.now << " hit now");
+    MESSAGE("behind cover, capped at 600 ms: " << around.shots << " shots, " << around.seen << " hit");
+    REQUIRE(covered.shots >= 12);
+    CHECK(covered.seen == 0);
+    CHECK(covered.now == 0);
+    CHECK(around.seen == around.shots);
+}
+
+TEST_CASE("ADR 0235: RaycastAsSeenBy is the server's")
+{
+    Machine solo;
+    solo.project.write("src/client/init.luau", R"(
+local NetworkService = game:GetService("NetworkService")
+local player = NetworkService.LocalPlayer
+if player then
+    local ok, message = pcall(function()
+        return workspace:RaycastAsSeenBy(workspace :: any, vector.zero, vector.create(0, 0, 1))
+    end)
+    workspace:SetAttribute("NotAPlayer", not ok and string.find(message, "not one", 1, true) ~= nil)
+    -- The authority's own player has drawn nothing behind: a ray as it is now.
+    local floor = Instance.new("Part")
+    floor.Anchored = true
+    floor.Size = vector.create(10, 1, 10)
+    floor.Parent = workspace
+    local hit = workspace:RaycastAsSeenBy(player, vector.create(0, 5, 0), vector.create(0, -10, 0))
+    workspace:SetAttribute("Solo", hit ~= nil and hit.Instance == floor)
+end
+)");
+    const std::shared_ptr<net::MemoryNetwork> wire = net::createMemoryNetwork();
+    solo.boot(wire);
+    for (int frame = 0; frame < 5; ++frame)
+        solo.frame();
+    const scene::World& world = solo.host->world();
+    const auto flag = [&](const char* name) {
+        const scene::Value value = world.getAttribute(solo.host->workspace(), world.atoms().lookup(name));
+        return std::holds_alternative<bool>(value) && std::get<bool>(value);
+    };
+    CHECK(flag("NotAPlayer"));
+    CHECK(flag("Solo"));
 }

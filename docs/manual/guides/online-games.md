@@ -82,6 +82,26 @@ instances start from the new build at once; running ones finish on the old.
 A build that speaks another protocol is refused by its first world, and the
 update stops there with the old build still running.
 
+### Its keys: back up the front door's
+
+**A player's game remembers the front door's key**, the first time it joins
+the game's address (see [A match is encrypted](manual:guides/multiplayer#a-match-is-encrypted)),
+and refuses a front door with another key afterward: somebody may be in the
+way. The worlds behind it are not remembered: the front door, or the world a
+player leaves, names the next world's key as it sends them there, so a world
+that restarts, or is moved to a new build by `update`, may have a new key and
+nobody notices.
+
+So the key to keep is the front door's: `keys/front-door.key`, beside
+`servers.toml`. It is made the first time the manager starts and kept there
+across restarts and updates. **Back it up, and carry it when the game moves
+to another machine.** Lose it, and every player who joined before is refused
+with *this server's key is not the one this machine saw* until they choose to trust the server again --
+which the game offers them with `NetworkService:ForgetServerKey`, never the
+engine on its own -- or until a client with the new `server_key` ships. The
+same holds for a lone dedicated server's `keys` folder (see
+[A dedicated server's key](manual:guides/shipping#a-dedicated-servers-key)).
+
 ### Running it as a service
 
 ```
@@ -110,6 +130,18 @@ travel: the world they arrive in makes them one. In that world,
 `NetworkService.TravelArrived` fires after `PlayerAdded` with what was sent --
 anything `SaveService` can store, at most 16 KiB -- and the name of the world
 they came from.
+
+**A player who left is not sent, and is no error.** A party member can leave
+while the server waits -- for `CreateInstanceAsync`, for a backend -- and
+their `Player` goes with them. `TravelGroup` skips them and sends the rest
+together, and returns who it sent; `Travel`, `SwitchChannel` and
+`TravelToPlayer` return whether they sent anybody. Only what is not a player
+at all is an error.
+
+```luau
+local id = InstanceService:CreateInstanceAsync("dungeon", { Players = party })
+local sent = NetworkService:TravelGroup(party, id)   -- whoever is still here
+```
 
 **The pass** is what lets them in: signed by the manager, naming the player,
 both worlds and when it was made, good for thirty seconds and for one use. A
@@ -165,6 +197,89 @@ when it is gone: `"Closed"`, or `"InstanceFailed"` when it stopped without
 closing. Its players are then sent back where they came from, and their
 `TravelArrived` carries `reason` `"InstanceFailed"`, so the game can say what
 happened and give back what the run cost.
+
+## Channels: a full world opens another of itself
+
+A town holds as many players as one server can tell about each other. On a
+launch day, more come. A `[[world]]` with `channels = true` is copied into
+**channels** -- each a server of its own, from the same scene -- as it fills:
+
+```toml
+# servers.toml
+[[world]]
+name = "town"
+scene = "scenes/town.scene.json"
+entry = true
+max_players = 150
+channels = true
+max_channels = 8
+channel_open_at = 0.9        # of max_players, in every open channel
+channel_close_seconds = 120  # empty that long, and a channel closes
+merge_minutes = 10           # under a quarter full that long, and it is merged; 0 never
+```
+
+- **Opened as they fill.** When every open channel holds nine tenths of its
+  players, the manager starts the next: `town:2`, `town:3`, up to
+  `max_channels`, and no more than the machine has memory for.
+- **The fullest with room.** A player sent to `town` -- by the front door or
+  by `Travel` -- goes to the fullest channel with room for them, so crowds
+  feel alive and fewer channels stay open. `TravelGroup` keeps a group in one
+  channel.
+- **To somebody.** `NetworkService:TravelToPlayer(player, friend.PublicKey)`
+  sends a player to the world and channel where the other is, and
+  `SwitchChannel(player, 3)` to channel 3 of this world, for a menu that
+  lists `GetChannelsAsync()`.
+- **Fewer when the crowd goes.** A channel other than the first, empty for
+  `channel_close_seconds`, closes. One under a quarter full for
+  `merge_minutes` is merged: its server hears `NetworkService.ChannelMerging`
+  with the seconds left, and then its players are moved, all together, to
+  the fullest channel with room.
+
+`NetworkService.Channel` says which channel a server is (1 without channels).
+Channels share what a world shares across the game: the same saves, the same
+`CrossWorldService` topics, the same bans.
+
+**Two channels saving one slot** take turns: each save is written whole and
+renamed into place while it holds that slot's lock, so the file is never
+torn and the backup is always the save before it. **The last save to finish
+is the slot** -- a slot is never merged -- so a channel that saves a slot
+another one also writes replaces what that one saved. Keep what is each
+player's in a slot of their own, which only the channel they are in writes;
+keep what the whole world shares in one channel's slots, and tell the others
+with `CrossWorldService`. The `worlds` command lists each
+channel as a world of its own, `town:2` and on.
+
+## A line at the door when the game is full
+
+When nobody has room for a newcomer -- every channel of the entry world full
+and no more to open, or the whole game at its `max_players` -- the front door
+keeps them **in line** instead of turning them away:
+
+```toml
+# servers.toml
+[manager]
+max_players = 2000          # the whole game, every world and channel; 0 for no limit
+queue_max = 10000           # past this many waiting, the door says the game is full
+queue_grace_seconds = 60
+```
+
+- **First in, first out**, as places free. Each player waiting is told their
+  place when they join the line and every five seconds after, with an
+  estimate measured by how fast the line moved in the last five minutes --
+  none before anybody has left it.
+- **A player who drops while waiting keeps their place** for
+  `queue_grace_seconds`; one who drops out of a world may come back to it in
+  that while without waiting at all.
+- **On the player's machine**, `NetworkService.Queued(position,
+  estimateSeconds)` fires each time; `Connected` fires as usual when they are
+  let in, and waiting is never a join that failed. `@engine/travelscreen`
+  shows the line, with no change to a game that mounted it.
+
+```luau
+NetworkService.Queued:Connect(function(position: number, estimateSeconds: number?)
+    -- "You are number {position}", and the minutes when there are some
+end)
+```
 
 ## Messages between worlds
 
@@ -301,9 +416,14 @@ plain HTTP:
   the world is starting or stopping, so nobody is sent to one that would
   refuse them;
 - `GET /metrics` answers the world's numbers as one JSON object: `world`,
-  `state`, `uptime_seconds`, `tick`, `tick_ms_mean`, `tick_ms_worst`,
-  `players`, `max_players`, `memory_bytes`, `scene`, `encrypted`,
-  `wire_bytes_sent` and `wire_bytes_received`.
+  `state`, `uptime_seconds`, `tick`, `tick_ms_mean` and `tick_ms_worst` (over
+  the last minute), `ticks_total` and `tick_ms_total` (since the world began:
+  the mean between two samples is the one's difference over the other's),
+  `ticks_per_frame` (1 for a world keeping up), `players`, `max_players`,
+  `memory_bytes`, `scene`, `encrypted`, `wire_bytes_sent`,
+  `wire_bytes_received`, `deferred_per_second` (updates the players'
+  budgets held back in the last second), and `time_dilation` (1 at full
+  speed).
 
 Turn it on with `[server] health = true` or `--health` for a dedicated server
 -- on the game's own port number over TCP, or `health_port` / `--health=PORT`
@@ -311,6 +431,186 @@ Turn it on with `[server] health = true` or `--health` for a dedicated server
 each on its own port number. It answers the machine's own address only,
 unless `health_allow` names others as `admin_allow` does. It says numbers and
 nothing else: no command reaches a world this way.
+
+## An overloaded world slows down evenly
+
+A battle can need more than a tick's time to simulate. Without help the
+server falls behind: ticks arrive late and in bursts, and every player's
+character is corrected at once. With **time dilation** a world slows its
+clock instead -- everything moving at, say, half speed, smoothly -- and says
+so:
+
+```toml
+# project.toml
+[server]
+time_dilation = true
+time_dilation_floor = 0.25   # never slower than a quarter of full speed
+```
+
+or `time_dilation = true` on one `[[world]]` in `servers.toml`, or
+`--time-dilation[=floor]` for a dedicated server.
+
+- **The tick is the same; fewer of them run a second.** `dt` and what a tick
+  does do not change, so the world is the one it would have been, only
+  later.
+- **Down at once to what fits, back up slowly.** A world that spent more
+  than nine tenths of a second simulating goes straight to the rate at which
+  its ticks take seven tenths; once three seconds in a row took less than
+  half, it speeds up by a twentieth.
+- **Every machine runs at the rate.** It travels in every snapshot, and a
+  player's machine ticks at it too, so nothing is corrected because the
+  server slowed down. `task.wait`, and what the simulation drives, slow with
+  it; the interface, the camera and `os.time` do not.
+
+`RunService.TimeDilation` is the rate, 1 at full speed, and
+`RunService.TimeDilationChanged` fires when it changes, so a game can say
+"the battle is slowed to 60%". A dedicated server's `/metrics` has
+`time_dilation`.
+
+## What no player is near sleeps
+
+A world of an online game is mostly empty of players at any moment, and its
+cost should follow them. On a dedicated server, a `CharacterBody` that no
+player's focus -- their `ReplicationFocus`, or their character -- is within
+`dormant_radius` of does not walk: it stays where it was, and what it was
+asked to do (`Move`) waits until a player comes near. A player sees only as
+far as `StreamingService.LoadRadius`, and the radius is twice that unless the
+game says otherwise, so a character wakes before anybody can see it.
+
+```toml
+# project.toml
+[server]
+dormant_radius = 300   # metres from every player's focus; 0 is never
+```
+
+- `BasePart.Dormancy = Enum.Dormancy.Never` keeps a character awake
+  wherever it is: a train, a boss that roams, a courier others wait for.
+- `BasePart.Dormant` says whether a part is asleep this tick.
+- A host and a single-player game sleep nothing, and neither does a world
+  any of whose players has no character or focus: that player is sent the
+  whole world, and sees all of it.
+
+It is decided where each tick's physics step begins, from where the players
+are then, so a world runs the same every time it is run (R10). A sleeping
+character costs the server nearly nothing: it is not stepped, and what is
+sent to players is not read from it again until something changes it.
+
+**An NPC's own code** can follow the same rule with `@engine/npclod`, which
+calls it as often as its distance from the nearest player deserves -- every
+tick within 30 meters, every fourth within 120, every sixteenth beyond, and
+not at all while it sleeps -- with the time since the last call:
+
+```luau
+--!strict
+local npclod = require("@engine/npclod")
+
+for _, guard in workspace.Guards:GetChildren() do
+    npclod.think(guard, function(dt: number)
+        -- look around, choose a target, walk: `dt` is the time since the last call
+    end)
+end
+
+-- The distances and the rates, if the game wants others.
+npclod.configure({ Near = 30, NearEvery = 1, Middle = 120, MiddleEvery = 4, FarEvery = 16 })
+```
+
+`Workspace:GetNearestPlayerDistance(position)` answers the same question
+for a game's own decisions -- `math.huge` when no player has a focus.
+
+## How many players it holds: a load test
+
+`ludwerk server loadtest` sends bots at a running server and reports what the
+server did while they were in:
+
+```
+ludwerk server loadtest 127.0.0.1:7777 --bots=200 --seconds=120 --behavior=crowd
+```
+
+The server needs its health on (`--health`), because the report is the
+server's own `/metrics`, read each second; `--metrics=host:port` names it
+when it answers elsewhere. Every bot comes from this machine's one address,
+so for the test start the server with `--max-per-address=0`, or set
+`max_connections_per_address = 0` under `[network]`: by default a server
+takes 64 players from one address, and the bots after the 64th are refused
+with that reason.
+
+**A bot is a connection, not a game.** It joins as a player does -- the same
+handshake, encrypted, with the same Luau flags -- and keeps what the server
+sends it, and sends input back. It runs no picture, no physics and none of
+the game's scripts, so one machine holds many: one process runs up to 64
+bots, using about a quarter of a core and 62 MB, and the command starts as
+many processes as it needs, up to 1,000 bots. Wherever the server sends a bot
+-- a front door, `Travel`, a party's instance -- it follows.
+
+What a bot does is its behavior, `--behavior=`:
+
+- `wander` (the default): walks to places near where it started;
+- `crowd`: everybody walks to the same few meters round the world's middle;
+- `travel`: walks to the parts tagged `Portal` -- tag the pads your server
+  sends players on from -- and, with none, wanders;
+- `idle`: stands;
+- a Luau file of the game's own, `--behavior=bots/shopper.luau`.
+
+A bot walks with the intent `Move`, a `Direction2D`, as a stick would;
+`--bot-intent=` on `engine-host` names another.
+
+### A behavior of your own
+
+```luau
+--!strict
+-- bots/shopper.luau: to the market, a while there, and home.
+local Bot = require("@engine/bot")
+
+while true do
+    local stalls = Bot:FindTagged("Stall")
+    if #stalls > 0 then
+        Bot:WalkTo(stalls[math.random(1, #stalls)])
+    end
+    Bot:Wait(math.random(5, 15))
+    Bot:WalkTo(Bot.Spawn)
+    Bot:Say("back")
+end
+```
+
+`Bot:WalkTo(position, seconds?)` walks there and waits until it arrives,
+within two meters, or the time (30 seconds unless given) runs out, and says
+which. `Bot:Wait(seconds)` waits. `Bot:GetPosition()` is where the bot's
+character is. `Bot:FindTagged(tag)` is where the parts with a tag are, in
+what the server sent the bot. `Bot:Say(text)` writes a line to the bot
+process's output. `Bot.Spawn` is where the bot stood when its behavior
+began, and `Bot.Index` which bot of its process it is.
+
+A behavior has the Luau libraries and `@engine/bot`, and nothing else: no
+`game`, no services, no other module. Every bot runs the file from its
+beginning, and again in each world it is sent to. The bots of a process
+share one thread, so a loop has to wait -- one that runs a quarter of a
+second without `Wait` or `WalkTo` is stopped, with the reason.
+
+### The report
+
+```
+Bots: 128 of 128 in; 0 could not join, 0 were dropped.
+Server, the 45 seconds all 128 were in: a tick took 5.44 ms on average,
+6.05 ms in its slowest second, at 60.5 ticks a second; 648.6 KiB a second
+out and 826.2 KiB in (2003.4 at most, as players joined or left); 80 MB of
+memory at most.
+```
+
+The numbers are those of the seconds every bot was in. Joining costs more
+than staying -- a newcomer is sent the whole of what is near it -- so the
+peak while players joined or left is said apart. A join refused, and why,
+and a behavior that stopped, and why, are printed once each.
+
+`--report=loadtest.json` (the default) keeps everything: those numbers, each
+second's, and every sample of `/metrics`. The command ends with 0 when every
+bot got in and stayed, every behavior ran, and no second took longer than
+its sixty ticks may; else with 1, so a build pipeline can run it.
+
+A bot sends what a player of the game sends, so what the server receives and
+sends is what it would with players; what a bot does not do is predict, so
+the corrections a player's machine makes are not measured here. Bots go only
+to the address on the command line: a test of somebody else's server is
+yours to answer for.
 
 ## What is not here
 

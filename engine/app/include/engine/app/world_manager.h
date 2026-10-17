@@ -12,6 +12,7 @@
 // with worlds of its own making.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -58,6 +59,8 @@ struct WorldLaunch
     std::filesystem::path saves;
     // Answers `/health` on its port number over TCP.
     bool health = false;
+    // Slows its clock when overloaded (ADR 0233).
+    bool timeDilation = false;
     // **Its own log file**, beside what the manager keeps of its output:
     // every world runs in the game's folder, and one `engine.log` there for
     // all of them was several processes writing one file.
@@ -174,6 +177,31 @@ private:
         bool retired = false;
         // The topics it hears (ADR 0223).
         std::set<std::string> topics;
+        // **Who is on the way to it**, by key, with when their pass runs out:
+        // given a pass, not yet in -- so not in what its heartbeat counts.
+        // Each leaves the list when they arrive, or when the pass could no
+        // longer be used. Cleared by a heartbeat, a door that sent forty in a
+        // second sent the next ones to the room the forty were taking.
+        std::map<std::string, core::u64> expected;
+        [[nodiscard]] core::u32 incoming() const noexcept { return static_cast<core::u32>(expected.size()); }
+        // **How many it holds and will**: who is in, as their arrivals and
+        // departures say at once -- a heartbeat's count is a second old --
+        // and who is on the way.
+        [[nodiscard]] core::u32 held() const noexcept
+        {
+            return std::max(players, static_cast<core::u32>(present.size())) + incoming();
+        }
+
+        // --- A channel (ADR 0230) ---------------------------------------
+        // The `[[world]]` it is a channel of, and which; empty and 0 for a
+        // world without channels.
+        std::string base;
+        core::u32 channel = 0;
+        // Since when it has been empty, or under a quarter full; and when a
+        // merge it was warned of moves its players.
+        core::u64 emptySinceChannelNs = 0;
+        core::u64 lowSinceNs = 0;
+        core::u64 mergeAtNs = 0;
 
         // --- An instance (ADR 0221) -------------------------------------
         bool instance = false;
@@ -221,6 +249,12 @@ private:
     void topUpWarm();
     void instances();
     void reply(World& asker, core::u32 id, std::string_view instance, std::string_view why);
+    // ADR 0230: the channels opened, closed and merged; the one a player
+    // going to `base` is sent to; where a world's files are named.
+    void channels();
+    World& startChannel(const ServersConfig::World& config, core::u32 channel);
+    [[nodiscard]] World* channelFor(std::string_view base, core::u32 travellers, const World* except = nullptr);
+    [[nodiscard]] World* routed(std::string_view target, core::u32 travellers);
     void closed(World& instance, std::string_view reason);
     void say(std::string_view text) const;
 
@@ -241,6 +275,13 @@ private:
     std::map<std::string, Return> m_returns;
     // Players of a live instance, by key: one who drops comes back to it.
     std::map<std::string, std::string> m_members;
+    // **Who left a world, by key** (ADR 0232 §3): one who comes back within
+    // the grace goes back to it without waiting in line.
+    std::map<std::string, Return> m_recent;
+    // ADR 0232: the room the game has for one more, at `to`; and the line.
+    [[nodiscard]] bool roomAt(const World* to) const;
+    void expect(World& to, std::string_view key);
+    void line();
     bool m_stopping = false;
     bool m_finished = false;
     core::u64 m_stopDeadlineNs = 0;

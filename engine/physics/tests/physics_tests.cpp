@@ -1556,3 +1556,150 @@ TEST_CASE("reshaping a body a cube is resting on does not re-announce the contac
     CHECK(began == 0);
     CHECK(ended == 0);
 }
+
+TEST_CASE("ADR 0231: a phased wall stops the characters of players in its phase, and no one else's")
+{
+    // A wall across the way, in phase 1 (its bit, 0, plus one). Three
+    // characters walk into it: a player's in that phase, a player's in
+    // another, and one that is nobody's.
+    const auto walk = [](bool holder, u64 mask) {
+        Fixture fixture;
+        fixture.spawn(floorDesc());
+        BodyDesc wall;
+        wall.shape.size = core::Vec3{10.0f, 6.0f, 0.5f};
+        wall.transform.position = core::DVec3{0.0, 3.0, 6.0};
+        wall.motion = MotionType::Static;
+        wall.userData = 8;
+        const BodyHandle built = fixture.physics->createBody(fixture.world, wall);
+        REQUIRE(built.valid());
+        fixture.physics->setBodyPhase(fixture.world, built, 1, false, 0);
+        CharacterDesc desc;
+        desc.transform.position = core::DVec3{0.0, 2.5, 0.0};
+        desc.userData = 9;
+        const CharacterHandle character = fixture.physics->createCharacter(fixture.world, desc);
+        REQUIRE(character.valid());
+        if (holder)
+            fixture.physics->setCharacterPhase(fixture.world, character, true, mask);
+        for (int i = 0; i < 120; ++i) {
+            const CharacterState state = fixture.physics->characterState(fixture.world, character);
+            const f32 vertical =
+                state.ground == CharacterGround::Grounded ? 0.0f : state.linearVelocity.y - 9.81f * kFixedDt;
+            fixture.physics->moveCharacter(fixture.world, character, core::Vec3{0.0f, vertical, 4.0f}, kFixedDt);
+            fixture.physics->step(fixture.world, kFixedDt);
+        }
+        return fixture.physics->characterState(fixture.world, character).transform.position.z;
+    };
+    // In the phase: stopped at the wall.
+    CHECK(walk(true, 0b1) < 6.0);
+    // In another: through it.
+    CHECK(walk(true, 0b10) > 7.0);
+    // Nobody's: a wall like any other.
+    CHECK(walk(false, 0) < 6.0);
+}
+
+TEST_CASE("ADR 0231: a phased floor holds up a player's part in its phase, and lets one outside it fall")
+{
+    const auto drop = [](u64 mask) {
+        Fixture fixture;
+        BodyDesc floor = floorDesc();
+        const BodyHandle built = fixture.physics->createBody(fixture.world, floor);
+        REQUIRE(built.valid());
+        fixture.physics->setBodyPhase(fixture.world, built, 3, false, 0);
+        const BodyHandle crate = fixture.physics->createBody(fixture.world, cubeDesc(core::DVec3{0.0, 3.0, 0.0}, 5));
+        REQUIRE(crate.valid());
+        fixture.physics->setBodyPhase(fixture.world, crate, 0, true, mask);
+        fixture.run(180);
+        return fixture.physics->bodyState(fixture.world, crate).transform.position.y;
+    };
+    CHECK(drop(0b100) > 0.0);
+    CHECK(drop(0b001) < -5.0);
+}
+
+TEST_CASE("a ray meets a character, and names it by its own user data")
+{
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+    // A body in the slot whose number a character's user data would read as,
+    // were it taken for a body's handle.
+    fixture.spawn(cubeDesc(core::DVec3{30.0, 0.5, 30.0}, 5));
+    CharacterDesc desc;
+    desc.transform.position = core::DVec3{0.0, 2.5, 0.0};
+    desc.userData = (static_cast<u64>(1) << 32) | 1u;
+    const CharacterHandle character = fixture.physics->createCharacter(fixture.world, desc);
+    REQUIRE(character.valid());
+    fixture.run(1);
+    RayD ray;
+    ray.origin = core::DVec3{0.0, 2.5, -10.0};
+    ray.direction = core::Vec3{0.0f, 0.0f, 20.0f};
+    RayHit hit;
+    REQUIRE(fixture.physics->raycast(fixture.world, ray, QueryFilter{}, hit));
+    // Its own user data -- not the crate's, whose body sits in the slot that
+    // number reads as -- and at the capsule's face, a metre short of its centre.
+    CHECK(hit.userData == desc.userData);
+    CHECK(hit.position.z == doctest::Approx(-1.0).epsilon(0.02));
+    CHECK_FALSE(hit.body.valid());
+    // A cast that leaves characters out -- a particle's, a crowd's ground --
+    // goes past it.
+    QueryFilter noCharacters;
+    noCharacters.characters = false;
+    CHECK_FALSE(fixture.physics->raycast(fixture.world, ray, noCharacters, hit));
+    // `CanQuery` off: the ray goes past it, to nothing.
+    fixture.physics->setCharacterQueryable(fixture.world, character, false);
+    CHECK_FALSE(fixture.physics->raycast(fixture.world, ray, QueryFilter{}, hit));
+}
+
+TEST_CASE("ADR 0235: a moved cast meets a body where it is moved to, and nothing moves")
+{
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+    BodyDesc crateDesc = cubeDesc(core::DVec3{0.0, 0.5, 0.0}, 41);
+    crateDesc.motion = MotionType::Kinematic;
+    const BodyHandle crate = fixture.physics->createBody(fixture.world, crateDesc);
+    CharacterDesc runner;
+    runner.transform.position = core::DVec3{10.0, 2.5, 0.0};
+    runner.userData = 42;
+    const CharacterHandle character = fixture.physics->createCharacter(fixture.world, runner);
+    REQUIRE(character.valid());
+    fixture.run(1);
+
+    // Down the line x = 4: neither is there now.
+    RayD ray;
+    ray.origin = core::DVec3{4.0, 0.5, -10.0};
+    ray.direction = core::Vec3{0.0f, 0.0f, 20.0f};
+    RayHit hit;
+    CHECK_FALSE(fixture.physics->raycast(fixture.world, ray, QueryFilter{}, hit));
+
+    // The crate where it was: met there, by its own handle.
+    std::array<MovedBody, 2> moved{};
+    moved[0].body = crate;
+    moved[0].transform.position = core::DVec3{4.0, 0.5, 2.0};
+    moved[1].character = character;
+    moved[1].transform.position = core::DVec3{4.0, 2.5, 6.0};
+    REQUIRE(fixture.physics->raycastMoved(fixture.world, ray, QueryFilter{}, moved, hit));
+    CHECK(hit.userData == 41);
+    CHECK(hit.body == crate);
+    CHECK(hit.position.z == doctest::Approx(1.5).epsilon(0.01));
+    CHECK(hit.normal.z == doctest::Approx(-1.0).epsilon(0.01));
+    // Left out by the filter, the character behind it is next.
+    const std::array<u64, 1> crateOnly{41};
+    QueryFilter past;
+    past.userData = crateOnly;
+    REQUIRE(fixture.physics->raycastMoved(fixture.world, ray, past, moved, hit));
+    CHECK(hit.userData == 42);
+    // Through its lower cap: half a metre above the cap's centre, the
+    // capsule's face is root 0.75 short of its axis.
+    CHECK(hit.position.z == doctest::Approx(6.0 - std::sqrt(0.75)).epsilon(0.01));
+    // A sphere the same.
+    REQUIRE(fixture.physics->spherecastMoved(fixture.world, ray, 0.25f, past, moved, hit));
+    CHECK(hit.userData == 42);
+
+    // Where they are now, a moved cast does not meet them.
+    RayD now;
+    now.origin = core::DVec3{0.0, 0.5, -10.0};
+    now.direction = core::Vec3{0.0f, 0.0f, 20.0f};
+    CHECK_FALSE(fixture.physics->raycastMoved(fixture.world, now, QueryFilter{}, moved, hit));
+    // And nothing moved: the plain cast meets the crate where it is.
+    REQUIRE(fixture.physics->raycast(fixture.world, now, QueryFilter{}, hit));
+    CHECK(hit.userData == 41);
+    CHECK(hit.position.z == doctest::Approx(-0.5).epsilon(0.01));
+}

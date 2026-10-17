@@ -55,6 +55,10 @@ struct ScopeReport
     f64 selfMedianMs = 0.0;
     // How many times it ran in a frame, at the median.
     f64 calls = 0.0;
+    // **One run of it**, over every frame kept: its time divided by how many
+    // times it ran. A server catching up runs a tick's scopes many times in
+    // one frame, and a frame's number is then many ticks' (ADR 0228 §6).
+    f64 perCallMs = 0.0;
 };
 
 // The tree, depth first in the order scopes were first entered, over every
