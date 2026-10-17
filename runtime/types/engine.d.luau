@@ -4622,6 +4622,9 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "LocalizationService"): LocalizationService
     function GetService(self, name: "GraphicsService"): GraphicsService
     function GetService(self, name: "HapticService"): HapticService
+    function GetService(self, name: "CrossWorldService"): CrossWorldService
+    function GetService(self, name: "InstanceService"): InstanceService
+    function GetService(self, name: "ConsoleService"): ConsoleService
     function GetService(self, name: "CryptoService"): CryptoService
     function GetService(self, name: "ContentProvider"): ContentProvider
     function GetService(self, name: "SceneService"): SceneService
@@ -5097,6 +5100,70 @@ declare extern type HapticService extends Instance with
     function Vibrate(self, strength: number, seconds: number): ()
 end
 
+declare extern type CrossWorldService extends Instance with
+    --- Sends `message` to every world subscribed to `topic`. The message is anything `SaveService` can
+    --- store, at most 4 KiB written, and the topic at most 80 bytes. A world may publish 200 messages a
+    --- second; past that this raises.
+    function Publish(self, topic: string, message: any): ()
+    --- Calls `callback` with each message published on `topic`, and the name of the world that
+    --- published it. That name is empty for this world when no manager runs it. A world may subscribe
+    --- to 1000 topics. Each call runs on a thread of its own, between ticks.
+    function Subscribe(self, topic: string, callback: (message: any, origin: string) -> ()): ()
+    --- Stops every callback this world gave for `topic`.
+    function Unsubscribe(self, topic: string): ()
+end
+
+declare extern type InstanceService extends Instance with
+    --- In an instance, its `Id`; empty in a world that is not one.
+    read InstanceId: string
+    --- Fires in an instance before it stops, for its script to save what it keeps. It stops five
+    --- seconds later.
+    read Closing: Signal<()>
+    --- Fires in the world that made an instance when that instance is gone, and says why. `reason` is
+    --- `"Closed"` when it was empty for its while or its script called `Close`, and `"InstanceFailed"`
+    --- when it stopped without closing. What the world handed out for the run is settled here: its
+    --- players may come back one by one, or not at all.
+    read InstanceClosed: Signal<string, string>
+    --- Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` once it
+    --- is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the instance's scene
+    --- reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in
+    --- it. Raises with the reason when the template has as many instances running as it may, the
+    --- machine has too little memory free, or the instance failed to start.
+    function CreateInstanceAsync(self, template: string, options: { Players: {Player}?, Data: any? }?): string
+    --- In an instance: lets the player with this `PublicKey` in too, for a friend who comes late.
+    function AllowPlayer(self, key: string): ()
+    --- In an instance: no longer lets that player in. Somebody already in stays.
+    function DisallowPlayer(self, key: string): ()
+    --- In an instance: closes it now. `Closing` fires, and the players still in it go back to the front
+    --- door.
+    function Close(self): ()
+    --- In an instance: keeps it open for at least this many seconds from now, empty or not.
+    function KeepOpen(self, seconds: number): ()
+end
+
+declare extern type ConsoleService extends Instance with
+    --- Adds the command `name` to the console. `name` is one lowercase word, and none of the engine's
+    --- own. Registering a name again replaces it, as a hot reload does. `spec.Parameters` lists what
+    --- the command takes, in order: each has a `Name` and a `Type` (`"string"`, `"number"`, `"boolean"`
+    --- or `"Player"`), and the `Optional` ones come last. A word left over at the end goes to the last
+    --- `string` parameter, so `announce Doors open at noon` gives the whole sentence. A `Player` is
+    --- written as their name, their `UserId` or the start of their `PublicKey`. A line that does not
+    --- fit is answered with the command's usage, and `callback` is not called. `spec.Permission`, 0 to
+    --- 3, is who may run it: 2 when absent. The local console is 3. `spec.Description` is shown by
+    --- `help`; it may be a key of the game's own catalog. `callback` runs on a thread of its own, on
+    --- the server, between ticks. Its first argument is who ran it, then the parameters, `nil` for an
+    --- optional one left out. What it returns is shown to whoever ran it; an error it raises is shown
+    --- the same way and does not stop the server. It may yield, and the console takes the next line
+    --- meanwhile.
+    function Register(self, name: string, spec: { Description: string?, Parameters: { { Name: string, Type: string, Optional: boolean? } }?, Permission: number? }, callback: (caller: { Local: boolean, Name: string, Key: string, Permission: number }, ...any) -> any): ()
+    --- Takes the command `name` out of the console. Nothing happens if there is none.
+    function Unregister(self, name: string): ()
+    --- Runs `line` as the server's own console would, with every permission, and returns what the
+    --- command answered. Raises when the command failed. Yields until the command has finished: a line
+    --- runs between ticks.
+    function ExecuteAsync(self, line: string): string
+end
+
 declare extern type CryptoService extends Instance with
     --- Returns a buffer of `count` bytes from the operating system's random generator, for a key, a
     --- salt or a token. `count` is an integer from 0 to 1048576.
@@ -5268,6 +5335,17 @@ declare extern type NetworkService extends Instance with
     --- that capacity is what it reads while hosting if it was never set. On a machine that joined a
     --- match it reads 0, and setting it raises an error.
     MaxPlayers: number
+    --- Called on the server for everybody who joins, before they are a player, to say whether they may.
+    --- Return true to let them in, or false and the words they are shown. `joiner` has their
+    --- `PublicKey`, their `Address` and the `Ticket` their game presented, empty for none; set
+    --- `joiner.AccountId` to the account they are, usually the `sub` of `VerifyTicket`'s claims. It
+    --- runs on a thread of its own and may yield, to ask the game's backend; after 10 seconds it is a
+    --- refusal, and so is an error in it. While it runs the joiner has no `Player` and is sent nothing.
+    --- An account already playing is dropped when the same account joins again, and an account banned
+    --- with the console's `ban` is refused after this has named it. With no `OnJoinRequest`, everybody
+    --- is let in. Set it once, in a server script: a second assignment replaces the first, and a client
+    --- cannot set it.
+    OnJoinRequest: ((joiner: { PublicKey: string, Address: string, Ticket: string, AccountId: string? }) -> (boolean, string?))?
     --- Fires when a join succeeds and this machine is in the server's match.
     read Connected: Signal<()>
     --- Fires when a join fails. This machine stays in single-player, in the state it was in before
@@ -5289,6 +5367,22 @@ declare extern type NetworkService extends Instance with
     --- Fires when the connection ends and this machine is back in single-player. The server left, the
     --- network failed, or `Disconnect` was called.
     read Disconnected: Signal<string>
+    --- Fires on the server of the world a player traveled to, after `PlayerAdded`, with the `data` the
+    --- world they left sent and that world's name. A player who came through the front door fires it
+    --- too, with nil and an empty origin. `reason` is empty, or `"InstanceFailed"` for a player sent
+    --- back because the instance they were in stopped without closing: the game can say so, and give
+    --- back what the run cost.
+    read TravelArrived: Signal<Player, any, string, string>
+    --- Fires on a client when it is sent to another world, by the front door or by the world it is in,
+    --- before it leaves, with that world's name. Show a loading screen here and take it down on
+    --- `Connected`, which fires when the next world has taken this machine; `@engine/travelscreen` is
+    --- one, mounted in one line.
+    read TravelStarted: Signal<string>
+    --- Fires on every machine of the match when the server's operator says something to everybody, with
+    --- the console's `say` or as `stop` counts down. The engine writes it to the log and draws nothing:
+    --- a game shows it its own way, or mounts `@engine/announcements`, which shows each one across the
+    --- top of the screen for a few seconds.
+    read Announced: Signal<string>
     --- Fires when a player joins. A script that connects at its top level and then loops over
     --- `GetPlayers()` handles each player exactly once.
     read PlayerAdded: Signal<Player>
@@ -5348,14 +5442,19 @@ declare extern type NetworkService extends Instance with
     --- `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and
     --- `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the
     --- positions of replicated swarms. The remainder is instances being created and removed, terrain
-    --- and the handshake. To get a rate, read a field twice, one second apart, and subtract. `Path`
-    --- says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet,
-    --- or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it
-    --- is the longest path among its players. It is empty when nobody is connected. `LocalPlayers` has
-    --- one entry for each local player on a machine that joined a match: the primary player first, then
-    --- the guests. Each entry has the player's `UserId` and the three correction numbers for that
-    --- player's character alone. It is empty on an authority and in single-player.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
+    --- and the handshake. To get a rate, read a field twice, one second apart, and subtract.
+    --- `CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many
+    --- waiting, or older than 10 seconds when their turn came. `WireBytesSent` and `WireBytesReceived`
+    --- are what the network itself carried: the same messages with the transport's headers,
+    --- acknowledgements, resends and encryption added. They are what a player's connection pays for,
+    --- and are larger than `BytesSent` and `BytesReceived`. `Path` says how the other end is reached:
+    --- `"lan"` on the same network, `"direct"` across the internet, or `"relayed"` through a relay,
+    --- which adds the relay's distance to the round trip. On a host it is the longest path among its
+    --- players. It is empty when nobody is connected. `LocalPlayers` has one entry for each local
+    --- player on a machine that joined a match: the primary player first, then the guests. Each entry
+    --- has the player's `UserId` and the three correction numbers for that player's character alone. It
+    --- is empty on an authority and in single-player.
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
     --- Connects to a server at `address`, written as `host` or `host:port`. With no address, it
     --- connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with
     --- the server's, and server scripts stop, because this machine is no longer the authority.
@@ -5366,8 +5465,10 @@ declare extern type NetworkService extends Instance with
     --- connection across the internet, or the relay. `GetStats().Path` reports which. Set
     --- `options.Direct` to false to always go through the relay. `relay://host:port/CODE` gives the
     --- relay and the code in one string. To connect to a host whose name could be read as a code,
-    --- include its port.
-    function Join(self, address: string?, options: { Relay: string?, Direct: boolean? }?): ()
+    --- include its port. `options.Ticket` is what this player presents to be let in: a ticket the
+    --- game's backend signed when they logged in. It travels inside the encrypted connection, and the
+    --- server's `OnJoinRequest` reads it.
+    function Join(self, address: string?, options: { Relay: string?, Direct: boolean?, Ticket: string? }?): ()
     --- Makes this machine the authority of a match that others can join, on `port` (7777 by default),
     --- keeping the current scene. A dedicated server cannot call it. With a relay, from `options.Relay
     --- = "host:port"` or `[network] relay`, the match is registered with the relay, and players
@@ -5379,6 +5480,33 @@ declare extern type NetworkService extends Instance with
     --- scripts start again from the beginning, because this machine is the authority again.
     --- `Disconnected` fires. A dedicated server cannot call it.
     function Disconnect(self): ()
+    --- Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or
+    --- an instance's `Id`. Their machine leaves this world and joins that one, which fires
+    --- `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can
+    --- store, at most 16 KiB. Their character does not travel; the target spawns one. Only a world a
+    --- manager started can send players elsewhere: anywhere else, and for a world the manager does not
+    --- have, this raises at once.
+    function Travel(self, player: Player, target: string, data: any?): ()
+    --- Sends several players to the same world together, as `Travel` sends one. The target fires
+    --- `TravelArrived` for each, in the order given.
+    function TravelGroup(self, players: {Player}, target: string, data: any?): ()
+    --- Checks a ticket the game's backend signed, on the server and with no call out, and returns its
+    --- claims, or nil. The ticket is a standard JWT signed with Ed25519 (`EdDSA`), which any backend's
+    --- JWT library issues. A ticket is accepted when its signature checks against `ticket_public_key`
+    --- under `[network]` in `project.toml`, its `aud` is this game's `[project] id`, it lives at most
+    --- 90 seconds between `iat` and `exp` and has not expired, and its `jti` has not been seen before
+    --- by this server. Clocks may differ by 30 seconds each way. The algorithm is never the ticket's to
+    --- choose: one that says anything but `EdDSA`, including `none`, is refused before its signature is
+    --- looked at, and a key the ticket names is ignored. What was wrong is written to the server's log,
+    --- never told to the player. The claims are the ticket's top-level strings, numbers and booleans:
+    --- `sub`, the account, and whatever else the backend put in.
+    function VerifyTicket(self, ticket: string): { [string]: any }?
+    --- Forgets the key this machine saved for the server at `address`, written as for `Join`. The first
+    --- time a machine joins a server by its address, it saves the server's key, and a later join to the
+    --- same address with another key fails with `JoinFailed`: someone may be in the way. A server whose
+    --- owner reinstalled it has a new key too. A game can offer the player a way to trust it again:
+    --- call this, then `Join`. Joining by code saves nothing, so there is nothing to forget.
+    function ForgetServerKey(self, address: string): ()
 end
 
 declare extern type RemoteEvent extends Instance with
@@ -5464,9 +5592,21 @@ declare extern type Player extends Instance with
     --- `GamepadId`. The game sets it when a gamepad joins.
     GamepadId: number
     --- The number the authority gives this player. It is 1 for the player on a single-player or hosting
-    --- machine, and 2 and up for clients in the order they joined. It is never reused within a session
-    --- and is not an account id: a player who reconnects gets a new number.
+    --- machine, and 2 and up for clients in the order they joined. It is never reused within a session,
+    --- and a player who reconnects while the server runs gets the same one. It is not kept when the
+    --- server restarts: what lasts is `PublicKey`, and an account id a game gives its players
+    --- (`NetworkService.OnJoinRequest`).
     read UserId: number
+    --- The account the game knows this player as, on the server: what its
+    --- `NetworkService.OnJoinRequest` set when they joined, or nil. Two joins with the same account are
+    --- one player: the second drops the first.
+    read AccountId: string?
+    --- The key this player's game proved when it joined, in hexadecimal. It is the same on every
+    --- connection from the same copy of the game, and after the server restarts. On the server every
+    --- player has one; on a client only its own players do. Empty where the match is not encrypted.
+    --- Saved data and a ban are kept by it; a player who deletes their game's key file is a new player,
+    --- so a game with accounts keys what lasts by its own account id.
+    read PublicKey: string
     --- The part that represents this player in the world: a `CharacterBody`, a vehicle or whatever the
     --- game moves for them. For a character on the 2D plane, use `Character2D`. The game sets it on the
     --- authority, and it replicates: on each machine, the `Player` refers to that machine's copy of the

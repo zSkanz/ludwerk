@@ -27,10 +27,12 @@
 #include "engine/core/log.h"
 #include "engine/core/math.h"
 #include "engine/core/name_atom.h"
+#include "engine/core/ticket.h"
 #include "engine/input/input.h"
 #include "engine/nav/nav.h"
 #include "engine/net/async_client.h"
 #include "engine/net/relay_ping.h"
+#include "engine/net/websocket_session.h"
 #include "engine/platform/event.h"
 #include "engine/platform/game_integration.h"
 #include "engine/scene/class_registry.h"
@@ -254,6 +256,62 @@ public:
     std::vector<InvokeRunning> invokeRunning;
     core::u32 nextInvoke = 1;
 
+    // `ConsoleService` (ADR 0218): each game command's function by its name,
+    // the calls that yielded until they finish, and the scripts parked in
+    // `ExecuteAsync` by the line they asked for.
+    struct ConsoleHandler
+    {
+        std::string name;
+        int functionRef = -1;
+    };
+    std::vector<ConsoleHandler> consoleHandlers;
+    struct ConsoleRunning
+    {
+        int threadRef = -1;
+        core::u32 id = 0;
+    };
+    std::vector<ConsoleRunning> consoleRunning;
+    struct ConsoleWaiter
+    {
+        core::u32 id = 0;
+        int threadRef = -1;
+    };
+    std::vector<ConsoleWaiter> consoleWaiters;
+    core::u32 nextConsoleLine = 0;
+
+    // `NetworkService.OnJoinRequest` (ADR 0226): the function, the requests
+    // that yielded with the table each was handed, and the ticket ids this
+    // server has spent.
+    int joinRequestHandler = -1;
+    struct JoinRunning
+    {
+        int threadRef = -1;
+        int requestRef = -1;
+        core::u32 id = 0;
+    };
+    std::vector<JoinRunning> joinRunning;
+    core::TicketReplay ticketReplay;
+
+    // `InstanceService:CreateInstanceAsync` (ADR 0221): the scripts waiting
+    // for the manager's answer, by request.
+    struct InstanceWaiter
+    {
+        core::u32 id = 0;
+        int threadRef = -1;
+    };
+    std::vector<InstanceWaiter> instanceWaiters;
+
+    // `CrossWorldService` (ADR 0223): each callback by its topic, and how
+    // many this world published in the second it is in.
+    struct CrossWorldHandler
+    {
+        std::string topic;
+        int functionRef = -1;
+    };
+    std::vector<CrossWorldHandler> crossWorldHandlers;
+    core::u64 crossWorldSecond = 0;
+    core::u32 crossWorldThisSecond = 0;
+
     // `StreamingService.LoadAreaAsync`, the same shape as a child waiter
     // and for the same reason: the caller is parked on a condition the world
     // will satisfy later, and the host is what notices. What a teleport calls
@@ -315,6 +373,21 @@ public:
     // for two of them. Owned here so it dies with the VM -- the coroutines
     // waiting on its tickets die with the VM too.
     std::unique_ptr<net::AsyncClient> netClient;
+
+    // **`net.websocket`** (ADR 0223 §2): each socket a script opened, its
+    // signals, the thread waiting for it to open, and the object scripts hold.
+    struct Socket
+    {
+        core::u32 id = 0;
+        std::unique_ptr<net::WebSocketSession> session;
+        SignalId received;
+        SignalId closed;
+        int waiterRef = -1;
+        int objectRef = -1;
+        bool opened = false;
+    };
+    std::vector<Socket> sockets;
+    core::u32 nextSocket = 1;
 
     // `NetworkService:PingRelayAsync` (ADR 0178, amended): the same parking
     // shape -- a ticket and the thread that waits on it -- and a pinger made

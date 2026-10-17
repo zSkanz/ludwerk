@@ -42,6 +42,12 @@ Adds a guest player to an offline game on this machine and fires `PlayerAdded`. 
 
 Leaves the match, or stops hosting, and returns to single-player in the current scene. Server scripts start again from the beginning, because this machine is the authority again. `Disconnected` fires. A dedicated server cannot call it.
 
+### `ForgetServerKey(address: string)`
+
+Forgets the key this machine saved for the server at `address`, written as for `Join`. The first time a machine joins a server by its address, it saves the server's key, and a later join to the same address with another key fails with `JoinFailed`: someone may be in the way. A server whose owner reinstalled it has a new key too. A game can offer the player a way to trust it again: call this, then `Join`.
+
+Joining by code saves nothing, so there is nothing to forget.
+
 ### `GetLocalAddresses(): {string}`
 
 Returns this machine's IPv4 addresses on its local networks, best first. A host can show them for players on the same network to type.
@@ -56,7 +62,7 @@ Returns the local players on this machine in the order they joined, with the pri
 
 Returns every player in the game, in the order they joined. In single-player it returns the one local player, so code that loops over players works with and without networking.
 
-### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }`
+### `GetStats(): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }`
 
 Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.
 
@@ -74,6 +80,10 @@ Link quality:
 
 Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.
 
+`CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.
+
+`WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages with the transport's headers, acknowledgements, resends and encryption added. They are what a player's connection pays for, and are larger than `BytesSent` and `BytesReceived`.
+
 `Path` says how the other end is reached: `"lan"` on the same network, `"direct"` across the internet, or `"relayed"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.
 
 `LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.
@@ -84,11 +94,13 @@ Makes this machine the authority of a match that others can join, on `port` (777
 
 With a relay, from `options.Relay = "host:port"` or `[network] relay`, the match is registered with the relay, and players anywhere can join it with `JoinCode`, with no port opened on a router. Hosting does not wait for the relay or depend on it: `RelayState` reports the relay's state, and the match can always be joined by address.
 
-### `Join(address: string? = nil, options: { Relay: string?, Direct: boolean? }? = nil)`
+### `Join(address: string? = nil, options: { Relay: string?, Direct: boolean?, Ticket: string? }? = nil)`
 
 Connects to a server at `address`, written as `host` or `host:port`. With no address, it connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with the server's, and server scripts stop, because this machine is no longer the authority. `Connected` or `JoinFailed` fires with the outcome. A dedicated server cannot join.
 
 `address` can also be a join code, when a relay is known from `options.Relay` or `[network] relay`. A code is accepted as a player types it: in either case, with spaces or a dash. The relay is asked for the host, and the best available path is used automatically: the same network, a direct connection across the internet, or the relay. `GetStats().Path` reports which. Set `options.Direct` to false to always go through the relay. `relay://host:port/CODE` gives the relay and the code in one string. To connect to a host whose name could be read as a code, include its port.
+
+`options.Ticket` is what this player presents to be let in: a ticket the game's backend signed when they logged in. It travels inside the encrypted connection, and the server's `OnJoinRequest` reads it.
 
 ### `PingRelayAsync(relay: string? = nil, timeout: number? = nil): { Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?`
 
@@ -104,10 +116,30 @@ The result has `Ping`, the shortest of the three round trips in milliseconds; `M
 
 Removes a guest player from an offline game, firing `PlayerRemoving`. Returns whether the removal was started. It does not remove the primary local player or a remote player.
 
+### `Travel(player: Player, target: string, data: any? = nil)`
+
+Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that one, which fires `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can store, at most 16 KiB. Their character does not travel; the target spawns one.
+
+Only a world a manager started can send players elsewhere: anywhere else, and for a world the manager does not have, this raises at once.
+
+### `TravelGroup(players: {Player}, target: string, data: any? = nil)`
+
+Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.
+
+### `VerifyTicket(ticket: string): { [string]: any }?`
+
+Checks a ticket the game's backend signed, on the server and with no call out, and returns its claims, or nil. The ticket is a standard JWT signed with Ed25519 (`EdDSA`), which any backend's JWT library issues. A ticket is accepted when its signature checks against `ticket_public_key` under `[network]` in `project.toml`, its `aud` is this game's `[project] id`, it lives at most 90 seconds between `iat` and `exp` and has not expired, and its `jti` has not been seen before by this server. Clocks may differ by 30 seconds each way.
+
+The algorithm is never the ticket's to choose: one that says anything but `EdDSA`, including `none`, is refused before its signature is looked at, and a key the ticket names is ignored. What was wrong is written to the server's log, never told to the player. The claims are the ticket's top-level strings, numbers and booleans: `sub`, the account, and whatever else the backend put in.
+
 ## Events
 
 Signals are deferred: a handler runs at the next resumption point, not
 inside the call that fired the signal.
+
+### `Announced(text: string)`
+
+Fires on every machine of the match when the server's operator says something to everybody, with the console's `say` or as `stop` counts down. The engine writes it to the log and draws nothing: a game shows it its own way, or mounts `@engine/announcements`, which shows each one across the top of the screen for a few seconds.
 
 ### `Connected()`
 
@@ -138,3 +170,22 @@ Fires when a player is leaving. The player object is still valid inside the hand
 ### `RelayStateChanged()`
 
 Fires when `RelayState` or `JoinCode` changes: the relay registered the match, stopped answering, or started answering again. Read the two properties for the new values.
+
+### `TravelArrived(player: Player, data: any, origin: string, reason: string)`
+
+Fires on the server of the world a player traveled to, after `PlayerAdded`, with the `data` the world they left sent and that world's name. A player who came through the front door fires it too, with nil and an empty origin. `reason` is empty, or `"InstanceFailed"` for a player sent back because the instance they were in stopped without closing: the game can say so, and give back what the run cost.
+
+### `TravelStarted(world: string)`
+
+Fires on a client when it is sent to another world, by the front door or by the world it is in, before it leaves, with that world's name. Show a loading screen here and take it down on `Connected`, which fires when the next world has taken this machine; `@engine/travelscreen` is one, mounted in one line.
+
+## Callbacks
+
+A callback is a function that a script assigns and the engine calls. Each
+callback holds one function, and assigning nil removes it.
+
+### `OnJoinRequest = function(joiner: { PublicKey: string, Address: string, Ticket: string, AccountId: string? }): boolean, string?`
+
+Called on the server for everybody who joins, before they are a player, to say whether they may. Return true to let them in, or false and the words they are shown. `joiner` has their `PublicKey`, their `Address` and the `Ticket` their game presented, empty for none; set `joiner.AccountId` to the account they are, usually the `sub` of `VerifyTicket`'s claims.
+
+It runs on a thread of its own and may yield, to ask the game's backend; after 10 seconds it is a refusal, and so is an error in it. While it runs the joiner has no `Player` and is sent nothing. An account already playing is dropped when the same account joins again, and an account banned with the console's `ban` is refused after this has named it. With no `OnJoinRequest`, everybody is let in. Set it once, in a server script: a second assignment replaces the first, and a client cannot set it.

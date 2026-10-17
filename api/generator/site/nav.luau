@@ -193,7 +193,7 @@ local Sections: { Section } = {
     {
         Slug = "guides",
         Title = "Guides",
-        Summary = "Hot reload, testing, localization, profiling, shipping, multiplayer, scenes and saves.",
+        Summary = "Hot reload, testing, localization, profiling, shipping, multiplayer, online games, scenes and saves.",
         Pages = {
             { Slug = "hot-reload", Title = "Hot reload" },
             { Slug = "testing", Title = "Testing" },
@@ -203,6 +203,7 @@ local Sections: { Section } = {
             { Slug = "shipping", Title = "Shipping a game" },
             { Slug = "platform-services", Title = "Platform services" },
             { Slug = "multiplayer", Title = "Multiplayer" },
+            { Slug = "online-games", Title = "Online games" },
             { Slug = "local-players", Title = "Several players at one screen" },
             { Slug = "scenes", Title = "Scenes at run time" },
             { Slug = "saves", Title = "Saving the game" },

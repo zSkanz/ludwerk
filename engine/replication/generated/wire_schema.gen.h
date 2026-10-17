@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 53;
+inline constexpr u32 ProtocolVersion = 54;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -1040,6 +1040,8 @@ enum class MessageType : u8
     GuestJoin = 32,
     GuestLeave = 33,
     GuestSeat = 34,
+    Redirect = 36,
+    Announce = 35,
     DetectorInput = 16,
     TerrainChunks = 17,
     TerrainLook = 18,
@@ -1093,6 +1095,8 @@ inline constexpr MessageDesc Messages[] = {
     {"GuestJoin", MessageType::GuestJoin, 0, Direction::ToAuthority},
     {"GuestLeave", MessageType::GuestLeave, 0, Direction::ToAuthority},
     {"GuestSeat", MessageType::GuestSeat, 0, Direction::ToReplica},
+    {"Redirect", MessageType::Redirect, 0, Direction::ToReplica},
+    {"Announce", MessageType::Announce, 0, Direction::ToReplica},
     {"DetectorInput", MessageType::DetectorInput, 0, Direction::ToAuthority},
     {"TerrainChunks", MessageType::TerrainChunks, 0, Direction::ToReplica},
     {"TerrainLook", MessageType::TerrainLook, 0, Direction::ToReplica},

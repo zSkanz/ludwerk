@@ -18,6 +18,7 @@ local assert = require("@std/test/assert")
 local process = require("@std/process")
 local test = require("@std/test")
 
+local bounded = require("../bounded")
 local edit = require("../commands/edit")
 
 --- The test file's own location, so this works from any working directory the
@@ -32,7 +33,7 @@ local function runCli(...: string): { code: number, output: string }
     for _, argument in { ... } do
         table.insert(arguments, argument)
     end
-    local result = process.run(arguments)
+    local result = bounded.run(arguments, nil, 300)
     return { code = result.exitcode, output = result.stdout .. result.stderr }
 end
 

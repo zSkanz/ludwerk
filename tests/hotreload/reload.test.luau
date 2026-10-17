@@ -33,6 +33,7 @@ local process = require("@std/process")
 local task = require("@std/task")
 local test = require("@std/test")
 
+local bounded = require("../../tools/cli/bounded")
 local devserver = require("../../tools/cli/devserver")
 local projectlib = require("../../tools/cli/project")
 
@@ -158,14 +159,14 @@ local function startSession(root: string): Session
     -- failure this test cannot otherwise explain.
     local exited: { result: process.ProcessResult? } = {}
     task.spawn(function()
-        exited.result = process.run({
+        exited.result = bounded.run({
             engine :: string,
             root,
             `--dev-control=ws://127.0.0.1:{server.port}/control`,
             `--dev-token={token}`,
             "--headless",
             "--rhi=null",
-        })
+        }, nil, 300)
     end)
 
     local inbox: { { [string]: any } } = {}

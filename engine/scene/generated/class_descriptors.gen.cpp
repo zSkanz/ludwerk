@@ -6433,6 +6433,141 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     hapticServiceDesc.methods = hapticServiceMethods;
     classes.registerClass(hapticServiceDesc);
 
+    // --- CrossWorldService ---
+    static std::array<MethodDesc, 3> crossWorldServiceMethods;
+    crossWorldServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("Publish"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends `message` to every world subscribed to `topic`. The message is anything `SaveService` can store, at most 4 KiB written, and the topic at most 80 bytes. A world may publish 200 messages a second; past that this raises.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Subscribe"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Calls `callback` with each message published on `topic`, and the name of the world that published it. That name is empty for this world when no manager runs it. A world may subscribe to 1000 topics. Each call runs on a thread of its own, between ticks.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Unsubscribe"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Stops every callback this world gave for `topic`.",
+        },
+    }};
+    ClassDescriptor crossWorldServiceDesc;
+    crossWorldServiceDesc.name = atoms.intern("CrossWorldService");
+    crossWorldServiceDesc.super = instanceClass;
+    crossWorldServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    crossWorldServiceDesc.defaultName = atoms.intern("CrossWorldService");
+    crossWorldServiceDesc.doc = "Sends a game's events between its worlds: a guild's chat, a world boss that appears for everyone, an operator's announcement. A world publishes on a topic, and every world that subscribes to it hears it, the publisher included, in the order the manager received them.\012\012Under a manager (`servers.toml`) a message crosses worlds; a world on its own hears its own, so the same code runs tested on one machine. Delivery is at most once and not guaranteed: a world that is restarting misses what was published meanwhile, and a message older than 10 seconds when its turn comes is dropped. Never movement and never a part: what crosses is an event, and the world it lands in decides what it does. Server side only.";
+    crossWorldServiceDesc.methods = crossWorldServiceMethods;
+    classes.registerClass(crossWorldServiceDesc);
+
+    // --- InstanceService ---
+    static std::array<PropertyDesc, 1> instanceServiceProperties;
+    instanceServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("InstanceId"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .transient = true,
+            .doc = "In an instance, its `Id`; empty in a world that is not one.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getInstanceServiceInstanceId,
+            .set = nullptr,
+        },
+    }};
+    static std::array<MethodDesc, 5> instanceServiceMethods;
+    instanceServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("CreateInstanceAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` once it is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises with the reason when the template has as many instances running as it may, the machine has too little memory free, or the instance failed to start.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AllowPlayer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "In an instance: lets the player with this `PublicKey` in too, for a friend who comes late.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DisallowPlayer"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "In an instance: no longer lets that player in. Somebody already in stays.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Close"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "In an instance: closes it now. `Closing` fires, and the players still in it go back to the front door.",
+        },
+        MethodDesc{
+            .name = atoms.intern("KeepOpen"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "In an instance: keeps it open for at least this many seconds from now, empty or not.",
+        },
+    }};
+    static std::array<EventDesc, 2> instanceServiceEvents;
+    instanceServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("Closing"),
+            .slot = 7,
+            .doc = "Fires in an instance before it stops, for its script to save what it keeps. It stops five seconds later.",
+        },
+        EventDesc{
+            .name = atoms.intern("InstanceClosed"),
+            .slot = 8,
+            .doc = "Fires in the world that made an instance when that instance is gone, and says why.\012\012`reason` is `\"Closed\"` when it was empty for its while or its script called `Close`, and `\"InstanceFailed\"` when it stopped without closing. What the world handed out for the run is settled here: its players may come back one by one, or not at all.",
+        },
+    }};
+    ClassDescriptor instanceServiceDesc;
+    instanceServiceDesc.name = atoms.intern("InstanceService");
+    instanceServiceDesc.super = instanceClass;
+    instanceServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    instanceServiceDesc.defaultName = atoms.intern("InstanceService");
+    instanceServiceDesc.doc = "Asks the manager for a copy of a scene for one group, such as a dungeon, an arena or a house, and runs the copy it made.\012\012A world a manager started (`servers.toml`) calls `CreateInstanceAsync` with a template's name from its `[[instance]]` rows, and sends the group there with `NetworkService:TravelGroup`. Only the players it was made for may enter, and one who drops comes back to it while it lives. It closes when it has been empty for its `idle_close_seconds`. Anywhere but under a manager, its methods raise.";
+    instanceServiceDesc.properties = instanceServiceProperties;
+    instanceServiceDesc.methods = instanceServiceMethods;
+    instanceServiceDesc.events = instanceServiceEvents;
+    classes.registerClass(instanceServiceDesc);
+
+    // --- ConsoleService ---
+    static std::array<MethodDesc, 3> consoleServiceMethods;
+    consoleServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("Register"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Adds the command `name` to the console. `name` is one lowercase word, and none of the engine's own. Registering a name again replaces it, as a hot reload does.\012\012`spec.Parameters` lists what the command takes, in order: each has a `Name` and a `Type` (`\"string\"`, `\"number\"`, `\"boolean\"` or `\"Player\"`), and the `Optional` ones come last. A word left over at the end goes to the last `string` parameter, so `announce Doors open at noon` gives the whole sentence. A `Player` is written as their name, their `UserId` or the start of their `PublicKey`. A line that does not fit is answered with the command's usage, and `callback` is not called.\012\012`spec.Permission`, 0 to 3, is who may run it: 2 when absent. The local console is 3. `spec.Description` is shown by `help`; it may be a key of the game's own catalog.\012\012`callback` runs on a thread of its own, on the server, between ticks. Its first argument is who ran it, then the parameters, `nil` for an optional one left out. What it returns is shown to whoever ran it; an error it raises is shown the same way and does not stop the server. It may yield, and the console takes the next line meanwhile.",
+        },
+        MethodDesc{
+            .name = atoms.intern("Unregister"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes the command `name` out of the console. Nothing happens if there is none.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ExecuteAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Runs `line` as the server's own console would, with every permission, and returns what the command answered. Raises when the command failed. Yields until the command has finished: a line runs between ticks.",
+        },
+    }};
+    ClassDescriptor consoleServiceDesc;
+    consoleServiceDesc.name = atoms.intern("ConsoleService");
+    consoleServiceDesc.super = instanceClass;
+    consoleServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    consoleServiceDesc.defaultName = atoms.intern("ConsoleService");
+    consoleServiceDesc.doc = "The console of a server that runs with no window, and the game's own commands in it.\012\012A dedicated server reads lines from its standard input: `help`, `status`, `players`, `kick`, `ban`, `unban`, `say`, `save` and `stop` are the engine's, and a game adds its own with `Register`. A line runs between two ticks, never during one, so a command that changes the world is an input like a player's. Its answer goes to the standard output and to the log.\012\012Only the server has a console. A client, or a script on the client's side of a machine that hosts, that calls one of these methods gets an error.";
+    consoleServiceDesc.methods = consoleServiceMethods;
+    classes.registerClass(consoleServiceDesc);
+
     // --- CryptoService ---
     static std::array<MethodDesc, 8> cryptoServiceMethods;
     cryptoServiceMethods = {{
@@ -6750,7 +6885,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 10> networkServiceMethods;
+    static std::array<MethodDesc, 14> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetLocalPlayers"),
@@ -6792,13 +6927,13 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStats"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the last answer, in meters, whether or not that was a correction. These are what its character pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and pulled back gently, so this stays small but is rarely zero.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
+            .doc = "Returns statistics about the connection, as a table. Use them to show a connection quality indicator. Every number is 0 in single-player. On an authority, the link numbers are those of the worst client and the deepest input queue.\012\012Link quality:\012\012- `Ping`: the round trip, in milliseconds.\012- `Jitter`: how much the round trip varies.\012- `Loss`: the share of packets lost, in percent.\012- The number of snapshots per second.\012- `Corrections`: how often this machine's own character was corrected, per second and in total since joining. `LastCorrection` is how far the last correction moved it, in meters.\012- `PredictedDrift`: how far the parts this machine predicts were from the authority's at the last answer, in meters, whether or not that was a correction. These are what its character pushes and the vehicle it drives. A driven vehicle is left a few centimeters of drift and pulled back gently, so this stays small but is rarely zero.\012- `InputBufferDepth`: how many ticks of this player's input the authority has queued. `InputStarvations` counts the times the queue ran empty, and `InputReanchors` the times it was restarted because the player's clock jumped, as after a long frame.\012- `InterpolationDelay`: how far in the past other players are drawn, in milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link.\012- On a client, `PredictedParts` is the number of loose parts near its character that it predicts. The table also reports how often a correction made the client simulate them again, how many ticks it simulated again, and `ResimulationTime`, the average time that took in milliseconds.\012\012Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being created and removed, terrain and the handshake. To get a rate, read a field twice, one second apart, and subtract.\012\012`CrossWorldDropped` counts `CrossWorldService` messages this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.\012\012`WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages with the transport's headers, acknowledgements, resends and encryption added. They are what a player's connection pays for, and are larger than `BytesSent` and `BytesReceived`.\012\012`Path` says how the other end is reached: `\"lan\"` on the same network, `\"direct\"` across the internet, or `\"relayed\"` through a relay, which adds the relay's distance to the round trip. On a host it is the longest path among its players. It is empty when nobody is connected.\012\012`LocalPlayers` has one entry for each local player on a machine that joined a match: the primary player first, then the guests. Each entry has the player's `UserId` and the three correction numbers for that player's character alone. It is empty on an authority and in single-player.",
         },
         MethodDesc{
             .name = atoms.intern("Join"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Connects to a server at `address`, written as `host` or `host:port`. With no address, it connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with the server's, and server scripts stop, because this machine is no longer the authority. `Connected` or `JoinFailed` fires with the outcome. A dedicated server cannot join.\012\012`address` can also be a join code, when a relay is known from `options.Relay` or `[network] relay`. A code is accepted as a player types it: in either case, with spaces or a dash. The relay is asked for the host, and the best available path is used automatically: the same network, a direct connection across the internet, or the relay. `GetStats().Path` reports which. Set `options.Direct` to false to always go through the relay. `relay://host:port/CODE` gives the relay and the code in one string. To connect to a host whose name could be read as a code, include its port.",
+            .doc = "Connects to a server at `address`, written as `host` or `host:port`. With no address, it connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with the server's, and server scripts stop, because this machine is no longer the authority. `Connected` or `JoinFailed` fires with the outcome. A dedicated server cannot join.\012\012`address` can also be a join code, when a relay is known from `options.Relay` or `[network] relay`. A code is accepted as a player types it: in either case, with spaces or a dash. The relay is asked for the host, and the best available path is used automatically: the same network, a direct connection across the internet, or the relay. `GetStats().Path` reports which. Set `options.Direct` to false to always go through the relay. `relay://host:port/CODE` gives the relay and the code in one string. To connect to a host whose name could be read as a code, include its port.\012\012`options.Ticket` is what this player presents to be let in: a ticket the game's backend signed when they logged in. It travels inside the encrypted connection, and the server's `OnJoinRequest` reads it.",
         },
         MethodDesc{
             .name = atoms.intern("Host"),
@@ -6812,8 +6947,32 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Leaves the match, or stops hosting, and returns to single-player in the current scene. Server scripts start again from the beginning, because this machine is the authority again. `Disconnected` fires. A dedicated server cannot call it.",
         },
+        MethodDesc{
+            .name = atoms.intern("Travel"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends `player` to another world of the game: `target` is a world's name from `servers.toml`, or an instance's `Id`. Their machine leaves this world and joins that one, which fires `TravelArrived` with `data` and the name of this world. `data` is anything `SaveService` can store, at most 16 KiB. Their character does not travel; the target spawns one.\012\012Only a world a manager started can send players elsewhere: anywhere else, and for a world the manager does not have, this raises at once.",
+        },
+        MethodDesc{
+            .name = atoms.intern("TravelGroup"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.",
+        },
+        MethodDesc{
+            .name = atoms.intern("VerifyTicket"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Checks a ticket the game's backend signed, on the server and with no call out, and returns its claims, or nil. The ticket is a standard JWT signed with Ed25519 (`EdDSA`), which any backend's JWT library issues. A ticket is accepted when its signature checks against `ticket_public_key` under `[network]` in `project.toml`, its `aud` is this game's `[project] id`, it lives at most 90 seconds between `iat` and `exp` and has not expired, and its `jti` has not been seen before by this server. Clocks may differ by 30 seconds each way.\012\012The algorithm is never the ticket's to choose: one that says anything but `EdDSA`, including `none`, is refused before its signature is looked at, and a key the ticket names is ignored. What was wrong is written to the server's log, never told to the player. The claims are the ticket's top-level strings, numbers and booleans: `sub`, the account, and whatever else the backend put in.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ForgetServerKey"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Forgets the key this machine saved for the server at `address`, written as for `Join`. The first time a machine joins a server by its address, it saves the server's key, and a later join to the same address with another key fails with `JoinFailed`: someone may be in the way. A server whose owner reinstalled it has a new key too. A game can offer the player a way to trust it again: call this, then `Join`.\012\012Joining by code saves nothing, so there is nothing to forget.",
+        },
     }};
-    static std::array<EventDesc, 7> networkServiceEvents;
+    static std::array<EventDesc, 10> networkServiceEvents;
     networkServiceEvents = {{
         EventDesc{
             .name = atoms.intern("Connected"),
@@ -6841,13 +7000,28 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "Fires when the connection ends and this machine is back in single-player. The server left, the network failed, or `Disconnect` was called.",
         },
         EventDesc{
-            .name = atoms.intern("PlayerAdded"),
+            .name = atoms.intern("TravelArrived"),
             .slot = 12,
+            .doc = "Fires on the server of the world a player traveled to, after `PlayerAdded`, with the `data` the world they left sent and that world's name. A player who came through the front door fires it too, with nil and an empty origin. `reason` is empty, or `\"InstanceFailed\"` for a player sent back because the instance they were in stopped without closing: the game can say so, and give back what the run cost.",
+        },
+        EventDesc{
+            .name = atoms.intern("TravelStarted"),
+            .slot = 13,
+            .doc = "Fires on a client when it is sent to another world, by the front door or by the world it is in, before it leaves, with that world's name. Show a loading screen here and take it down on `Connected`, which fires when the next world has taken this machine; `@engine/travelscreen` is one, mounted in one line.",
+        },
+        EventDesc{
+            .name = atoms.intern("Announced"),
+            .slot = 14,
+            .doc = "Fires on every machine of the match when the server's operator says something to everybody, with the console's `say` or as `stop` counts down. The engine writes it to the log and draws nothing: a game shows it its own way, or mounts `@engine/announcements`, which shows each one across the top of the screen for a few seconds.",
+        },
+        EventDesc{
+            .name = atoms.intern("PlayerAdded"),
+            .slot = 15,
             .doc = "Fires when a player joins. A script that connects at its top level and then loops over `GetPlayers()` handles each player exactly once.",
         },
         EventDesc{
             .name = atoms.intern("PlayerRemoving"),
-            .slot = 13,
+            .slot = 16,
             .doc = "Fires when a player is leaving. The player object is still valid inside the handler, so a game can save that player's data.",
         },
     }};
@@ -6994,7 +7168,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteFunctionDesc);
 
     // --- Player ---
-    static std::array<PropertyDesc, 6> playerProperties;
+    static std::array<PropertyDesc, 8> playerProperties;
     playerProperties = {{
         PropertyDesc{
             .name = atoms.intern("Camera"),
@@ -7027,9 +7201,33 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Safe,
             .readOnly = true,
             .inert = false,
-            .doc = "The number the authority gives this player. It is 1 for the player on a single-player or hosting machine, and 2 and up for clients in the order they joined. It is never reused within a session and is not an account id: a player who reconnects gets a new number.",
+            .doc = "The number the authority gives this player. It is 1 for the player on a single-player or hosting machine, and 2 and up for clients in the order they joined. It is never reused within a session, and a player who reconnects while the server runs gets the same one. It is not kept when the server restarts: what lasts is `PublicKey`, and an account id a game gives its players (`NetworkService.OnJoinRequest`).",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getPlayerUserId,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("AccountId"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The account the game knows this player as, on the server: what its `NetworkService.OnJoinRequest` set when they joined, or nil. Two joins with the same account are one player: the second drops the first.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getPlayerAccountId,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PublicKey"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The key this player's game proved when it joined, in hexadecimal. It is the same on every connection from the same copy of the game, and after the server restarts. On the server every player has one; on a client only its own players do. Empty where the match is not encrypted. Saved data and a ban are kept by it; a player who deletes their game's key file is a new player, so a game with accounts keys what lasts by its own account id.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getPlayerPublicKey,
             .set = nullptr,
         },
         PropertyDesc{

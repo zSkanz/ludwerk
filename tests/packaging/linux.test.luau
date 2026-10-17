@@ -23,6 +23,7 @@ local platform = require("@std/system/platform")
 local process = require("@std/process")
 local test = require("@std/test")
 
+local bounded = require("../../tools/cli/bounded")
 local build = require("../../tools/cli/commands/build")
 local new = require("../../tools/cli/commands/new")
 local projectlib = require("../../tools/cli/project")
@@ -95,7 +96,7 @@ test.suite("linux export", function(suite)
         local mode = process.run({ "stat", "-c", "%a", executable })
         assert.eq(string.gsub(mode.stdout, "%s", ""), "755")
 
-        local ran = process.run({ executable, "--headless", "--rhi=null", "--frames=1", "--exit" })
+        local ran = bounded.run({ executable, "--headless", "--rhi=null", "--frames=1", "--exit" })
         local text = ran.stdout .. ran.stderr
         assert.that(ran.ok, `the unpacked game exited non-zero:\n{text}`)
         assert.that(string.find(text, "Hello from the engine", 1, true) ~= nil, `the game did not run:\n{text}`)
@@ -130,7 +131,7 @@ test.suite("linux export", function(suite)
         -- No face: a server has no icon and no launcher entry.
         assert.that(not fs.exists(projectlib.joined(root, "icon.png")), "a server package carries an icon")
 
-        local ran = process.run({
+        local ran = bounded.run({
             projectlib.joined(root, "servertest"),
             "--rhi=null",
             "--frames=5",

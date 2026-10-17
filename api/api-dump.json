@@ -1587,6 +1587,57 @@
       "Events": []
     },
     {
+      "Name": "ConsoleService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "ExecuteAsync",
+          "Parameters": [
+            {
+              "Name": "line",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["string"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Register",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "spec",
+              "Type": "{ Description: string?, Parameters: { { Name: string, Type: string, Optional: boolean? } }?, Permission: number? }"
+            },
+            {
+              "Name": "callback",
+              "Type": "(caller: { Local: boolean, Name: string, Key: string, Permission: number }, ...any) -> any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Unregister",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "Constraint",
       "Extends": "Instance",
       "Tags": ["Abstract", "NotCreatable"],
@@ -1737,6 +1788,56 @@
             {
               "Name": "items",
               "Type": "{ string | Instance }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
+      "Name": "CrossWorldService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "Publish",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "message",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Subscribe",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
+            },
+            {
+              "Name": "callback",
+              "Type": "(message: any, origin: string) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Unsubscribe",
+          "Parameters": [
+            {
+              "Name": "topic",
+              "Type": "string"
             }
           ],
           "Returns": [],
@@ -4118,6 +4219,97 @@
       ]
     },
     {
+      "Name": "InstanceService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "InstanceId",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "AllowPlayer",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Close",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "CreateInstanceAsync",
+          "Parameters": [
+            {
+              "Name": "template",
+              "Type": "string"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Players: {Player}?, Data: any? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["string"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DisallowPlayer",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "KeepOpen",
+          "Parameters": [
+            {
+              "Name": "seconds",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Closing",
+          "Parameters": []
+        },
+        {
+          "Name": "InstanceClosed",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "reason",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "Name": "IrradianceVolume",
       "Extends": "Instance",
       "Tags": [],
@@ -4976,6 +5168,17 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "ForgetServerKey",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetLocalAddresses",
           "Parameters": [],
           "Returns": ["{string}"],
@@ -4995,7 +5198,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -5025,7 +5228,7 @@
             },
             {
               "Name": "options",
-              "Type": "{ Relay: string?, Direct: boolean? }?",
+              "Type": "{ Relay: string?, Direct: boolean?, Ticket: string? }?",
               "Default": "nil"
             }
           ],
@@ -5060,9 +5263,69 @@
           ],
           "Returns": ["boolean"],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Travel",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "target",
+              "Type": "string"
+            },
+            {
+              "Name": "data",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "TravelGroup",
+          "Parameters": [
+            {
+              "Name": "players",
+              "Type": "{Player}"
+            },
+            {
+              "Name": "target",
+              "Type": "string"
+            },
+            {
+              "Name": "data",
+              "Type": "any?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "VerifyTicket",
+          "Parameters": [
+            {
+              "Name": "ticket",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ [string]: any }?"],
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [
+        {
+          "Name": "Announced",
+          "Parameters": [
+            {
+              "Name": "text",
+              "Type": "string"
+            }
+          ]
+        },
         {
           "Name": "Connected",
           "Parameters": []
@@ -5115,6 +5378,48 @@
         {
           "Name": "RelayStateChanged",
           "Parameters": []
+        },
+        {
+          "Name": "TravelArrived",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "data",
+              "Type": "any"
+            },
+            {
+              "Name": "origin",
+              "Type": "string"
+            },
+            {
+              "Name": "reason",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "TravelStarted",
+          "Parameters": [
+            {
+              "Name": "world",
+              "Type": "string"
+            }
+          ]
+        }
+      ],
+      "Callbacks": [
+        {
+          "Name": "OnJoinRequest",
+          "Parameters": [
+            {
+              "Name": "joiner",
+              "Type": "{ PublicKey: string, Address: string, Ticket: string, AccountId: string? }"
+            }
+          ],
+          "Returns": ["boolean", "string?"]
         }
       ]
     },
@@ -5597,6 +5902,12 @@
       "Tags": ["NotCreatable"],
       "Properties": [
         {
+          "Name": "AccountId",
+          "Type": "string?",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
+        },
+        {
           "Name": "Camera",
           "Type": "Camera?",
           "Default": "nil"
@@ -5613,6 +5924,12 @@
           "Name": "GamepadId",
           "Type": "number",
           "Default": "0"
+        },
+        {
+          "Name": "PublicKey",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe"
         },
         {
           "Name": "ReplicationFocus",

@@ -1,9 +1,16 @@
 #include "engine/app/engine.h"
 
+#include "engine/app/admin_channel.h"
+#include "engine/app/admin_server.h"
 #include "engine/app/editor_drive.h"
+#include "engine/app/health_server.h"
+#include "engine/app/managed_world.h"
+#include "engine/app/match_keys.h"
 #include "engine/app/match_launcher.h"
 #include "engine/app/network_session.h"
 #include "engine/app/script_editor.h"
+#include "engine/app/server_console.h"
+#include "engine/core/base64.h"
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
 #include "engine/core/profile.h"
@@ -1215,6 +1222,18 @@ void submitWorld(const render::RenderWorld& snapshot, render::DebugDraw& draw)
 
 } // namespace
 
+namespace {
+
+// **Unix seconds, from the wall clock**: what a ban's end is written in, so
+// it outlives a restart. Never read by the simulation (R10).
+[[nodiscard]] std::int64_t unixSecondsNow()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+} // namespace
+
 bool scheduledAhead(bool headless, bool editor, bool networked, bool measuring) noexcept
 {
     if (editor)
@@ -1848,6 +1867,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // The editor's Play with players (ADR 0106 §5): a match of separate
     // processes, their output drained into this process's log every frame.
     MatchLauncher match;
+    // When the project was last looked at for a `servers.toml` (ADR 0225).
+    core::u64 serversCheckedNs = 0;
     // The open scripts (ADR 0057). Beside the `Editor` rather than inside it
     // because they outlive a reload: a tab is keyed on an instance and a
     // breakpoint on a chunk, and `reloadWorld` replaces every instance in the
@@ -3143,7 +3164,85 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     replication::Config networkBase = options.network;
     if (networkBase.relay.empty())
         networkBase.relay = options.defaultRelay;
+    // **This machine's key, beside its saves** (ADR 0224): a player's beside a
+    // player's saves, a server's beside a server's, and each window of a match
+    // tried on one machine its own. Held for the run, so a second copy of the
+    // game is another player rather than the first one again.
+    platform::FileLock matchKeyHeld;
     NetworkSession network([&host]() { return host.get(); }, networkBase);
+    // **A server's console** (ADR 0218): a process that serves with no window
+    // reads its standard input; any authority runs what its scripts ask of
+    // the console. Bans are kept beside the saves.
+    const bool consoleReads = options.headless && (options.network.topology == replication::Topology::Dedicated ||
+                                                   options.network.topology == replication::Topology::Host);
+    // A world a manager started shares its list with every other it runs:
+    // their saves are folders side by side.
+    ServerConsole serverConsole(options.saveDirectory.empty() || !options.conformanceRoot.empty()
+                                    ? std::filesystem::path{}
+                                : !options.managedWorld.empty() ? options.saveDirectory.parent_path() / "bans.json"
+                                                                : options.saveDirectory / "bans.json");
+    ConsoleInput consoleInput;
+    // **A world a manager started** (ADR 0220): its input is the manager's
+    // pipe, and its door takes passes.
+    std::optional<ManagedWorld> managedWorld;
+    if (!options.managedWorld.empty()) {
+        std::array<core::u8, 32> managerKey{};
+        if (const std::optional<std::vector<core::u8>> key = core::base64Decode(options.managerKey);
+            key.has_value() && key->size() == managerKey.size())
+            std::copy(key->begin(), key->end(), managerKey.begin());
+        managedWorld.emplace(options.managedWorld, managerKey, [](const std::string& line) {
+            std::fwrite(line.data(), 1, line.size(), stdout);
+            std::fflush(stdout);
+        });
+        managedWorld->setUnixClock([]() { return unixSecondsNow(); });
+    }
+    if (consoleReads || managedWorld.has_value())
+        consoleInput.start();
+    network.setJoinGate([&serverConsole, &managedWorld, &host](replication::JoinAsk& ask) {
+        if (std::optional<replication::JoinAnswer> refusal = serverConsole.refusal(ask, unixSecondsNow());
+            refusal.has_value())
+            return refusal;
+        if (managedWorld.has_value())
+            return managedWorld->admit(ask, host->world(), unixSecondsNow());
+        return std::optional<replication::JoinAnswer>{};
+    });
+    network.setAccountGate([&serverConsole](const std::string& account) {
+        return serverConsole.accountRefusal(account, unixSecondsNow());
+    });
+    {
+        NetworkSession::MatchSecurity security;
+        security.encrypt = options.encryptMatches;
+        security.prologue = NetworkSession::prologueFor(options.projectId);
+        if (!options.saveDirectory.empty() && options.conformanceRoot.empty()) {
+            const std::filesystem::path keys = options.saveDirectory.parent_path() / "keys";
+            const std::string name = options.saveDirectory.filename().string();
+            security.identity = loadOrMakeMatchKey(keys / (name + ".key"), matchKeyHeld);
+            security.pins = keys / (name + ".hosts.json");
+        }
+        security.server = options.defaultServer;
+        if (!options.defaultServerKey.empty()) {
+            security.serverKey = matchKeyFromHex(options.defaultServerKey);
+            if (!security.serverKey.has_value())
+                core::log(core::LogLevel::Warn, ENG_TR("net.warn.bad_server_key"));
+        }
+        security.projectId = options.projectId;
+        if (!options.ticketPublicKey.empty()) {
+            const std::optional<std::vector<core::u8>> key = core::base64Decode(options.ticketPublicKey);
+            if (key.has_value() && key->size() == 32) {
+                std::array<core::u8, 32> bytes{};
+                std::copy(key->begin(), key->end(), bytes.begin());
+                security.ticketKey = bytes;
+            }
+            else {
+                core::log(core::LogLevel::Warn, ENG_TR("net.warn.bad_ticket_key"));
+            }
+        }
+        if (!security.encrypt)
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.insecure"));
+        network.setSecurity(std::move(security));
+        if (managedWorld.has_value())
+            managedWorld->setKey(core::toHex(network.security().identity.pub));
+    }
     if (options.network.topology != replication::Topology::Solo) {
 #if ENG_ENABLE_REPLICATION
         if (std::optional<core::EngineError> networkError =
@@ -3166,6 +3265,48 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
 #else
         return core::makeError(ENG_TR("engine.cli.err.no_replication"));
 #endif
+    }
+    // **Administered from another machine** (ADR 0219): a dedicated server
+    // that was asked to, with the match's own key, letting in whoever
+    // `admins.toml` -- beside the game's saves, one for every world on the
+    // machine -- names. A world under a manager is administered through it.
+    AdminServer adminServer;
+    if (options.adminListen && options.network.topology == replication::Topology::Dedicated &&
+        !managedWorld.has_value()) {
+        AdminServer::Options admin;
+        admin.port = options.adminPort != 0 ? options.adminPort : static_cast<core::u16>(options.network.port + 1);
+        admin.allow = options.adminAllow;
+        admin.serverKey = network.security().identity;
+        admin.prologue = adminPrologue();
+        if (!options.saveDirectory.empty()) {
+            const std::filesystem::path list = options.saveDirectory.parent_path() / "admins.toml";
+            admin.adminsSource = list.string();
+            std::string text;
+            if (platform::readTextFile(list, text)) {
+                std::optional<core::EngineError> listError;
+                if (platform::readableByOthers(list)) {
+                    const core::I18nArg args[] = {{"path", list.string()}};
+                    return core::makeError(ENG_TR("admin.err.admins_readable"), args);
+                }
+                admin.admins = readAdmins(text, list.string(), listError);
+                if (listError.has_value())
+                    return listError;
+            }
+        }
+        if (std::optional<core::EngineError> adminError = adminServer.start(std::move(admin)); adminError.has_value())
+            return adminError;
+    }
+    // **A world's health** (ADR 0220): a dedicated server's, or a managed
+    // world's, numbers for whatever watches it.
+    HealthServer healthServer;
+    core::u64 healthPublishedNs = 0;
+    if (options.healthListen && options.network.topology == replication::Topology::Dedicated) {
+        HealthServer::Options health;
+        health.port = options.healthPort != 0 ? options.healthPort : options.network.port;
+        health.allow = options.healthAllow;
+        if (std::optional<core::EngineError> healthError = healthServer.start(std::move(health));
+            healthError.has_value())
+            return healthError;
     }
 
     // **The husk contract's one question**, asked of whichever world is live
@@ -4611,6 +4752,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // The scene is saved first: every window of the match loads
                 // the project from disk, and a match of yesterday's scene is
                 // not what somebody who pressed Play meant.
+                if (const core::u64 now = platform::nowNs(); now >= serversCheckedNs + 1'000'000'000ull) {
+                    serversCheckedNs = now;
+                    std::error_code ec;
+                    editor.matchSettings().servers = std::filesystem::exists(options.scriptPath / "servers.toml", ec);
+                }
                 if (editorCommands.match.has_value()) {
                     if (*editorCommands.match && !editor.matchRunning()) {
                         if (editor.sceneDirty())
@@ -4630,6 +4776,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         plan.logDirectory = options.scriptPath / ".engine" / "match";
                         std::error_code ec;
                         std::filesystem::create_directories(plan.logDirectory, ec);
+                        // **A game of several worlds** (ADR 0225): its manager,
+                        // in a folder of the editor's own.
+                        if (settings.playsWorlds()) {
+                            plan.servers = options.scriptPath / "servers.toml";
+                            plan.playRoot = options.scriptPath / ".engine" / "play";
+                            std::filesystem::create_directories(plan.playRoot, ec);
+                        }
                         plan.area = platform::usableDisplayArea();
                         if (match.start(plan)) {
                             editor.setMatchRunning(true);
@@ -4646,6 +4799,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     else if (!*editorCommands.match && editor.matchRunning()) {
                         match.stop();
                         editor.setMatchRunning(false);
+                        editor.setMatchWorlds({});
                         editor.report(core::tr(ENG_TR("engine.editor.status.stopped_the_match")), false);
                     }
                 }
@@ -4700,9 +4854,25 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         const std::array<I18nArg, 2> args{I18nArg{"process", line.process}, I18nArg{"text", line.text}};
                         core::log(core::LogLevel::Info, ENG_TR("engine.info.match_line"), args);
                     }
+                    // **The worlds, for the Run view and the Console**, and
+                    // what was asked of them since the last frame.
+                    std::vector<Editor::MatchWorld> worlds;
+                    for (const MatchLauncher::World& world : match.worlds())
+                        worlds.push_back(Editor::MatchWorld{world.name, world.state, world.port, world.players,
+                                                            world.tickMs, world.restarts, world.instance,
+                                                            world.templateName});
+                    editor.setMatchWorlds(std::move(worlds));
+                    for (const std::string& line : editor.takeMatchLines())
+                        (void)match.tellManager(line);
+                    if (editor.takeMatchUpdate() && match.managed()) {
+                        if (editor.sceneDirty())
+                            (void)editor.saveOpenScene(host->world());
+                        (void)match.tellManager("update " + options.scriptPath.string());
+                    }
                     if (!match.running()) {
                         match.stop();
                         editor.setMatchRunning(false);
+                        editor.setMatchWorlds({});
                     }
                 }
 
@@ -6275,6 +6445,98 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         host->publishTerrainMeshed([&terrainLoader, &host](core::InstanceId terrain, core::DVec3 at, f64 radius) {
             return terrainLoader.areaMeshed(host->world(), terrain, at, radius);
         });
+
+        // **The console's lines, between ticks** (ADR 0218): the operator's,
+        // then the frame's own -- a game's answers, a script's lines, a `stop`
+        // counting down.
+        {
+            const ServerConsole::Host consoleHost{.world = &host->world(),
+                                                  .dataModel = host->dataModel(),
+                                                  .replication = network.replication(),
+                                                  .flushSaves = [&host]() { host->flushSaves(); },
+                                                  .nowNs = platform::nowNs(),
+                                                  .nowUnix = unixSecondsNow()};
+            for (core::u32 at = 0; at < frame.simTicks; ++at)
+                serverConsole.noteTick(phaseSimMs / static_cast<f64>(frame.simTicks));
+            host->world().engineState().websocketClientAllowed = options.websocketClient;
+            std::vector<std::string> typed;
+            consoleInput.take(typed);
+            for (const std::string& line : typed) {
+                // The manager's own lines are its messages, never commands.
+                if (managedWorld.has_value()) {
+                    if (const std::optional<ManagerMessage> message = ManagerMessage::read(line); message.has_value()) {
+                        managedWorld->take(*message, host->world(), network.replication());
+                        continue;
+                    }
+                }
+                serverConsole.run(
+                    line, ServerConsole::Caller{.local = true, .name = "local", .key = {}, .permission = 3},
+                    [managed = managedWorld.has_value()](const std::string& text, bool) {
+                        // Under a manager the answer is the manager's to show.
+                        if (managed) {
+                            core::JsonWriter answer(core::JsonLayout::Compact);
+                            answer.beginObject();
+                            answer.field("type", "answer");
+                            answer.field("text", std::string_view{text});
+                            answer.endObject();
+                            const std::string said = managerLine(answer);
+                            std::fwrite(said.data(), 1, said.size(), stdout);
+                        }
+                        else {
+                            std::fprintf(stdout, "%s\n", text.c_str());
+                        }
+                        std::fflush(stdout);
+                    },
+                    consoleHost);
+            }
+            // An administrator's lines, each answered to them alone.
+            std::vector<AdminServer::Line> administered;
+            adminServer.take(administered);
+            for (const AdminServer::Line& line : administered)
+                serverConsole.run(
+                    line.line, line.caller,
+                    [&adminServer, session = line.session](const std::string& text, bool failed) {
+                        adminServer.answer(session, text, failed);
+                    },
+                    consoleHost);
+            serverConsole.frame(consoleHost);
+            // Once a second is what a probe asks at most.
+            if (healthServer.running() && consoleHost.nowNs >= healthPublishedNs + 1'000'000'000ull) {
+                healthPublishedNs = consoleHost.nowNs;
+                const ServerConsole::Health now = serverConsole.health(consoleHost);
+                const scene::EngineState& state = host->world().engineState();
+                core::JsonWriter metrics(core::JsonLayout::Compact);
+                metrics.beginObject();
+                metrics.field("world", std::string_view{options.managedWorld});
+                metrics.field("state", now.stopping ? "stopping" : "running");
+                metrics.field("uptime_seconds", now.uptimeSeconds);
+                metrics.field("tick", static_cast<core::u64>(state.tick));
+                metrics.field("tick_ms_mean", now.tickMeanMs);
+                metrics.field("tick_ms_worst", now.tickWorstMs);
+                metrics.field("players", static_cast<core::u64>(now.players));
+                metrics.field("max_players", static_cast<core::u64>(now.maxPlayers));
+                metrics.field("memory_bytes", now.memoryBytes);
+                metrics.field("scene", std::string_view{now.scene});
+                metrics.field("encrypted", state.networkStats.encrypted);
+                metrics.field("wire_bytes_sent", state.networkStats.wireBytesSent);
+                metrics.field("wire_bytes_received", state.networkStats.wireBytesReceived);
+                metrics.endObject();
+                healthServer.publish(!now.stopping, metrics.text());
+            }
+            if (serverConsole.finished())
+                quit = true;
+            if (managedWorld.has_value()) {
+                managedWorld->frame(host->world(), host->dataModel(), network.replication(),
+                                    host->world().engineState().networkPort, consoleHost.nowNs,
+                                    frame.simTicks > 0 ? phaseSimMs / static_cast<f64>(frame.simTicks) : 0.0);
+                // **A world without its manager stops on its own** (ADR 0220
+                // §5): its pipe closed, or the manager said so.
+                if (consoleInput.ended())
+                    managedWorld->managerGone();
+                if (managedWorld->stopping())
+                    quit = true;
+            }
+        }
 
         ENG_PROFILE_NEXT(stretch, "frame.reload");
         // **The editor's own reload** (ADR 0057), which `ludwerk edit` has never

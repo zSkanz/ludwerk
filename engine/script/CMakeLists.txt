@@ -32,6 +32,11 @@ engine_add_module(script
         src/save_store.cpp
         src/save_service.cpp
         src/crypto_service.cpp
+        src/cross_world.cpp
+        src/instance_service.cpp
+        src/join_request.cpp
+        src/server_console.cpp
+        src/travel.cpp
         src/scenes.cpp
         src/optional_service.cpp
     src/platform_services.cpp

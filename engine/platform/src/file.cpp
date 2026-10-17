@@ -103,6 +103,34 @@ bool writeFileDurable(const std::filesystem::path& path, std::span<const std::by
     return true;
 }
 
+bool restrictToOwner(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
+#else
+    std::error_code ec;
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace, ec);
+    return !ec;
+#endif
+}
+
+bool readableByOthers(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    (void)path;
+    return false;
+#else
+    std::error_code ec;
+    const std::filesystem::perms perms = std::filesystem::status(path, ec).permissions();
+    if (ec)
+        return false;
+    return (perms & (std::filesystem::perms::group_all | std::filesystem::perms::others_all)) !=
+           std::filesystem::perms::none;
+#endif
+}
+
 bool writeTextFileDurable(const std::filesystem::path& path, std::string_view text)
 {
     return writeFileDurable(path,

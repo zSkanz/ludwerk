@@ -39,6 +39,11 @@ struct MatchPlan
     platform::WindowPlacement area;
     // Appended to every command: a test runs the match `--headless`.
     std::vector<std::string> extraArguments;
+    // **The project's `servers.toml`** (ADR 0225), when it has one: the
+    // manager is started in place of one server, its worlds headless, in
+    // `playRoot`, and every player is a client of its front door.
+    std::filesystem::path servers;
+    std::filesystem::path playRoot;
 };
 
 struct MatchCommand
@@ -46,6 +51,8 @@ struct MatchCommand
     // `Server`, `Host`, `Client 1`...: what the Output panel calls it.
     std::string name;
     std::vector<std::string> arguments;
+    // The manager: spoken to on its input, and its messages read.
+    bool manager = false;
 };
 
 class MatchLauncher
@@ -72,6 +79,27 @@ public:
     // the processes are listed and then the order each wrote them.
     [[nodiscard]] std::vector<Line> poll();
 
+    // **A game's worlds** (ADR 0225), as the manager last said them: empty
+    // for a match of one server.
+    struct World
+    {
+        std::string name;
+        // WorldManager::State, as a number: Starting, Ready, Draining,
+        // Stopped, Failed.
+        int state = 0;
+        core::u16 port = 0;
+        core::u32 players = 0;
+        core::f64 tickMs = 0.0;
+        core::u32 restarts = 0;
+        bool instance = false;
+        std::string templateName;
+    };
+    [[nodiscard]] const std::vector<World>& worlds() const noexcept { return m_worlds; }
+    [[nodiscard]] bool managed() const noexcept;
+    // A line for the manager's console: `<world>: status`, `end <world>`,
+    // `update <folder>`. False when there is no manager to take it.
+    bool tellManager(std::string_view line);
+
     // Whether any of them is still running.
     [[nodiscard]] bool running();
     [[nodiscard]] core::usize size() const noexcept { return m_members.size(); }
@@ -84,8 +112,10 @@ private:
         std::string name;
         std::unique_ptr<platform::ChildProcess> process;
         std::string partial;
+        bool manager = false;
     };
     std::vector<Member> m_members;
+    std::vector<World> m_worlds;
 };
 
 } // namespace engine::app

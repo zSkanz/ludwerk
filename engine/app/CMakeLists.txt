@@ -10,6 +10,18 @@ engine_add_module(app
         src/luau_flags.cpp
         src/project_watch.cpp
         src/external_changes.cpp
+        src/managed_world.cpp
+        src/manager_link.cpp
+        src/manager_main.cpp
+        src/admin_channel.cpp
+        src/admin_client.cpp
+        src/admin_server.cpp
+        src/health_server.cpp
+        src/match_keys.cpp
+        src/servers_config.cpp
+        src/world_manager.cpp
+        src/travel_pass.cpp
+        src/server_console.cpp
         src/world_host_sub_worlds.cpp
         src/network_session.cpp
         src/match_launcher.cpp
@@ -382,6 +394,12 @@ engine_add_module_tests(app
         tests/draw_poses_tests.cpp
         tests/script_files_tests.cpp
         tests/external_changes_tests.cpp
+        tests/admin_server_tests.cpp
+        tests/health_server_tests.cpp
+        tests/match_keys_tests.cpp
+        tests/server_console_tests.cpp
+        tests/join_request_tests.cpp
+        tests/world_manager_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp
@@ -2464,7 +2482,7 @@ if(ENG_BUILD_TESTS)
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
                     30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
                     35-cape 37-character 38-dubbing 39-interior 40-cinematic 41-couch 42-nightfall
-                    43-ambush 44-vehicle 45-breaking-wall 46-cloth-cape)
+                    43-ambush 44-vehicle 45-breaking-wall 46-cloth-cape 47-realms)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)

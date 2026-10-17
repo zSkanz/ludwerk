@@ -196,4 +196,14 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
     return std::nullopt;
 }
 
+std::unique_ptr<TlsStream> openTlsStream(std::string_view host, core::u16 port, core::u32 timeoutMs,
+                                         std::optional<core::EngineError>& error)
+{
+    (void)host;
+    (void)port;
+    (void)timeoutMs;
+    error = core::makeError(ENG_TR("net.err.websocket_tls_unsupported"));
+    return nullptr;
+}
+
 } // namespace engine::net

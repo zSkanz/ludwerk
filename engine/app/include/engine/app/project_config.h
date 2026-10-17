@@ -141,6 +141,31 @@ struct ProjectConfig
     // server starts with no arguments.
     bool serverRole = false;
 
+    // `[network] encrypt = false` -- a development run's matches in the clear
+    // (ADR 0224). A shipping build encrypts whatever this says.
+    bool networkEncrypt = true;
+    // `[network] server_key` -- the key of the server `[network] server`
+    // names, in hexadecimal (ADR 0224 §3): what its operator's log printed.
+    std::string networkServerKey;
+    // `[network] ticket_public_key` -- the Ed25519 key the game's backend signs
+    // its tickets with, base64 (ADR 0226).
+    std::string networkTicketKey;
+    // `[permissions] websocket_client` (ADR 0223 §2): a client's game may open
+    // `net.websocket`.
+    bool websocketClient = false;
+    // `[server] admin`, `admin_port` and `admin_allow` (ADR 0219): a dedicated
+    // server listening for its administrators, where, and from which addresses
+    // beyond its own. The port is the game's plus one when not given.
+    bool serverAdmin = false;
+    core::u16 serverAdminPort = 0;
+    std::vector<std::string> serverAdminAllow;
+    // `[server] health`, `health_port` and `health_allow` (ADR 0220): a
+    // world's `/health` and `/metrics`, on the game's port number over TCP
+    // when no other is given.
+    bool serverHealth = false;
+    core::u16 serverHealthPort = 0;
+    std::vector<std::string> serverHealthAllow;
+
     // `[network] timeout` -- seconds the other end may go silent before this
     // machine says it is gone. From 1 to 120; ten by default.
     core::u32 networkTimeoutSeconds = 10;

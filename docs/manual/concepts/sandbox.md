@@ -67,6 +67,8 @@ This is short, and it is the whole list:
 | `@engine/splitscreen` | One picture while local players are together, a view each when they part. See [Several players at one screen](manual:guides/local-players). |
 | `@engine/settings` | A graphics and display options screen in one call. See [Graphics and display settings](manual:rendering/settings). |
 | `@engine/subtitles` | The captions of what is being said, on screen, in one call. See [Dubbing](manual:audio/dubbing). |
+| `@engine/announcements` | What a server's operator says, across the top of the screen, in one call. See [Administering a server](manual:guides/multiplayer#administering-a-server). |
+| `@engine/travelscreen` | A loading screen between two worlds of an online game, in one call. See [Worlds and instances](manual:guides/multiplayer#worlds-and-instances). |
 | `@engine/stamppool` | Copies of a stamp built ahead, so spawning one costs nothing at the moment it is asked for. See [Prefabs](manual:world/prefabs). |
 | `@engine/ragdoll` | Body profiles for `Ragdoll:Build`. See [Ragdolls](manual:physics/ragdoll). |
 | `@engine/testing` | The test runner the conformance suite is written against. See [Testing](manual:guides/testing). |

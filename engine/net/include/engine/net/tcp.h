@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include "engine/core/error.h"
@@ -63,8 +64,34 @@ public:
     [[nodiscard]] std::intptr_t nativeHandle() const noexcept;
 
 private:
+    friend class TcpListener;
     struct Impl;
     std::unique_ptr<Impl> m_impl;
+};
+
+// **A TCP port a dedicated server listens on for its administrators** (ADR
+// 0219) -- the one listener in the engine besides a match's own socket, off
+// unless asked for. On the machine's own address unless told otherwise.
+class TcpListener
+{
+public:
+    TcpListener();
+    ~TcpListener();
+
+    TcpListener(const TcpListener&) = delete;
+    TcpListener& operator=(const TcpListener&) = delete;
+
+    // `anyAddress` false listens on 127.0.0.1 alone.
+    [[nodiscard]] std::optional<core::EngineError> open(u16 port, bool anyAddress);
+    // A connection, if one arrives within `timeoutMs`, and the IPv4 address it
+    // came from; nothing otherwise.
+    [[nodiscard]] std::optional<TcpStream> accept(u32 timeoutMs, std::string& peerAddress);
+    void close();
+    [[nodiscard]] u16 port() const noexcept { return m_port; }
+
+private:
+    std::intptr_t m_handle = -1;
+    u16 m_port = 0;
 };
 
 } // namespace engine::net

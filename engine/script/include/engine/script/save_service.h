@@ -3,6 +3,7 @@
 // them and the parking of the threads that wait on one.
 #pragma once
 
+#include <string>
 #include <string_view>
 
 #include "engine/core/id.h"
@@ -27,5 +28,12 @@ void registerSaveTypes(lua_State* L);
 // Every tick: the store's periodic write, then every thread whose slot is
 // read and migrated or whose save is on disk, resumed.
 void resumeSaveWaiters(lua_State* L, core::f64 dt);
+
+// **A value as a save holds it, as text** (ADR 0222): what a traveller's
+// `data` crosses between worlds as. Raises for a value a save cannot hold,
+// or one larger than `limit` bytes once written.
+[[nodiscard]] std::string encodeSavedValue(lua_State* L, int index, core::usize limit);
+// And back, pushed; nil for text that is not one.
+void pushSavedValue(lua_State* L, std::string_view text);
 
 } // namespace engine::script

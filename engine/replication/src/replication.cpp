@@ -47,6 +47,8 @@ public:
             if (m_config.token.valid())
                 m_replica->setPlayerToken(m_config.token);
             m_replica->setLuauFlags(m_config.luauFlags);
+            m_replica->setTicket(m_config.joinTicket);
+            m_replica->setPass(m_config.joinPass);
             m_replica->setInterpolationDelay(m_config.interpolationDelayTicks);
             if (m_probe)
                 m_replica->setReferenceProbe(m_probe);
@@ -147,6 +149,35 @@ public:
         return m_authority.has_value() && m_authority->removePlayer(world, root, userId, reason);
     }
 
+    void setJoinGate(std::function<void(const JoinAsk&)> gate) override
+    {
+        if (m_authority.has_value())
+            m_authority->setJoinGate(std::move(gate));
+    }
+
+    void answerJoin(u32 ask, JoinAnswer answer) override
+    {
+        if (m_authority.has_value())
+            m_authority->answerJoin(ask, std::move(answer));
+    }
+
+    bool redirect(u32 userId, std::string_view address, u16 port, std::string_view pass, std::string_view key,
+                  std::string_view world) override
+    {
+        return m_authority.has_value() && m_authority->redirect(userId, address, port, pass, key, world);
+    }
+
+    void announce(std::string_view text) override
+    {
+        if (m_authority.has_value())
+            m_authority->announce(text);
+    }
+
+    [[nodiscard]] std::vector<PeerSummary> players() const override
+    {
+        return m_authority.has_value() ? m_authority->players() : std::vector<PeerSummary>{};
+    }
+
     void noteTimeDropped() override
     {
         if (m_replica.has_value())
@@ -158,6 +189,11 @@ public:
         Status status;
         status.topology = m_config.topology;
         status.authority = hasAuthority(m_config.topology);
+        if (m_transport != nullptr) {
+            const net::WireTotals wire = m_transport->wireTotals();
+            status.wireBytesSent = wire.bytesSent;
+            status.wireBytesReceived = wire.bytesReceived;
+        }
         if (m_authority.has_value()) {
             status.serverTick = m_tick;
             status.serverClock = m_tick;
@@ -192,6 +228,12 @@ public:
             status.loss = link.loss;
             status.path = static_cast<u8>(m_replica->path());
             status.joinFailure = static_cast<u8>(m_replica->joinFailure());
+            status.redirects = m_replica->redirects();
+            status.redirectAddress = m_replica->redirectAddress();
+            status.redirectPort = m_replica->redirectPort();
+            status.redirectPass = m_replica->redirectPass();
+            status.redirectKey = m_replica->redirectKey();
+            status.redirectWorld = m_replica->redirectWorld();
         }
         return status;
     }

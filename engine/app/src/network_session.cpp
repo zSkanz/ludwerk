@@ -5,6 +5,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/profile.h"
+#include "engine/net/secure_transport.h"
 #include "engine/platform/platform.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/extract.h"
@@ -37,6 +38,9 @@ namespace {
 [[maybe_unused]] constexpr core::i32 StateReconnecting = 5;
 
 constexpr core::u16 DefaultPort = 7777;
+// How long the game's `OnJoinRequest` may take before its joiner is refused
+// (ADR 0226 §1).
+[[maybe_unused]] constexpr core::u64 JoinRequestNs = 10'000'000'000ull;
 
 // `host`, `host:port`, or `[address]:port`. **A port that does not parse is
 // refused, not replaced**: `host:77x` used to dial 7777, and the player
@@ -140,6 +144,10 @@ struct JoinTarget
         return core::engineCatalog().format(ENG_TR("net.err.join_kept_away"), args);
     case net::ConnectFailure::Busy:
         return core::engineCatalog().format(ENG_TR("net.err.join_relay_busy"), args);
+    case net::ConnectFailure::KeyChanged:
+        return core::engineCatalog().format(ENG_TR("net.err.join_key_changed"), args);
+    case net::ConnectFailure::Insecure:
+        return core::engineCatalog().format(ENG_TR("net.err.join_insecure"), args);
     case net::ConnectFailure::None:
     case net::ConnectFailure::TimedOut:
         break;
@@ -156,6 +164,11 @@ struct JoinTarget
         return core::engineCatalog().format(ENG_TR("net.err.refused_address_limit"));
     if (reason == replication::RefusedLuauFlags)
         return core::engineCatalog().format(ENG_TR("net.err.refused_luau_flags"));
+    if (reason == replication::RefusedInsecure)
+        return core::engineCatalog().format(ENG_TR("net.err.refused_insecure"));
+    // The game's own words for a refusal, or the engine's where it gave none.
+    if (reason == replication::RefusedByGame)
+        return words.empty() ? core::engineCatalog().format(ENG_TR("net.err.refused_by_game")) : words;
     // The game's own words for a removal, or the engine's where it gave none.
     if (reason == replication::RefusedRemoved)
         return words.empty() ? core::engineCatalog().format(ENG_TR("net.info.removed")) : words;
@@ -175,6 +188,21 @@ NetworkSession::NetworkSession(std::function<WorldHost*()> host, replication::Co
     // project said.
     if (m_base.timeoutMs > 0)
         m_joinTimeoutSeconds = static_cast<core::f64>(m_base.timeoutMs) / 1000.0;
+}
+
+std::vector<core::u8> NetworkSession::prologueFor(std::string_view projectId)
+{
+#if ENG_ENABLE_REPLICATION
+    return replication::matchPrologue(projectId);
+#else
+    return std::vector<core::u8>(projectId.begin(), projectId.end());
+#endif
+}
+
+void NetworkSession::setSecurity(MatchSecurity security)
+{
+    m_security = std::move(security);
+    m_pins = m_security.pins.empty() ? nullptr : std::make_unique<KeyPins>(m_security.pins);
 }
 
 NetworkSession::~NetworkSession()
@@ -240,6 +268,12 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     m_redial = redial;
     m_port = port;
     m_relay = relay;
+    // **Where this machine first joined**, with no pass: what a dropped
+    // connection to a world it was sent to goes back to (ADR 0220 §5).
+    if (topology == replication::Topology::Replica && relay.pass.empty()) {
+        m_home = Home{address, port, redial, relay};
+        m_awayFromHome = false;
+    }
 #if ENG_ENABLE_REPLICATION
     replication::Config config = m_base;
     config.topology = topology;
@@ -249,6 +283,9 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     config.relay = relay.relay;
     config.joinCode = relay.code;
     config.relayDirect = relay.direct;
+    config.joinTicket = relay.ticket;
+    config.joinPass = relay.pass;
+    m_seenRedirects = 0;
     config.luauFlags = luauFlagsFingerprint();
     m_tokenKey.clear();
     if (topology == replication::Topology::Replica) {
@@ -260,9 +297,73 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
     }
     std::optional<core::EngineError> error;
     std::unique_ptr<net::ITransport> transport = m_transports ? m_transports() : net::createEnetTransport();
+    // **Every match encrypted** (ADR 0224), unless a development run said
+    // otherwise: around whatever carries it, so the relay carries what it
+    // cannot read.
+    if (m_security.encrypt) {
+        net::SecureConfig secure;
+        secure.identity = m_security.identity;
+        secure.prologue = m_security.prologue;
+        secure.plainRefusal = replication::refusalMessage(replication::RefusedInsecure);
+        KeyPins* pins = m_pins.get();
+        // The game's own server, where it names one with its key.
+        std::string ownServer;
+        if (std::string host; m_security.serverKey.has_value() && !m_security.server.empty()) {
+            core::u16 at = DefaultPort;
+            if (splitAddress(m_security.server, host, at))
+                ownServer = host + ":" + std::to_string(at);
+        }
+        // **A host is pinned by the address it was joined at**. A code names
+        // a match the relay found, not a machine, and is handed out again to
+        // another host later: pinned, it refused that one as a changed key.
+        secure.trust = [pins, ownServer, ownKey = m_security.serverKey, named = relay.serverKey](
+                           std::string_view host, core::u16 port, const std::array<core::u8, 32>& key) {
+            // **Sent here by a world that named this one's key** (ADR 0224
+            // §3): that key and no other, pinned or not.
+            if (!named.empty())
+                return core::toHex(key) == named;
+            if (port == 0)
+                return true;
+            const std::string where = std::string(host) + ":" + std::to_string(port);
+            if (!ownServer.empty() && where == ownServer)
+                return key == *ownKey;
+            return pins == nullptr || pins->trust(where, key);
+        };
+        // **A host says its key**, for its players to be given and its
+        // operator to check (ADR 0224 §3).
+        if (topology != replication::Topology::Replica) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"key", core::toHex(m_security.identity.pub)}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.match_key"), args);
+        }
+        transport = net::createSecureTransport(std::move(transport), std::move(secure));
+    }
     m_replication = replication::createReplicationOver(std::move(transport), config, error);
     if (m_replication == nullptr)
         return error.has_value() ? error : core::makeError(ENG_TR("net.err.transport_init_failed"));
+    if (topology != replication::Topology::Replica) {
+        // **Who may join** (ADRs 0218, 0226): the engine's own refusals -- a
+        // ban, a server stopping -- at once; then the game's `OnJoinRequest`
+        // where it set one, between ticks; else everybody.
+        m_validating.clear();
+        replication::IReplication* replica = m_replication.get();
+        m_replication->setJoinGate([this, replica](const replication::JoinAsk& asked) {
+            replication::JoinAsk ask = asked;
+            if (m_joinGate) {
+                if (std::optional<replication::JoinAnswer> refusal = m_joinGate(ask); refusal.has_value()) {
+                    replica->answerJoin(ask.id, std::move(*refusal));
+                    return;
+                }
+            }
+            WorldHost* host = m_host();
+            if (host == nullptr || !host->world().engineState().validateJoinSet) {
+                replica->answerJoin(ask.id, replication::JoinAnswer{});
+                return;
+            }
+            host->world().engineState().joinValidations.push_back(scene::EngineState::JoinValidation{
+                .id = ask.id, .publicKey = ask.publicKey, .address = ask.address, .ticket = ask.ticket});
+            m_validating[ask.id] = (m_clock ? m_clock() : platform::nowNs()) + JoinRequestNs;
+        });
+    }
     wire();
     return std::nullopt;
 #else
@@ -343,10 +444,11 @@ std::optional<core::EngineError> NetworkSession::start(replication::Topology top
         return std::nullopt;
     // `--join=CODE` with a relay known is a join by code, as it is from a
     // script; and `--host` registers with the relay there is.
-    RelayUse relay{.relay = m_base.relay, .code = {}, .direct = true};
+    RelayUse relay{.relay = m_base.relay, .code = {}, .direct = true, .ticket = {}, .pass = {}, .serverKey = {}};
     if (topology == replication::Topology::Replica) {
         const JoinTarget target = joinTargetOf(address, m_base.relay);
-        relay = RelayUse{.relay = target.relay, .code = target.code, .direct = true};
+        relay = RelayUse{
+            .relay = target.relay, .code = target.code, .direct = true, .ticket = {}, .pass = {}, .serverKey = {}};
     }
     if (std::optional<core::EngineError> error = begin(topology, address, port, true, relay); error.has_value())
         return error;
@@ -422,6 +524,15 @@ void NetworkSession::sendMessages()
 void NetworkSession::goSolo(std::string_view event, std::string_view reason, bool wasAuthority)
 {
     WorldHost* host = m_host();
+    // Out of a match, nobody proves a key (ADR 0224).
+    if (host != nullptr) {
+        std::vector<core::InstanceId> here;
+        scene::localPlayers(host->world(), here);
+        for (const core::InstanceId id : here) {
+            if (scene::PlayerComponent* player = host->world().players().find(id); player != nullptr)
+                player->publicKey.clear();
+        }
+    }
 #if ENG_ENABLE_REPLICATION
     if (m_replication != nullptr) {
         if (const replication::Status status = m_replication->status(); status.token.valid() && !m_tokenKey.empty())
@@ -480,6 +591,14 @@ void NetworkSession::update()
     state.networkState = m_state;
 
     // --- What a script asked for, at the safe point after the frame's ticks.
+    // **A host forgotten** (ADR 0224): its next key is taken as a new one.
+    for (const std::string& address : state.forgottenServerKeys) {
+        std::string where;
+        core::u16 port = DefaultPort;
+        if (m_pins != nullptr && splitAddress(address, where, port))
+            m_pins->forget(where + ":" + std::to_string(port));
+    }
+    state.forgottenServerKeys.clear();
     if (state.pendingNetwork.has_value()) {
         const scene::EngineState::NetworkRequest request = std::move(*state.pendingNetwork);
         state.pendingNetwork.reset();
@@ -499,7 +618,12 @@ void NetworkSession::update()
                                          core::engineCatalog().format(ENG_TR("net.err.bad_address"), args));
                 break;
             }
-            const RelayUse relay{.relay = target.relay, .code = target.code, .direct = request.relayDirect};
+            const RelayUse relay{.relay = target.relay,
+                                 .code = target.code,
+                                 .direct = request.relayDirect,
+                                 .ticket = request.ticket,
+                                 .pass = {},
+                                 .serverKey = {}};
             if (std::optional<core::EngineError> error =
                     begin(replication::Topology::Replica, address, port, false, relay);
                 error.has_value()) {
@@ -529,7 +653,8 @@ void NetworkSession::update()
                 break; // Hosting already.
             if (active())
                 goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
-            const RelayUse relay{.relay = request.relay, .code = {}, .direct = true};
+            const RelayUse relay{
+                .relay = request.relay, .code = {}, .direct = true, .ticket = {}, .pass = {}, .serverKey = {}};
             if (std::optional<core::EngineError> error =
                     begin(replication::Topology::Host, {}, request.port, false, relay);
                 error.has_value()) {
@@ -591,6 +716,56 @@ void NetworkSession::update()
         state.networkMaxPlayers = 0;
     }
     state.pendingRemovals.clear();
+    // **The game's word on who joins** (ADR 0226), and a refusal for one it
+    // did not give in time.
+    state.ticketPublicKey = m_security.ticketKey;
+    state.projectId = m_security.projectId;
+    if (!m_validating.empty() || !state.joinVerdicts.empty()) {
+        std::vector<scene::EngineState::JoinVerdict> verdicts;
+        verdicts.swap(state.joinVerdicts);
+        for (scene::EngineState::JoinVerdict& verdict : verdicts) {
+            if (m_validating.erase(verdict.id) == 0)
+                continue;
+            replication::JoinAnswer answer{
+                .admit = verdict.admit, .reason = std::move(verdict.reason), .accountId = std::move(verdict.accountId)};
+            if (answer.admit && !answer.accountId.empty()) {
+                // A banned account is refused, whatever key it came with.
+                if (m_accountGate) {
+                    if (std::optional<replication::JoinAnswer> refusal = m_accountGate(answer.accountId);
+                        refusal.has_value())
+                        answer = std::move(*refusal);
+                }
+                // **One session an account**: the one already in goes.
+                if (answer.admit) {
+                    std::vector<core::u32> already;
+                    const scene::World& world = host->world();
+                    const core::InstanceId network = scene::networkServiceOf(world, host->dataModel());
+                    for (core::InstanceId id = network.valid() ? world.firstChild(network) : core::InstanceId{};
+                         id.valid(); id = world.nextSibling(id)) {
+                        const scene::PlayerComponent* player = world.players().find(id);
+                        if (player != nullptr && player->accountId == answer.accountId)
+                            already.push_back(player->userId);
+                    }
+                    for (const core::u32 userId : already)
+                        (void)m_replication->removePlayer(
+                            host->world(), host->workspace(), userId,
+                            core::engineCatalog().format(ENG_TR("net.info.signed_in_elsewhere")));
+                }
+            }
+            m_replication->answerJoin(verdict.id, std::move(answer));
+        }
+        const core::u64 now = m_clock ? m_clock() : platform::nowNs();
+        for (auto waiting = m_validating.begin(); waiting != m_validating.end();) {
+            if (now < waiting->second) {
+                ++waiting;
+                continue;
+            }
+            core::log(core::LogLevel::Warn, ENG_TR("net.warn.join_request_timed_out"));
+            m_replication->answerJoin(waiting->first,
+                                      replication::JoinAnswer{.admit = false, .reason = {}, .accountId = {}});
+            waiting = m_validating.erase(waiting);
+        }
+    }
     const replication::Status status = m_replication->status();
     state.networkServerTick = status.serverTick;
     state.networkServerClock = status.serverClock;
@@ -602,6 +777,9 @@ void NetworkSession::update()
     {
         const replication::Stats stats = m_replication->stats();
         scene::EngineState::NetworkStats& shown = state.networkStats;
+        shown.encrypted = m_security.encrypt;
+        shown.wireBytesSent = status.wireBytesSent;
+        shown.wireBytesReceived = status.wireBytesReceived;
         shown.pingMs = static_cast<core::f64>(status.pingMs);
         shown.jitterMs = static_cast<core::f64>(status.jitterMs);
         shown.lossPercent = static_cast<core::f64>(status.loss) * 100.0;
@@ -674,6 +852,37 @@ void NetworkSession::update()
         }
     }
 
+    // --- **Sent elsewhere** (`Redirect`, ADRs 0220 and 0222): a front door
+    // naming a world, or a world a traveller's next. The join goes on there,
+    // with the pass -- the game hears `Connected` when that world takes it,
+    // and nothing in between.
+    if (status.redirects != m_seenRedirects && !status.redirectAddress.empty() && status.redirectPort != 0) {
+        m_seenRedirects = status.redirects;
+        host->world().engineState().travelStarted.push_back(status.redirectWorld);
+        const std::string address = status.redirectAddress;
+        const core::u16 port = status.redirectPort;
+        const RelayUse onward{.relay = {},
+                              .code = {},
+                              .direct = true,
+                              .ticket = {},
+                              .pass = status.redirectPass,
+                              .serverKey = status.redirectKey};
+        m_replication->shutdown();
+        m_replication.reset();
+        if (std::optional<core::EngineError> error =
+                begin(replication::Topology::Replica, address, port, false, onward);
+            error.has_value()) {
+            goSolo("Disconnected", reasonOf(*error), false);
+            return;
+        }
+        m_connecting = true;
+        m_awayFromHome = true;
+        m_joinStartedNs = m_clock ? m_clock() : platform::nowNs();
+        m_address = address + ":" + std::to_string(port);
+        setState(StateConnecting);
+        return;
+    }
+
     // --- A replica: did the join take, and is the server still there? A
     // script's join is still the machine's own world until the welcome, so
     // this is asked whatever the topology says.
@@ -716,6 +925,23 @@ void NetworkSession::update()
     // one a script made hands the decision back to the game.
     if (status.refused != 0) {
         goSolo("Disconnected", refusalText(status.refused, status.refusedText), false);
+        return;
+    }
+    // **Dropped by a world it was sent to**, on a join that dials until it is
+    // answered: back to where it first joined -- a front door, which knows
+    // where it belongs now. A pass is not tried twice.
+    if (status.lost && m_awayFromHome && m_home.has_value() && m_home->redial) {
+        const Home home = *m_home;
+        m_replication->shutdown();
+        m_replication.reset();
+        if (std::optional<core::EngineError> error =
+                begin(replication::Topology::Replica, home.address, home.port, true, home.relay);
+            error.has_value()) {
+            goSolo("Disconnected", reasonOf(*error), false);
+            return;
+        }
+        m_lostSinceNs = m_clock ? m_clock() : platform::nowNs();
+        setState(StateReconnecting);
         return;
     }
     if (status.lost && !m_redial) {

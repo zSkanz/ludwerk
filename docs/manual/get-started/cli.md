@@ -268,6 +268,20 @@ and saves it into the project's scene. The flags are `--size`, `--low`,
 `--high`, `--material`, `--seed`, `--scale` and `--octaves`. See
 [Terrain](manual:world/terrain).
 
+### ludwerk ticket
+
+```bash
+ludwerk ticket keygen --out=ticket.key
+ludwerk ticket sign --key=ticket.key --sub=account-42 --seconds=60
+```
+
+`keygen` makes the key pair a game's backend signs login tickets with: the
+private key in `ticket.key`, a PKCS #8 file any JWT library reads, and the
+public key printed, for `ticket_public_key` under `[network]` in
+`project.toml`. `sign` prints a ticket for one account and the project's
+`[project] id`, good for at most 90 seconds. See [Who may join, and
+accounts](manual:guides/multiplayer#who-may-join-and-accounts).
+
 ### ludwerk setup
 
 ```bash
@@ -356,6 +370,7 @@ engine-host [script.luau | project-dir]
   [--pace=HZ]
   [--profile-capture=FILE [--profile-lines]] [--gpu-pass-times]
   [--host | --serve | --join=ADDRESS[:PORT]] [--max-players=N] [--relay=HOST:PORT]
+  [--insecure]
   [--[no-]vsync --max-frame-rate=N --background-frame-rate=N]
   [--locale=LOCALE --voice-locale=LOCALE]
   | --run-tests=DIR | --replay=DIR [--record-replay] | --describe-rig=FILE
@@ -374,7 +389,10 @@ each joint's role, what has none, its clips -- and exits
 samples script lines as well ([The profiler](manual:guides/profiler)).
 `--host`, `--serve` and `--join` start the run in a match, `--max-players`
 caps how many may join one it hosts, and `--relay` names the relay a host
-registers with ([Multiplayer](manual:guides/multiplayer)).
+registers with ([Multiplayer](manual:guides/multiplayer)). `--insecure` plays
+this run's matches without encryption, for looking at packets with a network
+tool; a shipping build refuses it ([A match is
+encrypted](manual:guides/multiplayer#a-match-is-encrypted)).
 
 `--gpu=NAME` names the graphics API the run draws through -- `vulkan`,
 `direct3d12`, `metal` -- in place of the system's own choice. A name no

@@ -2038,6 +2038,13 @@ struct PlayerComponent
     // `Player.GamepadId`: the controller that navigates this player's
     // interfaces; 0 is none said.
     u32 gamepadId = 0;
+    // **The key this player proved** (ADR 0224), in hexadecimal: set by the
+    // authority from the match's handshake, and by each machine for its own
+    // players. Empty where the match does not encrypt. Not the simulation's.
+    std::string publicKey;
+    // **The account the game knows them as** (ADR 0226): what its
+    // `OnJoinRequest` set, on the authority. Empty for none.
+    std::string accountId;
 };
 
 // **The blocks the fluid step is due to look at**, by position, with the tick

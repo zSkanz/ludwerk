@@ -369,6 +369,29 @@ no window and no icon, and **starts serving with no arguments**: its own
 `project.toml` says `[network] role = "server"`. Start it with `--host` to play
 on it as well.
 
+### A dedicated server's key
+
+A server makes its match key the first time it starts and keeps it beside its
+saves, in a `keys` folder next to `saves-server`, and prints it in its log:
+
+```
+INFO  This machine's match key: 3f9c…e1a4. …
+```
+
+**Keep that folder when you update or move the server.** A player's game
+remembers the key of every server it joined by address. A server deployed
+afresh -- a new machine, a new container, a folder wiped by the update --
+makes a new key, and every player who joined it before is refused until their
+game forgets the old one (`NetworkService:ForgetServerKey`). Copy the `keys`
+folder along with the saves, or mount the folder they live in from outside the
+container so a new image keeps it.
+
+**Put the key in the game** when its players always join this one server:
+`server_key` under `[network]`, beside `server`, is the key the log printed.
+Then even the first join checks it. Change the key and you change the game:
+a client that has the old `server_key` is refused by the new server, so ship
+the client update first, or keep the key.
+
 What each service is, on each side (solo and a host have both columns):
 
 | Service | Dedicated server | Client that joined |

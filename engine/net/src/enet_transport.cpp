@@ -878,8 +878,16 @@ public:
     void flush() override
     {
         std::lock_guard lock(m_mutex);
-        if (m_host != nullptr)
+        if (m_host != nullptr) {
             enet_host_flush(m_host);
+            tally();
+        }
+    }
+
+    [[nodiscard]] WireTotals wireTotals() const noexcept override
+    {
+        std::lock_guard lock(m_mutex);
+        return m_wire;
     }
 
     std::optional<core::EngineError> poll(std::vector<TransportEvent>& out, u32 timeoutMs) override
@@ -936,6 +944,18 @@ public:
         // The host only: a household's players share it and differ by port.
         // A relayed joiner has a loopback address of its own (`Pipe`).
         return (u64{1} << 32) | static_cast<u64>(at->second->address.host);
+    }
+
+    [[nodiscard]] std::string addressText(PeerId peer) const override
+    {
+        std::lock_guard lock(m_mutex);
+        const auto at = m_peers.find(peer.value);
+        if (at == m_peers.end())
+            return {};
+        std::array<char, 64> host{};
+        if (enet_address_get_host_ip(&at->second->address, host.data(), host.size()) != 0)
+            return {};
+        return std::string(host.data()) + ":" + std::to_string(at->second->address.port);
     }
 
     [[nodiscard]] PeerLink link(PeerId peer) const noexcept override
@@ -1160,7 +1180,22 @@ private:
         t_servicing = this;
         const int result = enet_host_service(m_host, event, waitMs);
         t_servicing = nullptr;
+        tally();
         return result;
+    }
+
+    // ENet counts in 32 bits, which a busy server passes in hours: taken
+    // into this transport's own totals and started again each time.
+    void tally() noexcept
+    {
+        m_wire.bytesSent += m_host->totalSentData;
+        m_wire.bytesReceived += m_host->totalReceivedData;
+        m_wire.packetsSent += m_host->totalSentPackets;
+        m_wire.packetsReceived += m_host->totalReceivedPackets;
+        m_host->totalSentData = 0;
+        m_host->totalReceivedData = 0;
+        m_host->totalSentPackets = 0;
+        m_host->totalReceivedPackets = 0;
     }
 
     static int ENET_CALLBACK intercept(ENetHost* host, ENetEvent* event)
@@ -1388,6 +1423,7 @@ private:
     }
 
     ENetHost* m_host = nullptr;
+    WireTotals m_wire;
     u8 m_channels = 2;
     u32 m_timeoutMs = 10000;
     // Ids start at one, so a default-constructed `PeerId` is never a peer.

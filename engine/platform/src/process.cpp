@@ -29,7 +29,8 @@ namespace {
 
     const SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
-    SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+    SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER,
+                          options.pipeInput ? SDL_PROCESS_STDIO_APP : SDL_PROCESS_STDIO_NULL);
     SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_APP);
     SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN, true);
     const std::string directory = options.workingDirectory.string();
@@ -222,6 +223,36 @@ std::string ChildProcess::readAvailable()
         text.append(buffer, read);
     }
     return text;
+}
+
+bool ChildProcess::write(std::string_view text)
+{
+    if (m_process == nullptr || m_inputClosed)
+        return false;
+    SDL_IOStream* input = SDL_GetProcessInput(static_cast<SDL_Process*>(m_process));
+    if (input == nullptr)
+        return false;
+    // Written whole: a line half sent is a message the other side cannot
+    // read. A full pipe makes this wait, which a child that reads its input
+    // never lets last.
+    std::size_t sent = 0;
+    while (sent < text.size()) {
+        const std::size_t wrote = SDL_WriteIO(input, text.data() + sent, text.size() - sent);
+        if (wrote == 0 && SDL_GetIOStatus(input) != SDL_IO_STATUS_NOT_READY)
+            return false;
+        sent += wrote;
+    }
+    (void)SDL_FlushIO(input);
+    return true;
+}
+
+void ChildProcess::closeInput()
+{
+    if (m_process == nullptr || m_inputClosed)
+        return;
+    m_inputClosed = true;
+    if (SDL_IOStream* input = SDL_GetProcessInput(static_cast<SDL_Process*>(m_process)); input != nullptr)
+        (void)SDL_CloseIO(input);
 }
 
 bool ChildProcess::running()

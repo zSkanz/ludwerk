@@ -526,6 +526,18 @@ bool setPlayerCamera(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getPlayerPublicKey(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    return player == nullptr ? Value{} : Value{player->publicKey};
+}
+
+Value getPlayerAccountId(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    return player == nullptr || player->accountId.empty() ? Value{} : Value{player->accountId};
+}
+
 Value getPlayerGamepadId(const World& world, core::InstanceId id)
 {
     const PlayerComponent* player = world.players().find(id);
@@ -2079,6 +2091,13 @@ Value getNetworkServicePort(const World& world, core::InstanceId)
 Value getNetworkServiceRelayState(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::RelayStateEnumId, world.engineState().networkRelayState}};
+}
+
+Value getInstanceServiceInstanceId(const World& world, core::InstanceId)
+{
+    // An instance's world is named for it (ADR 0221): `i-` and its number.
+    const std::string& name = world.engineState().managedWorld;
+    return Value{name.starts_with("i-") ? name : std::string{}};
 }
 
 Value getNetworkServiceJoinCode(const World& world, core::InstanceId)

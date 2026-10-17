@@ -561,6 +561,13 @@ enum class JoinFailure : u8
     Busy,
     // No path opened in time, the relay's included.
     TimedOut,
+    // **The host is not the one this machine met before** (ADR 0224): its
+    // key differs from the one pinned, or from the one this machine was told
+    // to expect.
+    KeyChanged,
+    // The other side did not complete an encrypted handshake: it does not
+    // encrypt (a development run with `--insecure`), or it is another game.
+    Insecure,
 };
 
 // **A joiner's side**: looks a code up, tries the host's own network, punches,

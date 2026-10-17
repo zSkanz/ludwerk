@@ -233,4 +233,103 @@ std::optional<core::EngineError> performHttps(const HttpRequest& request, const 
     return parseHttpResponse(raw, request.maxBodyBytes, response);
 }
 
+namespace {
+
+// One TLS connection over a socket, kept for a protocol's own bytes.
+class OpenSslStream final : public TlsStream
+{
+public:
+    OpenSslStream(TcpStream stream, void* connection) : m_stream(std::move(stream)), m_connection(connection) {}
+    ~OpenSslStream() override
+    {
+        const OpenSsl& ssl = openSsl();
+        (void)ssl.shutdown(m_connection);
+        ssl.sslFree(m_connection);
+    }
+
+    [[nodiscard]] std::optional<core::EngineError> send(std::span<const core::u8> data) override
+    {
+        const OpenSsl& ssl = openSsl();
+        setTimeouts(static_cast<int>(m_stream.nativeHandle()), 10000);
+        for (std::size_t sent = 0; sent < data.size();) {
+            const int wrote = ssl.write(m_connection, data.data() + sent, static_cast<int>(data.size() - sent));
+            if (wrote <= 0)
+                return core::makeError(ENG_TR("net.err.closed"));
+            sent += static_cast<std::size_t>(wrote);
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<core::EngineError> receive(std::span<core::u8> out, core::usize& received,
+                                                           core::u32 timeoutMs) override
+    {
+        const OpenSsl& ssl = openSsl();
+        received = 0;
+        setTimeouts(static_cast<int>(m_stream.nativeHandle()), timeoutMs == 0 ? 1 : timeoutMs);
+        const int got = ssl.read(m_connection, out.data(), static_cast<int>(out.size()));
+        if (got > 0) {
+            received = static_cast<core::usize>(got);
+            return std::nullopt;
+        }
+        const int why = ssl.getError(m_connection, got);
+        if (why == SslErrorSyscall && got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return std::nullopt;
+        // A read that times out inside TLS reports "want read".
+        constexpr int SslErrorWantRead = 2;
+        if (why == SslErrorWantRead)
+            return std::nullopt;
+        return core::makeError(ENG_TR("net.err.closed"));
+    }
+
+private:
+    TcpStream m_stream;
+    void* m_connection = nullptr;
+};
+
+} // namespace
+
+std::unique_ptr<TlsStream> openTlsStream(std::string_view host, core::u16 port, core::u32 timeoutMs,
+                                         std::optional<core::EngineError>& error)
+{
+    const OpenSsl& ssl = openSsl();
+    const std::string name(host);
+    if (!ssl.loaded) {
+        const I18nArg args[] = {{"url", name}};
+        error = core::makeError(ENG_TR("net.err.https_no_openssl"), args);
+        return nullptr;
+    }
+    void* shared = context();
+    TcpStream stream;
+    if (auto failed = stream.connect(host, port, timeoutMs); failed.has_value()) {
+        error = failed;
+        return nullptr;
+    }
+    if (shared == nullptr) {
+        const I18nArg args[] = {{"url", name}, {"code", static_cast<core::i64>(0)}};
+        error = core::makeError(ENG_TR("net.err.https_failed"), args);
+        return nullptr;
+    }
+    const int socket = static_cast<int>(stream.nativeHandle());
+    setTimeouts(socket, timeoutMs);
+    void* connection = ssl.sslNew(shared);
+    if (connection == nullptr || ssl.setFd(connection, socket) != 1) {
+        if (connection != nullptr)
+            ssl.sslFree(connection);
+        const I18nArg args[] = {{"url", name}, {"code", static_cast<core::i64>(0)}};
+        error = core::makeError(ENG_TR("net.err.https_failed"), args);
+        return nullptr;
+    }
+    (void)ssl.sslCtrl(connection, SslCtrlSetTlsextHostname, TlsextNametypeHostName, const_cast<char*>(name.c_str()));
+    (void)ssl.set1Host(connection, name.c_str());
+    if (const int shook = ssl.connect(connection); shook != 1) {
+        const long verified = ssl.verifyResult(connection);
+        const I18nArg args[] = {{"url", name}, {"code", static_cast<core::i64>(ssl.getError(connection, shook))}};
+        error = verified != X509VerifyOk ? core::makeError(ENG_TR("net.err.https_untrusted"), args)
+                                         : core::makeError(ENG_TR("net.err.https_failed"), args);
+        ssl.sslFree(connection);
+        return nullptr;
+    }
+    return std::make_unique<OpenSslStream>(std::move(stream), connection);
+}
+
 } // namespace engine::net

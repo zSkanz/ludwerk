@@ -26,6 +26,7 @@
 #include "engine/scene/world.h"
 #include "engine/script/content_provider.h"
 #include "engine/script/datatypes.h"
+#include "engine/script/join_request.h"
 #include "engine/script/materials.h"
 #include "engine/script/modules.h"
 #include "engine/script/remote.h"
@@ -220,7 +221,7 @@ int instanceIndex(lua_State* L)
     // A callback is a member too (ADR 0079), and a script reads back the
     // function it assigned.
     if (remoteCallbackGet(L, id, key) || saveCallbackGet(L, id, key) || sceneMemberGet(L, id, key) ||
-        contentProviderMemberGet(L, id, key))
+        contentProviderMemberGet(L, id, key) || joinRequestCallbackGet(L, id, key))
         return 1;
 
     // **Then a child by that name** (ADR 0078, reversing
@@ -298,7 +299,8 @@ int instanceNewIndex(lua_State* L)
 
     const scene::PropertyDesc* property = w.classes().findProperty(classId, name);
     if (property == nullptr) {
-        if (remoteCallbackSet(L, id, key, 3) || saveCallbackSet(L, id, key, 3) || sceneMemberSet(L, id, key))
+        if (remoteCallbackSet(L, id, key, 3) || saveCallbackSet(L, id, key, 3) || sceneMemberSet(L, id, key) ||
+            joinRequestCallbackSet(L, id, key, 3))
             return 0;
         raiseUnknownInstanceMember(L, id, key);
     }

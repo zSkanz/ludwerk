@@ -1,6 +1,6 @@
 # 0222 — A player travels between worlds with a signed pass
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the messages and the screen of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0220 (the manager, the front door, `Redirect`), ADR 0221
   (instances), ADR 0106 (a scene loaded at run time, `GetLoadData`), ADR 0120
@@ -90,9 +90,27 @@ progress bar -- unless the game sets its own with
 ### 5. What a player keeps
 
 What the game sends in `data`, and whatever it saved. The engine carries the
-player's identity (their key, so their `UserId` is the same in the target)
+player's identity (their key, so their `PublicKey` is the same in the target;
+its `UserId` is the target's own number, ADR 0224 §4)
 and their local players at the same screen (ADR 0205), who travel with them.
 Their character does not: the target spawns one.
+
+## As built
+
+- **A pass is `base64url(JSON) "." base64url(signature)`**, Ed25519 over the
+  first part, with `v`, `player` (their key), `origin`, `target`, `data`,
+  `ticket`, `reason`, `issued`, `expires` -- thirty seconds after -- and a
+  `nonce`. A world refuses one not signed by its manager, expired, for
+  another world or player, or seen before.
+- **`Redirect` is a message of its own on the wire**: address, port, pass,
+  the target's key and its name. `Hello` carries a pass and a ticket as text.
+  The protocol is 54, with ADR 0224's encryption.
+- **A hop that fails returns to where the player first joined** -- the front
+  door -- which knows where they belong now; a pass is never tried twice.
+- **`TravelStarted(world)`** fires on the client before it leaves, and
+  `Connected` when the next world has taken it. `@engine/travelscreen` is the
+  loading screen over the two, one call, mounted under
+  `GlobalScriptService.Client`; a game draws its own from the same events.
 
 ## Consequences
 

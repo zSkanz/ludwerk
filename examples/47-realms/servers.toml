@@ -1,0 +1,27 @@
+# The game's worlds, as its manager runs them (ADR 0220): `run.bat`, or
+# `ludwerk server run` in this folder, or Start match in the editor with
+# "This game's worlds" ticked.
+
+[manager]
+port = 7777
+world_ports = "7800-7899"
+
+# Where every player arrives: the front door sends them here.
+[[world]]
+name = "town"
+scene = "scenes/town.scene.json"
+max_players = 64
+entry = true
+
+[[world]]
+name = "fields"
+scene = "scenes/fields.scene.json"
+max_players = 64
+
+# A dungeon for one party at a time (ADR 0221): made when a party asks, closed
+# a minute after the last of them leaves.
+[[instance]]
+template = "dungeon"
+scene = "scenes/dungeon.scene.json"
+max_instances = 20
+idle_close_seconds = 60

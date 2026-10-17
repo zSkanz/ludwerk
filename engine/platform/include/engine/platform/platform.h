@@ -109,6 +109,10 @@ void sleepNs(u64 ns) noexcept;
 // system will not say.
 [[nodiscard]] u64 systemMemoryBytes() noexcept;
 
+// **The machine's memory free now**, in bytes: what a manager asks before it
+// starts one more world (ADR 0221 §6). Zero where the system will not say.
+[[nodiscard]] u64 freeMemoryBytes() noexcept;
+
 // Asks the OS to schedule this process ahead of ordinary work. Returns
 // whether it did.
 //

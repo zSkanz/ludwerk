@@ -11,15 +11,18 @@
 // either being stricter. Supported: comments, bare and quoted keys, `[table]`
 // and `[nested.table]` headers, basic and literal strings, integers, floats,
 // booleans, and single-line arrays of those. Everything else -- multi-line
-// strings, inline tables, arrays of tables, dates -- is an explicit error and
-// never a silent misread, for the reason the Luau reader gives: a config format
-// that quietly ignores what it does not understand is how a setting ends up not
-// applying.
+// strings, inline tables, dates -- is an explicit error and never a silent
+// misread, for the reason the Luau reader gives: a config format that quietly
+// ignores what it does not understand is how a setting ends up not applying.
+//
+// **Arrays of tables** (`[[world]]`) are read too, for `servers.toml` (ADR
+// 0220), which only the engine reads: each entry is addressed by its index.
 //
 // Values are addressed by their DOTTED path (`graphics.quality`), because
 // nothing that reads this file walks it; every caller knows the key it wants.
 #pragma once
 
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -69,6 +72,9 @@ public:
     // Every key under `prefix`, whatever it holds, less the prefix, in the
     // file's order: a table whose keys the project names (`[luau.flags]`).
     [[nodiscard]] std::vector<std::string> keys(std::string_view prefix) const;
+    // How many `[[name]]` tables the file has: entry `i`'s keys are
+    // `name.i.key`.
+    [[nodiscard]] usize count(std::string_view name) const;
 
 private:
     enum class Kind : u8
@@ -94,6 +100,7 @@ private:
     [[nodiscard]] const Entry* find(std::string_view key) const noexcept;
 
     std::vector<Entry> entries_;
+    std::map<std::string, usize, std::less<>> tableCounts_;
 };
 
 } // namespace engine::core

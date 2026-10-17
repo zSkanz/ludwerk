@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <mutex>
 #ifdef _WIN32
 #include <share.h>
 #else
@@ -22,6 +23,18 @@ LogSink& sinkSlot()
 {
     static LogSink sink;
     return sink;
+}
+
+std::mutex& tapLock()
+{
+    static std::mutex lock;
+    return lock;
+}
+
+LogSink& tapSlot()
+{
+    static LogSink tap;
+    return tap;
 }
 
 std::FILE*& fileSlot() noexcept
@@ -85,6 +98,12 @@ std::string formatLogLine(LogLevel level, std::string_view text)
     line += text;
     line += '\n';
     return line;
+}
+
+void setLogTap(LogSink tap)
+{
+    const std::lock_guard lock(tapLock());
+    tapSlot() = std::move(tap);
 }
 
 LogSink setLogSink(LogSink sink)
@@ -223,6 +242,11 @@ void logText(LogLevel level, std::string_view text, std::string_view detail)
     // installs a sink -- the DebugShell's log pane, a test capturing output --
     // must not be able to take the file away with it.
     writeFile(level, text);
+    {
+        const std::lock_guard lock(tapLock());
+        if (const LogSink& tap = tapSlot())
+            tap(level, text);
+    }
 
     const std::string_view outer = std::exchange(t_detail, detail);
     if (const LogSink& sink = sinkSlot())

@@ -1,6 +1,6 @@
 # 0218 — A server has a console, and a game adds commands to it
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the names and the banner of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0167 (a host removes a player), ADR 0105 (server code lives in
   `ServerScriptService`), ADR 0120 (a player is a key), ADR 0111 (saves)
@@ -93,6 +93,30 @@ end)
 Every command is written to the log with who ran it -- `local`, or the
 admin's name and key fingerprint -- and what it answered. A ban says who
 banned and why.
+
+## As built
+
+- **`ConsoleService`, not `ServerConsole`**, and its run method
+  **`ExecuteAsync`**: the API's own naming rules say a service ends in
+  `Service` and a method that yields says so. **`NetworkService.Announced`**,
+  not `ServerMessage`: an event is a fact, in the past tense. The caller is a
+  table -- `Local`, `Name`, `Key`, `Permission` -- not a class.
+- **The engine draws no banner of its own.** A game's screen is the game's:
+  subtitles and the options screen are modules a game mounts, and so is this,
+  `@engine/announcements`, one line. What every machine does unasked is fire
+  `Announced` and write the line to its log.
+- **Who may join is one gate in the session** (`setJoinGate`), asked of every
+  hello that passed the engine's own checks, answered at once or later. A ban
+  answers at once, so a gate costs a joiner no tick; ADR 0226's
+  `ValidateJoin` answers later through the same gate. A refusal travels as
+  `Refused` with reason 7 and the game's words.
+- **Bans are `key:<PublicKey>`**, and `account:<id>` once ADR 0226 names
+  accounts, in `bans.json` beside the saves, with who banned and when. A ban
+  with minutes ends on the wall clock, so a restart does not reset it.
+- **`stop` ends the process with exit code 0** three frames after it has
+  removed everybody, so the removals reach them.
+- **A host's own players have its key** while it hosts, so `players` and a
+  game read a `PublicKey` for every player of an encrypted match.
 
 ## Consequences
 

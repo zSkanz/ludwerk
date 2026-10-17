@@ -4,9 +4,11 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "engine/core/error.h"
 #include "engine/net/http.h"
@@ -54,5 +56,22 @@ readUntilClosed(const std::function<std::optional<core::EngineError>(std::span<c
 // the platform has none.
 [[nodiscard]] std::optional<core::EngineError> performHttps(const HttpRequest& request, const ParsedUrl& url,
                                                             HttpResponse& response);
+
+// **A TLS stream of bytes**, for a protocol of its own over it -- a WebSocket
+// (ADR 0223 §2) -- on this platform's TLS stack, verified as `performHttps`
+// verifies. Where the platform offers none a raw stream can use, opening one
+// says so (`net.err.websocket_tls_unsupported`).
+class TlsStream
+{
+public:
+    virtual ~TlsStream() = default;
+    [[nodiscard]] virtual std::optional<core::EngineError> send(std::span<const core::u8> data) = 0;
+    // Nothing received and no error: `timeoutMs` passed.
+    [[nodiscard]] virtual std::optional<core::EngineError> receive(std::span<core::u8> out, core::usize& received,
+                                                                   core::u32 timeoutMs) = 0;
+};
+
+[[nodiscard]] std::unique_ptr<TlsStream> openTlsStream(std::string_view host, core::u16 port, core::u32 timeoutMs,
+                                                       std::optional<core::EngineError>& error);
 
 } // namespace engine::net

@@ -17,6 +17,7 @@
 // Everything above that is `replication`'s.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -183,6 +184,18 @@ struct PeerLink
     f32 loss = 0.0f;
 };
 
+// **What the socket carried**, since the transport opened: every datagram,
+// with the transport's own headers, acknowledgements and encryption in it --
+// what a player's connection is billed for, where the session's own counts
+// are only the messages inside.
+struct WireTotals
+{
+    u64 bytesSent = 0;
+    u64 bytesReceived = 0;
+    u64 packetsSent = 0;
+    u64 packetsReceived = 0;
+};
+
 // **Poll-driven, never callback-driven**, and this is the R10 decision in the
 // interface rather than a note about it. A callback fires whenever a packet
 // arrives, which is a wall-clock-driven entry into game code and therefore a
@@ -278,6 +291,28 @@ public:
         (void)peer;
         return 0;
     }
+    // **The key a peer proved it holds** (ADR 0224): set once an encrypted
+    // transport's handshake with it is done, and nothing for a transport that
+    // does not encrypt. On an authority, the joiner's key is the player.
+    [[nodiscard]] virtual std::optional<std::array<u8, 32>> remoteKey(PeerId peer) const noexcept
+    {
+        (void)peer;
+        return std::nullopt;
+    }
+    // **And the key this machine proves**: its own players' identity, which
+    // a replica says of them as the authority does. Nothing where the
+    // transport does not encrypt.
+    [[nodiscard]] virtual std::optional<std::array<u8, 32>> localKey() const noexcept { return std::nullopt; }
+    // **Where a peer is, for a person to read** (ADR 0218): `address:port`, or
+    // empty where the transport has no addresses.
+    [[nodiscard]] virtual std::string addressText(PeerId peer) const
+    {
+        (void)peer;
+        return {};
+    }
+    // What the socket carried (`WireTotals`); nothing for a transport with
+    // no socket.
+    [[nodiscard]] virtual WireTotals wireTotals() const noexcept { return {}; }
     // **Keeps a peer's address away for a while**, where the transport is what
     // stands between it and the host: a relayed joiner's address is the
     // relay's to refuse. Nothing for a peer that came by itself -- its address

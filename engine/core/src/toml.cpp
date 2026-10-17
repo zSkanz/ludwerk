@@ -256,6 +256,7 @@ struct Parsed
 TomlDocument::ParseResult TomlDocument::parse(std::string_view text, std::string_view sourceName)
 {
     entries_.clear();
+    tableCounts_.clear();
 
     const auto fail = [&](usize line, const std::string& what) {
         return ParseResult{.ok = false,
@@ -292,8 +293,20 @@ TomlDocument::ParseResult TomlDocument::parse(std::string_view text, std::string
             continue;
 
         if (line.front() == '[') {
-            if (line.size() > 1 && line[1] == '[')
-                return fail(lineNumber, "an array of tables is not part of this subset");
+            // **An array of tables** (`[[world]]`): each header starts the
+            // next entry, addressed by its index -- `world.0.name`,
+            // `world.1.name` -- and `count` says how many there are.
+            if (line.size() > 1 && line[1] == '[') {
+                if (line.size() < 4 || !line.ends_with("]]"))
+                    return fail(lineNumber, "an array of tables header ends with ]]");
+                std::string name;
+                if (!splitKey(line.substr(2, line.size() - 4), name))
+                    return fail(lineNumber, "an array of tables header names a key");
+                usize& next = tableCounts_[name];
+                section = name + "." + std::to_string(next);
+                ++next;
+                continue;
+            }
             if (line.back() != ']')
                 return fail(lineNumber, "a table header ends with ]");
             if (!splitKey(line.substr(1, line.size() - 2), section))
@@ -441,6 +454,12 @@ std::span<const std::string> TomlDocument::strings(std::string_view key) const
     const Entry* entry = find(key);
     return entry != nullptr && entry->kind == Kind::StringArray ? std::span<const std::string>(entry->strings)
                                                                 : std::span<const std::string>{};
+}
+
+usize TomlDocument::count(std::string_view name) const
+{
+    const auto found = tableCounts_.find(name);
+    return found == tableCounts_.end() ? 0 : found->second;
 }
 
 } // namespace engine::core

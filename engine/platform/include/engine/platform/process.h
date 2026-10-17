@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,9 @@ struct ProcessOptions
 {
     std::filesystem::path workingDirectory;
     std::vector<std::pair<std::string, std::string>> environment;
+    // **Its standard input a pipe this side writes** (`ChildProcess::write`),
+    // rather than nothing: how a manager speaks to its worlds (ADR 0220 §2).
+    bool pipeInput = false;
 };
 
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments);
@@ -96,6 +100,11 @@ public:
     [[nodiscard]] int exitCode() const noexcept { return m_exitCode; }
     // Ends it now, if it is running.
     void kill();
+    // **Writes to its standard input**, when it was started with `pipeInput`:
+    // false when it has none or the pipe is closed. And closes that input --
+    // what a child reading it hears as the end.
+    bool write(std::string_view text);
+    void closeInput();
 
 private:
     explicit ChildProcess(void* process) noexcept : m_process(process) {}
@@ -103,6 +112,7 @@ private:
     void* m_process = nullptr;
     int m_exitCode = -1;
     bool m_exited = false;
+    bool m_inputClosed = false;
 };
 
 } // namespace engine::platform

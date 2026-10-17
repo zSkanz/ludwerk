@@ -30,6 +30,7 @@ local platform = require("@std/system/platform")
 local process = require("@std/process")
 local test = require("@std/test")
 
+local bounded = require("../../tools/cli/bounded")
 local projectlib = require("../../tools/cli/project")
 local version = require("../../tools/cli/commands/version")
 
@@ -150,7 +151,7 @@ test.suite("installed", function(suite)
         local artifact = projectlib.joined(project, "dist", desktop, projectlib.executableName("installedtest"))
         assert.that(fs.exists(artifact), `no artifact at {artifact}:\n{built.output}`)
 
-        local ran = process.run({ artifact, "--headless", "--frames=30", "--exit" })
+        local ran = bounded.run({ artifact, "--headless", "--frames=30", "--exit" })
         local text = ran.stdout .. ran.stderr
         assert.that(ran.ok, `the game built by the installed CLI exited non-zero:\n{text}`)
         assert.that(

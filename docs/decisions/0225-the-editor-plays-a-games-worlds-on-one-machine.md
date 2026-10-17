@@ -1,6 +1,6 @@
 # 0225 — The editor plays a game's worlds on one machine
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the places in the editor of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0106 §5 (Play with players: a match of separate processes),
   ADR 0220 (the manager, `servers.toml`), ADR 0221 (instances), ADR 0222
@@ -52,6 +52,28 @@ stops every world.
 At most eight worlds and instances at once and four clients, which a
 development machine runs; the panel says when a template's `max_instances` or
 this limit refused one.
+
+## As built
+
+- **The manager's editor mode**: `--manager-play=<port>` takes the front door
+  at the editor's match port and the worlds on the sixteen after it, on
+  127.0.0.1, with no administration and no health; `--manager-root` puts its
+  logs, keys and saves in `.engine/play/`. It says its worlds each second, and
+  each line a world writes, on its output as messages the editor reads.
+- **The ports are the editor's, not probed**: the match port and the sixteen
+  after it. A port another program holds fails that world's start, which
+  the Console says.
+- **The world tabs are the Console's**, which is the editor's output panel: a
+  tab for every world and instance beside *All*, and a line typed in a world's
+  tab goes to that world's console through the manager.
+- **The worlds' table is in the Run view**, under the match's controls, not a
+  panel of its own: it is there only while the match runs, which is when
+  somebody is looking at the Run view.
+- **This game's worlds** is a box in the match controls, shown when the
+  project has a `servers.toml`; the dedicated-server box has no meaning while
+  it is ticked.
+- **Stop asks the manager to stop** and waits up to five seconds before
+  ending it, so its worlds are not left running with nobody to end them.
 
 ## Consequences
 

@@ -741,6 +741,28 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.networkRelay = *value;
     if (const std::optional<std::string_view> value = document.string("network.role"))
         config.serverRole = *value == "server";
+    if (const std::optional<bool> value = document.boolean("network.encrypt"))
+        config.networkEncrypt = *value;
+    if (const std::optional<std::string_view> value = document.string("network.server_key"))
+        config.networkServerKey = *value;
+    if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))
+        config.networkTicketKey = *value;
+    if (const std::optional<bool> value = document.boolean("permissions.websocket_client"))
+        config.websocketClient = *value;
+    if (const std::optional<bool> value = document.boolean("server.admin"))
+        config.serverAdmin = *value;
+    if (const std::optional<f64> value = document.number("server.admin_port");
+        value.has_value() && *value >= 1.0 && *value <= 65535.0)
+        config.serverAdminPort = static_cast<core::u16>(*value);
+    for (const std::string& address : document.strings("server.admin_allow"))
+        config.serverAdminAllow.push_back(address);
+    if (const std::optional<bool> value = document.boolean("server.health"))
+        config.serverHealth = *value;
+    if (const std::optional<f64> value = document.number("server.health_port");
+        value.has_value() && *value >= 1.0 && *value <= 65535.0)
+        config.serverHealthPort = static_cast<core::u16>(*value);
+    for (const std::string& address : document.strings("server.health_allow"))
+        config.serverHealthAllow.push_back(address);
     // Whole numbers in a sane range; anything else keeps the default.
     const auto count = [&document](const char* key, core::u32 lowest, core::u32 highest, core::u32& out) {
         if (const std::optional<f64> value = document.number(key);

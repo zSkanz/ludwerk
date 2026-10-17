@@ -1,6 +1,6 @@
 # 0221 — An instance is a world started for a group
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the names of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0220 (the manager, `[[instance]]`, a world's life),
   ADR 0222 (Travel), ADR 0111 (saves)
@@ -69,6 +69,20 @@ the game's to ask for.
 `max_instances` a template, and the machine's own: the manager refuses a new
 one when free memory is under `[manager] min_free_megabytes` (512 by
 default), and says so in the error and the log.
+
+## As built
+
+- **`InstanceService`, not a `WorldManager` service**: the API's services are
+  named for what a script does with them, and a script makes instances. The
+  handle is the instance's `Id`, a string (`"i-3"`), passed to `Travel` and
+  `TravelGroup` as a world's name is; `InstanceService.InstanceId` is it,
+  inside one.
+- **`InstanceClosed(id, reason)` fires in the world that made it** when it is
+  gone: `"Closed"` or `"InstanceFailed"`. Its players come back one by one
+  with `TravelArrived`'s `reason`.
+- **A world's own limit beside each template's**: the editor runs at most
+  eight worlds and instances (ADR 0225), and an instance past it is refused
+  with the reason, as `max_instances` refuses one.
 
 ## Consequences
 

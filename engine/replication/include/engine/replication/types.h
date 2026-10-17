@@ -115,6 +115,12 @@ struct Config
     // (ADR 0217), as one number, nought for nothing: a joiner whose number is
     // not the host's runs other scripts, and is refused before it plays.
     u64 luauFlags = 0;
+    // **What a replica presents to be let in** (ADR 0226): a ticket its game's
+    // backend signed, sent in the hello. Empty for none.
+    std::string joinTicket;
+    // **And the pass a manager signed for this join** (ADRs 0220, 0222), in
+    // base64: what a `Redirect` handed over. Empty for none.
+    std::string joinPass;
     // Snapshots per second. A COUNT of ticks between sends rather than a
     // millisecond interval, so it is a function of the simulation rather than of
     // the wall clock (R10).
@@ -179,6 +185,18 @@ struct Status
     u32 pingMs = 0;
     u32 jitterMs = 0;
     core::f32 loss = 0.0f;
+    // What the socket carried, headers and encryption in it (`net::WireTotals`).
+    u64 wireBytesSent = 0;
+    u64 wireBytesReceived = 0;
+    // A replica sent elsewhere (`Redirect`, ADRs 0220 and 0222): where, and
+    // the pass to present there. `redirects` counts them, so a caller sees
+    // each once.
+    u32 redirects = 0;
+    std::string redirectAddress;
+    u16 redirectPort = 0;
+    std::string redirectPass;
+    std::string redirectKey;
+    std::string redirectWorld;
     // A replica: whether the authority has welcomed it, and whether the
     // connection went and has not come back (ADR 0106).
     bool welcomed = false;
@@ -215,6 +233,44 @@ inline constexpr core::usize MessageKinds = 64;
 
 // One tick's worth of what the module did, for the overlay and for a test that
 // wants to assert a send happened rather than infer it.
+// **Somebody who asks to join** (ADRs 0218, 0226), as the authority knows them
+// before they are a player: the key they proved, where they came from, and
+// the ticket their game presented. `id` names the ask in its answer.
+struct JoinAsk
+{
+    u32 id = 0;
+    // Hexadecimal; empty where the match is not encrypted.
+    std::string publicKey;
+    std::string address;
+    std::string ticket;
+    // A manager's pass, in base64 (ADR 0222): empty for a joiner that came
+    // to this server directly.
+    std::string pass;
+};
+
+// **And what is said to them**: welcomed, or refused with words of the game's
+// own -- a ban's, a full queue's, a ticket that did not check.
+struct JoinAnswer
+{
+    bool admit = true;
+    std::string reason;
+    // The account the game knows them as (ADR 0226), kept with the player.
+    std::string accountId;
+};
+
+// **A player of the match, as an operator lists them** (ADR 0218): who, from
+// where, and how the link is.
+struct PeerSummary
+{
+    u32 userId = 0;
+    std::string publicKey;
+    std::string address;
+    u32 pingMs = 0;
+    // The authority's tick when they were welcomed.
+    u64 joinedTick = 0;
+    std::string accountId;
+};
+
 struct Stats
 {
     u64 snapshotsSent = 0;

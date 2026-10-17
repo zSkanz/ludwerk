@@ -21,7 +21,9 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`AudioService`](audioservice.md) | [`Instance`](instance.md) | Controls audio mixing: the master volume, the player's volume settings and one-shot sounds. |
 | [`ClientScriptService`](clientscriptservice.md) | [`Instance`](instance.md) | Holds the client scripts of the current scene, such as its HUD, its menu or a camera. |
 | [`CloudSaveService`](cloudsaveservice.md) | [`Instance`](instance.md) | Reads and writes the current user's save slots in the platform's cloud. |
+| [`ConsoleService`](consoleservice.md) | [`Instance`](instance.md) | The console of a server that runs with no window, and the game's own commands in it. |
 | [`ContentProvider`](contentprovider.md) | [`Instance`](instance.md) | Loads assets before they are shown. |
+| [`CrossWorldService`](crossworldservice.md) | [`Instance`](instance.md) | Sends a game's events between its worlds: a guild's chat, a world boss that appears for everyone, an operator's announcement. |
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | Provides cryptographic functions: unpredictable random values, two hashes, and a hash for passwords. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | Controls the debug overlay and gives access to the engine's statistics and log. |
 | [`DialogueService`](dialogueservice.md) | [`Instance`](instance.md) | Plays lines of dialogue and reports the captions that are current. |
@@ -31,6 +33,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`HotReloadService`](hotreloadservice.md) | [`Instance`](instance.md) | Gives scripts access to hot reload during development. |
 | [`IdentityService`](identityservice.md) | [`Instance`](instance.md) | Signs the player in to the platform and reads who they are. |
 | [`InputService`](inputservice.md) | [`Instance`](instance.md) | Reads the state of the input devices and hosts the input action system. |
+| [`InstanceService`](instanceservice.md) | [`Instance`](instance.md) | Asks the manager for a copy of a scene for one group, such as a dungeon, an arena or a house, and runs the copy it made. |
 | [`LeaderboardService`](leaderboardservice.md) | [`Instance`](instance.md) | Reads and writes the platform's leaderboards. |
 | [`Lighting`](lighting.md) | [`Instance`](instance.md) | Controls the time of day, the sun and the ambient light of the world. |
 | [`LocalizationService`](localizationservice.md) | [`Instance`](instance.md) | Returns the game's text by key, in the player's language. |

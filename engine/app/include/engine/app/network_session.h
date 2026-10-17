@@ -20,12 +20,17 @@
 // transport, in one process, as the engine runs one over ENet.
 #pragma once
 
+#include <array>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "engine/app/match_keys.h"
+#include "engine/core/crypto.h"
 #include "engine/core/error.h"
 #include "engine/core/types.h"
 #include "engine/replication/types.h"
@@ -64,6 +69,43 @@ public:
 
     NetworkSession(const NetworkSession&) = delete;
     NetworkSession& operator=(const NetworkSession&) = delete;
+
+    // **How this machine's matches are encrypted** (ADR 0224). On unless a
+    // development run says otherwise; with nothing set, a key for this run
+    // and every host's key taken -- what a test runs by. The engine gives a
+    // kept key, the project's id in the prologue and the hosts it pinned.
+    struct MatchSecurity
+    {
+        bool encrypt = true;
+        core::X25519Pair identity = core::x25519Generate();
+        std::vector<core::u8> prologue;
+        // Where the hosts this machine met are pinned; empty pins none.
+        std::filesystem::path pins;
+        // **What a ticket is checked against** (ADR 0226): the game's backend's
+        // key, `[network] ticket_public_key`, and `[project] id`.
+        std::optional<std::array<core::u8, 32>> ticketKey;
+        std::string projectId;
+        // **The game's own server and its key** (`[network] server` and
+        // `server_key`): known before the first join, so not even that one
+        // is taken on trust. Empty for a game that names none.
+        std::string server;
+        std::optional<std::array<core::u8, 32>> serverKey;
+    };
+    void setSecurity(MatchSecurity security);
+    // **Who may join this machine's match** (ADRs 0218, 0226): asked of every
+    // joiner that passed the engine's checks. An answer refuses or admits at
+    // once; none admits. Kept across matches.
+    using JoinGate = std::function<std::optional<replication::JoinAnswer>(replication::JoinAsk&)>;
+    void setJoinGate(JoinGate gate) { m_joinGate = std::move(gate); }
+    // **And after the game has named an account** (ADR 0226): a refusal for
+    // that account -- a ban -- or nothing.
+    using AccountGate = std::function<std::optional<replication::JoinAnswer>(const std::string& account)>;
+    void setAccountGate(AccountGate gate) { m_accountGate = std::move(gate); }
+    // **What every handshake of a game binds**: the protocol's version and the
+    // project's id, so another game, or another build of this one, fails the
+    // handshake rather than joining.
+    [[nodiscard]] static std::vector<core::u8> prologueFor(std::string_view projectId);
+    [[nodiscard]] const MatchSecurity& security() const noexcept { return m_security; }
 
     // **The command line's posture**, before the first tick: `--host`,
     // `--serve` or `--join=`. A join here keeps the dial-again behaviour a
@@ -115,6 +157,12 @@ private:
         std::string relay;
         std::string code;
         bool direct = true;
+        // The ticket a join presents (ADR 0226).
+        std::string ticket;
+        // And the pass a `Redirect` handed over (ADR 0222), in base64, with the
+        // key of the world it is for: that one, and no other.
+        std::string pass;
+        std::string serverKey;
     };
     [[nodiscard]] std::optional<core::EngineError> begin(replication::Topology topology, const std::string& address,
                                                          core::u16 port, bool redial, const RelayUse& relay);
@@ -128,6 +176,26 @@ private:
     std::function<WorldHost*()> m_host;
     replication::Config m_base;
     TransportFactory m_transports;
+    MatchSecurity m_security;
+    JoinGate m_joinGate;
+    // The `Redirect`s this match's replica has been sent, followed.
+    core::u32 m_seenRedirects = 0;
+    // Where this machine first joined, and whether it is somewhere it was
+    // sent since.
+    struct Home
+    {
+        std::string address;
+        core::u16 port = 0;
+        bool redial = false;
+        RelayUse relay;
+    };
+    std::optional<Home> m_home;
+    bool m_awayFromHome = false;
+    AccountGate m_accountGate;
+    // Joiners the game's `OnJoinRequest` is deciding about, by ask, and when
+    // each is a refusal for want of an answer.
+    std::map<core::u32, core::u64> m_validating;
+    std::unique_ptr<KeyPins> m_pins;
     std::unique_ptr<replication::IReplication> m_replication;
     std::function<bool(core::InstanceId)> m_probe;
     scene::ICharacterReplay* m_replay = nullptr;

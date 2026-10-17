@@ -25,6 +25,9 @@ int openStdNet(lua_State* L);
 // frame safe point, exactly like `resumeAreaWaiters`: a completion arriving on a
 // worker thread must not enter game code where it landed (R10).
 void resumeNetWaiters(lua_State* L);
+// `net.websocket`'s sockets, at the frame's safe point: one that opened or
+// failed, what arrived, and one that closed.
+void pumpWebSockets(lua_State* L);
 
 // Submitted and not yet taken. For a debug panel and for a test that needs to
 // know when to stop pumping.

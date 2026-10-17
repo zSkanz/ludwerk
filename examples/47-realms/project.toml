@@ -1,0 +1,16 @@
+# An online game of several worlds (ADRs 0220 to 0222): a town, the fields
+# beyond it and a dungeon made for each party that asks, run by the manager
+# from `servers.toml` beside this file.
+#
+# Alone -- `run.bat solo`, or Play in the editor with one player -- the
+# engine opens the town, whose portals then say they need the game's servers.
+
+[project]
+name = "Ludwerk Realms"
+id = "dev.ludwerk.realms"
+version = "1.0.0"
+scene = "scenes/town.scene.json"
+
+[window]
+title = "Ludwerk — Realms"
+size = [1280, 720]

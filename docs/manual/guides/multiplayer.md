@@ -74,7 +74,7 @@ it and stops predicting. What happens next depends on who answers:
 | Who answers | What this machine gets |
 |---|---|
 | the same run of the server | the match it was in, as the player it was: `Connected` fires and nothing else changes |
-| a server that was restarted | a new join: the world is replaced by the new server's, the scene's client code starts fresh, and `Connected` fires. The old run's `UserId` meant nothing to the new one |
+| a server that was restarted | a new join: the world is replaced by the new server's, the scene's client code starts fresh, and `Connected` fires. The old run's `UserId` meant nothing to the new one; the player's `PublicKey` is the same |
 | nobody, for `[network] timeout` | `Disconnected`, and the machine is solo |
 
 So a game needs one rule for all three: draw "reconnecting" while `State` is
@@ -210,9 +210,81 @@ is full. The host and everybody who joins it use the same relay: a code is
 one relay's, so an invitation says which (`relay://host:port/CODE`). Asking
 needs no match and does not disturb one.
 
-**What a relay sees.** What the match sends, as every router between two
-players does: a match is not encrypted yet (see [Accounts, tokens and
-passwords](#accounts-tokens-and-passwords)).
+**What a relay sees.** Packets it cannot read: a match is encrypted from end
+to end, and the relay passes on what neither it nor any router on the way can
+open (see [A match is encrypted](#a-match-is-encrypted)).
+
+## A match is encrypted
+
+Every match is encrypted -- a dedicated server, a host, a test -- and the game
+does nothing for it. Before anything else is said, the two machines agree on
+keys nobody else has: what a `RemoteEvent` carries, a player's input and the
+world itself cross the network sealed, and a packet somebody changed, played
+back or made up is thrown away as if it had been lost.
+
+**Each machine has a key, and a player is theirs.** The first time a game
+takes part in a match it makes a key and keeps it beside its saves, in a
+`keys` folder only that user can read. The same copy of the game is the same
+key next week; another copy, or a player who deleted the folder, is another.
+That is what `Player.PublicKey` is (see [Players](#players)).
+
+**A host is known by its key too.** The first time a machine joins a server by
+its address, it remembers that server's key, without a word to the player. If
+a later join to the same address meets another key, the join fails and
+`JoinFailed` says so: somebody may be between the two, or the server was
+reinstalled and made a new key. A game can offer the player a way to trust it
+again:
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+-- After the player read why, and chose to trust this server again.
+local function trustAgain(address: string)
+    NetworkService:ForgetServerKey(address)
+    NetworkService:Join(address)
+end
+```
+
+A join by code remembers nothing: the code names a match, not a machine, and
+the relay hands it to another host later.
+
+**A game whose players always join one server can name its key**, so even the
+first join is not taken on trust. A server prints its key when it starts:
+
+```
+INFO  This machine's match key: 3f9c…e1a4. …
+```
+
+and the game's `project.toml` says it beside the address:
+
+```toml
+[network]
+server = "play.example.com:7777"
+server_key = "3f9c…e1a4"
+```
+
+**A server's key is kept beside its own saves**, so it is the same server
+after a restart. Moved to a new machine without that folder, or installed
+afresh, it is a new key, and every player who joined it before is refused
+until they trust it again or the game's `server_key` is updated. See
+[Shipping](manual:guides/shipping#a-dedicated-servers-key).
+
+**Two copies of a game on one machine are two players.** The second finds the
+key held by the first and plays with a key of its own for that run -- which is
+what trying a match on one computer needs.
+
+**For development only, a match in the clear.** `--insecure` on the command
+line, or `encrypt = false` under `[network]` in `project.toml`, turns it off,
+to look at packets with a network tool. The log says so and the F3 overlay
+shows *Encryption: Off*. Both ends must agree: an encrypted game that joins
+one in the clear, or the other way round, fails with a reason that says
+which. A shipping build is always encrypted, and refuses `--insecure`.
+
+**What it costs**: 25 bytes a packet, and well under a microsecond to seal or
+open one. `GetStats()` has `WireBytesSent` and `WireBytesReceived`, what the
+network itself carried with that in it, beside the messages' own
+`BytesSent` and `BytesReceived`.
 
 ## How the connection is doing
 
@@ -568,6 +640,16 @@ to.
 `PlayerRemoving` say when that changes. `NetworkService.LocalPlayer` is the
 player at this machine, and a dedicated server has none. `Player.UserId` is the
 same number on every machine.
+
+**`UserId` is this run of the server's; `PublicKey` is the player's.** A
+`UserId` is given in the order players join, and a player who reconnects while
+the server runs gets theirs back. A server that restarts numbers everybody
+afresh. `Player.PublicKey` is the key the player's game proved when it joined:
+the same on every connection from that copy of the game, after the server
+restarts and on another server. So a server keeps what lasts -- progress, a
+ban -- by `PublicKey`, or by its own account id where the game has accounts
+(see [Talking to a backend](manual:guides/backend)). A client knows only its own
+players' keys; a match in the clear has none.
 
 **How many play, and who stays**. `NetworkService.MaxPlayers` is
 the most players the match takes, the machine's own among them: set it on the
@@ -1053,6 +1135,146 @@ scores, input history) in your own tables and restore it beside the buffer.
 created, destroyed or anchored since the save. `StepSimulation` fires no
 `Touched`; those ticks already did.
 
+## Administering a server
+
+A dedicated server has no window, and its **console** is its standard input:
+type a line in the terminal it runs in, or feed one from a script that starts
+it. A line runs between two ticks, never during one, and its answer is printed
+and written to the log with who ran it.
+
+| Command | Does |
+|---|---|
+| `help [command]` | Every command, the game's too, or one in full. |
+| `status` | Uptime, tick time over the last minute, players, memory, the scene. |
+| `players` | Each player: name, `UserId`, the start of their key, address, ping, time on. |
+| `kick <player> [reason]` | Removes a player, as `Player:Kick` does. They may come back. |
+| `ban <player\|key> [minutes] [reason]` | Removes them and refuses their key again, across restarts. No minutes is for good. |
+| `unban <key>` | Lets a key in again. |
+| `say <text>` | A line every player hears: `NetworkService.Announced` fires with it. |
+| `save` | Writes every save that is waiting, now. |
+| `stop [minutes]` | Tells every player, and each minute after; then saves, removes everybody with a reason, and ends the process cleanly. A second `stop` cancels the countdown. |
+
+`<player>` is a name, a `UserId` or the start of a key; one that matches two
+players is refused with both.
+
+**A ban is of a key**, kept in `bans.json` beside the server's saves. It is
+worth what a key is worth: a player who deletes their game's key folder comes
+back as somebody new. A ban that holds is a ban of an account, which needs a
+game that knows its players' accounts. There is no ban by address: a
+household, a school and a mobile carrier share one.
+
+**A game adds its own commands** with `ConsoleService`, on the server:
+
+```luau
+--!strict
+local ConsoleService = game:GetService("ConsoleService")
+
+ConsoleService:Register("give", {
+    Description = "Gives a player an item.",
+    Parameters = {
+        { Name = "player", Type = "Player" },
+        { Name = "item", Type = "string" },
+        { Name = "count", Type = "number", Optional = true },
+    },
+    Permission = 2,
+}, function(caller, player: Player, item: string, count: number?)
+    giveItem(player, item, count or 1)
+    return `gave {count or 1} {item} to {player.Name}`
+end)
+```
+
+Typed `give Player3 sword 2`, the function gets the `Player`, `"sword"` and
+`2`. A line that does not fit is answered with the command's usage, and the
+function is not called. What it returns is printed; an error it raises is
+printed the same way and does not stop the server; it may yield, and the
+console takes the next line meanwhile. `ConsoleService:ExecuteAsync(line)` runs
+a line from a script, as the console would, and returns its answer.
+
+**Players see what the operator says** where the game shows it:
+`NetworkService.Announced` fires on every machine. A game that has nothing of
+its own mounts the engine's banner in one line, which shows each one across the
+top of the screen for a few seconds:
+
+```luau
+require("@engine/announcements").mount()
+```
+
+The same console can be reached from another machine, by key: see
+[Online games](manual:guides/online-games).
+
+## Who may join, and accounts
+
+A key is a copy of a game, not a person. A game with accounts -- a login on
+its own backend -- tells the server which account a joiner is with a
+**ticket**, and the server checks it **with no call out**:
+
+```luau
+--!strict
+-- A server script.
+local NetworkService = game:GetService("NetworkService")
+
+NetworkService.OnJoinRequest = function(joiner)
+    local claims = NetworkService:VerifyTicket(joiner.Ticket)
+    if claims == nil then
+        return false, "Please log in again."
+    end
+    joiner.AccountId = claims.sub
+    return true
+end
+```
+
+```luau
+--!strict
+-- The player's game, after its own login screen got a ticket from the backend.
+NetworkService:Join("play.example.com:7777", { Ticket = ticket })
+```
+
+- **`OnJoinRequest` runs before the joiner is a player**: no `Player`, no
+  `PlayerAdded`, nothing sent to them but the wait. It may yield to ask the
+  backend; after 10 seconds it is a refusal, and so is an error in it.
+  Refused, the player hears `JoinFailed` with your words. With no
+  `OnJoinRequest`, everybody is let in.
+- **A ticket is a standard JWT** signed with Ed25519 (`EdDSA`), which every
+  backend's JWT library issues: `sub` the account, `aud` your `[project] id`,
+  `iat` and `exp` at most 90 seconds apart, and a `jti` that is new each time.
+  `VerifyTicket` checks it against `ticket_public_key` under `[network]`,
+  refuses one whose algorithm is anything else (`none` included), one that has
+  expired or was used before, and returns its claims. Why one was refused is
+  in the server's log, never told to the player.
+- **One session an account**: the same account joining again drops the one
+  already in, with "This account joined again from somewhere else".
+  `Player.AccountId` is the account on the server.
+- **A ban that holds is a ban of an account**: banning a player who has an
+  account bans `account:<id>`, which a new key does not get round.
+
+A backend issues a ticket with the library it already has:
+
+```js
+// Node, with jose
+import { SignJWT, importPKCS8 } from "jose";
+const key = await importPKCS8(process.env.TICKET_PRIVATE_KEY, "EdDSA");
+const ticket = await new SignJWT({})
+  .setProtectedHeader({ alg: "EdDSA", typ: "JWT" })
+  .setSubject(account.id).setAudience("com.example.realms")
+  .setIssuedAt().setExpirationTime("90s").setJti(crypto.randomUUID())
+  .sign(key);
+```
+
+```python
+# Python, with PyJWT and cryptography
+import jwt, time, uuid
+now = int(time.time())
+ticket = jwt.encode(
+    {"sub": account_id, "aud": "com.example.realms", "iat": now,
+     "exp": now + 90, "jti": str(uuid.uuid4())},
+    private_key, algorithm="EdDSA")
+```
+
+`ludwerk ticket keygen --out=ticket.key` makes the key pair: the private key
+in a file both libraries read, and the public key printed for `project.toml`.
+`ludwerk ticket sign --key=ticket.key --sub=<account>` prints a ticket, for a
+test or a backend that cannot sign one itself.
+
 ## Accounts, tokens and passwords
 
 `CryptoService` is what a login is made of ([`CryptoService`](api:CryptoService)):
@@ -1078,11 +1300,11 @@ end
 - **Compare secrets with `SecureEquals`**, and sign what a client must not
   forge with `HmacSha256` under a key only the server holds.
 
-**What a `RemoteEvent` carries is not hidden yet.** The connection is not
-encrypted yet, so a password sent from a client can be read
-by whoever carries the packets. Until then, keep a login for a network you
-trust, or send it to your own backend over `https://` with `net.request`
-([Talking to a backend](manual:guides/backend)), which is encrypted today.
+**What a `RemoteEvent` carries is hidden**: a match is encrypted (see [A
+match is encrypted](#a-match-is-encrypted)), so a password sent from a client
+reaches the server and nobody on the way. The server it reaches is the one this
+machine met before at that address, or the one the game names with
+`server_key`.
 
 ## What is not here
 
@@ -1094,6 +1316,8 @@ H asking a `RemoteFunction` how often you have honked.
 
 ## Where to look next
 
+- [Online games](manual:guides/online-games) — several worlds, travel between
+  them, instances, and administering a server from another machine
 - [Talking to a backend](manual:guides/backend) — accounts, inventories and
   anything that outlives a match
 - [Input actions](manual:input/actions)

@@ -24,6 +24,10 @@ here.
   default, 0 for no limit. A player over it gets a `JoinFailed` that says why,
   where before they saw "connection lost". A flood from one address is still
   dropped, judged by how fast it connects.
+- A player who joined while their character was still falling is no longer
+  corrected by a couple of centimetres at the first answer: the ticks between
+  the first intent the server answered and the first one the client predicted
+  are stepped again too.
 - A part larger than the streaming radius is sent to a player standing on it
   far from its centre. Interest is measured to the part's edge, so a 4 km floor
   no longer leaves the players on it falling through and corrected every tick.
@@ -47,6 +51,74 @@ here.
 
 ### Added
 
+- Every match is encrypted, with nothing for a game to do: a dedicated server,
+  a host and a test alike, and through a relay that cannot read what it
+  carries. Each copy of a game keeps a key beside its saves, and
+  `Player.PublicKey` is that key: the same player after the server restarts
+  and on another server, which is what a ban or saved progress is kept by. A
+  host's key is remembered the first time it is joined by address, and a
+  later join that meets another key fails and says so;
+  `NetworkService:ForgetServerKey` lets a game trust it again, and
+  `[network] server_key` names the game's own server's key. `--insecure` and
+  `[network] encrypt = false` turn it off for development, and a shipping build
+  refuses both. `GetStats()` has `WireBytesSent` and `WireBytesReceived`, what
+  the network itself carried. A build of this version cannot join an earlier
+  one: the protocol is 54.
+- A server says who may join: `NetworkService.OnJoinRequest` runs before a
+  joiner is a player, may ask the game's backend, and lets them in or refuses
+  them in the game's words. `NetworkService:VerifyTicket` checks a login
+  ticket -- a standard JWT signed with Ed25519, which any backend's JWT library
+  issues -- with no call out: signature, game, a life of at most 90 seconds,
+  and used once. `Join(address, { Ticket = ticket })` presents one inside the
+  encrypted connection. `Player.AccountId` is the account; the same account
+  joining again drops the first; a ban of an account holds whatever key it
+  comes back with. `ludwerk ticket keygen` and `sign` make a backend's key
+  pair and a ticket.
+- A dedicated server has a console on its standard input: `help`, `status`,
+  `players`, `kick`, `ban` (by key, kept across restarts), `unban`, `say`,
+  `save` and `stop [minutes]`, which counts down, saves, lets everybody go and
+  ends cleanly. A game adds its own commands with `ConsoleService:Register`,
+  typed parameters and a permission level, and runs one from a script with
+  `ExecuteAsync`. What the operator says fires `NetworkService.Announced`, and
+  `@engine/announcements` shows it across the top of the screen in one line.
+- Online games of several worlds: `engine-host --manager=servers.toml`, or
+  `ludwerk server run`, starts each world named in `servers.toml` from the
+  server's own binary, starts a fallen one again within a limit, keeps each
+  world's log, and answers players at one front door that sends each to the
+  entry world. `update <folder>` moves every world to a new build a world at a
+  time, its players carried across, nobody dropped. `ludwerk server install`
+  makes it start with the machine: a systemd unit on Linux, a startup task on
+  Windows.
+- `NetworkService:Travel` and `TravelGroup` send players to another world of
+  the game with what the game hands over, which `TravelArrived` reads there.
+  Each hop carries a pass signed by the manager, good for thirty seconds and
+  once. `TravelStarted` fires on the client before it leaves, and
+  `@engine/travelscreen` is a loading screen over the hop in one line.
+- `InstanceService:CreateInstanceAsync` makes a copy of a scene for one group
+  -- a dungeon, an arena -- from `servers.toml`'s `[[instance]]` rows, a warm
+  one at once. Only the group may enter, one who drops comes back to it, and
+  it closes when it has been empty for its while. `InstanceClosed` tells the
+  world that made it why it went; a group whose instance fell is sent back,
+  and `TravelArrived` says so.
+- `CrossWorldService:Publish` and `Subscribe` carry events between a game's
+  worlds: a chat line, a boss that fell. `require("@std/net").websocket(url)`
+  opens a WebSocket from a server, or from a client whose project allows it.
+- A dedicated server or a manager can be administered from another machine,
+  by key: `ludwerk server keygen` makes an administrator's key, `admins.toml`
+  names who may come in, and `ludwerk server connect` opens the console --
+  a prompt, one `--command` for a script, `--follow` for the log. Off unless
+  `[server] admin` or `--admin` turns it on, and on the machine's own address
+  unless `admin_allow` names others.
+- `GET /health` and `GET /metrics`, as JSON, for a load balancer or a
+  dashboard: `[server] health` or `--health` on a dedicated server, `[manager]
+  health` for every world a manager runs.
+- In the editor, a project with a `servers.toml` plays its worlds: Start match
+  with *This game's worlds* runs the manager on the machine, each world
+  without a window, with a Console tab for each world that also takes a line
+  for its console, and a table in the Run view with *End*, which ends a world
+  as a crash would, and *Restart with this build*.
+- `examples/47-realms`: a town, the fields beyond it and a dungeon for each
+  party that stands on the gate.
 - The editor notices files changed outside it while it is open, such as by
   VS Code or another program:
   - A script it has not edited takes the new text, and the next Play runs it.
@@ -112,7 +184,7 @@ here.
 - Android games target API 36 (Android 16), which Google Play requires of new
   apps and updates. They still run from API 21. Building needs SDK platform 36
   and build-tools 36.0.0; `scripts/install-android.ps1` installs them.
-- The wire protocol is 53. A build before this one cannot join a server of
+- The wire protocol is 54. A build before this one cannot join a server of
   this one, or the other way round.
 - In the editor, the scene is edited, and Play starts, in the project's
   graphics settings; a player's saved ones are Play's only when asked for.

@@ -10,6 +10,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#if !defined(_WIN32)
+#include <cerrno>
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -125,6 +130,83 @@ void writeConsole(ConsoleStream stream, std::string_view utf8)
 #endif
 
     writeBytes(stream, utf8);
+}
+
+InputRead readStandardInput(std::string& out, core::u32 timeoutMs)
+{
+    char buffer[4096];
+#if defined(_WIN32)
+    const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    if (input == nullptr || input == INVALID_HANDLE_VALUE)
+        return InputRead::Ended;
+    DWORD read = 0;
+    switch (GetFileType(input)) {
+    case FILE_TYPE_PIPE: {
+        // A pipe says how much is waiting without blocking for it.
+        const ULONGLONG until = GetTickCount64() + timeoutMs;
+        while (true) {
+            DWORD waiting = 0;
+            if (!PeekNamedPipe(input, nullptr, 0, nullptr, &waiting, nullptr))
+                return InputRead::Ended;
+            if (waiting > 0)
+                break;
+            if (GetTickCount64() >= until)
+                return InputRead::Nothing;
+            Sleep(10);
+        }
+        if (!ReadFile(input, buffer, sizeof(buffer), &read, nullptr) || read == 0)
+            return InputRead::Ended;
+        break;
+    }
+    case FILE_TYPE_CHAR: {
+        // A console: signalled when there is input of any kind, and read a
+        // line at a time once there is.
+        DWORD mode = 0;
+        if (GetConsoleMode(input, &mode)) {
+            if (WaitForSingleObject(input, timeoutMs) != WAIT_OBJECT_0)
+                return InputRead::Nothing;
+            DWORD events = 0;
+            INPUT_RECORD record{};
+            // Only a key going down starts a line; the rest -- focus, the
+            // mouse, a key coming up -- is taken off the queue and waited past.
+            if (!PeekConsoleInputW(input, &record, 1, &events) || events == 0)
+                return InputRead::Nothing;
+            if (record.EventType != KEY_EVENT || !record.Event.KeyEvent.bKeyDown) {
+                (void)ReadConsoleInputW(input, &record, 1, &events);
+                return InputRead::Nothing;
+            }
+        }
+        if (!ReadFile(input, buffer, sizeof(buffer), &read, nullptr) || read == 0)
+            return InputRead::Ended;
+        break;
+    }
+    default:
+        // A file, or nothing at all (`NUL`): a read never waits.
+        if (!ReadFile(input, buffer, sizeof(buffer), &read, nullptr) || read == 0)
+            return InputRead::Ended;
+        break;
+    }
+    out.append(buffer, read);
+    return InputRead::Data;
+#else
+    pollfd waiting{};
+    waiting.fd = STDIN_FILENO;
+    waiting.events = POLLIN;
+    const int ready = ::poll(&waiting, 1, static_cast<int>(timeoutMs));
+    if (ready == 0)
+        return InputRead::Nothing;
+    if (ready < 0)
+        return errno == EINTR ? InputRead::Nothing : InputRead::Ended;
+    if ((waiting.revents & (POLLIN | POLLHUP)) == 0)
+        return InputRead::Ended;
+    const ssize_t read = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+    if (read < 0)
+        return errno == EINTR || errno == EAGAIN ? InputRead::Nothing : InputRead::Ended;
+    if (read == 0)
+        return InputRead::Ended;
+    out.append(buffer, static_cast<std::size_t>(read));
+    return InputRead::Data;
+#endif
 }
 
 } // namespace engine::platform

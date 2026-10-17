@@ -13,6 +13,7 @@
 #include <string_view>
 
 #include "engine/asset/terrain_cell.h"
+#include "engine/core/crypto.h"
 #include "engine/core/finite.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -76,6 +77,17 @@ namespace {
         return beyond * beyond;
     }
     return std::nullopt;
+}
+
+// A guest at another seat of the same machine (ADR 0205): its machine's key
+// and its seat, hashed, so the same seat is the same player again.
+[[nodiscard]] std::string guestKeyOf(const std::array<u8, 32>& key, u8 seat)
+{
+    std::array<u8, 33> joined{};
+    std::copy(key.begin(), key.end(), joined.begin());
+    joined[32] = seat;
+    const core::Blake2b hashed = core::blake2b(joined);
+    return core::toHex(std::span<const u8>(hashed.data(), 32));
 }
 
 // **A token nobody can guess** (ADR 0085), from the operating system's
@@ -2463,6 +2475,18 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
     // Where players live. A world with no `NetworkService` -- a test's bare
     // tree -- still replicates; it just has nobody to name.
     const InstanceId network = scene::networkServiceOf(world, world.parentOf(root));
+    // **A host is a player too** (ADR 0224): its own players are its key, as
+    // a joiner's are theirs -- the first the machine's, a guest the machine's
+    // and its seat.
+    if (const std::optional<std::array<u8, 32>> own = m_transport.localKey(); own.has_value()) {
+        std::vector<InstanceId> here;
+        scene::localPlayers(world, here);
+        for (std::size_t seat = 0; seat < here.size(); ++seat) {
+            scene::PlayerComponent* player = world.players().find(here[seat]);
+            if (player != nullptr && player->publicKey.empty())
+                player->publicKey = seat == 0 ? core::toHex(*own) : guestKeyOf(*own, static_cast<u8>(seat));
+        }
+    }
     // **A connection that never says hello is let go**: it holds a slot, and
     // a slot is what the next player needs.
     // The per-tick limits count from one tick to the next, whatever the
@@ -2491,9 +2515,14 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
         peer.lateIntentCounted = false;
         peer.ownedThisTick = 0;
         peer.remoteBytesThisTick = 0;
-        if (!peer.welcomed && ++peer.unwelcomedReceives > MaxUnwelcomedReceives)
+        // One the game is still deciding about waits for its word, a while.
+        if (!peer.welcomed && peer.asking == 0 && ++peer.unwelcomedReceives > MaxUnwelcomedReceives)
             silent.push_back(peer.id);
+        if (!peer.welcomed && peer.asking != 0 && ++peer.askReceives > MaxAskReceives &&
+            !m_answers.contains(peer.asking))
+            m_answers[peer.asking] = JoinAnswer{.admit = false, .reason = {}, .accountId = {}};
     }
+    settleAsks(world, network);
     for (const net::PeerId gone : silent) {
         // A player whose connection went silent leaves, as one whose
         // connection closed does.
@@ -3005,6 +3034,19 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 token.high = reader.u64v();
                 token.low = reader.u64v();
                 const u64 luauFlags = reader.u64v();
+                const std::string_view ticket = reader.remaining() >= 2 ? reader.text() : std::string_view{};
+                const std::string_view pass = reader.remaining() >= 2 ? reader.text() : std::string_view{};
+                // **A player is their key** (ADR 0224): one that proved a key
+                // in the handshake is that key's player, whatever token it
+                // sent -- the same `UserId` on a reconnect while this server
+                // runs, and its `PublicKey` what lasts past that. The token is
+                // still this run's own, so a server that restarted is a fresh
+                // join to the player's machine (ADR 0085).
+                const std::optional<std::array<u8, 32>> key = m_transport.remoteKey(peer->id);
+                if (key.has_value()) {
+                    const auto known = m_keyTokens.find(*key);
+                    token = known != m_keyTokens.end() ? known->second : PlayerToken{};
+                }
                 // **Other Luau flags are other scripts** (ADR 0217): the same
                 // source parsed, compiled or run another way, so a world that
                 // parts from this one by the first tick. Said, like a version.
@@ -3033,108 +3075,28 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     m_transport.disconnect(peer->id);
                     break;
                 }
-                // **A token this authority gave is the same player again**
-                // (ADR 0085): the same `UserId`, so a game keyed on it finds
-                // the score, the seat and the inventory it left. Anything else
-                // -- the first time, or a token from an authority that has
-                // since restarted -- is a new player with a new token.
-                u32 userId = 0;
-                if (const auto known = m_identities.find(token); token.valid() && known != m_identities.end())
-                    userId = known->second;
-                if (userId != 0) {
-                    // A connection that still holds this player is one that
-                    // died without saying so and has not timed out yet: the
-                    // player is here now, so that one is let go.
-                    std::vector<net::PeerId> stale;
-                    for (const Peer& other : m_peers) {
-                        if (!(other.id == event.peer) && other.welcomed && other.token == token)
-                            stale.push_back(other.id);
-                    }
-                    for (const net::PeerId gone : stale) {
-                        if (Peer* old = peerFor(gone); old != nullptr && old->player.valid())
-                            scene::removePlayer(world, network, old->player);
-                        m_transport.disconnect(gone);
-                        std::erase_if(m_peers, [&](const Peer& candidate) { return candidate.id == gone; });
-                    }
-                    peer = peerFor(event.peer);
-                    if (peer == nullptr)
-                        break;
+                // Asked already, and waiting for the answer: a second hello
+                // is nothing.
+                if (peer->asking != 0)
+                    break;
+                if (m_gate) {
+                    peer->asking = m_nextAsk++;
+                    peer->askedToken = token;
+                    JoinAsk ask;
+                    ask.id = peer->asking;
+                    ask.publicKey = key.has_value() ? core::toHex(*key) : std::string{};
+                    ask.address = m_transport.addressText(peer->id);
+                    ask.ticket.assign(ticket.substr(0, MaxTicketBytes));
+                    ask.pass.assign(pass.substr(0, MaxPassBytes));
+                    const net::PeerId asked = peer->id;
+                    m_gate(ask);
+                    // Answered inside the call -- a ban list -- is settled now,
+                    // so a gate costs a joiner no tick.
+                    settleAsks(world, network);
+                    (void)asked;
+                    break;
                 }
-                // **An address with as many players as it may be says so**
-                // -- a household, a school, a carrier's NAT -- rather than
-                // being dropped and heard as a lost connection.
-                if (m_maxPerAddress != 0 && peer->address != 0) {
-                    u32 fromThere = 0;
-                    for (const Peer& other : m_peers)
-                        fromThere += other.welcomed && other.address == peer->address ? 1u : 0u;
-                    if (fromThere >= m_maxPerAddress) {
-                        const std::array<core::I18nArg, 1> args{
-                            core::I18nArg{"most", static_cast<core::i64>(m_maxPerAddress)}};
-                        core::log(core::LogLevel::Info, ENG_TR("net.info.refused_address_limit"), args);
-                        Writer refused;
-                        refused.u8v(static_cast<u8>(MessageType::Refused));
-                        refused.u8v(RefusedAddressLimit);
-                        refused.text({});
-                        (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
-                                        m_stats);
-                        m_transport.disconnect(peer->id);
-                        break;
-                    }
-                }
-                // **A full server says so**, after a returning player's
-                // old connection was let go -- that seat is theirs.
-                if (m_maxPlayers != 0) {
-                    u32 seated = 0;
-                    for (const Peer& other : m_peers) {
-                        seated += other.welcomed ? 1u : 0u;
-                        // Somebody's guest is a player the match holds.
-                        for (const Peer::Guest& sitting : other.guests)
-                            seated += other.welcomed && sitting.userId != 0 ? 1u : 0u;
-                    }
-                    if (seated >= m_maxPlayers) {
-                        Writer refused;
-                        refused.u8v(static_cast<u8>(MessageType::Refused));
-                        refused.u8v(RefusedFull);
-                        refused.text({});
-                        (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel,
-                                        m_stats);
-                        m_transport.disconnect(peer->id);
-                        break;
-                    }
-                }
-                if (userId == 0) {
-                    userId = m_nextUserId++;
-                    token = freshToken();
-                    // **Bounded**: a peer that throws its token away and
-                    // dials again is a new player each time. Past the limit
-                    // the longest-known one not connected now is forgotten.
-                    if (m_identities.size() >= MaxKnownIdentities) {
-                        auto oldest = m_identities.end();
-                        for (auto at = m_identities.begin(); at != m_identities.end(); ++at) {
-                            const bool connected = std::any_of(m_peers.begin(), m_peers.end(), [&](const Peer& other) {
-                                return other.welcomed && other.token == at->first;
-                            });
-                            if (!connected && (oldest == m_identities.end() || at->second < oldest->second))
-                                oldest = at;
-                        }
-                        if (oldest != m_identities.end())
-                            m_identities.erase(oldest);
-                    }
-                    m_identities[token] = userId;
-                }
-                peer->welcomed = true;
-                peer->userId = userId;
-                peer->token = token;
-                if (network.valid())
-                    peer->player = scene::createPlayer(world, network, peer->userId, false);
-                Writer welcome;
-                welcome.u8v(static_cast<u8>(MessageType::Welcome));
-                welcome.u32v(generated::ProtocolVersion);
-                welcome.u32v(peer->userId);
-                welcome.u64v(m_tick);
-                welcome.u64v(token.high);
-                welcome.u64v(token.low);
-                sendBytes(m_transport, peer->id, welcome.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+                admit(world, network, peer->id, token);
             }
             else if ((type == MessageType::GuestJoin || type == MessageType::GuestLeave) && peer->welcomed) {
                 // **Somebody else at the same screen** (protocol 48, ADR
@@ -3172,6 +3134,11 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     if (m_maxPlayers == 0 || seated < m_maxPlayers) {
                         guest.userId = m_nextUserId++;
                         guest.player = scene::createPlayer(world, network, guest.userId, false);
+                        // A guest is its machine's key and its seat: the same
+                        // player at that seat next time.
+                        if (scene::PlayerComponent* sat = world.players().find(guest.player);
+                            sat != nullptr && peer->key.has_value())
+                            sat->publicKey = guestKeyOf(*peer->key, seat);
                     }
                 }
                 // Who sits there now: its number, or nobody.
@@ -4484,6 +4451,8 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             hello.u64v(m_token.high);
             hello.u64v(m_token.low);
             hello.u64v(m_luauFlags);
+            hello.text(std::string_view{m_ticket}.substr(0, MaxTicketBytes));
+            hello.text(std::string_view{m_pass}.substr(0, MaxPassBytes));
             sendBytes(m_transport, m_authority, hello.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
             continue;
         }
@@ -4539,10 +4508,14 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_token = token;
             // The player at this machine takes the number the authority gave
             // it, so `LocalPlayer.UserId` on a replica is the same number the
-            // authority's copy of that player has.
+            // authority's copy of that player has -- and the key it proved,
+            // which the authority has too (ADR 0224).
             if (const InstanceId local = scene::localPlayerOf(world); local.valid()) {
-                if (scene::PlayerComponent* component = world.players().find(local); component != nullptr)
+                if (scene::PlayerComponent* component = world.players().find(local); component != nullptr) {
                     component->userId = player;
+                    const std::optional<std::array<u8, 32>> key = m_transport.localKey();
+                    component->publicKey = key.has_value() ? core::toHex(*key) : std::string{};
+                }
                 world.setName(local, world.atoms().intern("Player" + std::to_string(player)));
             }
             break;
@@ -4572,6 +4545,37 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_welcomed = false;
             break;
         }
+        case MessageType::Redirect: {
+            // **Sent elsewhere** (ADRs 0220, 0222): this connection is let go,
+            // and the session joins where it was told, with the pass.
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const std::string_view address = reader.text();
+            const u16 port = reader.u16v();
+            const std::string_view pass = reader.text();
+            const std::string_view key = reader.text();
+            const std::string_view where = reader.remaining() >= 2 ? reader.text() : std::string_view{};
+            if (!reader.ok() || address.empty() || port == 0)
+                break;
+            m_redirectWorld.assign(where.substr(0, 64));
+            m_redirectAddress.assign(address);
+            m_redirectPort = port;
+            m_redirectPass.assign(pass.substr(0, MaxPassBytes));
+            m_redirectKey.assign(key.substr(0, 64));
+            ++m_redirects;
+            m_transport.disconnect(m_authority);
+            break;
+        }
+        case MessageType::Announce: {
+            // **What the server's operator said** (ADR 0218): for this
+            // machine's scripts to hear, between ticks.
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            const std::string_view text = reader.text();
+            if (reader.ok())
+                world.engineState().serverMessages.emplace_back(text.substr(0, MaxRemovedReasonBytes));
+            break;
+        }
         case MessageType::Players:
             onPlayers(world, root, event.payload);
             break;
@@ -4594,6 +4598,8 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             if (userId != 0) {
                 guest.userId = userId;
                 component->userId = userId;
+                const std::optional<std::array<u8, 32>> key = m_transport.localKey();
+                component->publicKey = key.has_value() ? guestKeyOf(*key, seat) : std::string{};
                 world.setName(guest.player, world.atoms().intern("Player" + std::to_string(userId)));
                 world.changes().push(scene::Change{
                     scene::ChangeKind::PropertyChanged, guest.player, {}, world.atoms().intern("UserId")});
@@ -6959,6 +6965,268 @@ void ReplicaSession::onSnapshotPart(scene::World& world, InstanceId root, std::s
     onSnapshot(world, root, joined, true);
 }
 
+// **A hello that passed every check is a player**: the same one again where
+// the token is known (ADR 0085), else a new one -- unless the address or the
+// match is full, which is said.
+void AuthoritySession::admit(scene::World& world, InstanceId network, net::PeerId id, PlayerToken token)
+{
+    // **A token this authority gave is the same player again**
+    // (ADR 0085): the same `UserId`, so a game keyed on it finds
+    // the score, the seat and the inventory it left. Anything else
+    // -- the first time, or a token from an authority that has
+    // since restarted -- is a new player with a new token.
+    Peer* peer = peerFor(id);
+    if (peer == nullptr)
+        return;
+    const std::optional<std::array<u8, 32>> key = m_transport.remoteKey(id);
+    u32 userId = 0;
+    if (const auto known = m_identities.find(token); token.valid() && known != m_identities.end())
+        userId = known->second;
+    if (userId != 0) {
+        // A connection that still holds this player is one that
+        // died without saying so and has not timed out yet: the
+        // player is here now, so that one is let go.
+        std::vector<net::PeerId> stale;
+        for (const Peer& other : m_peers) {
+            if (!(other.id == id) && other.welcomed && other.token == token)
+                stale.push_back(other.id);
+        }
+        for (const net::PeerId gone : stale) {
+            if (Peer* old = peerFor(gone); old != nullptr && old->player.valid())
+                scene::removePlayer(world, network, old->player);
+            m_transport.disconnect(gone);
+            std::erase_if(m_peers, [&](const Peer& candidate) { return candidate.id == gone; });
+        }
+        peer = peerFor(id);
+        if (peer == nullptr)
+            return;
+    }
+    // **An address with as many players as it may be says so**
+    // -- a household, a school, a carrier's NAT -- rather than
+    // being dropped and heard as a lost connection.
+    if (m_maxPerAddress != 0 && peer->address != 0) {
+        u32 fromThere = 0;
+        for (const Peer& other : m_peers)
+            fromThere += other.welcomed && other.address == peer->address ? 1u : 0u;
+        if (fromThere >= m_maxPerAddress) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"most", static_cast<core::i64>(m_maxPerAddress)}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.refused_address_limit"), args);
+            Writer refused;
+            refused.u8v(static_cast<u8>(MessageType::Refused));
+            refused.u8v(RefusedAddressLimit);
+            refused.text({});
+            (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            m_transport.disconnect(peer->id);
+            return;
+        }
+    }
+    // **A full server says so**, after a returning player's
+    // old connection was let go -- that seat is theirs.
+    if (m_maxPlayers != 0) {
+        u32 seated = 0;
+        for (const Peer& other : m_peers) {
+            seated += other.welcomed ? 1u : 0u;
+            // Somebody's guest is a player the match holds.
+            for (const Peer::Guest& sitting : other.guests)
+                seated += other.welcomed && sitting.userId != 0 ? 1u : 0u;
+        }
+        if (seated >= m_maxPlayers) {
+            Writer refused;
+            refused.u8v(static_cast<u8>(MessageType::Refused));
+            refused.u8v(RefusedFull);
+            refused.text({});
+            (void)sendBytes(m_transport, peer->id, refused.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            m_transport.disconnect(peer->id);
+            return;
+        }
+    }
+    if (userId == 0) {
+        userId = m_nextUserId++;
+        token = freshToken();
+        if (key.has_value())
+            m_keyTokens[*key] = token;
+        // **Bounded**: a peer that throws its token away and
+        // dials again is a new player each time. Past the limit
+        // the longest-known one not connected now is forgotten.
+        if (m_identities.size() >= MaxKnownIdentities) {
+            auto oldest = m_identities.end();
+            for (auto at = m_identities.begin(); at != m_identities.end(); ++at) {
+                const bool connected = std::any_of(m_peers.begin(), m_peers.end(), [&](const Peer& other) {
+                    return other.welcomed && other.token == at->first;
+                });
+                if (!connected && (oldest == m_identities.end() || at->second < oldest->second))
+                    oldest = at;
+            }
+            if (oldest != m_identities.end()) {
+                const PlayerToken forgotten = oldest->first;
+                std::erase_if(m_keyTokens, [&](const auto& entry) { return entry.second == forgotten; });
+                m_identities.erase(oldest);
+            }
+        }
+        m_identities[token] = userId;
+    }
+    peer->welcomed = true;
+    peer->joinedTick = m_tick;
+    peer->userId = userId;
+    peer->token = token;
+    if (network.valid())
+        peer->player = scene::createPlayer(world, network, peer->userId, false);
+    if (key.has_value()) {
+        peer->key = *key;
+        if (scene::PlayerComponent* player = world.players().find(peer->player); player != nullptr)
+            player->publicKey = core::toHex(*key);
+    }
+    // The account the game named (ADR 0226), on its player.
+    if (scene::PlayerComponent* player = world.players().find(peer->player); player != nullptr)
+        player->accountId = peer->accountId;
+    Writer welcome;
+    welcome.u8v(static_cast<u8>(MessageType::Welcome));
+    welcome.u32v(generated::ProtocolVersion);
+    welcome.u32v(peer->userId);
+    welcome.u64v(m_tick);
+    welcome.u64v(token.high);
+    welcome.u64v(token.low);
+    sendBytes(m_transport, peer->id, welcome.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+}
+
+// **The game's answers, settled** (`setJoinGate`): a refusal is said in the
+// game's words and let go; an admission is welcomed as any hello is.
+void AuthoritySession::settleAsks(scene::World& world, InstanceId network)
+{
+    for (auto answer = m_answers.begin(); answer != m_answers.end();) {
+        const auto asking = std::find_if(m_peers.begin(), m_peers.end(), [&](const Peer& candidate) {
+            return candidate.asking == answer->first && !candidate.welcomed;
+        });
+        if (asking == m_peers.end()) {
+            // Not asked yet, or the joiner has gone: an answer for an ask that
+            // is not made yet waits; one for a joiner gone is forgotten.
+            if (answer->first >= m_nextAsk)
+                ++answer;
+            else
+                answer = m_answers.erase(answer);
+            continue;
+        }
+        const net::PeerId id = asking->id;
+        const PlayerToken token = asking->askedToken;
+        JoinAnswer said = std::move(answer->second);
+        answer = m_answers.erase(answer);
+        asking->asking = 0;
+        if (!said.admit) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"reason", std::string_view{said.reason}}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.refused_by_game"), args);
+            Writer refused;
+            refused.u8v(static_cast<u8>(MessageType::Refused));
+            refused.u8v(RefusedByGame);
+            refused.text(std::string_view{said.reason}.substr(0, MaxRemovedReasonBytes));
+            (void)sendBytes(m_transport, id, refused.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+            m_transport.disconnect(id);
+            continue;
+        }
+        asking->accountId = std::move(said.accountId);
+        admit(world, network, id, token);
+    }
+}
+
+bool AuthoritySession::redirect(u32 userId, std::string_view address, u16 port, std::string_view pass,
+                                std::string_view key, std::string_view world)
+{
+    const auto found = std::find_if(m_peers.begin(), m_peers.end(),
+                                    [&](const Peer& peer) { return peer.welcomed && peer.userId == userId; });
+    if (found == m_peers.end())
+        return false;
+    const std::vector<u8> said = redirectMessage(address, port, pass, key, world);
+    (void)sendBytes(m_transport, found->id, said, net::Delivery::Reliable, ControlChannel, m_stats);
+    return true;
+}
+
+void AuthoritySession::announce(std::string_view text)
+{
+    Writer said;
+    said.u8v(static_cast<u8>(MessageType::Announce));
+    said.text(text.substr(0, MaxRemovedReasonBytes));
+    for (const Peer& peer : m_peers) {
+        if (peer.welcomed)
+            (void)sendBytes(m_transport, peer.id, said.bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
+}
+
+std::vector<PeerSummary> AuthoritySession::players() const
+{
+    std::vector<PeerSummary> out;
+    for (const Peer& peer : m_peers) {
+        if (!peer.welcomed)
+            continue;
+        PeerSummary one;
+        one.userId = peer.userId;
+        one.publicKey = peer.key.has_value() ? core::toHex(*peer.key) : std::string{};
+        one.address = m_transport.addressText(peer.id);
+        one.pingMs = m_transport.link(peer.id).roundTripMs;
+        one.joinedTick = peer.joinedTick;
+        one.accountId = peer.accountId;
+        out.push_back(std::move(one));
+    }
+    return out;
+}
+
+std::vector<u8> refusalMessage(u8 reason, std::string_view words)
+{
+    Writer refused;
+    refused.u8v(static_cast<u8>(MessageType::Refused));
+    refused.u8v(reason);
+    refused.text(words.substr(0, MaxRemovedReasonBytes));
+    return std::move(refused.bytes);
+}
+
+u32 protocolVersion() noexcept
+{
+    return generated::ProtocolVersion;
+}
+
+u8 transportChannels() noexcept
+{
+    return static_cast<u8>(std::size(generated::Channels));
+}
+
+std::optional<HelloFields> readHello(std::span<const u8> payload)
+{
+    if (payload.empty() || payload[0] != static_cast<u8>(MessageType::Hello))
+        return std::nullopt;
+    Reader reader(payload);
+    (void)reader.u8v();
+    HelloFields hello;
+    hello.protocol = reader.u32v();
+    (void)reader.u64v();
+    (void)reader.u64v();
+    hello.luauFlags = reader.u64v();
+    if (reader.remaining() >= 2)
+        hello.ticket.assign(reader.text().substr(0, MaxTicketBytes));
+    if (reader.remaining() >= 2)
+        hello.pass.assign(reader.text().substr(0, MaxPassBytes));
+    if (!reader.ok())
+        return std::nullopt;
+    return hello;
+}
+
+std::vector<u8> redirectMessage(std::string_view address, u16 port, std::string_view pass, std::string_view key,
+                                std::string_view world)
+{
+    Writer said;
+    said.u8v(static_cast<u8>(MessageType::Redirect));
+    said.text(address);
+    said.u16v(port);
+    said.text(pass.substr(0, MaxPassBytes));
+    said.text(key.substr(0, 64));
+    said.text(world.substr(0, 64));
+    return std::move(said.bytes);
+}
+
+std::vector<u8> matchPrologue(std::string_view projectId)
+{
+    std::string text = "match " + std::to_string(generated::ProtocolVersion) + " ";
+    text += projectId;
+    return std::vector<u8>(text.begin(), text.end());
+}
+
 void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answers)
 {
     // One character of the machine's, as this answer finds it.
@@ -7200,6 +7468,32 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
             if (one.answer->start.jumpSpeed.has_value())
                 one.commands.back().jumpSpeed = *one.answer->start.jumpSpeed;
         }
+        // **A taken character's history can begin after the tick answered**:
+        // its intents were answered from the first one sent, and this
+        // machine predicted it only from the tick its character arrived. The
+        // ticks between were stepped by the authority all the same -- a fall
+        // goes on -- so they are stepped here, standing, as the ticks a guest
+        // lacks are below. Left out, a character that joined in the air was
+        // replayed a tick short of its fall and corrected by that tick at the
+        // first comparison.
+        if (complete && !one.comparing && !one.commands.empty() && one.commands.front().tick > m_ackedIntent + 1) {
+            const usize lacking = static_cast<usize>(one.commands.front().tick - m_ackedIntent - 1);
+            scene::CharacterCommand standing = one.commands.front();
+            standing.moveDirection = core::Vec3{};
+            standing.jump = false;
+            standing.intents.clear();
+            standing.presses.clear();
+            std::vector<scene::CharacterCommand> whole;
+            whole.reserve(lacking + one.commands.size());
+            for (usize at = 0; at < lacking; ++at) {
+                standing.tick = m_ackedIntent + 1 + at;
+                whole.push_back(standing);
+            }
+            whole.insert(whole.end(), std::make_move_iterator(one.commands.begin()),
+                         std::make_move_iterator(one.commands.end()));
+            one.commands = std::move(whole);
+            one.before = lacking;
+        }
         if (fullest == nullptr || one.commands.size() > count) {
             count = one.commands.size();
             fullest = &one;
@@ -7228,7 +7522,8 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
             complete = false;
             break;
         }
-        one.before = count - one.commands.size();
+        const usize lacking = count - one.commands.size();
+        one.before += lacking;
         scene::CharacterCommand standing;
         if (!one.commands.empty()) {
             standing = one.commands.front();
@@ -7244,7 +7539,7 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
         standing.presses.clear();
         std::vector<scene::CharacterCommand> whole;
         whole.reserve(count);
-        for (usize at = 0; at < one.before; ++at) {
+        for (usize at = 0; at < lacking; ++at) {
             standing.tick = fullest->commands[at].tick;
             standing.dt = fullest->commands[at].dt;
             whole.push_back(standing);

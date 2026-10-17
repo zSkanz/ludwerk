@@ -108,4 +108,130 @@ bool verifyPassword(std::string_view hash, std::string_view password)
     return crypto_pwhash_str_verify(text, password.data(), password.size()) == 0;
 }
 
+X25519Pair x25519Generate()
+{
+    X25519Pair pair;
+    secureRandom(pair.secret);
+    pair.pub = x25519Public(pair.secret);
+    return pair;
+}
+
+std::array<u8, 32> x25519Public(const std::array<u8, 32>& secret)
+{
+    std::array<u8, 32> pub{};
+    crypto_scalarmult_base(pub.data(), secret.data());
+    return pub;
+}
+
+bool x25519(const std::array<u8, 32>& secret, const std::array<u8, 32>& peerPublic, std::array<u8, 32>& shared)
+{
+    return crypto_scalarmult(shared.data(), secret.data(), peerPublic.data()) == 0;
+}
+
+namespace {
+
+[[nodiscard]] std::array<u8, crypto_aead_chacha20poly1305_ietf_NPUBBYTES> nonceOf(u64 counter)
+{
+    std::array<u8, crypto_aead_chacha20poly1305_ietf_NPUBBYTES> nonce{};
+    for (usize at = 0; at < 8; ++at)
+        nonce[4 + at] = static_cast<u8>(counter >> (8 * at));
+    return nonce;
+}
+
+} // namespace
+
+void aeadSeal(const std::array<u8, 32>& key, u64 nonce, std::span<const u8> associated, std::span<const u8> plain,
+              std::vector<u8>& out)
+{
+    out.resize(plain.size() + AeadTagBytes);
+    unsigned long long written = 0;
+    const auto n = nonceOf(nonce);
+    crypto_aead_chacha20poly1305_ietf_encrypt(out.data(), &written, plain.data(), plain.size(), associated.data(),
+                                              associated.size(), nullptr, n.data(), key.data());
+    out.resize(static_cast<usize>(written));
+}
+
+bool aeadOpen(const std::array<u8, 32>& key, u64 nonce, std::span<const u8> associated, std::span<const u8> sealed,
+              std::vector<u8>& out)
+{
+    if (sealed.size() < AeadTagBytes)
+        return false;
+    std::vector<u8> plain(sealed.size() - AeadTagBytes);
+    unsigned long long written = 0;
+    const auto n = nonceOf(nonce);
+    if (crypto_aead_chacha20poly1305_ietf_decrypt(plain.data(), &written, nullptr, sealed.data(), sealed.size(),
+                                                  associated.data(), associated.size(), n.data(), key.data()) != 0)
+        return false;
+    plain.resize(static_cast<usize>(written));
+    out = std::move(plain);
+    return true;
+}
+
+Blake2b blake2b(std::span<const u8> data)
+{
+    Blake2b out{};
+    crypto_generichash_blake2b(out.data(), out.size(), data.data(), data.size(), nullptr, 0);
+    return out;
+}
+
+Blake2b hmacBlake2b(std::span<const u8> key, std::span<const u8> data)
+{
+    // RFC 2104 with BLAKE2b's 128-byte block: a longer key is hashed first.
+    constexpr usize Block = 128;
+    std::array<u8, Block> padded{};
+    if (key.size() > Block) {
+        const Blake2b hashed = blake2b(key);
+        std::copy(hashed.begin(), hashed.end(), padded.begin());
+    }
+    else {
+        std::copy(key.begin(), key.end(), padded.begin());
+    }
+    std::array<u8, Block> inner{};
+    std::array<u8, Block> outer{};
+    for (usize at = 0; at < Block; ++at) {
+        inner[at] = static_cast<u8>(padded[at] ^ 0x36u);
+        outer[at] = static_cast<u8>(padded[at] ^ 0x5cu);
+    }
+    crypto_generichash_blake2b_state state;
+    Blake2b innerHash{};
+    crypto_generichash_blake2b_init(&state, nullptr, 0, innerHash.size());
+    crypto_generichash_blake2b_update(&state, inner.data(), inner.size());
+    crypto_generichash_blake2b_update(&state, data.data(), data.size());
+    crypto_generichash_blake2b_final(&state, innerHash.data(), innerHash.size());
+    Blake2b out{};
+    crypto_generichash_blake2b_init(&state, nullptr, 0, out.size());
+    crypto_generichash_blake2b_update(&state, outer.data(), outer.size());
+    crypto_generichash_blake2b_update(&state, innerHash.data(), innerHash.size());
+    crypto_generichash_blake2b_final(&state, out.data(), out.size());
+    sodium_memzero(padded.data(), padded.size());
+    return out;
+}
+
+Ed25519Pair ed25519Generate()
+{
+    Ed25519Pair pair;
+    crypto_sign_ed25519_keypair(pair.pub.data(), pair.secret.data());
+    return pair;
+}
+
+Ed25519Pair ed25519FromSeed(const std::array<u8, 32>& seed)
+{
+    Ed25519Pair pair;
+    crypto_sign_ed25519_seed_keypair(pair.pub.data(), pair.secret.data(), seed.data());
+    return pair;
+}
+
+std::array<u8, 64> ed25519Sign(const std::array<u8, 64>& secret, std::span<const u8> message)
+{
+    std::array<u8, 64> signature{};
+    crypto_sign_ed25519_detached(signature.data(), nullptr, message.data(), message.size(), secret.data());
+    return signature;
+}
+
+bool ed25519Verify(const std::array<u8, 32>& pub, std::span<const u8> message, std::span<const u8> signature)
+{
+    return signature.size() == crypto_sign_ed25519_BYTES &&
+           crypto_sign_ed25519_verify_detached(signature.data(), message.data(), message.size(), pub.data()) == 0;
+}
+
 } // namespace engine::core

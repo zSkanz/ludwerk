@@ -29,9 +29,12 @@
 #include "engine/scene/wind.h"
 #include "engine/scene/world.h"
 #include "engine/script/content_provider.h"
+#include "engine/script/cross_world.h"
 #include "engine/script/crypto_service.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
+#include "engine/script/instance_service.h"
+#include "engine/script/join_request.h"
 #include "engine/script/json_module.h"
 #include "engine/script/modules.h"
 #include "engine/script/optional_service.h"
@@ -39,7 +42,9 @@
 #include "engine/script/remote.h"
 #include "engine/script/save_service.h"
 #include "engine/script/scenes.h"
+#include "engine/script/server_console.h"
 #include "engine/script/signals.h"
+#include "engine/script/travel.h"
 #include "engine/script/tweens.h"
 
 namespace engine::script {
@@ -1824,12 +1829,15 @@ int networkServiceGetStats(lua_State* L)
     field("UnreliableDropped", static_cast<double>(stats.unreliableDropped));
     field("BytesSent", static_cast<double>(stats.bytesSent));
     field("BytesReceived", static_cast<double>(stats.bytesReceived));
+    field("WireBytesSent", static_cast<double>(stats.wireBytesSent));
+    field("WireBytesReceived", static_cast<double>(stats.wireBytesReceived));
     field("SwarmBytes", static_cast<double>(stats.swarmBytes));
     field("SnapshotBytes", static_cast<double>(stats.snapshotBytes));
     field("AttributeBytes", static_cast<double>(stats.attributeBytes));
     field("RemoteBytes", static_cast<double>(stats.remoteBytes));
     field("UnreliableBytes", static_cast<double>(stats.unreliableBytes));
     field("InputBytes", static_cast<double>(stats.inputBytes));
+    field("CrossWorldDropped", static_cast<double>(world(L).engineState().crossWorldDropped));
     // How the other end was reached (ADR 0178).
     static constexpr std::array<const char*, 4> Paths{"", "lan", "direct", "relayed"};
     lua_pushstring(L, Paths[std::min<usize>(stats.path, Paths.size() - 1)]);
@@ -2048,6 +2056,7 @@ struct RelayOptions
 {
     std::string relay;
     bool direct = true;
+    std::string ticket;
 };
 
 RelayOptions relayOptions(lua_State* L, int index)
@@ -2071,6 +2080,15 @@ RelayOptions relayOptions(lua_State* L, int index)
         if (!lua_isboolean(L, -1))
             raise(L, ENG_TR("scene.err.network_relay_option"));
         options.direct = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "Ticket");
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TSTRING)
+            raise(L, ENG_TR("scene.err.network_relay_option"));
+        size_t length = 0;
+        const char* text = lua_tolstring(L, -1, &length);
+        options.ticket.assign(text, length);
     }
     lua_pop(L, 1);
     return options;
@@ -2097,7 +2115,8 @@ int networkServiceJoin(lua_State* L)
                                                               .address = std::move(address),
                                                               .port = 0,
                                                               .relay = std::move(options.relay),
-                                                              .relayDirect = options.direct};
+                                                              .relayDirect = options.direct,
+                                                              .ticket = std::move(options.ticket)};
     return 0;
 }
 
@@ -2158,7 +2177,8 @@ int networkServiceHost(lua_State* L)
                                            .address = {},
                                            .port = port,
                                            .relay = std::move(options.relay),
-                                           .relayDirect = true};
+                                           .relayDirect = true,
+                                           .ticket = {}};
     return 0;
 }
 
@@ -2171,7 +2191,20 @@ int networkServiceDisconnect(lua_State* L)
                                            .address = {},
                                            .port = 0,
                                            .relay = {},
-                                           .relayDirect = true};
+                                           .relayDirect = true,
+                                           .ticket = {}};
+    return 0;
+}
+
+// `NetworkService:ForgetServerKey(address)` (ADR 0224): the key pinned for a
+// host is let go, so the next join takes the key it has now. What a game
+// offers a player whose join failed because the host reinstalled its game.
+int networkServiceForgetServerKey(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    world(L).engineState().forgottenServerKeys.emplace_back(text, length);
     return 0;
 }
 
@@ -3360,6 +3393,21 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "PingRelayAsync", networkServicePingRelay},
     {"NetworkService", "Host", networkServiceHost},
     {"NetworkService", "Disconnect", networkServiceDisconnect},
+    {"NetworkService", "ForgetServerKey", networkServiceForgetServerKey},
+    {"NetworkService", "VerifyTicket", networkServiceVerifyTicket},
+    {"NetworkService", "Travel", networkServiceTravel},
+    {"InstanceService", "CreateInstanceAsync", instanceServiceCreateInstanceAsync},
+    {"CrossWorldService", "Publish", crossWorldServicePublish},
+    {"CrossWorldService", "Subscribe", crossWorldServiceSubscribe},
+    {"CrossWorldService", "Unsubscribe", crossWorldServiceUnsubscribe},
+    {"InstanceService", "AllowPlayer", instanceServiceAllowPlayer},
+    {"InstanceService", "DisallowPlayer", instanceServiceDisallowPlayer},
+    {"InstanceService", "Close", instanceServiceClose},
+    {"InstanceService", "KeepOpen", instanceServiceKeepOpen},
+    {"NetworkService", "TravelGroup", networkServiceTravelGroup},
+    {"ConsoleService", "Register", serverConsoleRegister},
+    {"ConsoleService", "Unregister", serverConsoleUnregister},
+    {"ConsoleService", "ExecuteAsync", serverConsoleExecuteAsync},
 
     {"SceneService", "LoadScene", sceneServiceLoadScene},
     {"SceneService", "LoadSceneAsync", sceneServiceLoadSceneAsync},

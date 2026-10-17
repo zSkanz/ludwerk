@@ -600,8 +600,14 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 314: `ReflectionProbe:Refresh`, and `IrradianceVolume`'s `Refresh` and
     // `GetProgress` (ADRs 0202, 0203).
     // 328: `BasePart:Fracture` (ADR 0215).
-    CHECK(coverage.declared == 328);
-    CHECK(coverage.bound == 328);
+    // 329: `NetworkService:ForgetServerKey` (ADR 0224).
+    // 332: `ConsoleService`'s `Register`, `Unregister` and `ExecuteAsync` (ADR 0218).
+    // 333: `NetworkService:VerifyTicket` (ADR 0226).
+    // 340: `NetworkService`'s `Travel` and `TravelGroup` (ADR 0222), and
+    // `InstanceService`'s five (ADR 0221).
+    // 343: `CrossWorldService`'s `Publish`, `Subscribe` and `Unsubscribe` (ADR 0223).
+    CHECK(coverage.declared == 343);
+    CHECK(coverage.bound == 343);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

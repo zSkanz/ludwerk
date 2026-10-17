@@ -10,6 +10,7 @@
 // ws2tcpip.h must follow winsock2.h; the order is not stylistic.
 #include <ws2tcpip.h>
 #else
+#include <arpa/inet.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <netdb.h>
@@ -380,6 +381,65 @@ std::intptr_t TcpStream::nativeHandle() const noexcept
 bool TcpStream::isOpen() const noexcept
 {
     return m_impl && m_impl->handle != kInvalidSocket;
+}
+
+TcpListener::TcpListener() = default;
+
+TcpListener::~TcpListener()
+{
+    close();
+}
+
+void TcpListener::close()
+{
+    if (m_handle != -1)
+        closeSocket(static_cast<SocketHandle>(m_handle));
+    m_handle = -1;
+}
+
+std::optional<core::EngineError> TcpListener::open(u16 port, bool anyAddress)
+{
+    ensureWinsock();
+    close();
+    const SocketHandle handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == kInvalidSocket)
+        return connectErrorCode("0.0.0.0", port, lastSocketError());
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(anyAddress ? INADDR_ANY : INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+    if (::bind(handle, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0 || ::listen(handle, 8) != 0) {
+        const int code = lastSocketError();
+        closeSocket(handle);
+        const std::array<I18nArg, 2> args{I18nArg{"port", static_cast<core::i64>(port)},
+                                          I18nArg{"code", static_cast<core::i64>(code)}};
+        return core::makeError(ENG_TR("net.err.listen_failed"), args);
+    }
+    (void)setNonBlocking(handle, true);
+    m_handle = static_cast<std::intptr_t>(handle);
+    m_port = port;
+    return std::nullopt;
+}
+
+std::optional<TcpStream> TcpListener::accept(u32 timeoutMs, std::string& peerAddress)
+{
+    if (m_handle == -1)
+        return std::nullopt;
+    const auto handle = static_cast<SocketHandle>(m_handle);
+    if (waitFor(handle, false, timeoutMs) <= 0)
+        return std::nullopt;
+    sockaddr_in from{};
+    AddressLength length = sizeof(from);
+    const SocketHandle accepted = ::accept(handle, reinterpret_cast<sockaddr*>(&from), &length);
+    if (accepted == kInvalidSocket)
+        return std::nullopt;
+    (void)setNonBlocking(accepted, false);
+    char text[INET_ADDRSTRLEN] = {};
+    (void)::inet_ntop(AF_INET, &from.sin_addr, text, sizeof(text));
+    peerAddress = text;
+    TcpStream stream;
+    stream.m_impl->handle = accepted;
+    return stream;
 }
 
 } // namespace engine::net

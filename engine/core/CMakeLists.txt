@@ -20,6 +20,7 @@ engine_add_module(core
         src/content_hash.cpp
         src/content_path.cpp
         src/crypto.cpp
+        src/ticket.cpp
         src/i18n.cpp
         src/json.cpp
         src/json_writer.cpp
@@ -50,6 +51,7 @@ engine_add_module_tests(core
         tests/content_hash_tests.cpp
         tests/content_path_tests.cpp
         tests/crypto_tests.cpp
+        tests/ticket_tests.cpp
         tests/dmath_tests.cpp
         tests/text_key_tests.cpp
         tests/i18n_tests.cpp

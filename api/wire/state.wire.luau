@@ -4272,6 +4272,20 @@ local Messages: { Schema.Message } = {
                     .. "number, zero for nothing (protocol 53, ADR 0217). Any other than the authority's is "
                     .. "refused: other syntax, another compiler or another VM is not the same scripts.",
             },
+            {
+                Name = "ticket",
+                Type = "text",
+                Doc = "What the joiner's game presents to be let in (protocol 54, ADR 0226): a ticket its "
+                    .. "backend signed, at most 2048 bytes, or empty. The authority's game reads it in "
+                    .. "`OnJoinRequest`.",
+            },
+            {
+                Name = "pass",
+                Type = "text",
+                Doc = "The pass a world's manager signed for this player to join this world (protocol 54, "
+                    .. "ADRs 0220 and 0222), in base64, or empty. A world under a manager takes nobody without "
+                    .. "one; a server on its own ignores it.",
+            },
         },
         Doc = "A replica announcing itself: protocol version, then the player token the authority "
             .. "gave it last time, or zeros the first time. **Version first, so a mismatch is refused "
@@ -4975,6 +4989,47 @@ local Messages: { Schema.Message } = {
             .. "`GuestJoin` and to a `GuestLeave`, and said unasked when the authority removes a guest.",
     },
     {
+        Name = "Redirect",
+        Id = 36,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "address", Type = "text", Doc = "Where to join: a host name or an address." },
+            { Name = "port", Type = "u16" },
+            {
+                Name = "pass",
+                Type = "text",
+                Doc = "The pass to present there, in base64: signed by the manager, for this player and "
+                    .. "that world only, for 30 seconds.",
+            },
+            {
+                Name = "key",
+                Type = "text",
+                Doc = "That world's public key, in hexadecimal (ADR 0224 §3): the replica takes no other "
+                    .. "there, so a world reached through a redirect is never taken on trust.",
+            },
+            {
+                Name = "world",
+                Type = "text",
+                Doc = "That world's name, or an instance's id: what a loading screen says the player goes to.",
+            },
+        },
+        Doc = "Go there instead (protocol 54, ADRs 0220 and 0222): the front door sending a joiner to a "
+            .. "world, and a world sending a traveller to the next. The replica leaves this connection and "
+            .. "joins the one named, with the pass in its hello.",
+    },
+    {
+        Name = "Announce",
+        Id = 35,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "text", Type = "text", Doc = "What was said, at most 512 bytes." },
+        },
+        Doc = "What a server's operator said to every player (protocol 54, ADR 0218): the console's "
+            .. "`say`, and `stop` counting down. Each machine fires `NetworkService.Announced` with it.",
+    },
+    {
         Name = "DetectorInput",
         Id = 16,
         Channel = "Control",
@@ -5206,13 +5261,17 @@ local Messages: { Schema.Message } = {
                     .. "this player (protocol 40, `Player:Kick`). 4: the replica's network address already "
                     .. "has as many players on the server as it allows (`[network] "
                     .. "max_connections_per_address`). 5: the replica's game runs with other Luau flags than "
-                    .. "the server's (protocol 53, ADR 0217).",
+                    .. "the server's (protocol 53, ADR 0217). 6: the server encrypts its matches and the "
+                    .. "replica does not -- said in the clear, the one message that is (protocol 54, ADR "
+                    .. "0224). 7: the server's game did not let the player in: a ban, a ticket that did not "
+                    .. "check (protocol 54, ADRs 0218 and 0226).",
             },
             {
                 Name = "text",
                 Type = "text",
-                Doc = "The game's own words for a removal, at most 512 bytes; empty for the other reasons "
-                    .. "and for a removal that gave none (protocol 40).",
+                Doc = "The game's own words for a removal or a refusal of its own (reasons 3 and 7), at "
+                    .. "most 512 bytes; empty for the other reasons and where the game gave none (protocol "
+                    .. "40).",
             },
         },
         Doc = "Why the authority will not take this replica (protocol 33), or will not keep it "

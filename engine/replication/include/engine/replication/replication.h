@@ -92,6 +92,31 @@ public:
         (void)reason;
         return false;
     }
+    // **Who may join** (`AuthoritySession::setJoinGate`, ADRs 0218, 0226), the
+    // answers to it, and the players an operator lists. A replica has none.
+    virtual void setJoinGate(std::function<void(const JoinAsk&)> gate) { (void)gate; }
+    virtual void answerJoin(u32 ask, JoinAnswer answer)
+    {
+        (void)ask;
+        (void)answer;
+    }
+    [[nodiscard]] virtual std::vector<PeerSummary> players() const { return {}; }
+    // **Said to every player** (ADR 0218, `Announce`): an authority's
+    // operator's words. A replica says nothing.
+    virtual void announce(std::string_view text) { (void)text; }
+    // **Player `userId` sent elsewhere** (`Redirect`, ADR 0222): false where
+    // nobody is them, and on a replica.
+    virtual bool redirect(u32 userId, std::string_view address, u16 port, std::string_view pass, std::string_view key,
+                          std::string_view world)
+    {
+        (void)userId;
+        (void)address;
+        (void)port;
+        (void)pass;
+        (void)key;
+        (void)world;
+        return false;
+    }
     [[nodiscard]] virtual Stats stats() const = 0;
 
     // **This machine dropped simulated time** -- a frame owed more ticks than

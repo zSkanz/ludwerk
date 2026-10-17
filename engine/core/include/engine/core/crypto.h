@@ -16,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine/core/types.h"
 
@@ -62,5 +63,54 @@ using Sha256 = std::array<u8, 32>;
 // Whether `password` is the one `hash` was made from. False for a hash that is
 // not one of `hashPassword`'s. Costs what the hash was made at.
 [[nodiscard]] bool verifyPassword(std::string_view hash, std::string_view password);
+
+// --- What a match's encryption and a signed pass are made of (ADR 0224) ----
+//
+// Each of these is libsodium's, under the names the Noise specification and
+// RFC 8032 use, so the code that builds on them reads as those documents do.
+
+// **X25519**: a key pair, and the shared secret two halves of two pairs make.
+struct X25519Pair
+{
+    std::array<u8, 32> secret{};
+    std::array<u8, 32> pub{};
+};
+[[nodiscard]] X25519Pair x25519Generate();
+// The public half of a secret.
+[[nodiscard]] std::array<u8, 32> x25519Public(const std::array<u8, 32>& secret);
+// False for a public key that makes an all-zero secret (a low-order point):
+// a peer that sends one is refused.
+[[nodiscard]] bool x25519(const std::array<u8, 32>& secret, const std::array<u8, 32>& peerPublic,
+                          std::array<u8, 32>& shared);
+
+// **ChaCha20-Poly1305 (IETF)**: sealed with a 32-byte key, a 64-bit nonce
+// (in the 96-bit nonce's last eight bytes, little-endian, as Noise has it)
+// and data that is authenticated but not hidden. A seal is 16 bytes longer.
+inline constexpr usize AeadTagBytes = 16;
+void aeadSeal(const std::array<u8, 32>& key, u64 nonce, std::span<const u8> associated, std::span<const u8> plain,
+              std::vector<u8>& out);
+// False, with `out` untouched, for anything forged, damaged or sealed with
+// another key, nonce or associated data.
+[[nodiscard]] bool aeadOpen(const std::array<u8, 32>& key, u64 nonce, std::span<const u8> associated,
+                            std::span<const u8> sealed, std::vector<u8>& out);
+
+// **BLAKE2b-512**, and HMAC over it (RFC 2104, the 128-byte block BLAKE2b
+// has): what Noise's HKDF is built from.
+using Blake2b = std::array<u8, 64>;
+[[nodiscard]] Blake2b blake2b(std::span<const u8> data);
+[[nodiscard]] Blake2b hmacBlake2b(std::span<const u8> key, std::span<const u8> data);
+
+// **Ed25519** (RFC 8032): a signing pair, a signature and its check.
+struct Ed25519Pair
+{
+    std::array<u8, 64> secret{};
+    std::array<u8, 32> pub{};
+};
+[[nodiscard]] Ed25519Pair ed25519Generate();
+// The pair a 32-byte seed makes: what a PKCS #8 private key file holds.
+[[nodiscard]] Ed25519Pair ed25519FromSeed(const std::array<u8, 32>& seed);
+[[nodiscard]] std::array<u8, 64> ed25519Sign(const std::array<u8, 64>& secret, std::span<const u8> message);
+[[nodiscard]] bool ed25519Verify(const std::array<u8, 32>& pub, std::span<const u8> message,
+                                 std::span<const u8> signature);
 
 } // namespace engine::core

@@ -35,12 +35,15 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "engine/core/i18n.h"
 #include "engine/net/async_client.h"
+#include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/json_module.h"
 #include "engine/script/modules.h"
@@ -229,13 +232,189 @@ void pushResult(lua_State* L, const net::NetResult& result)
     lua_setfield(L, -2, "headers");
 }
 
+// ADR 0223 §2's bounds.
+constexpr std::size_t MostSockets = 8;
+constexpr core::usize MaxSocketMessage = 1u << 20;
+
+[[nodiscard]] ServiceState::Socket* socketOf(lua_State* L, core::u32 id)
+{
+    for (ServiceState::Socket& socket : services(L).sockets) {
+        if (socket.id == id)
+            return &socket;
+    }
+    return nullptr;
+}
+
+// `socket:Send(message)`: a string as text, a buffer as binary.
+int socketSend(lua_State* L)
+{
+    const auto id = static_cast<core::u32>(lua_tointeger(L, lua_upvalueindex(1)));
+    net::WebSocketSession::Message message;
+    size_t length = 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* text = lua_tolstring(L, 2, &length);
+        message.bytes.assign(text, length);
+    }
+    else if (const void* bytes = lua_tobuffer(L, 2, &length); bytes != nullptr) {
+        message.binary = true;
+        message.bytes.assign(static_cast<const char*>(bytes), length);
+    }
+    else {
+        luaL_typeerrorL(L, 2, "string or buffer");
+    }
+    if (message.bytes.size() > MaxSocketMessage)
+        raise(L, ENG_TR("script.err.websocket_message_size"));
+    ServiceState::Socket* socket = socketOf(L, id);
+    lua_pushboolean(L, socket != nullptr && socket->session->send(std::move(message)) ? 1 : 0);
+    return 1;
+}
+
+// `socket:Close(code?, reason?)`.
+int socketClose(lua_State* L)
+{
+    const auto id = static_cast<core::u32>(lua_tointeger(L, lua_upvalueindex(1)));
+    const auto code = static_cast<core::u16>(luaL_optinteger(L, 2, 1000));
+    size_t length = 0;
+    const char* reason = luaL_optlstring(L, 3, "", &length);
+    if (ServiceState::Socket* socket = socketOf(L, id); socket != nullptr)
+        socket->session->close(code, std::string(reason, length).substr(0, 123));
+    return 0;
+}
+
+// `net.websocket(url, options?)`: yields until open, and returns the socket.
+int netWebsocket(lua_State* L)
+{
+    size_t length = 0;
+    const char* url = luaL_checklstring(L, 1, &length);
+    // **The server's by default** (ADR 0223 §2): a client's game opens one
+    // only where the project says it wants every player's machine to.
+    const scene::EngineState& state = context(L).world->engineState();
+    if ((state.networkTopology == scene::NetworkTopology::Replica || threadMakesLocal(L)) &&
+        !state.websocketClientAllowed)
+        raise(L, ENG_TR("script.err.websocket_client"));
+    ServiceState& services = engine::script::services(L);
+    if (services.sockets.size() >= MostSockets)
+        raise(L, ENG_TR("script.err.websocket_count"));
+    std::vector<net::HttpHeader> headers;
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        luaL_checktype(L, 2, LUA_TTABLE);
+        readHeaders(L, 2, headers);
+    }
+    requireYieldable(L, "websocket");
+
+    ServiceState::Socket socket;
+    socket.id = services.nextSocket++;
+    socket.session = net::WebSocketSession::open(std::string(url, length), std::move(headers), MaxSocketMessage);
+    socket.received = createScriptSignal(L);
+    socket.closed = createScriptSignal(L);
+    // The object scripts hold: two signals and two methods, each method
+    // knowing its socket by number.
+    lua_createtable(L, 0, 4);
+    pushSignalObject(L, socket.received);
+    lua_setfield(L, -2, "Received");
+    pushSignalObject(L, socket.closed);
+    lua_setfield(L, -2, "Closed");
+    lua_pushinteger(L, static_cast<int>(socket.id));
+    lua_pushcclosure(L, socketSend, "Send", 1);
+    lua_setfield(L, -2, "Send");
+    lua_pushinteger(L, static_cast<int>(socket.id));
+    lua_pushcclosure(L, socketClose, "Close", 1);
+    lua_setfield(L, -2, "Close");
+    socket.objectRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    lua_pushthread(L);
+    socket.waiterRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services.sockets.push_back(std::move(socket));
+    return lua_yield(L, 0);
+}
+
 } // namespace
+
+void pumpWebSockets(lua_State* L)
+{
+    // By id, looked up again after each call into a script: a callback may
+    // open another socket, which moves the list.
+    std::vector<core::u32> ids;
+    for (const ServiceState::Socket& socket : services(L).sockets)
+        ids.push_back(socket.id);
+    for (const core::u32 id : ids) {
+        ServiceState::Socket* socket = socketOf(L, id);
+        if (socket == nullptr)
+            continue;
+        const net::WebSocketSession::State now = socket->session->state();
+        // The script waiting for it to open: the socket, or why not.
+        if (socket->waiterRef >= 0 && now != net::WebSocketSession::State::Connecting) {
+            const int waiter = std::exchange(socket->waiterRef, -1);
+            const bool open = now == net::WebSocketSession::State::Open || !socket->session->failure().has_value();
+            const std::string why = open ? std::string{} : socket->session->failure()->message;
+            socket->opened = open;
+            const int object = socket->objectRef;
+            lua_getref(L, waiter);
+            if (lua_State* co = lua_tothread(L, -1); co != nullptr) {
+                if (open) {
+                    lua_getref(co, object);
+                    (void)resumeScheduled(L, co, 1);
+                }
+                else {
+                    lua_pushlstring(co, why.data(), why.size());
+                    (void)resumeScheduledWithError(L, co);
+                }
+            }
+            lua_pop(L, 1);
+            (void)lua_unref(L, waiter);
+            socket = socketOf(L, id);
+            if (socket == nullptr)
+                continue;
+        }
+        // What arrived, to `Received`.
+        std::vector<net::WebSocketSession::Message> arrived;
+        socket->session->take(arrived);
+        const SignalId received = socket->received;
+        for (const net::WebSocketSession::Message& message : arrived) {
+            const int top = lua_gettop(L);
+            if (message.binary) {
+                void* bytes = lua_newbuffer(L, message.bytes.size());
+                std::memcpy(bytes, message.bytes.data(), message.bytes.size());
+            }
+            else {
+                lua_pushlstring(L, message.bytes.data(), message.bytes.size());
+            }
+            fireSignal(L, received, top + 1, 1);
+            lua_settop(L, top);
+        }
+        socket = socketOf(L, id);
+        if (socket == nullptr || socket->session->state() != net::WebSocketSession::State::Closed ||
+            socket->waiterRef >= 0)
+            continue;
+        // **Closed**: said once, with its code and words, and let go.
+        const SignalId closedSignal = socket->closed;
+        const bool tell = socket->opened;
+        const int code = socket->session->closeCode();
+        const std::string reason = socket->session->closeReason();
+        const int object = socket->objectRef;
+        std::unique_ptr<net::WebSocketSession> gone = std::move(socket->session);
+        std::erase_if(services(L).sockets, [id](const ServiceState::Socket& s) { return s.id == id; });
+        if (tell) {
+            const int top = lua_gettop(L);
+            lua_pushinteger(L, code);
+            lua_pushlstring(L, reason.data(), reason.size());
+            fireSignal(L, closedSignal, top + 1, 2);
+            lua_settop(L, top);
+        }
+        closeScriptSignal(L, received);
+        closeScriptSignal(L, closedSignal);
+        (void)lua_unref(L, object);
+    }
+}
 
 int openStdNet(lua_State* L)
 {
-    lua_createtable(L, 0, 1);
+    lua_createtable(L, 0, 2);
     lua_pushcfunction(L, netRequest, "request");
     lua_setfield(L, -2, "request");
+    lua_pushcfunction(L, netWebsocket, "websocket");
+    lua_setfield(L, -2, "websocket");
 
     // Frozen, so a script cannot add a `serve` of its own and hand it to code
     // written against the real one later. `@std/*` naming a thing is a contract

@@ -178,6 +178,9 @@ local CliExemptFiles: { [string]: boolean } = {
     ["tools/cli/catalog.luau"] = true,
     -- Machine output by definition; see its own header.
     ["tools/cli/output.luau"] = true,
+    -- A script for PowerShell and a command line, for the tests: nothing in it
+    -- reaches a person but the command it names when it times out.
+    ["tools/cli/bounded.luau"] = true,
 }
 
 type Finding = {
@@ -749,6 +752,8 @@ local CliDataLiterals: { [string]: boolean } = {
     ["@echo off\\r\\n"] = true,
     ["Written by `ludwerk build`. This directory is cleared on every rebuild.\\n"] = true,
     ["[Desktop Entry]"] = true,
+    -- The systemd unit `ludwerk server install` writes: its description line.
+    ["Description= ( game servers)"] = true,
     -- A line of the Android manifest an export writes, its permission's name
     -- taken out as this lint reads an interpolation.
     ['    <uses-permission android:name="" />'] = true,

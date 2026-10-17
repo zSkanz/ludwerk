@@ -66,6 +66,11 @@ end)
 | A match started from the editor | `.engine/saves/<window>/`, one folder per window |
 | Any run started with `--saves=DIR` | `DIR` -- so a server and a player of one game on one machine keep apart |
 
+Beside that folder, in `keys/`, is the machine's match key and the servers it
+has met (see [A match is encrypted](manual:guides/multiplayer#a-match-is-encrypted)).
+It is not a save: a player who deletes it is a new player to every server, and
+a server that loses it is a new server to every player.
+
 Each slot is `<name>.save`, beside `<name>.bak`, the save before it. A damaged
 file is read from the backup, with a warning; when both are damaged the slot
 starts empty and `slot.Recovered` is false, so the game can tell the player.

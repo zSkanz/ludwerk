@@ -227,7 +227,46 @@ inline constexpr u8 RefusedAddressLimit = 4;
 // Its game runs with other Luau flags than the authority's (ADR 0217): other
 // syntax, another compiler or another VM, so not the same scripts.
 inline constexpr u8 RefusedLuauFlags = 5;
+// Its game does not encrypt, and this authority does (ADR 0224): said in the
+// clear, the one message that is, by the transport that encrypts.
+inline constexpr u8 RefusedInsecure = 6;
+// The game's own answer to an ask to join (`JoinAnswer`): a ban, a ticket that
+// did not check, a queue -- in its words, which travel with it.
+inline constexpr u8 RefusedByGame = 7;
+// An ask to join the game did not answer in this many authority receives (a
+// minute at sixty): refused, as one nobody admitted.
+inline constexpr u32 MaxAskReceives = 3600;
 inline constexpr usize MaxRemovedReasonBytes = 512;
+// The longest ticket a hello carries (ADR 0226): a signed token of a few
+// claims is a few hundred bytes.
+inline constexpr usize MaxTicketBytes = 2048;
+// And the longest pass (ADR 0222), in base64: its fields, a signature and the
+// travel's data, at most 16 KiB of it.
+inline constexpr usize MaxPassBytes = 24 * 1024;
+// A `Refused` message with no words of the game's: what the encrypting
+// transport says, in the clear, to a joiner that does not encrypt.
+[[nodiscard]] std::vector<u8> refusalMessage(u8 reason, std::string_view words = {});
+// The protocol this build speaks, and the channels a connection to it opens:
+// what a front door with no session of its own needs (ADR 0220).
+[[nodiscard]] u32 protocolVersion() noexcept;
+[[nodiscard]] u8 transportChannels() noexcept;
+// **What a match's handshake binds** (ADR 0224): this protocol's version and
+// the game's id, so another game or another build fails the handshake.
+[[nodiscard]] std::vector<u8> matchPrologue(std::string_view projectId);
+
+// **What a hello says** (ADR 0220): read by a front door, which answers it
+// without a world. Nothing for bytes that are not a hello.
+struct HelloFields
+{
+    u32 protocol = 0;
+    u64 luauFlags = 0;
+    std::string ticket;
+    std::string pass;
+};
+[[nodiscard]] std::optional<HelloFields> readHello(std::span<const u8> payload);
+// A `Redirect` (ADRs 0220, 0222): join there, with that pass.
+[[nodiscard]] std::vector<u8> redirectMessage(std::string_view address, u16 port, std::string_view pass,
+                                              std::string_view key, std::string_view world);
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
 // new player, which is what an authority that restarted would say too.
@@ -427,6 +466,22 @@ public:
     // told why, let go, and its player taken out of the world as one who
     // left is. False when no peer is that player -- the host's own is not.
     bool removePlayer(scene::World& world, core::InstanceId root, u32 userId, std::string_view reason);
+    // **Who may join is the game's to say, where it says** (ADRs 0218, 0226):
+    // every hello that passed the engine's own checks is asked here before it
+    // is a player. The answer may come at once, inside the call -- a ban list
+    // -- or later through `answerJoin`, when a backend has been asked; the
+    // joiner waits, at most `MaxAskReceives`. Unset, everybody is admitted.
+    void setJoinGate(std::function<void(const JoinAsk&)> gate) { m_gate = std::move(gate); }
+    void answerJoin(u32 ask, JoinAnswer answer) { m_answers[ask] = std::move(answer); }
+    // Every welcomed peer's player, as an operator lists them.
+    [[nodiscard]] std::vector<PeerSummary> players() const;
+    // Words for every welcomed peer (`Announce`), at most
+    // `MaxRemovedReasonBytes` of them.
+    void announce(std::string_view text);
+    // **Sends player `userId` elsewhere** (`Redirect`, ADR 0222): its machine
+    // leaves this connection and joins there. False when no peer is it.
+    bool redirect(u32 userId, std::string_view address, u16 port, std::string_view pass, std::string_view key,
+                  std::string_view world);
 
     explicit AuthoritySession(net::ITransport& transport) noexcept : m_transport(transport) {}
 
@@ -472,6 +527,9 @@ private:
         net::PeerId id;
         // The address it came from (`ITransport::addressOf`), nought unknown.
         u64 address = 0;
+        // The key it proved in the handshake (ADR 0224), when the transport
+        // encrypts.
+        std::optional<std::array<u8, 32>> key;
         bool welcomed = false;
         // The newest state this peer has proved it holds. Zero: none yet.
         u64 acked = 0;
@@ -650,6 +708,13 @@ private:
         usize remoteBytesThisTick = 0;
         // Receives since it connected without a hello.
         u32 unwelcomedReceives = 0;
+        // **Waiting for the game's word** (`setJoinGate`): the ask it is, the
+        // token it would be welcomed with, and for how long it has waited.
+        u32 asking = 0;
+        PlayerToken askedToken;
+        u32 askReceives = 0;
+        u64 joinedTick = 0;
+        std::string accountId;
         // Messages for it naming an event it has not been told about yet, in
         // the order they were sent: the event's network id, the flush it was
         // held at, and the bytes. Held in order, so the front is the oldest.
@@ -847,6 +912,14 @@ private:
     u32 m_maxPlayers = 0;
     u32 m_maxPerAddress = DefaultPeersPerAddress;
     u64 m_luauFlags = 0;
+    // **Which token each proved key was given** in this run (ADR 0224): the
+    // same player again while the server runs, a fresh join after it restarts.
+    std::map<std::array<u8, 32>, PlayerToken> m_keyTokens;
+    void admit(scene::World& world, core::InstanceId network, net::PeerId id, PlayerToken token);
+    void settleAsks(scene::World& world, core::InstanceId network);
+    std::function<void(const JoinAsk&)> m_gate;
+    std::map<u32, JoinAnswer> m_answers;
+    u32 m_nextAsk = 1;
     // Receives so far, and when each address last began connections: the
     // second a flood is counted over, in the authority's own receives.
     u64 m_receives = 0;
@@ -993,6 +1066,18 @@ public:
     // What this machine's Luau flags come to (`Config::luauFlags`), said in
     // the hello.
     void setLuauFlags(u64 fingerprint) noexcept { m_luauFlags = fingerprint; }
+    // What this machine presents in its hello (`Config::joinTicket`).
+    void setTicket(std::string ticket) { m_ticket = std::move(ticket); }
+    // And the pass a manager signed for this join (`Config::joinPass`).
+    void setPass(std::string pass) { m_pass = std::move(pass); }
+    // **Where this replica was sent** (`Redirect`), and how many times: the
+    // session joins there.
+    [[nodiscard]] u32 redirects() const noexcept { return m_redirects; }
+    [[nodiscard]] const std::string& redirectAddress() const noexcept { return m_redirectAddress; }
+    [[nodiscard]] u16 redirectPort() const noexcept { return m_redirectPort; }
+    [[nodiscard]] const std::string& redirectPass() const noexcept { return m_redirectPass; }
+    [[nodiscard]] const std::string& redirectKey() const noexcept { return m_redirectKey; }
+    [[nodiscard]] const std::string& redirectWorld() const noexcept { return m_redirectWorld; }
     // **How the own character is stepped again when the authority corrects
     // it** (ADR 0076, as amended). Each tick's prediction keeps the command
     // the physics step consumed; a correction puts the character where the
@@ -1177,6 +1262,14 @@ private:
     u32 m_freshJoins = 0;
     PlayerToken m_token;
     u64 m_luauFlags = 0;
+    std::string m_ticket;
+    std::string m_pass;
+    u32 m_redirects = 0;
+    std::string m_redirectAddress;
+    u16 m_redirectPort = 0;
+    std::string m_redirectPass;
+    std::string m_redirectKey;
+    std::string m_redirectWorld;
     u32 m_playerId = 0;
     // **This machine's guests, by seat** (protocol 48): the local player in
     // each of seats 1 to 3, whether the authority has been asked for it on

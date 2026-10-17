@@ -51,6 +51,26 @@ export type Response = {
     body: string,
 }
 
+--- What `net.websocket` accepts.
+export type WebSocketOptions = {
+    --- Sent with the opening handshake: an `Authorization`, a protocol name.
+    headers: { [string]: string }?,
+}
+
+--- **An open WebSocket** (ADR 0223 §2). A message is text as a `string` and
+--- binary as a `buffer`, at most 1 MiB, both ways.
+export type WebSocket = {
+    --- Fires with each message that arrives, at a frame safe point.
+    Received: Signal<string | buffer>,
+    --- Fires once, with the close code and the words, when it closes for any
+    --- reason: 1006 and nothing when the connection simply went.
+    Closed: Signal<number, string>,
+    --- Queues a message; false once the socket is closed.
+    Send: (self: WebSocket, message: string | buffer) -> boolean,
+    --- Closes it, telling the server `code` (1000) and `reason`.
+    Close: (self: WebSocket, code: number?, reason: string?) -> (),
+}
+
 export type Net = {
     --- Performs an HTTP/1.1 request. **Yields** — the calling coroutine is
     --- parked and resumed at a frame safe point when the answer arrives, so a
@@ -61,6 +81,14 @@ export type Net = {
     --- CALL — a missing `url`, a field of the wrong type — because that is a bug
     --- in the script rather than a fact about the world.
     request: (options: RequestOptions) -> Response,
+    --- Opens a WebSocket to `url` -- `ws://` or `wss://`, TLS the platform's
+    --- as `request`'s is -- and **yields** until it is open, then returns it.
+    --- Raises with the reason when it cannot be opened.
+    ---
+    --- On the server by default: a client's game opens one only with
+    --- `websocket_client = true` under `[permissions]` in `project.toml`.
+    --- At most eight are open at once.
+    websocket: (url: string, options: WebSocketOptions?) -> WebSocket,
 }
 
 return (error("@std/net is provided by the engine; this file is the type declaration and is never run") :: any) :: Net

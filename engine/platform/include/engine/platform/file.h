@@ -201,6 +201,16 @@ private:
 // a scene, a stamp, a material is somebody's work, and it is a save.
 [[nodiscard]] bool writeTextFileDurable(const std::filesystem::path& path, std::string_view text);
 
+// **Readable and writable by its owner only** (ADR 0224): what a key file is
+// made. Mode 0600 where files have modes; on Windows a file under the user's
+// own profile -- where every key file is kept -- already carries that user's
+// access list and nobody else's, so nothing is changed. False where the
+// system refused.
+[[nodiscard]] bool restrictToOwner(const std::filesystem::path& path);
+// Whether others than its owner may read it: a key file that is refuses to
+// be used (ADR 0219 §2). Never true on Windows, for the reason above.
+[[nodiscard]] bool readableByOthers(const std::filesystem::path& path);
+
 // Renames `from` over `to`, replacing it. False when either is not there to
 // take part, or the OS refused.
 [[nodiscard]] bool renameFile(const std::filesystem::path& from, const std::filesystem::path& to);

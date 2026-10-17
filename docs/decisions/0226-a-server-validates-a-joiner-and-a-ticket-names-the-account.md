@@ -1,6 +1,6 @@
 # 0226 — A server validates a joiner, and a ticket names the account
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the names of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0224 (a player is a key), ADR 0218 (bans), ADR 0220 (the
   front door, `Redirect`), ADR 0222 (the pass)
@@ -129,6 +129,30 @@ which account is where -- and lets the second in.
 it and before the joiner is accepted -- on every world under the manager,
 which shares one `bans.json`. This is the ban that holds: a new key with the
 same account is the same banned account.
+
+## As built
+
+- **`NetworkService.OnJoinRequest`**, not `ValidateJoin`: the API's rule is
+  that a callback begins with `On`. The joiner is a table -- `PublicKey`,
+  `Address`, `Ticket`, `AccountId` -- not a class.
+- **The refusal is `Refused` reason 7** (`RefusedByGame`): reason 6 went to a
+  joiner that does not encrypt (ADR 0224). The game's words travel with it,
+  at most 256 bytes.
+- **One gate**, the console's (ADR 0218): a ban by key and a server stopping
+  refuse at once; then `OnJoinRequest` runs at the start of the next tick, on a
+  thread of its own; then a ban by account, and one session an account. A
+  gate that answers at once costs a joiner no tick.
+- **The ticket travels in the hello** (protocol 54), inside the encrypted
+  connection: `Join(address, { Ticket = ticket })`.
+- **Interoperable, both ways**: a ticket PyJWT 2.13 signed is a test vector
+  the engine accepts, and a key and a ticket `ludwerk ticket` made are read by
+  PyJWT. The private key is a PKCS #8 file, the form `importPKCS8` and
+  `load_pem_private_key` read.
+- **Claims**: `VerifyTicket` returns every top-level string, number and
+  boolean of the ticket, so a backend's own claims reach the game.
+- **Under a manager** (ADR 0220): the ticket carried in `Redirect` and the
+  pass is built there; this record's engine side checks signature and
+  audience alone for a ticket reached through a pass.
 
 ## Consequences
 

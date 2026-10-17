@@ -1,0 +1,11 @@
+{
+  "realm.name.town": "The Town",
+  "realm.name.fields": "The Fields",
+  "realm.name.dungeon": "The Dungeon",
+  "realm.hint": "WASD or the stick to walk. The green road goes to the fields; the purple gate opens a dungeon for everyone standing on it.",
+  "realm.notice.needs_servers": "This leads to another world: play the game's servers (run.bat, or Start match with This game's worlds).",
+  "realm.notice.opening_dungeon": "The gate opens a dungeon for your party...",
+  "realm.notice.dungeon_fell": "The dungeon fell, and you are back in the town.",
+  "realm.notice.welcome_back": "Back in the town.",
+  "realm.notice.arrived_fields": "The road back is behind you."
+}

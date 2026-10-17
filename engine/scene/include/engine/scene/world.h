@@ -15,6 +15,7 @@
 #pragma once
 
 #include <array>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -494,6 +495,12 @@ struct EngineState
     // the process, as the three above; zero solo.
     struct NetworkStats
     {
+        // Whether the match is encrypted (ADR 0224): a development run that is
+        // not says so where its numbers are read.
+        bool encrypted = true;
+        // What the socket carried, headers and encryption in it.
+        u64 wireBytesSent = 0;
+        u64 wireBytesReceived = 0;
         f64 pingMs = 0.0;
         f64 jitterMs = 0.0;
         f64 lossPercent = 0.0;
@@ -684,8 +691,212 @@ struct EngineState
         // A join by code: whether a path each to the other is tried before
         // the relay carries the match.
         bool relayDirect = true;
+        // A join: the ticket its game presents (ADR 0226), empty for none.
+        std::string ticket;
     };
     std::optional<NetworkRequest> pendingNetwork;
+    // **Hosts whose pinned key a script forgot** (`ForgetServerKey`, ADR
+    // 0224), as it named them: done by the session at its safe point.
+    std::vector<std::string> forgottenServerKeys;
+
+    // --- A server's console (ADR 0218) ------------------------------------
+    // **A command the game registered** (`ConsoleService:Register`): what the
+    // console parses a line by and lists in `help`. The function is the
+    // script runtime's; this is what the engine reads of it.
+    struct ConsoleParameter
+    {
+        enum class Type : u8
+        {
+            String,
+            Number,
+            Boolean,
+            Player,
+        };
+        std::string name;
+        Type type = Type::String;
+        bool optional = false;
+    };
+    struct ConsoleCommand
+    {
+        std::string name;
+        // A key of the game's catalog, or text.
+        std::string description;
+        std::vector<ConsoleParameter> parameters;
+        // 0 to 3: who may run it. The local console is 3.
+        u8 permission = 2;
+    };
+    std::vector<ConsoleCommand> consoleCommands;
+    // Who ran a command: the local console, or an administrator (ADR 0219).
+    struct ConsoleCaller
+    {
+        bool local = true;
+        std::string name;
+        std::string key;
+        u8 permission = 3;
+    };
+    // **One parsed call of a game's command**, for the scripts to run between
+    // ticks. An argument left out is `present = false`; a player is their
+    // `UserId`.
+    struct ConsoleArgument
+    {
+        bool present = false;
+        std::string text;
+        f64 number = 0.0;
+        bool flag = false;
+        u32 userId = 0;
+    };
+    struct ConsoleCall
+    {
+        u32 id = 0;
+        std::string name;
+        std::vector<ConsoleArgument> arguments;
+        ConsoleCaller caller;
+    };
+    std::vector<ConsoleCall> consoleCalls;
+    // And what each said back, by its `id`: its return value as text, or the
+    // error it raised.
+    struct ConsoleAnswer
+    {
+        u32 id = 0;
+        std::string text;
+        bool failed = false;
+    };
+    std::vector<ConsoleAnswer> consoleAnswers;
+    // **A line a script asked the console to run** (`ConsoleService:
+    // ExecuteAsync`), as the local console with the script as caller; its
+    // answer comes back in `consoleAnswers` under the same `id`, which the
+    // script runtime numbers from the top of the range.
+    struct ConsoleLine
+    {
+        u32 id = 0;
+        std::string line;
+    };
+    std::vector<ConsoleLine> consoleLines;
+    // What the console answered those lines, by their `id`.
+    std::vector<ConsoleAnswer> consoleLineAnswers;
+    // --- Who may join (ADR 0226) ---------------------------------------
+    // **A joiner the game's `OnJoinRequest` is asked about**, as the session
+    // knows them before they are a player; and its answer, by `id`.
+    struct JoinValidation
+    {
+        u32 id = 0;
+        std::string publicKey;
+        std::string address;
+        std::string ticket;
+    };
+    std::vector<JoinValidation> joinValidations;
+    struct JoinVerdict
+    {
+        u32 id = 0;
+        bool admit = false;
+        std::string reason;
+        std::string accountId;
+    };
+    std::vector<JoinVerdict> joinVerdicts;
+    // Whether a script set `NetworkService.OnJoinRequest`: none admits everybody.
+    bool validateJoinSet = false;
+    // `[network] ticket_public_key` and `[project] id`: what `VerifyTicket`
+    // checks a ticket against.
+    std::optional<std::array<u8, 32>> ticketPublicKey;
+    std::string projectId;
+
+    // --- Worlds under a manager (ADRs 0220 to 0223) ------------------------
+    // This world's name, as `servers.toml` gives it, and every world the
+    // manager has; empty where no manager started this one.
+    std::string managedWorld;
+    std::vector<std::string> managerWorlds;
+    // **Players a script sent elsewhere** (`Travel`, `TravelGroup`), for the
+    // manager to give passes for: who, where, and what they carry, as a save
+    // writes it.
+    struct TravelRequest
+    {
+        u32 id = 0;
+        std::vector<u32> userIds;
+        std::string target;
+        std::string data;
+    };
+    std::vector<TravelRequest> travelRequests;
+    u32 nextTravel = 1;
+    // **Who arrived with a pass**, for `TravelArrived`: by key, with what
+    // they carry and the world they left.
+    struct TravelArrival
+    {
+        std::string publicKey;
+        std::string origin;
+        std::string data;
+        u32 waited = 0;
+        // Why they came back, when not of their own accord (`InstanceFailed`).
+        std::string reason;
+    };
+    std::vector<TravelArrival> travelArrivals;
+    // A client sent elsewhere: where, for `TravelStarted`.
+    std::vector<std::string> travelStarted;
+    // **Instances** (ADR 0221): what this world's scripts asked of the
+    // manager -- a copy of a template for a group, in its `Data` as a remote
+    // event's arguments written -- and its answers, by request.
+    struct InstanceRequest
+    {
+        u32 id = 0;
+        std::string templateName;
+        std::vector<std::string> keys;
+        std::vector<u8> data;
+    };
+    std::vector<InstanceRequest> instanceRequests;
+    u32 nextInstanceRequest = 1;
+    struct InstanceAnswer
+    {
+        u32 id = 0;
+        std::string instanceId;
+        std::string error;
+    };
+    std::vector<InstanceAnswer> instanceAnswers;
+    // And what an instance's own scripts say of it.
+    struct InstanceControl
+    {
+        enum class Kind : u8
+        {
+            Allow,
+            Disallow,
+            Close,
+            KeepOpen,
+        };
+        Kind kind = Kind::Close;
+        std::string key;
+        f64 seconds = 0.0;
+    };
+    std::vector<InstanceControl> instanceControls;
+    // **Events between worlds** (`CrossWorldService`, ADR 0223): what this
+    // world published for the manager, what arrived for its callbacks -- as a
+    // save writes a value -- the topics it began or stopped hearing, and how
+    // many arrived too late or too many and were dropped.
+    struct CrossWorldMessage
+    {
+        std::string topic;
+        std::string message;
+        std::string origin;
+    };
+    std::vector<CrossWorldMessage> crossWorldOut;
+    std::deque<CrossWorldMessage> crossWorldIn;
+    std::vector<std::pair<std::string, bool>> crossWorldTopics;
+    u64 crossWorldDropped = 0;
+    // **Instances this world made that are gone**, and why (`InstanceClosed`).
+    struct InstanceClosed
+    {
+        std::string id;
+        std::string reason;
+    };
+    std::vector<InstanceClosed> instancesClosed;
+    // The manager said this instance closes: `Closing` fires once.
+    bool instanceClosing = false;
+    bool instanceClosingFired = false;
+
+    // `[permissions] websocket_client` (ADR 0223 §2): a client's game may open
+    // `net.websocket` too.
+    bool websocketClientAllowed = false;
+
+    // `say` (ADR 0218): lines a server's operator sent every player. On a
+    // client, what arrived; the scripts fire `Announced` for each.
+    std::vector<std::string> serverMessages;
     // **How many play, the machine's own player among them**
     // (`NetworkService.MaxPlayers`, ADR 0167): what a script wrote, or zero
     // for the session's own limit; and what the session takes now, which is

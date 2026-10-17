@@ -123,8 +123,8 @@ TEST_CASE("a script hosts through a relay, reads its join code, and another join
     const std::string code = server.state().networkJoinCode;
 
     // Nobody has this code: the script is told so, in words, and is still solo.
-    client.state().pendingNetwork = scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Join,
-                                                                       "2222-2222", 0, relayAt, true};
+    client.state().pendingNetwork = scene::EngineState::NetworkRequest{
+        scene::EngineState::NetworkRequest::Kind::Join, "2222-2222", 0, relayAt, true, {}};
     REQUIRE(runUntil(server, client, [&] { return log.contains("join failed:"); }));
     CHECK(log.contains("join failed: No match has the code 22222222"));
     CHECK(client.state().networkState == Offline);
@@ -137,8 +137,8 @@ TEST_CASE("a script hosts through a relay, reads its join code, and another join
             typed += '-';
         typed += static_cast<char>(code[index] >= 'A' && code[index] <= 'Z' ? code[index] - 'A' + 'a' : code[index]);
     }
-    client.state().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Join, typed, 0, relayAt, false};
+    client.state().pendingNetwork = scene::EngineState::NetworkRequest{
+        scene::EngineState::NetworkRequest::Kind::Join, typed, 0, relayAt, false, {}};
     REQUIRE(runUntil(server, client, [&] { return client.state().networkState == Connected; }));
     REQUIRE(runUntil(server, client, [&] { return log.contains("host path:"); }));
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
@@ -150,11 +150,11 @@ TEST_CASE("a script hosts through a relay, reads its join code, and another join
     // The client leaves and comes back the short way: on one machine that is
     // its own network, and the relay carries nothing of it.
     client.state().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true, {}};
     REQUIRE(runUntil(server, client, [&] { return client.state().networkState == Offline; }));
     REQUIRE(runUntil(server, client, [&] { return relay.stats().relayed == 0; }));
     client.state().pendingNetwork = scene::EngineState::NetworkRequest{
-        scene::EngineState::NetworkRequest::Kind::Join, "relay://" + relayAt + "/" + code, 0, {}, true};
+        scene::EngineState::NetworkRequest::Kind::Join, "relay://" + relayAt + "/" + code, 0, {}, true, {}};
     REQUIRE(runUntil(server, client, [&] { return client.state().networkState == Connected; }));
     REQUIRE(runUntil(server, client,
                      [&] { return log.contains("joined path:lan") || log.contains("joined path:direct"); }));
@@ -162,7 +162,7 @@ TEST_CASE("a script hosts through a relay, reads its join code, and another join
 
     // The host stops: the code is nobody's, and its `JoinCode` is empty again.
     server.state().pendingNetwork =
-        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true};
+        scene::EngineState::NetworkRequest{scene::EngineState::NetworkRequest::Kind::Disconnect, {}, 0, {}, true, {}};
     REQUIRE(runUntil(server, client, [&] { return server.state().networkState == Offline; }));
     CHECK(server.state().networkJoinCode.empty());
     REQUIRE(runUntil(server, client, [&] { return log.contains("relay:None code-length:0"); }));

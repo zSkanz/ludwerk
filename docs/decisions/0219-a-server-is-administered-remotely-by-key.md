@@ -1,6 +1,6 @@
 # 0219 — A server is administered from another machine, by key
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the handshake and the places of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0218 (the console), ADR 0120 (Noise `IK` and libsodium),
   ADR 0035 (the engine is a WebSocket client and never listens for its tools)
@@ -81,6 +81,36 @@ because the handshake and the sealing are the engine's code, not Lute's. A
 prompt that sends each line and prints the answer; `--follow` also prints
 the server's log as it is written; `--command="status"` runs one and exits
 with its outcome, for scripts.
+
+## As built
+
+- **Noise `XX`, not `IK`**, as the match's became (ADR 0224): each side
+  learns the other's key in the handshake. The administrator still checks the
+  server's before anything is sent -- the key given with `--server-key`, or
+  the one met first at that address, kept in `<key>.servers.json` beside the
+  administrator's key; a different one is refused. The prologue is
+  `admin 1`, never a match's, so neither key is taken for the other
+  conversation.
+- **A frame is a four-byte length and a sealed message**, whose first byte
+  says what it is: a line, an answer, a failed answer, a log line, or "follow
+  the log". `--command` exits 0 for an answer and 1 for a failure.
+- **`admins.toml` is beside the game's saves** for a dedicated server -- one
+  for every world of the game on the machine -- and beside `servers.toml` for
+  a manager. A missing one is a server nobody may enter, said at start.
+- **On Linux** a key file or an `admins.toml` that others can read is
+  refused, saying which. **On Windows** every file is made under the user's
+  own profile, whose access list is that user's, so nothing is changed or
+  checked there.
+- **The manager is administered too** (`[manager] admin`, `admin_port`,
+  `admin_allow`), by level 3 only: a line for a world runs on that world's
+  console as its operator's, so a lower level would be a way round its own.
+  A world's answer reaches the administrator who asked it when the world
+  gives it. An `admin_port` inside `world_ports` is refused by `servers.toml`.
+- **A world under a manager does not listen for administrators itself**: it
+  is reached through its manager.
+- **The tool**: `ludwerk server keygen --name=` and `ludwerk server connect`
+  run `engine-host --admin-keygen=` and `--admin-connect=host:port`;
+  `ludwerk server update <folder>` is a `connect` with `--command=update`.
 
 ## Consequences
 

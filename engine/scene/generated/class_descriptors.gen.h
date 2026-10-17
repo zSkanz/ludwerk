@@ -1050,6 +1050,9 @@ bool setGraphicsServiceFrameGeneration(World& world, core::InstanceId id, const 
 Value getGraphicsServiceBrightness(const World& world, core::InstanceId id);
 bool setGraphicsServiceBrightness(World& world, core::InstanceId id, const Value& value);
 
+// InstanceService
+Value getInstanceServiceInstanceId(const World& world, core::InstanceId id);
+
 // NetworkService
 Value getNetworkServiceAuthority(const World& world, core::InstanceId id);
 Value getNetworkServiceTopology(const World& world, core::InstanceId id);
@@ -1069,6 +1072,8 @@ bool setPlayerCamera(World& world, core::InstanceId id, const Value& value);
 Value getPlayerGamepadId(const World& world, core::InstanceId id);
 bool setPlayerGamepadId(World& world, core::InstanceId id, const Value& value);
 Value getPlayerUserId(const World& world, core::InstanceId id);
+Value getPlayerAccountId(const World& world, core::InstanceId id);
+Value getPlayerPublicKey(const World& world, core::InstanceId id);
 Value getPlayerCharacter(const World& world, core::InstanceId id);
 bool setPlayerCharacter(World& world, core::InstanceId id, const Value& value);
 Value getPlayerReplicationFocus(const World& world, core::InstanceId id);

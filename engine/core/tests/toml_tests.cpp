@@ -104,7 +104,7 @@ TEST_CASE("what the subset refuses, it refuses out loud")
     // "a config format that quietly ignores what it does not understand is how a
     // setting ends up not applying".
     const std::string_view cases[] = {
-        "[[products]]\nname = \"a\"\n",
+        "[[products]\nname = \"a\"\n",
         "[project]\nname = { first = \"a\" }\n",
         "[project]\nname = \"unterminated\n",
         "[project\nname = \"a\"\n",
@@ -121,6 +121,31 @@ TEST_CASE("what the subset refuses, it refuses out loud")
         CHECK_FALSE(result.diagnostic.empty());
         CHECK(result.line > 0);
     }
+}
+
+TEST_CASE("an array of tables is each entry by its index, for servers.toml")
+{
+    TomlDocument document;
+    REQUIRE(document.parse(R"([manager]
+port = 7777
+[[world]]
+name = "town"
+entry = true
+[[world]]
+name = "fields"
+[[instance]]
+template = "crypt"
+)",
+                           "servers.toml"));
+    CHECK(document.count("world") == 2);
+    CHECK(document.count("instance") == 1);
+    CHECK(document.count("nothing") == 0);
+    CHECK(document.string("world.0.name") == "town");
+    CHECK(document.boolean("world.0.entry") == true);
+    CHECK(document.string("world.1.name") == "fields");
+    CHECK_FALSE(document.boolean("world.1.entry").has_value());
+    CHECK(document.string("instance.0.template") == "crypt");
+    CHECK(document.number("manager.port") == 7777.0);
 }
 
 TEST_CASE("a duplicate key is the last one, and the CLI reader agrees")

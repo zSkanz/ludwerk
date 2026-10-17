@@ -18,10 +18,12 @@
 #include <string_view>
 #include <vector>
 
+#include "engine/app/admin_client.h"
 #include "engine/app/backends.h"
 #include "engine/app/bench.h"
 #include "engine/app/debug_measure.h"
 #include "engine/app/engine.h"
+#include "engine/app/manager_main.h"
 #include "engine/app/project_config.h"
 #include "engine/app/replay.h"
 #include "engine/app/script_package.h"
@@ -30,14 +32,17 @@
 #include "engine/asset/gltf.h"
 #include "engine/asset/mesh_format.h"
 #include "engine/asset/model.h"
+#include "engine/core/base64.h"
 #include "engine/core/brand.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
+#include "engine/core/crypto.h"
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/core/run_record.h"
+#include "engine/core/ticket.h"
 #include "engine/platform/console.h"
 #include "engine/platform/crash.h"
 #include "engine/platform/file.h"
@@ -516,6 +521,51 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 options.network.simulatedJitterMs = static_cast<engine::core::u32>(value);
             else
                 options.network.simulatedLossPercent = static_cast<engine::core::f32>(value);
+            continue;
+        }
+        // **A world a manager started** (ADR 0220): its name, and the key it
+        // takes passes from. The manager's to pass; a person has no use for
+        // them.
+        if (arg.starts_with("--managed=")) {
+            options.managedWorld = std::string(arg.substr(std::string_view("--managed=").size()));
+            continue;
+        }
+        if (arg.starts_with("--manager-key=")) {
+            options.managerKey = std::string(arg.substr(std::string_view("--manager-key=").size()));
+            continue;
+        }
+        // **Administered from another machine** (ADR 0219): what `[server]
+        // admin = true` says, for one run.
+        if (arg == "--admin") {
+            options.adminListen = true;
+            continue;
+        }
+        // **A world's health for whatever watches it** (ADR 0220): what
+        // `[server] health = true` says, for one run, at a port of its own if
+        // given one.
+        if (arg == "--health" || arg.starts_with("--health=")) {
+            options.healthListen = true;
+            if (arg.starts_with("--health=")) {
+                engine::core::u64 value = 0;
+                if (!numericValue(arg.substr(std::string_view("--health=").size()), value) || value == 0 ||
+                    value > 65535u) {
+                    const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                    engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                    return kExitUsage;
+                }
+                options.healthPort = static_cast<engine::core::u16>(value);
+            }
+            continue;
+        }
+        // **A match in the clear** (ADR 0224): for a development run that
+        // watches its own packets. A shipping build refuses it.
+        if (arg == "--insecure") {
+            if (std::string_view(ENG_PROFILE_NAME) == "shipping") {
+                const std::array<I18nArg, 1> refused{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.not_in_shipping"), refused);
+                return kExitUsage;
+            }
+            options.encryptMatches = false;
             continue;
         }
         // **Why a prediction was corrected**: each correction of this
@@ -1591,6 +1641,124 @@ static int hostMain(int argc, char** argv)
         return kExitOk;
     }
 
+    // **The manager of an online game's worlds** (ADR 0220): no world and no
+    // window of its own; it starts its worlds with this same binary.
+    if (!args.empty() && args[0].starts_with("--manager=")) {
+        std::filesystem::path self =
+            engine::platform::paths().executableDir / std::filesystem::path(argv[0]).filename();
+#if defined(_WIN32)
+        if (self.extension().empty())
+            self += ".exe";
+#endif
+        // The editor's own (ADR 0225): where to play it.
+        engine::app::ManagerPlay play;
+        for (std::size_t at = 1; at < args.size(); ++at) {
+            if (args[at].starts_with("--manager-play=")) {
+                const std::string_view number = args[at].substr(std::string_view{"--manager-play="}.size());
+                if (std::from_chars(number.data(), number.data() + number.size(), play.port).ec != std::errc{})
+                    play.port = 0;
+            }
+            else if (args[at].starts_with("--manager-project="))
+                play.project = std::string(args[at].substr(std::string_view{"--manager-project="}.size()));
+            else if (args[at].starts_with("--manager-root="))
+                play.root = std::string(args[at].substr(std::string_view{"--manager-root="}.size()));
+        }
+        return engine::app::runManager(
+            std::filesystem::path(std::string(args[0].substr(std::string_view{"--manager="}.size()))), self, play);
+    }
+
+    // **An administrator's end** (ADR 0219 §6): `ludwerk server keygen` and
+    // `ludwerk server connect` run these. A key pair, and a session with a
+    // server's console -- a prompt, or one `--command` whose outcome is the
+    // exit code.
+    if (!args.empty() && args[0].starts_with("--admin-keygen="))
+        return engine::app::runAdminKeygen(
+            std::filesystem::path(std::string(args[0].substr(std::string_view{"--admin-keygen="}.size()))));
+    if (!args.empty() && args[0].starts_with("--admin-connect=")) {
+        engine::app::AdminConnect connect;
+        const std::string_view where = args[0].substr(std::string_view{"--admin-connect="}.size());
+        const std::size_t colon = where.rfind(':');
+        connect.host = std::string(where.substr(0, colon));
+        connect.port = 0;
+        if (colon != std::string_view::npos) {
+            const std::string_view number = where.substr(colon + 1);
+            const auto parsed = std::from_chars(number.data(), number.data() + number.size(), connect.port);
+            if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size())
+                connect.port = 0;
+        }
+        for (std::size_t at = 1; at < args.size(); ++at) {
+            if (args[at].starts_with("--admin-key="))
+                connect.keyFile = std::string(args[at].substr(std::string_view{"--admin-key="}.size()));
+            else if (args[at].starts_with("--server-key="))
+                connect.serverKey = std::string(args[at].substr(std::string_view{"--server-key="}.size()));
+            else if (args[at].starts_with("--command="))
+                connect.command = std::string(args[at].substr(std::string_view{"--command="}.size()));
+            else if (args[at] == "--follow")
+                connect.follow = true;
+        }
+        if (connect.host.empty() || connect.port == 0 || connect.keyFile.empty()) {
+            const std::array<I18nArg, 1> badValue{I18nArg{"option", args[0]}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+            return kExitUsage;
+        }
+        return engine::app::runAdminConnect(connect);
+    }
+
+    // **Tickets, for a backend that cannot sign them itself** (ADR 0226 §3):
+    // `ludwerk ticket keygen` and `sign` run this. A key pair -- the private
+    // half a PKCS #8 file any JWT library reads, the public half printed for
+    // `[network] ticket_public_key` -- and a ticket signed with one.
+    if (!args.empty() && args[0].starts_with("--ticket-keygen=")) {
+        const std::filesystem::path file(std::string(args[0].substr(std::string_view{"--ticket-keygen="}.size())));
+        std::array<engine::core::u8, 32> seed{};
+        engine::core::secureRandom(seed);
+        if (!engine::platform::createDirectories(file.parent_path().empty() ? std::filesystem::path(".")
+                                                                            : file.parent_path()) ||
+            !engine::platform::writeTextFile(file, engine::core::ed25519PrivatePem(seed)) ||
+            !engine::platform::restrictToOwner(file)) {
+            const std::array<I18nArg, 1> where{I18nArg{"path", file.string()}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.ticket_key_write"), where);
+            return kExitUsage;
+        }
+        std::fprintf(stdout, "%s\n", engine::core::base64Encode(engine::core::ed25519FromSeed(seed).pub).c_str());
+        return kExitOk;
+    }
+    if (!args.empty() && args[0].starts_with("--ticket-sign=")) {
+        const std::filesystem::path file(std::string(args[0].substr(std::string_view{"--ticket-sign="}.size())));
+        std::string subject;
+        std::string audience;
+        engine::core::u64 seconds = 90;
+        for (std::size_t at = 1; at < args.size(); ++at) {
+            if (args[at].starts_with("--ticket-sub="))
+                subject = std::string(args[at].substr(std::string_view{"--ticket-sub="}.size()));
+            else if (args[at].starts_with("--ticket-aud="))
+                audience = std::string(args[at].substr(std::string_view{"--ticket-aud="}.size()));
+            else if (args[at].starts_with("--ticket-seconds=")) {
+                const std::string_view number = args[at].substr(std::string_view{"--ticket-seconds="}.size());
+                const auto parsed = std::from_chars(number.data(), number.data() + number.size(), seconds);
+                if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size())
+                    seconds = 0;
+            }
+        }
+        std::string pem;
+        const std::optional<std::array<engine::core::u8, 32>> seed =
+            engine::platform::readTextFile(file, pem) ? engine::core::ed25519SeedFromPem(pem) : std::nullopt;
+        if (!seed.has_value() || subject.empty() || audience.empty() || seconds == 0 ||
+            seconds > static_cast<engine::core::u64>(engine::core::TicketMostSeconds)) {
+            const std::array<I18nArg, 1> where{I18nArg{"path", file.string()}};
+            engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.ticket_sign"), where);
+            return kExitUsage;
+        }
+        const std::int64_t now =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        std::fprintf(stdout, "%s\n",
+                     engine::core::signTicket(engine::core::ed25519FromSeed(*seed).secret, subject, audience, now,
+                                              static_cast<std::int64_t>(seconds), engine::core::uniqueId())
+                         .c_str());
+        return kExitOk;
+    }
+
     // **Whether this player reads a mesh format**, asked by `ludwerk
     // build` of the player it is about to package, with the format its asset
     // compiler writes: an answer in the exit code, so no text is printed.
@@ -1754,6 +1922,23 @@ static int hostMain(int argc, char** argv)
         if (!options.startupSceneFromFlag)
             options.startupScene = config.scene;
         options.defaultServer = config.networkServer;
+        options.projectId = config.id;
+        options.defaultServerKey = config.networkServerKey;
+        options.ticketPublicKey = config.networkTicketKey;
+        options.websocketClient = config.websocketClient;
+        options.adminListen = options.adminListen || config.serverAdmin;
+        options.adminPort = config.serverAdminPort;
+        options.adminAllow = config.serverAdminAllow;
+        options.healthListen = options.healthListen || config.serverHealth;
+        if (options.healthPort == 0)
+            options.healthPort = config.serverHealthPort;
+        options.healthAllow = config.serverHealthAllow;
+        if (!config.networkEncrypt) {
+            if (std::string_view(ENG_PROFILE_NAME) == "shipping")
+                engine::core::log(LogLevel::Warn, ENG_TR("net.warn.encrypt_kept"));
+            else
+                options.encryptMatches = false;
+        }
         options.enabledIntegrations = config.enabledIntegrations;
         options.integrationConfigurations = config.integrationConfigurations;
         options.platformServices = config.platformServices;

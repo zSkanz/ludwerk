@@ -1,6 +1,6 @@
 # 0220 — A manager runs a game's worlds from `servers.toml`
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the states, the dashboard and the service of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0218 (the console), ADR 0219 (remote administration),
   ADR 0106 (a scene changed at run time, a match joined from a script),
@@ -143,6 +143,51 @@ console). Without a terminal it logs instead. Remote administration (ADR
 Windows service, that runs the manager in the folder it was given and starts
 it with the machine. `uninstall` takes it away. Nothing is installed without
 the command.
+
+## As built
+
+- **`engine-host --manager=servers.toml`**, and `ludwerk server run`, which
+  runs that in a folder with a `servers.toml` and one dedicated server in any
+  other.
+- **The pipes carry lines that begin with the record separator (0x1E)**,
+  then one JSON object with a `type`: what a console line can never begin
+  with. Each world says `hello`, `ready` (its port, key and protocol), a
+  `heartbeat` each second, `player-joined` and `player-left`; travel,
+  instances and publishing have their own (ADRs 0221 to 0223).
+- **The states are `Starting`, `Ready`, `Draining`, `Stopped` and `Failed`.**
+  `Allocated` is not a state of a world: an instance given to its group is a
+  ready world with a group, and a warm one is a ready world with none.
+- **The front door is a match's own transport**, encrypted, with a key of its
+  own (`keys/front-door.key`); the passes are signed with the manager's
+  Ed25519 key (`keys/manager.key`), kept across restarts.
+- **The dashboard is `worlds --watch`**: the table again each second, the
+  screen cleared where the terminal reads the sequence, until a line is
+  typed. A full-screen terminal interface was not built; the table and a
+  prompt cover the same ground with no terminal library.
+- **`end <world>`** ends a world's process as a crash would, which the editor's
+  *End* sends (ADR 0225).
+- **An update to a folder with no binary of its own** runs this build on the
+  game that folder holds: the editor's *Restart with this build*.
+- **An update to a folder that holds no game is refused** before anything
+  moves, and one whose first world will not start puts the old build back in
+  charge of whatever starts next -- restarts and instances included -- as one
+  of another protocol does.
+- **Each world has its own engine log**, `logs/<world>/engine.log`, beside
+  what the manager keeps of its output: every world runs in the game's
+  folder, and one `engine.log` there was several processes writing one file.
+- **As a service**: on Linux a systemd unit, written by `ludwerk server
+  install` (with `sudo`) and enabled; on Windows a task that runs at startup
+  as the system, since the server binary is not a Windows service program.
+  `uninstall` takes either away.
+- **Health over HTTP**, off by default: `[server] health` or `--health` for a
+  dedicated server, `[manager] health` for every world a manager runs.
+  `GET /health` answers 200 while the world takes players and 503 while it
+  starts or stops; `GET /metrics` its numbers as one JSON object. On the
+  game's port number over TCP -- each world its own -- on the machine's own
+  address unless `health_allow` names others, by ADR 0219's rule.
+- **The editor's own mode** (`--manager-play`, `--manager-project`,
+  `--manager-root`) is ADR 0225's: the manager says its worlds and their
+  lines on its output as messages, and runs at most eight.
 
 ## Consequences
 

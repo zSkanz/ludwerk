@@ -35,10 +35,15 @@
 #include "engine/scene/swarm.h"
 #include "engine/scene/voxel_fluid.h"
 #include "engine/script/bytecode.h"
+#include "engine/script/cross_world.h"
 #include "engine/script/instance_binding.h"
+#include "engine/script/instance_service.h"
+#include "engine/script/join_request.h"
 #include "engine/script/net_module.h"
 #include "engine/script/remote.h"
 #include "engine/script/scenes.h"
+#include "engine/script/server_console.h"
+#include "engine/script/travel.h"
 #include "engine/ui/scene_types.h"
 
 namespace engine::app {
@@ -51,8 +56,8 @@ using core::LogLevel;
 // a directory walk, because the set is the engine's own surface (ADR 0030) and
 // discovering it from a directory would make an accidentally-shipped file part
 // of the API.
-constexpr std::string_view RuntimeModules[] = {"camera",    "ragdoll",   "settings", "splitscreen",
-                                               "stamppool", "subtitles", "testing",  "views"};
+constexpr std::string_view RuntimeModules[] = {"announcements", "camera",    "ragdoll",      "settings", "splitscreen",
+                                               "stamppool",     "subtitles", "travelscreen", "testing",  "views"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -1598,6 +1603,19 @@ void WorldHost::tick()
         // And what crossed from a sub-world, or into one (ADR 0107 §3), for the
         // same reason: it arrived between ticks, and this is where it becomes one.
         script::fireSubWorldMessages(m_runtime->state());
+        // And a server's console (ADR 0218): its operator's lines arrived
+        // between ticks too, and a game's command runs here as a message's
+        // handler does; what the operator said to everybody, the same.
+        script::runConsoleCalls(m_runtime->state());
+        // And who asks to join (ADR 0226): the game's answer, between ticks.
+        script::runJoinRequests(m_runtime->state());
+        // And who arrived from another world, or is leaving for one (ADR 0222).
+        script::fireTravelEvents(m_runtime->state());
+        // And instances: the manager's answers, and one closing (ADR 0221).
+        script::runInstanceEvents(m_runtime->state());
+        // And events from the game's other worlds (ADR 0223).
+        script::fireCrossWorldMessages(m_runtime->state());
+        script::fireServerMessages(m_runtime->state());
     }
 
     // This tick's input, as the local player's intent: after the dispatch
@@ -2387,6 +2405,7 @@ void WorldHost::publishNetworkResults()
     // there would put game code into the frame wherever the socket happened to
     // land it. Same rule and same reason as `resumeAreaWaiters` below (R10).
     script::resumeNetWaiters(m_runtime->state());
+    script::pumpWebSockets(m_runtime->state());
     script::resumeRelayPings(m_runtime->state());
 }
 

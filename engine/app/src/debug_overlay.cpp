@@ -6873,9 +6873,31 @@ struct ConsoleHistory
 };
 
 void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCommands = nullptr,
-                 const IconAtlas* icons = nullptr, bool docked = false)
+                 const IconAtlas* icons = nullptr, bool docked = false, Editor* editor = nullptr)
 {
     ConsoleLog& log = console();
+
+    // **A game's worlds, a tab each** (ADR 0225 §1): what one world wrote,
+    // and a line typed there is for its console -- `status`, `players`, a
+    // game's own commands.
+    static std::string worldTab;
+    if (editor == nullptr || editor->matchWorlds().empty()) {
+        worldTab.clear();
+    }
+    else if (ImGui::BeginTabBar("##console-worlds")) {
+        if (ImGui::BeginTabItem(core::tr(ENG_TR("engine.editor.console.all_tab")))) {
+            worldTab.clear();
+            ImGui::EndTabItem();
+        }
+        for (const Editor::MatchWorld& world : editor->matchWorlds()) {
+            if (ImGui::BeginTabItem(world.name.c_str())) {
+                worldTab = world.name;
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+    const std::string worldPrefix = worldTab.empty() ? std::string{} : "[" + worldTab + "] ";
 
     static std::array<char, 128> filter{};
     static ConsoleSelection selection;
@@ -6999,6 +7021,8 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
 
         for (const ConsoleLog::Line& line : log.lines) {
             if (!consoleMatches(line.text, needle))
+                continue;
+            if (!worldPrefix.empty() && !std::string_view{line.text}.starts_with(worldPrefix))
                 continue;
             const bool levelShown = line.level == core::LogLevel::Error  ? showErrors
                                     : line.level == core::LogLevel::Warn ? showWarnings
@@ -7278,12 +7302,14 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
     ImGui::TextColored(themeColor(palette().accent), ">");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1.0f);
+    const std::string hint =
+        !worldTab.empty()
+            ? core::tr(ENG_TR("engine.editor.console.world_hint"), {{"world", std::string_view{worldTab}}})
+            : std::string(core::tr(runtime != nullptr ? ENG_TR("engine.editor.console.repl_hint")
+                                                      : ENG_TR("engine.editor.console.no_game")));
     const bool submitted = ImGui::InputTextWithHint(
-        "##repl",
-        core::tr(runtime != nullptr ? ENG_TR("engine.editor.console.repl_hint")
-                                    : ENG_TR("engine.editor.console.no_game")),
-        input.data(), input.size(), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, recall,
-        &history);
+        "##repl", hint.c_str(), input.data(), input.size(),
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, recall, &history);
     if (!submitted)
         return;
 
@@ -7296,7 +7322,12 @@ void drawConsole(script::ScriptRuntime* runtime, ScriptEditorCommands* scriptCom
     }
     history.at = -1;
     history.draft.clear();
-    if (!source.empty() && runtime != nullptr) {
+    if (!source.empty() && !worldTab.empty() && editor != nullptr) {
+        // Said under the world's name, so its tab reads as a session too.
+        core::logText(core::LogLevel::Info, std::string(worldPrefix).append("> ").append(source));
+        editor->tellMatch(worldTab + ": " + std::string(source));
+    }
+    else if (!source.empty() && runtime != nullptr) {
         // Echoed first, so the log reads as a session rather than as a list of
         // answers with no questions.
         core::logText(core::LogLevel::Info, std::string("> ").append(source));
@@ -7349,10 +7380,75 @@ void drawMatchControls(Editor& editor, bool locked)
     if (ImGui::IsItemHovered())
         pointerTip("%s", core::tr(ENG_TR("engine.editor.match_controls.more_than_one_plays_a_tip")));
     ImGui::SameLine();
+    // **A game of several worlds** (ADR 0225): its manager in place of one
+    // server, which then has no meaning.
+    if (match.servers) {
+        ImGui::Checkbox(core::tr(ENG_TR("engine.editor.match_controls.worlds")), &match.useServers);
+        if (ImGui::IsItemHovered())
+            pointerTip("%s", core::tr(ENG_TR("engine.editor.match_controls.worlds_tip")));
+        ImGui::SameLine();
+    }
+    ImGui::BeginDisabled(match.playsWorlds());
     ImGui::Checkbox(core::tr(ENG_TR("engine.editor.match_controls.dedicated_server")), &match.dedicated);
     if (ImGui::IsItemHovered())
         pointerTip("%s", core::tr(ENG_TR("engine.editor.match_controls.run_the_match_on_a_tip")));
     ImGui::EndDisabled();
+    ImGui::EndDisabled();
+}
+
+// **A game's worlds while they play** (ADR 0225 §1): each world and instance
+// with its state, players and tick time, *End* to try a fall, and *Restart
+// with this build* to move them to the scripts as they are now.
+void drawMatchWorlds(Editor& editor)
+{
+    const std::vector<Editor::MatchWorld>& worlds = editor.matchWorlds();
+    if (!editor.matchRunning() || worlds.empty())
+        return;
+    if (ImGui::Button(core::tr(ENG_TR("engine.editor.worlds.restart_build"))))
+        editor.requestMatchUpdate();
+    itemTip("%s", core::tr(ENG_TR("engine.editor.worlds.restart_build_tip")));
+    constexpr core::TextKey States[] = {ENG_TR("manager.state.starting"), ENG_TR("manager.state.ready"),
+                                        ENG_TR("manager.state.draining"), ENG_TR("manager.state.stopped"),
+                                        ENG_TR("manager.state.failed")};
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##match-worlds", 5, flags))
+        return;
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.worlds.world")));
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.worlds.state")));
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.worlds.players")));
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.worlds.tick")));
+    ImGui::TableSetupColumn("##end", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableHeadersRow();
+    for (const Editor::MatchWorld& world : worlds) {
+        ImGui::PushID(world.name.c_str());
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(world.name.c_str());
+        if (world.instance && ImGui::IsItemHovered())
+            pointerTip("%s", core::tr(ENG_TR("engine.editor.worlds.instance_of_tip"),
+                                      {{"template", std::string_view{world.templateName}}})
+                                 .c_str());
+        ImGui::TableNextColumn();
+        const int state = std::clamp(world.state, 0, static_cast<int>(std::size(States)) - 1);
+        const bool failed = state == 4;
+        if (failed)
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor(palette().danger));
+        ImGui::TextUnformatted(core::tr(States[state]));
+        if (failed)
+            ImGui::PopStyleColor();
+        ImGui::TableNextColumn();
+        ImGui::Text("%u", world.players);
+        ImGui::TableNextColumn();
+        ImGui::Text("%.1f", world.tickMs);
+        ImGui::TableNextColumn();
+        ImGui::BeginDisabled(state != 1 && state != 2);
+        if (ImGui::SmallButton(core::tr(ENG_TR("engine.editor.worlds.end"))))
+            editor.tellMatch("end " + world.name);
+        ImGui::EndDisabled();
+        itemTip("%s", core::tr(ENG_TR("engine.editor.worlds.end_tip")));
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
 }
 
 // thing a person notices.
@@ -7385,6 +7481,7 @@ void drawRunHeader(Editor& editor, EditorCommands& commands, const IconAtlas* ic
     }
     ImGui::SameLine();
     drawMatchControls(editor, running);
+    drawMatchWorlds(editor);
     ImGui::Separator();
 }
 
@@ -18122,7 +18219,7 @@ void drawEditorShell(const Frame& frame, scene::World* world, core::InstanceId r
     if (panels.console) {
         if (ImGui::Begin((tabIconPad() + core::tr(ENG_TR("engine.editor.panel.console")) + "###Console").c_str(),
                          &panels.console))
-            drawConsole(runtime, &scriptCommands, icons, true);
+            drawConsole(runtime, &scriptCommands, icons, true, editor);
         ImGui::End();
     }
 
@@ -19377,6 +19474,9 @@ void drawNetwork(const scene::World& world)
             (void)std::snprintf(text, sizeof(text), "%.*f%s", decimals, value, unit);
             return std::string(text);
         };
+        if (!stats.encrypted)
+            row(core::tr(ENG_TR("engine.editor.network.encryption")),
+                core::tr(ENG_TR("engine.editor.network.encryption_off")));
         row(core::tr(ENG_TR("engine.editor.network.ping")), number(stats.pingMs, 0, " ms"));
         row(core::tr(ENG_TR("engine.editor.network.jitter")), number(stats.jitterMs, 0, " ms"));
         row(core::tr(ENG_TR("engine.editor.network.loss")), number(stats.lossPercent, 1, " %"));

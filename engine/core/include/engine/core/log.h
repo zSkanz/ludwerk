@@ -43,6 +43,12 @@ using LogSink = std::function<void(LogLevel, std::string_view)>;
 LogSink setLogSink(LogSink sink);
 void resetLogSink();
 
+// **A listener beside the sink, never in its place** (ADR 0219): every line,
+// as it is written, for an administrator following a server's log from
+// another machine. Called from whichever thread logged, so it must be quick
+// and take its own lock. Null removes it.
+void setLogTap(LogSink tap);
+
 // Also writes every line to `path`, in addition to wherever it already goes.
 //
 // **An addition, never a replacement.** Every gate, the conformance runner and

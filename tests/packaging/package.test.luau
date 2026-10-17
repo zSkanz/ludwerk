@@ -32,6 +32,7 @@ local platform = require("@std/system/platform")
 local process = require("@std/process")
 local test = require("@std/test")
 
+local bounded = require("../../tools/cli/bounded")
 local build = require("../../tools/cli/commands/build")
 local new = require("../../tools/cli/commands/new")
 local projectlib = require("../../tools/cli/project")
@@ -168,7 +169,7 @@ test.suite("packaging", function(suite)
         -- executable mounts the `game/` directory beside it, so double-clicking
         -- it plays. `--headless --frames --exit` is only how a test watches it
         -- do that without a window.
-        local ran = process.run({ executable, "--headless", "--frames=30", "--exit" })
+        local ran = bounded.run({ executable, "--headless", "--frames=30", "--exit" })
         local output_text = ran.stdout .. ran.stderr
         assert.that(ran.ok, `the packaged game exited non-zero:\n{output_text}`)
         -- The template's own first line, which proves the GAME ran rather than
@@ -295,7 +296,7 @@ test.suite("packaging", function(suite)
         -- is the engine's (`field_streamer_tests`) -- not asserted here,
         -- where the binary packaged may be the player a gate before this one
         -- built.
-        local ran = process.run({
+        local ran = bounded.run({
             projectlib.joined(output, "packageterrain.exe"),
             "--headless",
             "--frames=60",
@@ -409,7 +410,7 @@ test.suite("packaging", function(suite)
             -- all the same -- its longest language's, from the game's own list,
             -- with none of that language's files on the machine (ADR 0200, R10).
             local executable = projectlib.joined(output, "voicetest.exe")
-            local ran = process.run({ executable, "--headless", "--frames=40", "--exit" })
+            local ran = bounded.run({ executable, "--headless", "--frames=40", "--exit" })
             local said = ran.stdout .. ran.stderr
             assert.that(ran.ok, `the packaged game exited non-zero:\n{said}`)
             assert.that(
@@ -417,7 +418,7 @@ test.suite("packaging", function(suite)
                 `without its language pack the game did not say two voices and a line of 0.90 s:\n{said}`
             )
             -- A voice that is not installed is not one the game can be put in.
-            local asked = process.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
+            local asked = bounded.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
             local answered = asked.stdout .. asked.stderr
             assert.that(
                 string.find(answered, "[voices] list=en,pt-BR voice=en length=0.90", 1, true) ~= nil,
@@ -426,7 +427,7 @@ test.suite("packaging", function(suite)
 
             -- **With it**: put beside the game's own pack, it is found at start.
             fs.copy(japanese, projectlib.joined(engineFolder, "l10n-ja.lpack"))
-            local installed = process.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
+            local installed = bounded.run({ executable, "--headless", "--frames=40", "--exit", "--voice-locale=ja" })
             local heard = installed.stdout .. installed.stderr
             assert.that(installed.ok, `the packaged game exited non-zero with a language pack:\n{heard}`)
             assert.that(

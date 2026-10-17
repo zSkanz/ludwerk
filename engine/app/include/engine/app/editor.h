@@ -1077,11 +1077,43 @@ public:
     {
         int players = 1;
         bool dedicated = false;
-        [[nodiscard]] bool isMatch() const noexcept { return players > 1 || dedicated; }
+        // **The project has a `servers.toml`** (ADR 0225), and whether a match
+        // plays its worlds -- the manager, each world headless -- rather than
+        // one server.
+        bool servers = false;
+        bool useServers = true;
+        [[nodiscard]] bool playsWorlds() const noexcept { return servers && useServers; }
+        [[nodiscard]] bool isMatch() const noexcept { return players > 1 || dedicated || playsWorlds(); }
     };
     [[nodiscard]] MatchSettings& matchSettings() noexcept { return m_match; }
     [[nodiscard]] bool matchRunning() const noexcept { return m_matchRunning; }
     void setMatchRunning(bool running) noexcept { m_matchRunning = running; }
+
+    // **A game's worlds while a match plays them** (ADR 0225): each world and
+    // instance as the manager last said, for the Run view's table and the
+    // Console's tabs.
+    struct MatchWorld
+    {
+        std::string name;
+        // Starting, Ready, Draining, Stopped, Failed.
+        int state = 0;
+        core::u16 port = 0;
+        core::u32 players = 0;
+        core::f64 tickMs = 0.0;
+        core::u32 restarts = 0;
+        bool instance = false;
+        std::string templateName;
+    };
+    void setMatchWorlds(std::vector<MatchWorld> worlds) { m_matchWorlds = std::move(worlds); }
+    [[nodiscard]] const std::vector<MatchWorld>& matchWorlds() const noexcept { return m_matchWorlds; }
+    // A line for the manager's console -- `<world>: status`, `end <world>` --
+    // sent by the frame that follows.
+    void tellMatch(std::string line) { m_matchLines.push_back(std::move(line)); }
+    [[nodiscard]] std::vector<std::string> takeMatchLines() { return std::exchange(m_matchLines, {}); }
+    // **Restart with this build** (ADR 0225 §2): the worlds moved to the
+    // scripts as they are now, nobody dropped.
+    void requestMatchUpdate() noexcept { m_matchUpdate = true; }
+    [[nodiscard]] bool takeMatchUpdate() noexcept { return std::exchange(m_matchUpdate, false); }
 
     // Writes the world to `path`. Returns false and sets the status on failure;
     // the caller does not need to know which of the two steps failed, but a
@@ -3626,6 +3658,9 @@ private:
     std::optional<ScriptFileRequest> m_scriptFileRequest;
     MatchSettings m_match;
     bool m_matchRunning = false;
+    std::vector<MatchWorld> m_matchWorlds;
+    std::vector<std::string> m_matchLines;
+    bool m_matchUpdate = false;
     UndoStack m_history;
     // The scene's, while a stamp's stage holds `m_history`.
     UndoStack m_sceneHistory;

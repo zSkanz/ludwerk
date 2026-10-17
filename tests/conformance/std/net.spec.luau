@@ -46,6 +46,17 @@ describe("@std/net", function()
         expect(typeof(net.request)):ToBe("function")
     end)
 
+    it("exports websocket, which refuses what it cannot open and says why", function()
+        expect(typeof(net.websocket)):ToBe("function")
+        local ok, why = pcall(function()
+            return net.websocket("http://example.test/")
+        end)
+        expect(ok):ToBe(false)
+        -- Refused, saying why: the address, or -- a client's side without
+        -- `[permissions] websocket_client` -- whose a socket is.
+        expect(string.find(string.lower(tostring(why)), "websocket", 1, true) ~= nil):ToBe(true)
+    end)
+
     it("does not export serve, which is reserved rather than present", function()
         -- api-design.md §7 lists `serve`; v1 does not ship it, and the decision
         -- is recorded at the top of `net_module.cpp`. Asserted here so that a

@@ -30,9 +30,11 @@ local moduleRegistry = require("./modules/registry")
 local new = require("./commands/new")
 local projectlib = require("./project")
 local saves = require("./commands/saves")
+local server = require("./commands/server")
 local setup = require("./commands/setup")
 local terrain = require("./commands/terrain")
 local test = require("./commands/test")
+local ticket = require("./commands/ticket")
 local version = require("./commands/version")
 local voice = require("./commands/voice")
 
@@ -80,9 +82,11 @@ type Parsed = {
 --- `build --dev-host mygame` builds `mygame`.
 local ValueFlags: { [string]: boolean } = {
     alias = true,
+    command = true,
     definitions = true,
     high = true,
     junit = true,
+    key = true,
     locale = true,
     low = true,
     material = true,
@@ -94,9 +98,12 @@ local ValueFlags: { [string]: boolean } = {
     progress = true,
     report = true,
     scale = true,
+    seconds = true,
     seed = true,
     size = true,
     slot = true,
+    ["server-key"] = true,
+    sub = true,
     target = true,
     template = true,
     validity = true,
@@ -388,6 +395,50 @@ local function main(): number
             path = parsed.positional[2] or ".",
             slot = parsed.flags.slot,
             player = parsed.flags.player ~= nil,
+        })
+    end
+
+    -- **An online game's servers** (ADRs 0219, 0220): run, installed to
+    -- start with the machine, and administered from another one.
+    if parsed.command == "server" then
+        if
+            not rejectUnknownFlags(
+                parsed,
+                { "port", "name", "out", "key", "server-key", "command", "follow", "admin", "health" }
+            )
+        then
+            return 2
+        end
+        local positional = table.clone(parsed.positional)
+        local action = table.remove(positional, 1)
+        return server.run({
+            action = action,
+            positional = positional,
+            port = parsed.flags.port,
+            name = parsed.flags.name,
+            out = parsed.flags.out,
+            key = parsed.flags.key,
+            serverKey = parsed.flags["server-key"],
+            command = parsed.flags.command,
+            follow = parsed.flags.follow ~= nil,
+            admin = parsed.flags.admin ~= nil,
+            health = parsed.flags.health ~= nil,
+        })
+    end
+
+    -- **Tickets that name an account** (ADR 0226 §3): a key pair for a
+    -- backend, and a ticket signed with it.
+    if parsed.command == "ticket" then
+        if not rejectUnknownFlags(parsed, { "out", "key", "sub", "seconds" }) then
+            return 2
+        end
+        return ticket.run({
+            action = parsed.positional[1],
+            path = parsed.positional[2] or ".",
+            out = parsed.flags.out,
+            key = parsed.flags.key,
+            sub = parsed.flags.sub,
+            seconds = parsed.flags.seconds,
         })
     end
 

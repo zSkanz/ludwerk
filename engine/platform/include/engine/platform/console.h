@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 #include "engine/core/types.h"
@@ -39,5 +40,27 @@ void writeConsole(ConsoleStream stream, std::string_view utf8);
 // -- a test, a script, CI -- where somebody is reading and a dialog would
 // only be in the way.
 [[nodiscard]] bool outputGoesUnread() noexcept;
+
+// What one read of the standard input found.
+enum class InputRead : core::u8
+{
+    // Bytes, appended to `out`.
+    Data,
+    // Nothing within the time given; the input is still open.
+    Nothing,
+    // Closed, or there is none: nothing more will come.
+    Ended,
+};
+
+// **The standard input, read without the C library**: at most `timeoutMs`
+// waiting for bytes, and what came appended to `out`.
+//
+// Not `std::cin` nor `fgets`, because both take the C library's lock on
+// `stdin` for as long as they wait -- and `exit()` takes every stream's lock
+// to flush it. A thread waiting for a line nobody will type then holds the
+// whole process open at exit, forever, at no CPU: a server started with an
+// open pipe it never reads from, told to run five frames and end, did exactly
+// that. Here the wait is the system's own, bounded, and holds nothing.
+[[nodiscard]] InputRead readStandardInput(std::string& out, core::u32 timeoutMs);
 
 } // namespace engine::platform

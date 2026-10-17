@@ -338,6 +338,29 @@ u64 systemMemoryBytes() noexcept
     return megabytes > 0 ? static_cast<u64>(megabytes) * 1024ull * 1024ull : 0;
 }
 
+u64 freeMemoryBytes() noexcept
+{
+#if defined(_WIN32) && !ENG_PLATFORM_UWP
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    return GlobalMemoryStatusEx(&status) != 0 ? static_cast<u64>(status.ullAvailPhys) : 0;
+#elif defined(__linux__)
+    std::FILE* const meminfo = std::fopen("/proc/meminfo", "rb");
+    if (meminfo == nullptr)
+        return 0;
+    char line[256];
+    unsigned long long kilobytes = 0;
+    while (std::fgets(line, sizeof(line), meminfo) != nullptr) {
+        if (std::sscanf(line, "MemAvailable: %llu kB", &kilobytes) == 1)
+            break;
+    }
+    (void)std::fclose(meminfo);
+    return static_cast<u64>(kilobytes) * 1024ull;
+#else
+    return 0;
+#endif
+}
+
 u64 residentBytes() noexcept
 {
 #if defined(_WIN32)

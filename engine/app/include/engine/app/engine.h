@@ -207,6 +207,36 @@ struct EngineOptions
     // `[network] relay`, or `--relay=` (ADR 0178): where `Host` registers and
     // a `Join` by code asks when the call names no relay.
     std::string defaultRelay;
+    // **Whether this run's matches are encrypted** (ADR 0224): false only for
+    // `--insecure` or `[network] encrypt = false`, and never in a shipping
+    // build.
+    bool encryptMatches = true;
+    // `[network] server_key`: the key of `defaultServer`, in hexadecimal.
+    std::string defaultServerKey;
+    // `[network] ticket_public_key`, base64.
+    std::string ticketPublicKey;
+    // `[permissions] websocket_client`.
+    bool websocketClient = false;
+    // **Administration from another machine** (ADR 0219): `--admin` or
+    // `[server] admin`, its port (0: the game's plus one) and who beyond
+    // 127.0.0.1 may reach it.
+    bool adminListen = false;
+    core::u16 adminPort = 0;
+    std::vector<std::string> adminAllow;
+    // **A world's health** (ADR 0220): `--health[=PORT]` or `[server]
+    // health`, its port (0: the game's, over TCP) and who beyond 127.0.0.1
+    // may ask.
+    bool healthListen = false;
+    core::u16 healthPort = 0;
+    std::vector<std::string> healthAllow;
+    // **A world a manager started** (`--managed=NAME`, ADR 0220): its name,
+    // and the manager's public key it trusts passes from (`--manager-key=`,
+    // base64).
+    std::string managedWorld;
+    std::string managerKey;
+    // `[project] id`: bound into every match's handshake, so a game joins only
+    // its own.
+    std::string projectId;
     std::vector<std::string> enabledIntegrations{};
     std::unordered_map<std::string, std::string> integrationConfigurations{};
     platform::PlatformServiceConfiguration platformServices{};

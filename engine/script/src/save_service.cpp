@@ -585,4 +585,33 @@ void resumeSaveWaiters(lua_State* L, core::f64 dt)
     }
 }
 
+std::string encodeSavedValue(lua_State* L, int index, core::usize limit)
+{
+    std::vector<const void*> path;
+    SaveSlotData slot;
+    slot.values.emplace("data", toSaveValue(L, index, 0, path));
+    std::string text = SaveStore::encode(slot, 0.0);
+    if (text.size() > limit) {
+        const core::I18nArg args[] = {{"bytes", static_cast<core::i64>(text.size())},
+                                      {"limit", static_cast<core::i64>(limit)}};
+        raise(L, ENG_TR("script.err.saved_value_too_large"), args);
+    }
+    return text;
+}
+
+void pushSavedValue(lua_State* L, std::string_view text)
+{
+    SaveSlotData slot;
+    if (!SaveStore::decode(text, slot)) {
+        lua_pushnil(L);
+        return;
+    }
+    const auto found = slot.values.find("data");
+    if (found == slot.values.end()) {
+        lua_pushnil(L);
+        return;
+    }
+    pushSaveValue(L, found->second);
+}
+
 } // namespace engine::script

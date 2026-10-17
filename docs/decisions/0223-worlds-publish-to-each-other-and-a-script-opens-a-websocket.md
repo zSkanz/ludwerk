@@ -1,6 +1,6 @@
 # 0223 — Worlds publish to each other, and a script opens a WebSocket
 
-- Status: accepted; not built yet
+- Status: accepted; built, with the platforms of "As built"
 - Date: 2026-10-14
 - Builds on: ADR 0220 (the manager and its pipes), ADR 0035 (the engine's
   WebSocket client), ADR 0063 (TLS comes from the platform), api-design.md §7
@@ -65,6 +65,22 @@ socket:Close()
   says it wants with `[permissions] websocket_client = true`. A shipped game
   without it refuses on a client, saying which key to set.
 - Bounded: eight sockets a VM, 1 MiB a message.
+
+## As built
+
+- **`CrossWorldService` has `Publish`, `Subscribe` and `Unsubscribe`**: a
+  topic at most 80 bytes, a message at most 4 KiB written, 200 a second from
+  a world, dropped when older than ten seconds at its turn. The manager
+  carries them over the pipes; a world with no manager hears its own.
+  `NetworkService:GetStats` counts what was dropped.
+- **`net.websocket`** opens `ws://` and `wss://`: through WinHTTP on Windows,
+  and through the engine's own socket and the OpenSSL that `net.request`
+  already uses on Linux. On Android, Xbox and Apple platforms `wss://` raises
+  for now -- their TLS is the platform's, and the engine does not yet hold a
+  stream through it -- and `ws://` works.
+- **A socket's messages arrive at a frame safe point** as `Received`, at most
+  1 MiB, text as a `string` and binary as a `buffer`; `Closed` fires once
+  with the code and the words. At most eight are open in a VM.
 
 ## Consequences
 
