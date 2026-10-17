@@ -138,6 +138,22 @@ end
   from 334 MB to 116: a capture that keeps an entity keeps its field set.
 - **The one without dormancy was not keeping up** (54 ticks a second where 60
   are due), so the drop measured is if anything smaller than the real one.
+- **Judged again with a release build** (the package of the commit that built
+  it, the load test of ADR 0236: 1,500 server characters, 50 bots,
+  `wander`, 85 seconds with all of them in):
+
+  | Players | `dormant_radius` | Tick (ms) | Ticks a second | Memory, most |
+  |---|---|---|---|---|
+  | spread over the whole map | 0 (never) | 16.5 | 56.2 | 332 MB |
+  | spread over the whole map | 300 | 15.5 | 60.5 | 238 MB |
+  | within 500 m of each other | 0 (never) | 13.6 | 58.8 | 332 MB |
+  | within 500 m of each other | 300 | 7.2 | 60.6 | 112 MB |
+
+  Gathered, the tick is **53%** of what it was in the release build, against
+  40% in the development one: the release build does the awake world faster
+  (13.6 ms against 16.8), and what sleeping removes is a smaller share of it.
+  The third the Proof asks is not met in either. Spread, the drop is small in
+  both, and the server keeps its sixty ticks only with dormancy.
 - A player walking into a sleeping camp finds every character where it was,
   walking the tick they come within the radius (`engine_scene_tests`); the
   determinism traces, of worlds with no dedicated server, are unchanged.

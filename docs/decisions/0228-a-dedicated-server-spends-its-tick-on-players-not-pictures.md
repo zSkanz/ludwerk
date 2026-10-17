@@ -164,6 +164,12 @@ How much each peer is sent (ADR 0229); which world a crowd is in (ADR 0230).
 **A parallel character step**, a later option: the characters' controllers
 moved on several workers at once. Measured at 5.7 µs a character a tick in a
 development build -- 1,000 characters, 5.75 ms -- it is the largest share of a
-crowded server's tick that dormancy (ADR 0234) does not remove. Characters
+crowded server's tick that dormancy (ADR 0234) does not remove. **In a
+release build**, a dedicated server with characters walking and none asleep
+(`physics.characters`, then the whole tick): 500 characters, 2.21 ms (4.4 µs
+each) and 3.17 ms; 1,000, 5.17 ms (5.2 µs each) and 7.94 ms, the solver
+growing faster than the count (0.61 ms at 500, 2.03 at 1,000); 2,000, past
+what one core holds -- 13.3 ms of characters and 22.5 ms in all a tick, and
+the server catching up thirty ticks a frame. Characters
 push each other, so it needs a determinism proof of its own before it is
 built.
