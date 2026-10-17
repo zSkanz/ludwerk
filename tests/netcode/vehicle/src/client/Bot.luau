@@ -138,6 +138,10 @@ task.spawn(function()
     -- a round trip, which is not to be counted in the ticks below.
     local jumps = Workspace:WaitForChild("Jumps") :: RemoteFunction
     jumps:InvokeServerAsync(true)
+    -- Where the server's long frames stand as the drive begins: asked here,
+    -- before the answer's ticks are counted, so the round trip is in none.
+    local serverLong = Workspace:WaitForChild("LongFrames") :: RemoteFunction
+    local serverLongAtStart = serverLong:InvokeServerAsync() :: number
 
     -- The car answers when its engine does -- its turns change -- or it
     -- moves: from a standstill an automatic gearbox puts it in gear and lets
@@ -210,6 +214,11 @@ task.spawn(function()
     -- of them was reported as none at all.
     local runCorrections, runLargest = 0, 0
     local runSeen = NetworkService:GetStats().Corrections
+    -- **And every long frame of the drive**, both machines', for the same
+    -- reason: a frame of 200 ms between two stretches was in no row. The
+    -- server's count was asked before the ticks to answer were counted.
+    local runLong = 0
+    local lastFrame = os.clock()
     local simulatedSpans: { number } = {}
     local function simulatedJumpOf(at: vector): number
         -- The simulated place moves a tick at a time: its line is a tick long.
@@ -227,6 +236,11 @@ task.spawn(function()
     local ticking = RunService.Heartbeat:Connect(function(dt: number)
         tickLength = dt
         simJump = math.max(simJump, simulatedJumpOf(car.Position))
+        local frameNow = os.clock()
+        if frameNow - lastFrame > 0.05 then
+            runLong += 1
+        end
+        lastFrame = frameNow
         local stats = NetworkService:GetStats()
         local corrected = stats.Corrections > runSeen
         if corrected then
@@ -328,6 +342,10 @@ task.spawn(function()
     RunService:UnbindFromRenderStep("CarJumps")
     ticking:Disconnect()
     local authorityJump = jumps:InvokeServerAsync(false) :: number
+    local serverLongAtEnd = serverLong:InvokeServerAsync() :: number
+    -- The drive's long frames, both machines', in place of the stretches'
+    -- own: what the rules allow for a long frame, they allow wherever it fell.
+    hitches = math.max(hitches, runLong + (serverLongAtEnd - serverLongAtStart))
     task.wait(1)
 
     local where = Workspace:WaitForChild("Where") :: RemoteFunction
