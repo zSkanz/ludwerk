@@ -36,9 +36,17 @@
 # correction must be that half metre. A run that said nought here would be a
 # measure that cannot see a correction, and every nought above with it.
 #
-# **A stall** (`stall`, 150 ms): the driver's machine stops for 200 ms in the
-# straight. It catches the ticks up and goes on as before: no correction, and
-# the car drawn no further than the glide allows.
+# **A stall** (`stall`, 150 ms): the driver's machine stops for 120 ms in the
+# straight, well inside the quarter second a client catches up
+# (`StallCatchUpSeconds`). It catches the ticks up and goes on as before: no
+# correction, and the car drawn no further than the glide allows. **And one
+# past it** (`stalllong`): 400 ms, of which the client runs a quarter second
+# and drops the rest, as it says it does; it then steps its car on to where
+# the authority has it -- drawn gliding or put there as the jump's size says,
+# and never a storm of corrections. Each row prints the
+# stall's frame, the frame before it and the ticks the burst ran, so a stall
+# that went past the quarter second, or that followed a heavy frame and was
+# refused, says so.
 #
 # **Two drivers** (`duel`, 150 ms): two clients, their cars facing each other,
 # each driving at the other with a wheel that wanders from a seed of its own.
@@ -65,6 +73,7 @@ set(conditions
     "touch|25|20|2|park|1"
     "nudge|25|20|2|nudge|1"
     "stall|75|20|2|stall|1"
+    "stalllong|75|20|2|stalllong|1"
     "duel|75|20|2|duel|2")
 
 file(REMOVE_RECURSE "${STAGE}")
@@ -133,12 +142,12 @@ foreach(entry IN LISTS conditions)
 
     foreach(line IN LISTS lines)
         message("${line}")
-        foreach(key seat start straight corner stopping contact hitches carTicks walkTicks corrections)
+        foreach(key seat start straight corner stopping contact hitches carTicks walkTicks corrections stallTicks)
             string(REGEX MATCH " ${key}=(-?[0-9]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
         foreach(key stop ping closest largest drawnJump simJump driftMean driftMax driftBetween otherDrift
-                    authorityJump)
+                    authorityJump stallFrame stallBefore)
             string(REGEX MATCH " ${key}=([0-9.a-z]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
@@ -180,12 +189,37 @@ foreach(entry IN LISTS conditions)
             endif()
         elseif(mode STREQUAL "stall")
             # **A stall is caught up, not dropped** (`stallCatchUpSeconds`):
-            # the machine stopped for 200 ms runs the twelve ticks it owes and
+            # the machine stopped for 120 ms runs the eight ticks it owes and
             # goes on predicting. Not one correction, anywhere in the drive --
-            # what it dropped it used to be put at, 1.4 m on.
+            # what it dropped it used to be put at, 1.4 m on. A burst of no
+            # more than the four ticks every frame may run is one the client
+            # refused: the frame before it was heavy, or the stall went past
+            # the quarter second.
             math(EXPR driven "${straight} + ${corner} + ${outside}")
-            if(driven GREATER 0)
-                string(APPEND failures "  ${name}: a stall of 200 ms took ${driven} corrections\n")
+            if(stallTicks LESS_EQUAL 4)
+                string(APPEND failures "  ${name}: the stall was not caught up -- ${stallTicks} ticks after a frame of "
+                       "${stallFrame} ms, the one before it ${stallBefore} ms\n")
+            elseif(driven GREATER 0)
+                string(APPEND failures "  ${name}: a stall of 120 ms took ${driven} corrections (its frame ${stallFrame} "
+                       "ms, ${stallTicks} ticks caught up)\n")
+            endif()
+        elseif(mode STREQUAL "stalllong")
+            # **Past the quarter second, dropped and told**: the burst is
+            # a quarter second at most (fifteen ticks), and what the client
+            # dropped it no longer predicts -- its car is stepped on to the
+            # authority's, which the authority's answers then agree with: no
+            # correction over the runs, and three at most, never a storm.
+            math(EXPR driven "${straight} + ${corner} + ${outside}")
+            string(REGEX REPLACE "\\..*" "" stallWhole "${stallFrame}")
+            if(stallWhole LESS 300)
+                string(APPEND failures "  ${name}: the long stall was only ${stallFrame} ms -- the measure is blind\n")
+            endif()
+            if(stallTicks GREATER 16)
+                string(APPEND failures "  ${name}: a stall of ${stallFrame} ms ran ${stallTicks} ticks, past the quarter "
+                       "second a client catches up\n")
+            endif()
+            if(driven GREATER 3)
+                string(APPEND failures "  ${name}: a stall past the catch-up took ${driven} corrections\n")
             endif()
         elseif(mode STREQUAL "nudge")
             # Half a metre aside, seen as half a metre.
@@ -228,7 +262,21 @@ foreach(entry IN LISTS conditions)
         # 111 mm the authority's, over the runs). What the picture must not
         # do is snap on top of the physics: the drawn car against the larger
         # of the two crashes. The correction itself is held below.
-        if(NOT mode STREQUAL "nudge")
+        if(mode STREQUAL "stalllong")
+            # **Drawn as the jump's size says** (`VisualSnapMetres`): what
+            # the client dropped it no longer predicts, and its car is
+            # stepped on to where the authority has it -- a metre or so in a
+            # tick, no correction counted (1.0 to 1.9 m over the runs). Under
+            # two metres that is drawn gliding, a fifth of what is left a
+            # tick, as the nudge's half metre is; past two it is put there.
+            string(REGEX REPLACE "\\..*" "" longDrawn "${drawnJump}")
+            string(REGEX REPLACE "\\..*" "" longSimulated "${simJump}")
+            math(EXPR glideMost "${longSimulated} / 4 + 20")
+            if(longSimulated LESS 2000 AND longDrawn GREATER glideMost)
+                string(APPEND failures "  ${name}: a ${simJump} mm jump after a dropped stall was drawn as a "
+                       "${drawnJump} mm jump -- it did not glide\n")
+            endif()
+        elseif(NOT mode STREQUAL "nudge")
             string(REGEX REPLACE "\\..*" "" drawnWhole "${drawnJump}")
             string(REGEX REPLACE "\\..*" "" authorityWhole "${authorityJump}")
             string(REGEX REPLACE "\\..*" "" simulatedWhole "${simJump}")
@@ -276,7 +324,8 @@ foreach(entry IN LISTS conditions)
                 string(APPEND failures "  ${name}: the car (${car}) drifted ${driftBetween} mm from the authority's "
                        "between corrections (the most of any other part: ${otherDrift} mm, ${otherPart})\n")
             endif()
-        elseif(NOT mode STREQUAL "nudge" AND NOT mode STREQUAL "duel" AND driftMax GREATER 30)
+        elseif(NOT mode STREQUAL "nudge" AND NOT mode STREQUAL "duel" AND NOT mode STREQUAL "stalllong"
+               AND driftMax GREATER 30)
             string(APPEND failures "  ${name}: the car (${car}) drifted ${driftMax} mm from the authority's\n")
         endif()
         # **And a ceiling the relative rules cannot raise**: on a clean link

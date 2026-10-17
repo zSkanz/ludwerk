@@ -206,8 +206,13 @@ task.spawn(function()
     -- once two cars touch the other is one of them. Its drift is kept apart,
     -- by name. And the car's drift in the ticks no correction answered: a
     -- correction fires at `VehicleCorrectionMetres` by design, so the tick it
-    -- fires reads at least that much.
+    -- fires reads at least that much. **And the ticks after it read it
+    -- again**: the drift is the last answer's, held until the next one
+    -- comes, so the ticks between a correction and the next answer read the
+    -- very drift that correction answered -- 32.4 mm, after a 0.032 m
+    -- correction of it, was taken for drift nothing answered.
     local driftBetween = 0
+    local answered = -1
     local otherDrift, otherPart = 0, "--"
     -- **Every correction of the drive, and the largest**, not only the ones
     -- inside the stretches `corrections` counts: an 11 cm snap between two
@@ -219,6 +224,30 @@ task.spawn(function()
     -- server's count was asked before the ticks to answer were counted.
     local runLong = 0
     local lastFrame = os.clock()
+    -- **What the stall was, as this machine's clock saw it**: the frame it
+    -- made, the frame before it, and the ticks the frames after it ran. A
+    -- client catches up a stall once, to a quarter of a second, and not one
+    -- that follows a frame long enough to owe more than its four ticks
+    -- (`StallCatchUpSeconds`, `FrameScheduler`); what it does not catch up it
+    -- drops. Frames are counted at `PreRender`, ticks at `Heartbeat`.
+    local stallDone = false
+    local stallSeen = 0
+    local stallFrame, stallBefore, stallTicks = 0, 0, 0
+    local frameAt = os.clock()
+    local lastFrameLength = 0
+    local ticksThisFrame = 0
+    local framing = RunService.PreRender:Connect(function()
+        local now = os.clock()
+        local length = now - frameAt
+        frameAt = now
+        if stallDone and stallSeen < 3 then
+            stallSeen += 1
+            stallFrame = math.max(stallFrame, length)
+            stallTicks = math.max(stallTicks, ticksThisFrame)
+        end
+        lastFrameLength = length
+        ticksThisFrame = 0
+    end)
     local simulatedSpans: { number } = {}
     local function simulatedJumpOf(at: vector): number
         -- The simulated place moves a tick at a time: its line is a tick long.
@@ -235,6 +264,7 @@ task.spawn(function()
     local tickLength = 1 / 60
     local ticking = RunService.Heartbeat:Connect(function(dt: number)
         tickLength = dt
+        ticksThisFrame += 1
         simJump = math.max(simJump, simulatedJumpOf(car.Position))
         local frameNow = os.clock()
         if frameNow - lastFrame > 0.05 then
@@ -254,7 +284,9 @@ task.spawn(function()
             driftSum += drift
             driftCount += 1
             driftMax = math.max(driftMax, drift)
-            if not corrected then
+            if corrected then
+                answered = drift
+            elseif drift ~= answered then
                 driftBetween = math.max(driftBetween, drift)
             end
         elseif drift > otherDrift then
@@ -318,13 +350,17 @@ task.spawn(function()
                 local nudge = Workspace:WaitForChild("Nudge") :: RemoteFunction
                 nudge:InvokeServerAsync()
             end)
-        elseif Condition.Mode == "stall" then
-            -- A second into the straight, this machine stops for a fifth of a
-            -- second: a window dragged, a disk read, an alt-tab.
+        elseif Condition.Mode == "stall" or Condition.Mode == "stalllong" then
+            -- A second into the straight, this machine stops: for 120 ms --
+            -- a window dragged, a disk read, an alt-tab -- well inside the
+            -- quarter second a client catches up; or for 400 ms, past it.
+            local busy = if Condition.Mode == "stall" then 0.12 else 0.4
             task.delay(1, function()
+                stallBefore = lastFrameLength
                 local from = os.clock()
-                while os.clock() - from < 0.2 do
+                while os.clock() - from < busy do
                 end
+                stallDone = true
             end)
         end
         straight, h = corrections(3)
@@ -341,6 +377,7 @@ task.spawn(function()
     hitches += h
     RunService:UnbindFromRenderStep("CarJumps")
     ticking:Disconnect()
+    framing:Disconnect()
     local authorityJump = jumps:InvokeServerAsync(false) :: number
     local serverLongAtEnd = serverLong:InvokeServerAsync() :: number
     -- The drive's long frames, both machines', in place of the stretches'
@@ -367,6 +404,8 @@ task.spawn(function()
             .. `simJump={decimal(simJump * 1000, 1)} driftMean={decimal(driftSum / math.max(driftCount, 1) * 1000, 1)} `
             .. `driftMax={decimal(driftMax * 1000, 1)} driftBetween={decimal(driftBetween * 1000, 1)} `
             .. `otherDrift={decimal(otherDrift * 1000, 1)} otherPart={otherPart} car={car.Name} `
-            .. `authorityJump={decimal(authorityJump * 1000, 1)}`
+            .. `authorityJump={decimal(authorityJump * 1000, 1)} `
+            .. `stallFrame={decimal(stallFrame * 1000, 1)} stallBefore={decimal(stallBefore * 1000, 1)} `
+            .. `stallTicks={stallTicks}`
     )
 end)
