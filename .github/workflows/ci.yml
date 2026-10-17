@@ -441,6 +441,19 @@ jobs:
           set -e
           exit "$status"
 
+      # What a netcode test saw, kept when the run fails: as the Windows job
+      # keeps it, and for the same reason.
+      - name: The netcode stages, on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: netcode-stages-${{ matrix.preset }}
+          path: |
+            ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/netcode-*/
+            ${{ env.ENG_BUILD_ROOT }}/${{ matrix.preset }}/engine/app/example-multiplayer-guest/
+          if-no-files-found: ignore
+          retention-days: 7
+
       # **What a runner is allowed to skip, named**. CTest counts a skip
       # as a pass, so six gates that need a graphics device or a display have
       # reported green on every push without executing: `editor_seam` and
