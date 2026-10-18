@@ -107,8 +107,14 @@ describe("Enum.UserInputType", function()
         expect(Enum.InputDeviceType.Touch.Value):ToBe(2)
     end)
 
+    it("names a headset's two controllers after the touchscreen (ADR 0245)", function()
+        expect(Enum.UserInputType.XRLeft.Value):ToBe(9)
+        expect(Enum.UserInputType.XRRight.Value):ToBe(10)
+        expect(Enum.InputDeviceType.XR.Value):ToBe(3)
+    end)
+
     it("is a closed set that GetEnumItems enumerates", function()
-        expect(#Enum.UserInputType:GetEnumItems()):ToBe(9)
+        expect(#Enum.UserInputType:GetEnumItems()):ToBe(11)
     end)
 end)
 

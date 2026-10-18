@@ -134,10 +134,7 @@ public:
     // **The head, the hands and the controllers** (ADR 0245), for the frame
     // begun last -- read at the time it will be shown. Nothing known reads
     // as poses not valid and every key at rest.
-    virtual void readInput(HeadsetInput& input)
-    {
-        input = HeadsetInput{};
-    }
+    virtual void readInput(HeadsetInput& input) { input = HeadsetInput{}; }
     // **A controller's vibration** (ADR 0245 §3): `hand` 0 left, 1 right; an
     // amplitude 0 to 1 for `seconds`, replacing what it was doing.
     virtual void vibrate(u32 hand, f32 amplitude, f32 seconds)

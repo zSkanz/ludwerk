@@ -7805,7 +7805,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 headset->readInput(read);
                 host->input().setHeadsetKeys(read.keys);
                 const auto cframeOf = [](const rhi::HeadsetPose& pose) {
-                    return core::CFrameD{core::DVec3{pose.position[0], pose.position[1], pose.position[2]},
+                    return core::CFrameD{core::DVec3{static_cast<f64>(pose.position[0]),
+                                                     static_cast<f64>(pose.position[1]),
+                                                     static_cast<f64>(pose.position[2])},
                                          core::fromQuaternion(pose.orientation[0], pose.orientation[1],
                                                               pose.orientation[2], pose.orientation[3])};
                 };

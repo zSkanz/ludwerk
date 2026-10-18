@@ -77,11 +77,11 @@ constexpr i32 SwipeCount = 4;
 // each stick's two axes and the two as one, the sticks pressed in, and a
 // tracked hand's pinch. At the end, so no value a game held moved. Written by
 // the host each frame from what the runtime read (`setHeadsetInput`).
-constexpr i32 XrFirst = SwipeFirst + SwipeCount;  // 152
-constexpr i32 XrAnalogFirst = XrFirst + 5;        // the two triggers and grips, 157
-constexpr i32 XrStickAxisFirst = XrFirst + 9;     // 161: left X, left Y, right X, right Y
-constexpr i32 XrStickLeft = XrFirst + 13;         // 165
-constexpr i32 XrStickRight = XrStickLeft + 1;     // 166
+constexpr i32 XrFirst = SwipeFirst + SwipeCount; // 152
+constexpr i32 XrAnalogFirst = XrFirst + 5;       // the two triggers and grips, 157
+constexpr i32 XrStickAxisFirst = XrFirst + 9;    // 161: left X, left Y, right X, right Y
+constexpr i32 XrStickLeft = XrFirst + 13;        // 165
+constexpr i32 XrStickRight = XrStickLeft + 1;    // 166
 constexpr i32 XrCount = 19;
 
 static_assert(XrFirst + XrCount == static_cast<i32>(kKeyCodeCount),
@@ -96,8 +96,8 @@ static_assert(XrFirst + XrCount == static_cast<i32>(kKeyCodeCount),
 // and each other pair is left then right, in the enum's order.
 [[nodiscard]] constexpr bool isXrLeft(i32 keyCode) noexcept
 {
-    constexpr std::array<bool, XrCount> Left{false, false, true,  true,  true,  true, false, true,  false, true,
-                                             true,  false, false, true,  false, true, false, true,  false};
+    constexpr std::array<bool, XrCount> Left{false, false, true,  true, true,  true, false, true, false, true,
+                                             true,  false, false, true, false, true, false, true, false};
     return keyCode >= XrFirst && keyCode < XrFirst + XrCount && Left[static_cast<usize>(keyCode - XrFirst)];
 }
 
@@ -220,11 +220,25 @@ static_assert(std::size(MoreVirtualNames) == static_cast<usize>(MoreVirtualCount
 constexpr std::string_view SwipeNames[] = {"SwipeUp", "SwipeDown", "SwipeLeft", "SwipeRight"};
 static_assert(std::size(SwipeNames) == static_cast<usize>(SwipeCount));
 constexpr std::string_view VirtualStickNames[] = {"VirtualStick1", "VirtualStick2"};
-constexpr std::string_view XrNames[] = {
-    "XRButtonA",         "XRButtonB",         "XRButtonX",          "XRButtonY",          "XRMenu",
-    "XRTriggerLeft",     "XRTriggerRight",    "XRGripLeft",         "XRGripRight",        "XRThumbstickLeftX",
-    "XRThumbstickLeftY", "XRThumbstickRightX", "XRThumbstickRightY", "XRThumbstickLeft",   "XRThumbstickRight",
-    "XRThumbstickLeftClick", "XRThumbstickRightClick", "XRPinchLeft", "XRPinchRight"};
+constexpr std::string_view XrNames[] = {"XRButtonA",
+                                        "XRButtonB",
+                                        "XRButtonX",
+                                        "XRButtonY",
+                                        "XRMenu",
+                                        "XRTriggerLeft",
+                                        "XRTriggerRight",
+                                        "XRGripLeft",
+                                        "XRGripRight",
+                                        "XRThumbstickLeftX",
+                                        "XRThumbstickLeftY",
+                                        "XRThumbstickRightX",
+                                        "XRThumbstickRightY",
+                                        "XRThumbstickLeft",
+                                        "XRThumbstickRight",
+                                        "XRThumbstickLeftClick",
+                                        "XRThumbstickRightClick",
+                                        "XRPinchLeft",
+                                        "XRPinchRight"};
 static_assert(std::size(XrNames) == static_cast<usize>(XrCount));
 
 i32 gamepadButtonSlotOf(i32 keyCode) noexcept

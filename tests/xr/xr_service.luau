@@ -9,7 +9,7 @@ RunService.PostSimulation:Connect(function()
     if ticks == 10 then
         local head = XRService:GetHeadCFrame()
         print(
-            `[xr] enabled={XRService.Enabled} head={string.format("%.2f", head.Position.Y)} `
+            `[xr] enabled={XRService.Enabled} head={string.format("%.2f", head.Position.y)} `
                 .. `left={XRService:IsHandTracked(Enum.XRHand.Left)}`
         )
     end

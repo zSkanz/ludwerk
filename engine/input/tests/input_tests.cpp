@@ -885,10 +885,10 @@ TEST_CASE("a headset's controllers drive actions through ordinary bindings, besi
     // In the enum's order: A, B, X, Y, the menu, the triggers, the grips, the
     // stick axes, the sticks as one, the sticks pressed in, the pinches.
     std::array<engine::core::f32, 19> keys{};
-    keys[0] = 1.0f;     // A
-    keys[6] = 0.8f;     // the right trigger, past half
-    keys[9] = 0.5f;     // the left stick, across
-    keys[10] = -0.25f;  // and down, +Y being up as OpenXR has it
+    keys[0] = 1.0f;    // A
+    keys[6] = 0.8f;    // the right trigger, past half
+    keys[9] = 0.5f;    // the left stick, across
+    keys[10] = -0.25f; // and down, +Y being up as OpenXR has it
     fixture.system.setHeadsetKeys(keys);
     fixture.system.dispatchSimTick(*fixture.world, 1);
     CHECK(fixture.state(jump).pressed);

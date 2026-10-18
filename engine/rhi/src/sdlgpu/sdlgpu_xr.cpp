@@ -575,8 +575,8 @@ private:
                 for (usize at = 0; at < Actions.size(); ++at) {
                     if (paths[at][0] == '\0' || m_actions[at] == XR_NULL_HANDLE)
                         continue;
-                    const std::string full = std::string(hand == 0 ? "/user/hand/left/" : "/user/hand/right/") +
-                                             paths[at];
+                    const std::string full =
+                        std::string(hand == 0 ? "/user/hand/left/" : "/user/hand/right/") + paths[at];
                     XrPath path = XR_NULL_PATH;
                     if (XR_SUCCEEDED(m_calls.stringToPath(m_instance, full.c_str(), &path)))
                         bindings.push_back(XrActionSuggestedBinding{m_actions[at], path});
