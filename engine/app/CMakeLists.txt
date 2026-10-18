@@ -707,6 +707,17 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "\\[xr\\] enabled=true head=1.60 left=false.*\\[xr\\] simulated=true head=1.00,1.70,2.00 left=true 1.20 area=3.00x3.00 state=Focused.*\\[xr\\] recentred=-?0.00,1.70,-?0.00 look=-?0.00,-1.00 seated=0.10 space=Seated moves=true states=Focused joints=true"
         TIMEOUT 60)
+    # **Moving in a headset without being sick** (ADR 0246 §3):
+    # `@engine/xrcomfort` under the simulated headset -- a teleport lands on
+    # the floor and never on a wall, the view fades as it moves, and a snap
+    # turn turns 30 degrees each push.
+    add_test(NAME xr_comfort
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_comfort.luau" --headless --frames=60 --exit
+                --rhi=null --xr=simulated)
+    set_tests_properties(xr_comfort PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "\\[comfort\\] landed=-0.20,-2.2[0-9] faded=1.00 walled=-0.20,-2.2[0-9] turned=-30,-60 rest=0.00"
+        TIMEOUT 60)
     add_test(NAME xr_service_flat
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=50 --exit --rhi=null)
     set_tests_properties(xr_service_flat PROPERTIES

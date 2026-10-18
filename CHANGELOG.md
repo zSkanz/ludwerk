@@ -332,8 +332,13 @@ here.
   (`XRDistance`, `XRPixelsPerMetre`, `XRFollow`), and the pointing hand
   (`XRService.PointerHand`) clicks its buttons, and those on any
   `SurfaceGui` or `BillboardGui`, with its trigger or a pinch, drawing a beam
-  where it points. While a headset draws, the window shows its left eye, or
+  where it points. With hand tracking, a fingertip pushed into a button
+  presses it. While a headset draws, the window shows its left eye, or
   nothing with `[xr] mirror = false`.
+- `@engine/xrcomfort` moves a player in a headset without making them sick:
+  a teleport with an arc onto anything flat enough to stand on, snap or
+  smooth turns, smooth movement with a vignette, a seated mode and height
+  calibration.
 - The server console's `mute <player|key> [minutes] [reason]` and `unmute`
   keep a list in `mutes.json` beside the bans, read by every world of the
   game; `NetworkService:IsMuted(player)` answers it, and what a mute stops is

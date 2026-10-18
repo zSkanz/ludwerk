@@ -61,9 +61,9 @@ using core::LogLevel;
 //
 // `bot` is a load test's bot (ADR 0236): a game that requires it is told
 // only a bot process runs one, by the module itself.
-constexpr std::string_view RuntimeModules[] = {"announcements", "bot",      "camera",       "npclod",
-                                               "ragdoll",       "settings", "splitscreen",  "stamppool",
-                                               "subtitles",     "testing",  "travelscreen", "views"};
+constexpr std::string_view RuntimeModules[] = {"announcements", "bot",         "camera",    "npclod",    "ragdoll",
+                                               "settings",      "splitscreen", "stamppool", "subtitles", "testing",
+                                               "travelscreen",  "views",       "xrcomfort"};
 
 // The conformance runner, as an ordinary entry script.
 //

@@ -99,6 +99,37 @@ if from and along then
 end
 ```
 
+## Moving without being sick
+
+A player who walks with a stick while standing still is the main cause of
+discomfort in VR. `@engine/xrcomfort` gives a game the usual answers in one
+call:
+
+```luau
+--!strict
+local xrcomfort = require("@engine/xrcomfort")
+
+local session = xrcomfort.start({
+    Move = "teleport", -- or "smooth"
+    Turn = "snap", -- or "smooth"
+    SnapDegrees = 30,
+    Vignette = 0.6, -- how much of the view closes while moving smoothly
+})
+```
+
+- **Teleport**: the left stick pushed forward draws an arc from the left
+  hand; released, the view fades for a tenth of a second and the player is
+  where the arc landed -- only on something flat enough to stand on.
+- **Snap turn**: the right stick pushed to a side turns the player by
+  `SnapDegrees`, about their head, at once.
+- **Smooth move and turn**, with the edges of the view darkened while
+  moving.
+- **Seated** raises a seated player to a standing player's eyes, and
+  `session:CalibrateHeight()` makes where the head is now that height.
+
+The session moves the camera from then on: a game moves its player by
+setting `session.Origin`.
+
 ## Hands
 
 On a headset that tracks hands -- the Quest 3 does -- a player who puts the

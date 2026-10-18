@@ -137,4 +137,27 @@ HUD): a game draws those on a `SurfaceGui` parented to the camera.
   `RightIndexTip`), which puts that hand's controller down; in
   `xr_simulated_panel` a finger pushed a centimetre through the button and
   out again activates it once more.
-- **Not yet**: `@engine/xrcomfort` (§3).
+
+## As built, third step (2026-10-18)
+
+- **`@engine/xrcomfort`** (§3), a Luau module: `xrcomfort.start(options)`
+  returns a session that owns the camera's `CFrame` while it runs -- its
+  `Origin` is the play space in the world, which a game sets to move its
+  player. The options' keys are PascalCase like every `@engine` module's
+  (`Move`, `Turn`, `SnapDegrees`, `TurnRate`, `Speed`, `Vignette`,
+  `Seated`, `HeightOffset`); height calibration is the session's
+  `CalibrateHeight`, since the height it sets is the session's.
+- The teleport's arc is thrown from the left hand and followed by raycasts
+  in steps of a twentieth of a second; it lands only on a surface within 45
+  degrees of level. It is drawn as a beam. The vignette is a radial gradient
+  on an interface a hand's width in front of the eyes, drawn over
+  everything; a teleport's fade is the vignette shut for a tenth of a
+  second. A session reads the sticks through its own `InputContext`, at the
+  render rate.
+- Proved under the simulated headset (`xr_comfort`): a teleport lands where
+  the arc meets the floor (-0.20, -2.23, as the arc's own arithmetic gives),
+  the view is shut as it moves and open at rest, aiming at a wall does not
+  move the player, and two pushes of the stick turn the view by 30 and then
+  60 degrees.
+- **Not yet**: landing on `NavigationService`'s mesh rather than on any
+  level surface; the settings kept through `SaveService`.
