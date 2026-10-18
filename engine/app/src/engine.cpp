@@ -9649,8 +9649,15 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         mainTarget.stepsFrame = true;
                     }
                     const render::RenderCamera headCamera = snapshot.camera;
-                    render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
-                    renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
+                    // **While a headset draws, the window is its mirror**
+                    // (ADR 0244 §5): the left eye's picture, copied after it is
+                    // drawn -- not a third view of the world drawn for a
+                    // window nobody wearing the headset sees.
+                    const bool mirroring = headsetView.has_value() && headsetBegun && headsetFrame.draw && !splitDrawn;
+                    if (!mirroring) {
+                        render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
+                        renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
+                    }
 
                     // **Each eye** (ADR 0244): the head's view moved to the eye
                     // and given its own edges, drawn as a part of the window is,
@@ -9704,9 +9711,37 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                  render::RenderTarget{.color = headsetFrame.color[index],
                                                                       .colorFormat = headsetFrame.format,
                                                                       .width = headsetFrame.width,
-                                                                      .height = headsetFrame.height});
+                                                                      .height = headsetFrame.height},
+                                                 render::PictureCrop{});
                         }
                         snapshot.camera = mainCamera;
+                        // The window: the middle of the left eye, as much of
+                        // it as the window's shape takes -- or black.
+                        if (mirroring && options.xrMirror && eyePictures[0].texture.valid()) {
+                            const f32 eyeAspect =
+                                static_cast<f32>(eyePictures[0].width) / static_cast<f32>(eyePictures[0].height);
+                            const f32 windowAspect = static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight);
+                            render::PictureCrop crop;
+                            if (windowAspect > eyeAspect) {
+                                crop.height = eyeAspect / windowAspect;
+                                crop.y = 0.5f * (1.0f - crop.height);
+                            }
+                            else {
+                                crop.width = windowAspect / eyeAspect;
+                                crop.x = 0.5f * (1.0f - crop.width);
+                            }
+                            renderer->presentEye(*device, *cmd, eyePictures[0].texture, windowTarget, crop);
+                        }
+                        else if (mirroring) {
+                            const std::array<rhi::ColorAttachment, 1> black{rhi::ColorAttachment{
+                                .texture = target,
+                                .loadOp = rhi::LoadOp::Clear,
+                                .storeOp = rhi::StoreOp::Store,
+                                .clearColor = {0.0f, 0.0f, 0.0f, 1.0f},
+                            }};
+                            cmd->beginRenderPass({.colorAttachments = black, .debugName = "xr-no-mirror"});
+                            cmd->endRenderPass();
+                        }
                     }
 
                     if (splitDrawn) {

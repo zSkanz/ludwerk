@@ -674,7 +674,7 @@ if(ENG_BUILD_TESTS)
                 -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-simulated-eyes
                 -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_eyes.cmake)
     set_tests_properties(xr_simulated_eyes PROPERTIES
-        PASS_REGULAR_EXPRESSION "two eyes drawn, and they differ"
+        PASS_REGULAR_EXPRESSION "two eyes drawn, they differ, and the window mirrors the left"
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 

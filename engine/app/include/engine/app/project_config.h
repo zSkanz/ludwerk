@@ -178,6 +178,9 @@ struct ProjectConfig
     // `[xr] required`: a game that is only VR -- without a headset it says
     // so and does not start.
     bool xrRequired = false;
+    // `[xr] mirror` (ADR 0244 §5): the window shows the left eye, or, false,
+    // nothing.
+    bool xrMirror = true;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

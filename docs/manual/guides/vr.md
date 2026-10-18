@@ -12,9 +12,12 @@ In `project.toml`:
 [xr]
 enabled = true     # try a headset at start; the screen when there is none
 # required = true  # a game played only in a headset: without one it says so and does not start
+# mirror = false   # the window stays black instead of showing the left eye
 ```
 
-`--xr` and `--no-xr` on the command line override both. The OpenXR loader
+`--xr` and `--no-xr` on the command line override `enabled` and `required`.
+While a headset draws, the window shows what the left eye sees, cropped to
+the window's shape: someone watching sees what the player sees. The OpenXR loader
 ships beside the engine; nothing of it is loaded by a game that does not ask
 for a headset.
 

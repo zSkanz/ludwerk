@@ -11,6 +11,10 @@ cbuffer GpuXrEyeUniforms : register(b0, space3)
 {
     // x above a half: the target is an sRGB image, so the picture is decoded.
     float4 XrEye;
+    // The part of the picture copied: its corner, then its width and height,
+    // in parts of the picture's -- the whole of it into a headset, the middle
+    // of it into a window of another shape.
+    float4 XrEyeCrop;
 };
 
 Texture2D EyeTexture : register(t0, space2);
@@ -38,7 +42,7 @@ float3 decodeSrgb(float3 encoded)
 
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
-    const float4 picture = EyeTexture.SampleLevel(EyeSampler, input.Uv, 0.0f);
+    const float4 picture = EyeTexture.SampleLevel(EyeSampler, XrEyeCrop.xy + input.Uv * XrEyeCrop.zw, 0.0f);
     if (XrEye.x > 0.5f)
         return float4(decodeSrgb(picture.rgb), 1.0f);
     return float4(picture.rgb, 1.0f);

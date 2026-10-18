@@ -446,6 +446,9 @@ struct EngineOptions
     std::string xrApplication{};
     // `[xr] required`: no headset, no game -- said, and the run ends.
     bool xrRequired = false;
+    // `[xr] mirror`: while a headset draws, the window shows its left eye,
+    // or nothing.
+    bool xrMirror = true;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

@@ -818,8 +818,8 @@ public:
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, const RenderTarget& target) const override;
     void composeViews(rhi::IDevice& device, rhi::ICmdList& cmd, const ViewComposite& views,
                       const RenderTarget& target) override;
-    void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
-                    const RenderTarget& target) override;
+    void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture, const RenderTarget& target,
+                    const PictureCrop& crop) override;
     [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
     void showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
                      const RenderTarget& target) override;
@@ -5546,7 +5546,7 @@ void DefaultRenderer::composeViews(rhi::IDevice& device, rhi::ICmdList& cmd, con
 }
 
 void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
-                                 const RenderTarget& target)
+                                 const RenderTarget& target, const PictureCrop& crop)
 {
     if (!picture.valid() || !target.color.valid() || target.width == 0 || target.height == 0)
         return;
@@ -5554,7 +5554,7 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
         return;
     const bool srgb = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
                       target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
-    const std::array<f32, 4> uniforms{srgb ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+    const std::array<f32, 8> uniforms{srgb ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f, crop.x, crop.y, crop.width, crop.height};
     const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, linearSampler_}};
     fullscreenPass(cmd, xrEye_.handle, target.color, target.width, target.height, "xr-eye", source,
                    asBytes(uniforms.data(), sizeof(uniforms)));

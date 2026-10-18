@@ -2027,6 +2027,7 @@ static int hostMain(int argc, char** argv)
         if (!options.xrFromFlag)
             options.xr = config.xrEnabled || config.xrRequired;
         options.xrRequired = config.xrRequired && !options.xrFromFlag;
+        options.xrMirror = config.xrMirror;
         options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;

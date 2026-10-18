@@ -187,3 +187,14 @@ Quest build, multiplayer and the editor (ADR 0248).
   the left eye and `[xr] mirror` / `required`, multiview (§4), the Android
   build. A minimised window draws no eyes. The first session on a real
   runtime is the maintainer's: a test never starts the machine's own.
+
+## As built, second step (2026-10-18)
+
+- **The window is the mirror** (§5): while a headset draws, the window's
+  own view of the head is not drawn at all -- one view of the world fewer
+  each frame -- and the left eye's picture is copied into it by the same
+  pass that copies an eye into the runtime's image, cropped to the window's
+  shape around the picture's middle. `[xr] mirror = false` leaves the window
+  black. `[xr] required` was built with the first step.
+- **Not yet**: the depth submitted with each eye (§5), multiview (§4), the
+  Android build.

@@ -157,6 +157,15 @@ struct RendererStats
     core::u32 instances = 0;
 };
 
+// The part of a picture a copy takes, in parts of its width and height.
+struct PictureCrop
+{
+    core::f32 x = 0.0f;
+    core::f32 y = 0.0f;
+    core::f32 width = 1.0f;
+    core::f32 height = 1.0f;
+};
+
 class IRenderer
 {
 public:
@@ -252,14 +261,18 @@ public:
     // **An eye's picture into the headset's image** (ADR 0244): a view drawn
     // for the eye, copied into the runtime's swapchain image `target` --
     // decoded first where that image is sRGB, since a runtime reads one as
-    // linear light. Inside the frame, with no render pass open.
+    // linear light. `crop` is the part of the picture copied, in parts of its
+    // width and height: the whole of it into the headset, the middle of it
+    // into a window of another shape (the mirror). Inside the frame, with no
+    // render pass open.
     virtual void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
-                            const RenderTarget& target)
+                            const RenderTarget& target, const PictureCrop& crop)
     {
         (void)device;
         (void)cmd;
         (void)picture;
         (void)target;
+        (void)crop;
     }
     // **Several players' views made into one window** (ADR 0205): each
     // picture to its rectangle, or two across a line, with the line drawn.

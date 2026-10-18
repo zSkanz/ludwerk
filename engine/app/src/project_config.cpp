@@ -747,6 +747,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.xrEnabled = *value;
     if (const std::optional<bool> value = document.boolean("xr.required"))
         config.xrRequired = *value;
+    if (const std::optional<bool> value = document.boolean("xr.mirror"))
+        config.xrMirror = *value;
     if (const std::optional<std::string_view> value = document.string("network.server_key"))
         config.networkServerKey = *value;
     if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))
