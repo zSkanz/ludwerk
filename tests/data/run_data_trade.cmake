@@ -12,11 +12,25 @@ endforeach()
 
 file(REMOVE_RECURSE "${WORKDIR}")
 file(MAKE_DIRECTORY "${WORKDIR}")
+# **How long a server takes to start here**, from a run that is not killed:
+# the kills below come that long and more after the start. Fixed at two
+# seconds, a cold runner killed most runs before their first trade.
+string(TIMESTAMP before "%s" UTC)
+execute_process(
+    COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves" --frames=60 --exit
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE output)
+string(TIMESTAMP after "%s" UTC)
+if(NOT output MATCHES "\\[trade\\] swords=5 gold=1000")
+    message(FATAL_ERROR "the first run did not count five swords and a thousand gold (${result}):\n${output}")
+endif()
+math(EXPR startup "${after} - ${before} + 1")
 set(killed 0)
 foreach(run RANGE 1 8)
     # Killed after a time that differs each run, and differs from the time
     # a trade takes.
-    math(EXPR seconds "2 + (${run} * 7) % 3")
+    math(EXPR seconds "${startup} + 1 + (${run} * 7) % 3")
     execute_process(
         COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves"
         TIMEOUT ${seconds}

@@ -13,7 +13,8 @@ file(REMOVE_RECURSE "${WORKDIR}")
 file(MAKE_DIRECTORY "${WORKDIR}")
 foreach(run 1 2)
     execute_process(
-        COMMAND "${HOST}" "${SCRIPT}" --headless --frames=60 --exit "--host=${PORT}" "--saves=${WORKDIR}/saves"
+        COMMAND "${HOST}" "${SCRIPT}" --headless --rhi=null --frames=60 --exit "--host=${PORT}"
+                "--saves=${WORKDIR}/saves"
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)

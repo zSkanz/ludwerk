@@ -16,7 +16,8 @@ foreach(step "V1:wrote version 1" "V2:migrated=1 gold=30 old=nil" "V2:migrated=0
     math(EXPR after "${colon} + 1")
     string(SUBSTRING "${step}" ${after} -1 expected)
     execute_process(
-        COMMAND "${HOST}" "${${project}}" --headless --frames=60 --exit "--host=${PORT}" "--saves=${WORKDIR}/saves"
+        COMMAND "${HOST}" "${${project}}" --headless --rhi=null --frames=60 --exit "--host=${PORT}"
+                "--saves=${WORKDIR}/saves"
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)
