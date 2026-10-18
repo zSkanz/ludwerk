@@ -11,6 +11,15 @@ here.
 
 ### Fixed
 
+- In a headset, both eyes see the same shadows: the sun's cascades are
+  fitted once from the head, with a first cascade two metres out for what
+  the player holds. Occlusion, contact shadows and the screen's reflections
+  are no longer drawn in the eyes, where they streaked under a held ball;
+  `[xr] screen_effects = true` brings them back.
+- A small box collides as it is drawn: its edges were rounded by five
+  centimetres, and a ball rolled at a crate's corner sank two centimetres
+  into it. Bodies at rest sink at most five millimetres into what they rest
+  on, not two centimetres.
 - A player walking on a moving platform, or standing on one that turns, is no
   longer corrected nearly every tick in an online game. Their machine draws
   the platform a few ticks in the past, and the correction stepped the player

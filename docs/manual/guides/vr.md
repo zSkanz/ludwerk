@@ -17,6 +17,7 @@ enabled = true     # try a headset at start; the screen when there is none
 # required = true  # a game played only in a headset: without one it says so and does not start
 # mirror = false   # the window stays black instead of showing the left eye
 # depth = false    # the headset is not given each eye's depth (see below)
+# screen_effects = true  # occlusion, contact shadows and the screen's reflections in the eyes (see below)
 ```
 
 `--xr` and `--no-xr` on the command line override `enabled` and `required`.
@@ -27,6 +28,15 @@ While a headset draws, the window shows what the left eye sees, cropped to
 the window's shape: someone watching sees what the player sees. The OpenXR loader
 ships beside the engine; nothing of it is loaded by a game that does not ask
 for a headset.
+
+**Shadows in a headset are the sun's shadow map**, one set for both eyes. It
+is fitted from the head with a view as wide as the two eyes together, so
+both eyes see the same shadow, texel for texel. Its first cascade ends two
+metres out, where a player looks at what they hold and what is on the table
+in front of them. Occlusion, contact shadows and the screen's reflections and
+bounced light are not drawn in the eyes. Each eye would mark them from its
+own picture, so the two would disagree, which a pair of eyes sees as
+shimmer. `screen_effects = true` draws them anyway.
 
 ## Where the player is
 

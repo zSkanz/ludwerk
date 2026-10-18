@@ -187,6 +187,7 @@ struct ProjectConfig
     // `[xr] depth` (ADR 0244 §5): each eye's depth handed to the runtime, for
     // its reprojection; false to compare a headset without it.
     bool xrDepth = true;
+    bool xrScreenEffects = false;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

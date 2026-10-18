@@ -458,6 +458,10 @@ struct EngineOptions
     // the runtime with its colour, where it takes depth (ADR 0244 §5).
     bool xrDepth = true;
     bool xrDepthFromFlag = false;
+    // `[xr] screen_effects`: occlusion, contact shadows and the screen's
+    // reflections and bounce drawn in a headset's eyes, which by default
+    // they are not.
+    bool xrScreenEffects = false;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

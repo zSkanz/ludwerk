@@ -4272,7 +4272,16 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // for and is not holding. Waited out here, at the frame's end, and
         // counted in what a frame is measured to have taken -- it is how long
         // the frame was on the screen.
-        if (paced) {
+        // **A headset's session paces the loop alone** (ADR 0244): its
+        // runtime's wait holds each frame to the headset's display. Our own
+        // pacing -- a handheld's governed rate, the background limit, the
+        // window's refresh -- held a Quest's frames to forty-five a second
+        // against its seventy-two, and to ten when its window lost focus;
+        // the compositor dropped a thousand frames a minute.
+        const bool headsetPaces = headset != nullptr && headset->state() != rhi::HeadsetState::Ended;
+        if (headsetPaces)
+            heldRate = 0;
+        if (paced && !headsetPaces) {
             FrameWindowState state;
             state.focused = platform::windowFocused(*window);
             state.minimized = platform::windowMinimized(*window);
@@ -10013,6 +10022,33 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 light != nullptr)
                                 eyeCopy.roomOpacity = light->xrPassthroughOpacity;
                         }
+                        // **One set of shadows for both eyes**, fitted from the head
+                        // with a view as wide as the two eyes together, and a first
+                        // cascade that ends two metres out: where a player in a
+                        // headset looks at what they hold.
+                        {
+                            const rhi::EyeView& left = headsetFrame.eyes[0];
+                            const rhi::EyeView& right = headsetFrame.eyes[1];
+                            const f32 wide = std::max({std::fabs(left.tanLeft), std::fabs(left.tanRight),
+                                                       std::fabs(right.tanLeft), std::fabs(right.tanRight)});
+                            const f32 tall = std::max({std::fabs(left.tanDown), std::fabs(left.tanUp),
+                                                       std::fabs(right.tanDown), std::fabs(right.tanUp)});
+                            const f32 dx = right.position[0] - left.position[0];
+                            const f32 dy = right.position[1] - left.position[1];
+                            const f32 dz = right.position[2] - left.position[2];
+                            const f32 halfApart = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+                            render::ShadowView shared;
+                            shared.view = headCamera.view;
+                            shared.spread = core::ViewSpread{core::Vec2{halfApart, halfApart}, core::Vec2{wide, tall}};
+                            shared.nearPlane = headCamera.nearPlane;
+                            shared.firstSplit = 2.0f;
+                            snapshot.shadowView = shared;
+                            snapshot.headsetEye = true;
+                            snapshot.headsetScreenEffects = options.xrScreenEffects;
+#if defined(__ANDROID__)
+                            snapshot.headsetLean = true;
+#endif
+                        }
                         for (core::u32 index = 0; index < 2; ++index) {
                             SplitPicture& picture = eyePictures[index];
                             if (!picture.texture.valid() || picture.width != headsetFrame.width ||
@@ -10052,7 +10088,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                  .height = picture.height,
                                                                  .view = EyeViewBase + index,
                                                                  .window = true};
-                            render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, eyeTarget));
+                            // No jitter: an eye has no temporal anti-aliasing to
+                            // gather it (`RenderWorld::headsetEye`).
                             const u64 eyeStarted = platform::nowNs();
                             renderer->render(*device, *cmd, eyeTarget, snapshot, meshCache);
                             eyePassMs += msSince(eyeStarted);
@@ -10074,6 +10111,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         }
                         headset->setDepthRange(headCamera.nearPlane, headCamera.farPlane);
                         snapshot.camera = mainCamera;
+                        snapshot.shadowView.reset();
+                        snapshot.headsetEye = false;
+                        snapshot.headsetLean = false;
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.
                         if (mirroring && options.xrMirror && eyePictures[0].texture.valid()) {

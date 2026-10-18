@@ -753,6 +753,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.xrHands = *value;
     if (const std::optional<bool> value = document.boolean("xr.depth"))
         config.xrDepth = *value;
+    if (const std::optional<bool> value = document.boolean("xr.screen_effects"))
+        config.xrScreenEffects = *value;
     if (const std::optional<std::string_view> value = document.string("network.server_key"))
         config.networkServerKey = *value;
     if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))

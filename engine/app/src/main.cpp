@@ -2047,6 +2047,7 @@ static int hostMain(int argc, char** argv)
         options.xrHands = config.xrHands;
         if (!options.xrDepthFromFlag)
             options.xrDepth = config.xrDepth;
+        options.xrScreenEffects = config.xrScreenEffects;
         options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;

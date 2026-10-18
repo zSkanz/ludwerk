@@ -404,6 +404,12 @@ struct ShadowFit
     // nothing.
     f32 distance = kShadowDistance;
     u32 tileResolution = kShadowTileResolution;
+    // **Where the first cascade ends**, in metres, or nought for the split
+    // `kShadowSplitLambda` gives. A headset's player looks at what is in
+    // their hands and on the table in front of them, a metre or two away,
+    // where a flat game's camera looks at a character five metres off: the
+    // first cascade is made that near, and the others share the rest.
+    f32 firstSplit = 0.0f;
 };
 
 // `previous` is the last frame's result, or null on the first frame. It is a

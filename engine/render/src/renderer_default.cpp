@@ -8927,6 +8927,44 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         return;
     useView(target.view);
     windowPart_ = target.window && target.view != 0;
+    // **A headset's eye draws no screen-space shading** unless asked
+    // (`RenderWorld::headsetEye`): the settings this picture is drawn with,
+    // put back when it is drawn.
+    struct SettingsBack
+    {
+        GraphicsSettings& live;
+        GraphicsSettings saved;
+        ~SettingsBack() { live = saved; }
+    } settingsBack{settings_, settings_};
+    if (world.headsetEye && !world.headsetScreenEffects) {
+        settings_.ambientOcclusion = false;
+        settings_.contactShadows = false;
+        settings_.screenReflectionSteps = 0;
+        settings_.screenBounceRays = 0;
+    }
+    // **An eye is drawn whole and sharp**: at its own resolution, never
+    // scaled up from a smaller one -- a handheld's resolution cap drew a
+    // Quest's eye below its pixels and FSR brought it up, and the player saw
+    // every edge in steps -- and with no temporal anti-aliasing, whose jitter
+    // and history are one view's and no pair of eyes': the spatial one
+    // instead.
+    if (world.headsetEye) {
+        if (settings_.antiAliasing == AntiAliasingMode::Taa)
+            settings_.antiAliasing = AntiAliasingMode::Smaa;
+        settings_.upscaling = UpscalingMode::None;
+        settings_.renderScale = 1.0f;
+        settings_.renderResolutionCap = 0;
+        settings_.frameGeneration = false;
+    }
+    // **And lean on a standalone headset** (`RenderWorld::headsetLean`):
+    // two eyes at seventy-two frames a second on a phone's GPU leave no room
+    // for what a flat game on it can afford.
+    if (world.headsetEye && world.headsetLean) {
+        settings_.bloom = false;
+        settings_.sunRays = false;
+        settings_.depthOfField = false;
+        settings_.shadowCascades = std::min(settings_.shadowCascades, 2u);
+    }
     // Each pass's time on the CPU, recording it: what was submitted is
     // the GPU's, which `wait.*` measures.
     core::profile::Sections passes;
@@ -9426,7 +9464,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // The cascade fit, from the camera basis. `inverse(view)` is the camera's own
     // frame; the camera sits at the origin of this space, so only its axes are
     // read out of it.
-    const Mat4 cameraFrame = core::inverse(world.camera.view);
+    // A headset's eyes fit from the head (`ShadowView`).
+    const Mat4 cameraFrame = core::inverse(world.shadowView.has_value() ? world.shadowView->view : world.camera.view);
     ShadowFit fit;
     // From where the light comes: the moon's shadows at night (see `SkyParams`).
     fit.sunDirection = sky.lightDirection;
@@ -9434,8 +9473,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     fit.up = Vec3{cameraFrame.m[1][0], cameraFrame.m[1][1], cameraFrame.m[1][2]};
     // The camera looks down -Z, so its forward is the negated third axis.
     fit.forward = Vec3{-cameraFrame.m[2][0], -cameraFrame.m[2][1], -cameraFrame.m[2][2]};
-    fit.spread = core::viewSpread(world.camera.projection);
-    fit.nearPlane = world.camera.nearPlane;
+    fit.spread = world.shadowView.has_value() ? world.shadowView->spread : core::viewSpread(world.camera.projection);
+    fit.nearPlane = world.shadowView.has_value() ? world.shadowView->nearPlane : world.camera.nearPlane;
+    fit.firstSplit = world.shadowView.has_value() ? world.shadowView->firstSplit : 0.0f;
     fit.origin = world.camera.origin;
 
     // What can cast, handed to the fit so a cascade can be sized to it. The two

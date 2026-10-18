@@ -18,6 +18,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -825,9 +826,37 @@ struct RenderIrradianceVolume
     std::span<const f32> samples;
 };
 
+// **The frame a picture's sun shadows are fitted from**, where it is not the
+// picture's own camera (ADR 0244): a headset's head, with a view as wide as
+// both eyes together. Both eyes fitted from one frame draw the same maps,
+// texel for texel -- fitted each from its own, the two eyes saw shadows whose
+// edges and cascade borders differed, which a pair of eyes reads as shimmer.
+struct ShadowView
+{
+    // The view, relative to the camera's origin, as `RenderCamera::view`.
+    core::Mat4 view;
+    core::ViewSpread spread;
+    f32 nearPlane = 0.1f;
+    // `ShadowFit::firstSplit`.
+    f32 firstSplit = 0.0f;
+};
+
 struct RenderWorld
 {
     RenderCamera camera;
+    // The frame the sun's cascades are fitted from in place of `camera`'s.
+    std::optional<ShadowView> shadowView;
+    // **A headset's eye**: occlusion, contact shadows and the screen's
+    // reflections and bounce are not drawn in one unless the project asks
+    // (`[xr] screen_effects`). Each eye marches its own depth buffer, so the
+    // two eyes darken different pixels -- a disparity the pair sees as
+    // shimmer -- and a held object over a table is where a march breaks.
+    // The shadow map grounds things in a headset.
+    bool headsetEye = false;
+    bool headsetScreenEffects = false;
+    // A standalone headset's eye -- the GPU is a phone's: no bloom, sun rays
+    // or depth of field, and two shadow cascades at most.
+    bool headsetLean = false;
     RenderEnvironment environment;
     // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a
     // world with none of them, which is the picture it always drew.

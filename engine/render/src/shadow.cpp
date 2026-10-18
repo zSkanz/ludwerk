@@ -149,6 +149,19 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
 
     f32 splits[kShadowCascadeCount + 1]{};
     shadowSplits(fit.nearPlane, fit.distance, kShadowSplitLambda, splits);
+    // A first split asked for: the first cascade ends there, and the others
+    // divide what is left the way the four divide the whole.
+    if (fit.firstSplit > splits[0] && fit.firstSplit < splits[1]) {
+        const f32 near = fit.firstSplit;
+        const f32 far = splits[kShadowCascadeCount];
+        splits[1] = near;
+        for (u32 index = 2; index < kShadowCascadeCount; ++index) {
+            const f32 fraction = static_cast<f32>(index - 1) / static_cast<f32>(kShadowCascadeCount - 1);
+            const f32 logarithmic = near * std::pow(far / near, fraction);
+            const f32 uniform = near + (far - near) * fraction;
+            splits[index] = kShadowSplitLambda * logarithmic + (1.0f - kShadowSplitLambda) * uniform;
+        }
+    }
 
     for (u32 index = 0; index < kShadowCascadeCount; ++index) {
         const f32 sliceNear = splits[index];
