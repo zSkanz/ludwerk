@@ -1,10 +1,13 @@
 #include "sdlgpu_xr.h"
 
 // OpenXR's own header first: SDL's then leaves its stand-in types out.
+// clang-format off
+#include <openxr/openxr.h>
 #include <SDL3/SDL_openxr.h>
+// clang-format on
+
 #include <array>
 #include <cmath>
-#include <openxr/openxr.h>
 #include <string>
 #include <type_traits>
 #include <vector>
