@@ -264,6 +264,8 @@ cbuffer GpuSsaoUniforms : register(b0, space3)
     float4 SsaoViewport;
     // x radius in world metres, y depth bias, z strength.
     float4 SsaoParams;
+    // xy where the view's middle is off its axis, in NDC: an eye's.
+    float4 SsaoCenter;
 };
 #endif
 
@@ -284,6 +286,8 @@ cbuffer GpuContactUniforms : register(b0, space3)
     // can leave lit under a caster.
     float4 ContactCascadeFar;
     float4 ContactBiasReach;
+    // xy where the view's middle is off its axis, in NDC: an eye's.
+    float4 ContactCenter;
 };
 #endif
 
@@ -305,6 +309,8 @@ cbuffer GpuScreenTraceUniforms : register(b0, space3)
     // start that differs frame to frame; z 1 when the pass has an answer of
     // the frame before, and w how much that answer counts in this one's.
     float4 TraceFrame;
+    // xy where the view's middle is off its axis, in NDC: an eye's.
+    float4 TraceCenter;
 };
 #endif
 

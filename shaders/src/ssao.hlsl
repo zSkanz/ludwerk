@@ -52,8 +52,8 @@ float linearDepthOf(float deviceDepth)
 // because a texture's V runs down while normalised device Y runs up.
 float3 viewPositionOf(float2 uv, float linearDepth)
 {
-    const float x = (uv.x * 2.0f - 1.0f) * SsaoProjection.x * linearDepth;
-    const float y = (1.0f - uv.y * 2.0f) * SsaoProjection.y * linearDepth;
+    const float x = (uv.x * 2.0f - 1.0f + SsaoCenter.x) * SsaoProjection.x * linearDepth;
+    const float y = (1.0f - uv.y * 2.0f + SsaoCenter.y) * SsaoProjection.y * linearDepth;
     return float3(x, y, -linearDepth);
 }
 
@@ -147,8 +147,8 @@ float4 FragmentMain(Interpolants input) : SV_Target0
             continue;
         }
         float2 sampleUv;
-        sampleUv.x = (samplePoint.x / (SsaoProjection.x * sampleDepth)) * 0.5f + 0.5f;
-        sampleUv.y = 0.5f - (samplePoint.y / (SsaoProjection.y * sampleDepth)) * 0.5f;
+        sampleUv.x = (samplePoint.x / (SsaoProjection.x * sampleDepth) - SsaoCenter.x) * 0.5f + 0.5f;
+        sampleUv.y = 0.5f - (samplePoint.y / (SsaoProjection.y * sampleDepth) - SsaoCenter.y) * 0.5f;
         if (any(sampleUv < 0.0f) || any(sampleUv > 1.0f))
         {
             continue;

@@ -58,8 +58,8 @@ float linearDepthOf(float deviceDepth)
 
 float3 viewPositionOf(float2 uv, float linearDepth)
 {
-    const float x = (uv.x * 2.0f - 1.0f) * TraceProjection.x * linearDepth;
-    const float y = (1.0f - uv.y * 2.0f) * TraceProjection.y * linearDepth;
+    const float x = (uv.x * 2.0f - 1.0f + TraceCenter.x) * TraceProjection.x * linearDepth;
+    const float y = (1.0f - uv.y * 2.0f + TraceCenter.y) * TraceProjection.y * linearDepth;
     return float3(x, y, -linearDepth);
 }
 
@@ -67,8 +67,8 @@ float2 screenOf(float3 position)
 {
     const float depth = max(-position.z, 1e-6f);
     float2 uv;
-    uv.x = (position.x / (TraceProjection.x * depth)) * 0.5f + 0.5f;
-    uv.y = 0.5f - (position.y / (TraceProjection.y * depth)) * 0.5f;
+    uv.x = (position.x / (TraceProjection.x * depth) - TraceCenter.x) * 0.5f + 0.5f;
+    uv.y = 0.5f - (position.y / (TraceProjection.y * depth) - TraceCenter.y) * 0.5f;
     return uv;
 }
 

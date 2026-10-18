@@ -6777,6 +6777,10 @@ void DefaultRenderer::traceScreen(rhi::IDevice& device, rhi::ICmdList& cmd, cons
     trace.projection[1] = world.camera.projection.m[1][1] != 0.0f ? 1.0f / world.camera.projection.m[1][1] : 1.0f;
     trace.projection[2] = world.camera.nearPlane;
     trace.projection[3] = world.camera.farPlane;
+    // **The view's middle off its axis** (an eye's projection): rebuilt
+    // positions and the pixels they land on are wrong by it otherwise.
+    trace.center[0] = world.camera.projection.m[2][0];
+    trace.center[1] = world.camera.projection.m[2][1];
     // This frame's view space, to the world as this frame's camera has it at
     // its origin, to the last frame's -- whose origin was the camera then --
     // and through the camera that drew it.
@@ -9696,6 +9700,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         ssao.projection[1] = world.camera.projection.m[1][1] != 0.0f ? 1.0f / world.camera.projection.m[1][1] : 1.0f;
         ssao.projection[2] = world.camera.nearPlane;
         ssao.projection[3] = world.camera.farPlane;
+        // **The view's middle off its axis** (an eye's projection, whose two
+        // sides are at different angles): positions rebuilt from depth as if
+        // it were centred are beside where they are, and a headset's eye drew
+        // its occlusion and its contact shadows as columns down the walls.
+        ssao.center[0] = world.camera.projection.m[2][0];
+        ssao.center[1] = world.camera.projection.m[2][1];
         ssao.viewport[0] = static_cast<f32>(occlusionWidth);
         ssao.viewport[1] = static_cast<f32>(occlusionHeight);
         ssao.viewport[2] = 1.0f / static_cast<f32>(occlusionWidth);
@@ -9750,6 +9760,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         contact.projection[1] = world.camera.projection.m[1][1] != 0.0f ? 1.0f / world.camera.projection.m[1][1] : 1.0f;
         contact.projection[2] = world.camera.nearPlane;
         contact.projection[3] = world.camera.farPlane;
+        contact.center[0] = world.camera.projection.m[2][0];
+        contact.center[1] = world.camera.projection.m[2][1];
         // Towards the sun, turned into the camera's view space: the view
         // matrix's rotation, applied to a direction.
         const Vec3 sun = sky.lightDirection;

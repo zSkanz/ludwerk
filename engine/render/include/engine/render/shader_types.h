@@ -326,9 +326,13 @@ struct GpuSsaoUniforms
     // x the sampling radius in world metres, y the depth bias that keeps a
     // surface from occluding itself, z the strength, w unused.
     f32 params[4]{0.5f, 0.02f, 1.0f, 0.0f};
+    // xy where the middle of the view is off its axis, in NDC (an eye's
+    // projection, whose two sides are at different angles): what the
+    // projection's third column adds; nought for a camera's own.
+    f32 center[4]{};
 };
 
-static_assert(sizeof(GpuSsaoUniforms) == 48, "GpuSsaoUniforms is a cbuffer layout");
+static_assert(sizeof(GpuSsaoUniforms) == 64, "GpuSsaoUniforms is a cbuffer layout");
 
 // Fragment stage, `b0 space3`, for the depth-aware blur that follows it.
 struct GpuBlurUniforms
@@ -695,8 +699,10 @@ struct GpuScreenTraceUniforms
     f32 params[4]{12.0f, 0.5f, 24.0f, 0.0f};
     // x whether there is a last frame, y the frame's number.
     f32 frame[4]{};
+    // xy the view's middle off its axis, as `GpuSsaoUniforms::center`.
+    f32 center[4]{};
 };
-static_assert(sizeof(GpuScreenTraceUniforms) == 112, "GpuScreenTraceUniforms is a cbuffer layout");
+static_assert(sizeof(GpuScreenTraceUniforms) == 128, "GpuScreenTraceUniforms is a cbuffer layout");
 
 struct GpuContactUniforms
 {
@@ -714,9 +720,11 @@ struct GpuContactUniforms
     // stops, whichever cascade the pixel is in.
     f32 cascadeFar[4]{1.0e9f, 1.0e9f, 1.0e9f, 1.0e9f};
     f32 biasReach[4]{0.0f, 0.0f, 0.0f, 0.0f};
+    // xy the view's middle off its axis, as `GpuSsaoUniforms::center`.
+    f32 center[4]{};
 };
 
-static_assert(sizeof(GpuContactUniforms) == 80, "GpuContactUniforms is a cbuffer layout");
+static_assert(sizeof(GpuContactUniforms) == 96, "GpuContactUniforms is a cbuffer layout");
 
 // --- Terrain (ADR 0082) ------------------------------------------------------
 

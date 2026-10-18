@@ -45,8 +45,8 @@ float linearDepthOf(float deviceDepth)
 
 float3 viewPositionOf(float2 uv, float linearDepth)
 {
-    const float x = (uv.x * 2.0f - 1.0f) * ContactProjection.x * linearDepth;
-    const float y = (1.0f - uv.y * 2.0f) * ContactProjection.y * linearDepth;
+    const float x = (uv.x * 2.0f - 1.0f + ContactCenter.x) * ContactProjection.x * linearDepth;
+    const float y = (1.0f - uv.y * 2.0f + ContactCenter.y) * ContactProjection.y * linearDepth;
     return float3(x, y, -linearDepth);
 }
 
@@ -139,8 +139,8 @@ float4 FragmentMain(Interpolants input) : SV_Target0
             break;
 
         float2 uv;
-        uv.x = (marched.x / (ContactProjection.x * sampleDepth)) * 0.5f + 0.5f;
-        uv.y = 0.5f - (marched.y / (ContactProjection.y * sampleDepth)) * 0.5f;
+        uv.x = (marched.x / (ContactProjection.x * sampleDepth) - ContactCenter.x) * 0.5f + 0.5f;
+        uv.y = 0.5f - (marched.y / (ContactProjection.y * sampleDepth) - ContactCenter.y) * 0.5f;
         if (any(uv < 0.0f) || any(uv > 1.0f))
             break;
 
