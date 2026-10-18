@@ -872,7 +872,8 @@ set ENG_EDITOR_PRESET=win-msvc-editor
 # redden the gate somebody runs before a push. The nightly job runs the same
 # script.
 Invoke-Stage 'lavapipe' {
-    if (-not $Only) {
+    # Asked for by name, or by a plan of what a change affects (ADR 0249).
+    if (-not $Only -and -not ($script:affectedPlan -and $script:affectedPlan.stages.lavapipe.run)) {
         Write-Host '[gate] lavapipe: skipped (opt-in; run scripts/localgate.ps1 -Only lavapipe)' -ForegroundColor DarkGray
         $script:stageSkipped = $true
         return

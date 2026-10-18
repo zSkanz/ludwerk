@@ -839,9 +839,10 @@ struct ShadowView
     f32 nearPlane = 0.1f;
     // `ShadowFit::firstSplit`.
     f32 firstSplit = 0.0f;
-    // **The map the frame's first eye drew**: the second eye's fit is the
-    // first's, so it draws no map of its own and reads that one. A Quest's
-    // GPU drew the same two cascades twice a frame.
+    // **The frame's second eye**: its fit is the first's, so it draws no
+    // map of its own and reads that one -- a Quest's GPU drew the same two
+    // cascades twice a frame -- and it is drawn at the exposure the first
+    // eye metered.
     bool reuse = false;
 };
 

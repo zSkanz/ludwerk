@@ -1208,6 +1208,9 @@ private:
     // and one map.
     ShadowCascades headsetShadowFit_{};
     bool headsetShadowDrawn_ = false;
+    // The exposure a headset frame's first eye metered, which the second
+    // reads (`ShadowView::reuse`). Owned by that eye's view.
+    rhi::TextureHandle headsetExposure_{};
     // The local-light atlas and this frame's assignment of its tiles. Held
     // across frames only so the vector behind `localCandidates_` keeps its
     // capacity; nothing in either survives a frame.
@@ -9697,7 +9700,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // **A view seen on one side of a line** (ADR 0205) always has it: the
     // prepass is where the other side is taken out, before anything is lit.
     const bool sided = (target.sideNormal.x != 0.0f || target.sideNormal.y != 0.0f) && ensureViewSide(device);
-    prepassDrawn_ = depthRead || sided || (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u;
+    // **Never on a standalone headset's eye** where nothing reads it: on a
+    // tiled GPU the prepass is the scene binned once more and a depth target
+    // of three million texels stored, an eye. The forward pass clears and
+    // writes the depth itself, which is the depth the runtime is given.
+    const bool leanEye = world.headsetEye && world.headsetLean;
+    prepassDrawn_ =
+        depthRead || sided || (!leanEye && (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u);
     if (prepassDrawn_) {
         cmd.pushDebugGroup("depth-prepass");
         cmd.beginRenderPass({
@@ -10812,10 +10821,19 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     exposureIndex_ = nextExposure;
 
     cmd.pushDebugGroup("exposure");
+    // **A headset frame is metered once**, by its first eye, and its second
+    // eye is drawn at that exposure: two eyes metered apart are two
+    // exposures, one eye brighter than the other, and three passes more --
+    // the first reading the whole eye.
+    const bool exposureShared = world.shadowView.has_value() && world.shadowView->reuse && headsetExposure_.valid();
+    rhi::TextureHandle metered = exposureShared ? headsetExposure_ : exposure_[nextExposure];
+    if (exposureShared) {
+        // Nothing to meter: the first eye has.
+    }
     // The machine's switch and the world's, and either turns it off: a scene
     // that wants a fixed exposure gets one, and a machine that cannot afford
     // the metering does not pay for it (ADR 0044, ADR 0096).
-    if (!settings_.autoExposure || !world.environment.autoExposure) {
+    else if (!settings_.autoExposure || !world.environment.autoExposure) {
         // A neutral gain, written directly. Skipping the three passes is the
         // point of the setting -- what is left is `ExposureCompensation` and
         // `Lighting.Brightness`, which is exactly the fixed exposure the engine
@@ -10869,6 +10887,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         exposureInitialised_ = true;
     }
     cmd.popDebugGroup();
+    headsetExposure_ = world.shadowView.has_value() ? metered : rhi::TextureHandle{};
 
     // --- Bloom ---------------------------------------------------------------
     ENG_PROFILE_NEXT(passes, "render.bloom");
@@ -11022,7 +11041,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     }
     const std::array<rhi::TextureBinding, 4> tonemapTextures{
         rhi::TextureBinding{sceneColor, environmentSampler_}, rhi::TextureBinding{bloom_[0], environmentSampler_},
-        rhi::TextureBinding{exposure_[nextExposure], linearSampler_},
+        rhi::TextureBinding{metered, linearSampler_},
         rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, pointSampler_}};
     const std::span<const rhi::TextureBinding> tonemapBindings{tonemapTextures.data(),
                                                                exactSlot != nullptr ? usize{4} : usize{3}};
