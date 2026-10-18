@@ -13,6 +13,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -50,6 +51,16 @@ struct EyeView
 
 // Where the headset's session stands: `Running` is the only state frames are
 // drawn in; `Ended` is for good, and the game goes on on the screen.
+// **Which space the poses are in** (ADR 0245 §1): the floor where the player
+// stood (`Standing`, OpenXR's stage) or the head where the session began
+// (`Seated`, OpenXR's local). A runtime that knows no floor gives the
+// head's start for both.
+enum class HeadsetSpace : u8
+{
+    Standing,
+    Seated,
+};
+
 enum class HeadsetState : u8
 {
     Idle,
@@ -143,6 +154,13 @@ public:
         (void)amplitude;
         (void)seconds;
     }
+    // **The space the poses and the eyes are in from the next frame**
+    // (ADR 0245 §1). Standing until asked.
+    virtual void setSpace(HeadsetSpace space) { (void)space; }
+    // **The floor's play area**: the width and depth, in metres, of the
+    // rectangle the player set up around the standing space's origin, or
+    // nothing where the runtime knows none.
+    [[nodiscard]] virtual std::optional<std::array<f32, 2>> playArea() const { return std::nullopt; }
 };
 
 } // namespace engine::rhi

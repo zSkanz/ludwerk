@@ -53,6 +53,20 @@ public:
     // them: `grip`, `aim` and `keys` are read back as they are; `head` is
     // not, being `setHead`'s.
     void setInput(const rhi::HeadsetInput& input) noexcept { m_input = input; }
+    // **Seated or standing** (ADR 0245 §1): seated, every pose is from where
+    // the head stands at rest -- 1.6 m over the floor -- as OpenXR's local
+    // space is from the head's start.
+    void setSpace(rhi::HeadsetSpace space) override { m_seated = space == rhi::HeadsetSpace::Seated; }
+    // A room three metres by three.
+    [[nodiscard]] std::optional<std::array<core::f32, 2>> playArea() const override
+    {
+        return std::array<core::f32, 2>{3.0f, 3.0f};
+    }
+    // **A pose put in the space chosen now** (`XRService:SimulatePose`):
+    // 0 the head, 1 the left hand, 2 the right -- a hand's grip and aim both,
+    // and tracked from then on.
+    void setPose(core::u32 which, const std::array<core::f32, 3>& position,
+                 const std::array<core::f32, 4>& orientation) noexcept;
     // What each controller was last asked to vibrate at, for a test to read.
     [[nodiscard]] core::f32 vibration(core::u32 hand) const noexcept { return m_vibration[hand & 1u]; }
     // The eyes' images as the last frame left them, for a test to read back.
@@ -68,6 +82,7 @@ private:
     core::u64 m_frames = 0;
     rhi::HeadsetInput m_input{};
     std::array<core::f32, 2> m_vibration{};
+    bool m_seated = false;
 };
 
 } // namespace engine::app

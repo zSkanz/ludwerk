@@ -7807,6 +7807,41 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // and each controller kept vibrating while a script has it set.
             scene::EngineState::Headset& seen = host->world().engineState().headset;
             seen.enabled = headset->state() != rhi::HeadsetState::Ended;
+            seen.simulated = simulatedHeadset != nullptr;
+            seen.playArea = headset->playArea();
+            // **What the session is doing** (`XRService.SessionState`), said
+            // to the game when it changes.
+            {
+                const rhi::HeadsetState now = headset->state();
+                const core::u8 state = now == rhi::HeadsetState::Running  ? 3
+                                       : now == rhi::HeadsetState::Paused ? 2
+                                       : now == rhi::HeadsetState::Idle   ? 1
+                                                                          : 4;
+                if (state != seen.sessionState) {
+                    seen.sessionState = state;
+                    script::fireXRSessionStateChanged(host->runtime().state(), state);
+                }
+            }
+            headset->setSpace(seen.space == 1 ? rhi::HeadsetSpace::Seated : rhi::HeadsetSpace::Standing);
+            // **The poses a script put** (`XRService:SimulatePose`), in the
+            // play space it reads -- the recentred one -- handed to the
+            // simulated headset in the space the headset gives.
+            if (simulatedHeadset != nullptr) {
+                for (core::u32 which = 0; which < 3; ++which) {
+                    std::optional<core::CFrameD>& put = seen.simulatedPoses[which];
+                    if (!put.has_value())
+                        continue;
+                    const core::CFrameD given = core::inverse(seen.recenter) * *put;
+                    std::array<core::f32, 4> turn{};
+                    core::toQuaternion(given.rotation, turn[0], turn[1], turn[2], turn[3]);
+                    simulatedHeadset->setPose(which,
+                                              {static_cast<core::f32>(given.position.x),
+                                               static_cast<core::f32>(given.position.y),
+                                               static_cast<core::f32>(given.position.z)},
+                                              turn);
+                    put.reset();
+                }
+            }
             if (headsetBegun) {
                 rhi::HeadsetInput read;
                 headset->readInput(read);
@@ -7818,12 +7853,36 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                          core::fromQuaternion(pose.orientation[0], pose.orientation[1],
                                                               pose.orientation[2], pose.orientation[3])};
                 };
-                if (read.head.valid)
-                    seen.head = cframeOf(read.head);
+                // **Recentred where the head is now** (`XRService:Recenter`):
+                // its place across the floor and the way it faces become
+                // the origin -- at the floor's height when standing, the
+                // head's own when seated.
+                if (seen.recenterAsked && read.head.valid) {
+                    const core::CFrameD head = cframeOf(read.head);
+                    const core::Vec3 ahead = head.rotation * core::Vec3{0.0f, 0.0f, -1.0f};
+                    const core::CFrameD origin{
+                        core::DVec3{head.position.x, seen.space == 1 ? head.position.y : 0.0, head.position.z},
+                        core::rotationY(std::atan2(-ahead.x, -ahead.z))};
+                    seen.recenter = core::inverse(origin);
+                }
+                seen.recenterAsked = false;
+                lua_State* const L = host->runtime().state();
+                if (read.head.valid) {
+                    const core::CFrameD head = seen.recenter * cframeOf(read.head);
+                    if (!(head == seen.head)) {
+                        seen.head = head;
+                        script::fireXRUserCFrameChanged(L, 0, head);
+                    }
+                }
                 for (core::u32 hand = 0; hand < 2; ++hand) {
                     seen.handsTracked[hand] = read.grip[hand].valid;
-                    if (read.grip[hand].valid)
-                        seen.hands[hand] = cframeOf(read.grip[hand]);
+                    if (read.grip[hand].valid) {
+                        const core::CFrameD grip = seen.recenter * cframeOf(read.grip[hand]);
+                        if (!(grip == seen.hands[hand])) {
+                            seen.hands[hand] = grip;
+                            script::fireXRUserCFrameChanged(L, static_cast<core::u8>(1 + hand), grip);
+                        }
+                    }
                     if (seen.vibration[hand] > 0.0f)
                         headset->vibrate(hand, seen.vibration[hand], 0.1f);
                 }
@@ -8413,7 +8472,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                         core::fromQuaternion(right.orientation[0], right.orientation[1],
                                                              right.orientation[2], right.orientation[3]),
                                         0.5f);
-                        headsetView->cframe = headsetView->cframe * headInSpace;
+                        // From the camera, through where `Recenter` put the
+                        // play space's origin, to the head.
+                        headsetView->cframe =
+                            headsetView->cframe * host->world().engineState().headset.recenter * headInSpace;
                         // Both eyes' edges, and a little more: each eye sits a few
                         // centimetres off the head's middle.
                         f32 across = 0.0f;

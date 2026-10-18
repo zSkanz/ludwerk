@@ -11486,6 +11486,18 @@
           "Type": "boolean",
           "ReadOnly": true,
           "Transient": true
+        },
+        {
+          "Name": "SessionState",
+          "Type": "Enum.XRSessionState",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "Space",
+          "Type": "Enum.XRSpace",
+          "Default": "Enum.XRSpace.Standing",
+          "Transient": true
         }
       ],
       "Methods": [
@@ -11507,6 +11519,12 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetPlayAreaBounds",
+          "Parameters": [],
+          "Returns": ["vector?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "IsHandTracked",
           "Parameters": [
             {
@@ -11516,9 +11534,53 @@
           ],
           "Returns": ["boolean"],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Recenter",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SimulatePose",
+          "Parameters": [
+            {
+              "Name": "pose",
+              "Type": "Enum.XRPose"
+            },
+            {
+              "Name": "cframe",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
-      "Events": []
+      "Events": [
+        {
+          "Name": "SessionStateChanged",
+          "Parameters": [
+            {
+              "Name": "state",
+              "Type": "Enum.XRSessionState"
+            }
+          ]
+        },
+        {
+          "Name": "UserCFrameChanged",
+          "Parameters": [
+            {
+              "Name": "pose",
+              "Type": "Enum.XRPose"
+            },
+            {
+              "Name": "cframe",
+              "Type": "CFrame"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "XboxService",
@@ -17148,6 +17210,61 @@
         {
           "Name": "Right",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "XRPose",
+      "Items": [
+        {
+          "Name": "Head",
+          "Value": 0
+        },
+        {
+          "Name": "LeftHand",
+          "Value": 1
+        },
+        {
+          "Name": "RightHand",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "XRSessionState",
+      "Items": [
+        {
+          "Name": "Ended",
+          "Value": 4
+        },
+        {
+          "Name": "Focused",
+          "Value": 3
+        },
+        {
+          "Name": "Idle",
+          "Value": 1
+        },
+        {
+          "Name": "None",
+          "Value": 0
+        },
+        {
+          "Name": "Visible",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "XRSpace",
+      "Items": [
+        {
+          "Name": "Seated",
+          "Value": 1
+        },
+        {
+          "Name": "Standing",
+          "Value": 0
         }
       ]
     }

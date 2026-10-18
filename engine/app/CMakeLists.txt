@@ -680,17 +680,21 @@ if(ENG_BUILD_TESTS)
 
     # **Where the player is, to a script** (ADR 0245): `XRService` under the
     # simulated headset -- enabled, the head standing at 1.6 m -- and flat,
-    # where every pose is the identity.
+    # where every pose is the identity. A script then puts the head and a
+    # hand (`SimulatePose`), reads the play area, recentres and sits down;
+    # flat, each of those is a no-op or nil.
     add_test(NAME xr_service_simulated
-        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=20 --exit
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=50 --exit
                 --rhi=null --xr=simulated)
     set_tests_properties(xr_service_simulated PROPERTIES
-        PASS_REGULAR_EXPRESSION "\\[xr\\] enabled=true head=1.60 left=false"
+        PASS_REGULAR_EXPRESSION
+            "\\[xr\\] enabled=true head=1.60 left=false.*\\[xr\\] simulated=true head=1.00,1.70,2.00 left=true 1.20 area=3.00x3.00 state=Focused.*\\[xr\\] recentred=-?0.00,1.70,-?0.00 look=-?0.00,-1.00 seated=0.10 space=Seated moves=true states=Focused"
         TIMEOUT 60)
     add_test(NAME xr_service_flat
-        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=20 --exit --rhi=null)
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=50 --exit --rhi=null)
     set_tests_properties(xr_service_flat PROPERTIES
-        PASS_REGULAR_EXPRESSION "\\[xr\\] enabled=false head=0.00 left=false"
+        PASS_REGULAR_EXPRESSION
+            "\\[xr\\] enabled=false head=0.00 left=false.*\\[xr\\] simulated=false head=0.00,0.00,0.00 left=false 0.00 area=nil state=None.*\\[xr\\] recentred=0.00,0.00,0.00 look=-?0.00,-1.00 seated=0.00 space=Seated moves=false states=\n"
         TIMEOUT 60)
 
     # **The render half of the frame runs headless**: a Render-rate

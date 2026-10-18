@@ -1787,6 +1787,27 @@ local Classes: { Schema.Class } = {
                 Doc = "Whether a headset is drawing this game. False on the screen, on a server and in a "
                     .. "headless run without `--xr=simulated`.",
             },
+            {
+                Name = "Space",
+                Type = "Enum.XRSpace",
+                Default = "Enum.XRSpace.Standing",
+                Transient = true,
+                HostFact = true,
+                Doc = "Where the poses are measured from: the floor (`Standing`) or the head where the session "
+                    .. "began (`Seated`). A game that is played sitting down sets `Seated` once, at the start. "
+                    .. "The picture uses the same space, so the camera stands for the floor when standing and "
+                    .. "for the player's eyes when seated.",
+            },
+            {
+                Name = "SessionState",
+                Type = "Enum.XRSessionState",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "What the headset is doing with this game: `Focused` while the player plays, `Visible` "
+                    .. "while the headset's own menu is in front, and `None` with no headset. "
+                    .. "`SessionStateChanged` fires when it changes; a game pauses on anything but `Focused`.",
+            },
         },
         Methods = {
             {
@@ -1812,6 +1833,52 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Whether the headset knows where this hand is now: false when its controller is put "
                     .. "down out of sight, or asleep.",
+            },
+            {
+                Name = "Recenter",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Makes where the head is now the play space's origin, facing where it faces. When "
+                    .. "`Space` is `Standing` the origin stays at the floor's height. The poses after it, and the "
+                    .. "picture, are measured from there. Nothing with no headset.",
+            },
+            {
+                Name = "GetPlayAreaBounds",
+                Parameters = {},
+                Returns = { "vector?" },
+                ThreadSafety = "Unsafe",
+                Doc = "Returns the size of the play area the player set up on the floor, or nil where the "
+                    .. "headset knows none. The width is x and the depth is z, in meters, centered on the "
+                    .. "standing space's origin.",
+            },
+            {
+                Name = "SimulatePose",
+                Parameters = {
+                    { Name = "pose", Type = "Enum.XRPose" },
+                    { Name = "cframe", Type = "CFrame" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. "
+                    .. "The pose is in the play space. A test uses it to move the player's head and hands from a "
+                    .. "script. Only with `--xr=simulated`; anywhere else it raises an error.",
+            },
+        },
+        Events = {
+            {
+                Name = "UserCFrameChanged",
+                Parameters = {
+                    { Name = "pose", Type = "Enum.XRPose" },
+                    { Name = "cframe", Type = "CFrame" },
+                },
+                Doc = "Fires when the head or a hand moves, once a frame for each that moved, with where it is "
+                    .. "now in the play space.",
+            },
+            {
+                Name = "SessionStateChanged",
+                Parameters = { { Name = "state", Type = "Enum.XRSessionState" } },
+                Doc = "Fires when `SessionState` changes.",
             },
         },
     },

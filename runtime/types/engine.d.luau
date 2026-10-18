@@ -210,6 +210,15 @@ end
 declare extern type EnumXRHand extends EnumItem with
 end
 
+declare extern type EnumXRPose extends EnumItem with
+end
+
+declare extern type EnumXRSpace extends EnumItem with
+end
+
+declare extern type EnumXRSessionState extends EnumItem with
+end
+
 declare extern type EnumVibrationMotor extends EnumItem with
 end
 
@@ -5146,6 +5155,20 @@ declare extern type XRService extends Instance with
     --- Whether a headset is drawing this game. False on the screen, on a server and in a headless run
     --- without `--xr=simulated`.
     read Enabled: boolean
+    --- Where the poses are measured from: the floor (`Standing`) or the head where the session began
+    --- (`Seated`). A game that is played sitting down sets `Seated` once, at the start. The picture
+    --- uses the same space, so the camera stands for the floor when standing and for the player's eyes
+    --- when seated.
+    Space: EnumXRSpace
+    --- What the headset is doing with this game: `Focused` while the player plays, `Visible` while the
+    --- headset's own menu is in front, and `None` with no headset. `SessionStateChanged` fires when it
+    --- changes; a game pauses on anything but `Focused`.
+    read SessionState: EnumXRSessionState
+    --- Fires when the head or a hand moves, once a frame for each that moved, with where it is now in
+    --- the play space.
+    read UserCFrameChanged: Signal<EnumXRPose, CFrame>
+    --- Fires when `SessionState` changes.
+    read SessionStateChanged: Signal<EnumXRSessionState>
     --- Where the head is in the play space, and how it is turned: between the eyes, looking down its
     --- -Z. The identity with no headset.
     function GetHeadCFrame(self): CFrame
@@ -5155,6 +5178,17 @@ declare extern type XRService extends Instance with
     --- Whether the headset knows where this hand is now: false when its controller is put down out of
     --- sight, or asleep.
     function IsHandTracked(self, hand: EnumXRHand): boolean
+    --- Makes where the head is now the play space's origin, facing where it faces. When `Space` is
+    --- `Standing` the origin stays at the floor's height. The poses after it, and the picture, are
+    --- measured from there. Nothing with no headset.
+    function Recenter(self): ()
+    --- Returns the size of the play area the player set up on the floor, or nil where the headset knows
+    --- none. The width is x and the depth is z, in meters, centered on the standing space's origin.
+    function GetPlayAreaBounds(self): vector?
+    --- Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose
+    --- is in the play space. A test uses it to move the player's head and hands from a script. Only
+    --- with `--xr=simulated`; anywhere else it raises an error.
+    function SimulatePose(self, pose: EnumXRPose, cframe: CFrame): ()
 end
 
 declare extern type HapticService extends Instance with
@@ -7093,6 +7127,25 @@ declare Enum: {
         Left: EnumXRHand,
         Right: EnumXRHand,
         GetEnumItems: (self: any) -> { EnumXRHand },
+    },
+    XRPose: {
+        Head: EnumXRPose,
+        LeftHand: EnumXRPose,
+        RightHand: EnumXRPose,
+        GetEnumItems: (self: any) -> { EnumXRPose },
+    },
+    XRSpace: {
+        Standing: EnumXRSpace,
+        Seated: EnumXRSpace,
+        GetEnumItems: (self: any) -> { EnumXRSpace },
+    },
+    XRSessionState: {
+        None: EnumXRSessionState,
+        Idle: EnumXRSessionState,
+        Visible: EnumXRSessionState,
+        Focused: EnumXRSessionState,
+        Ended: EnumXRSessionState,
+        GetEnumItems: (self: any) -> { EnumXRSessionState },
     },
     VibrationMotor: {
         Large: EnumVibrationMotor,

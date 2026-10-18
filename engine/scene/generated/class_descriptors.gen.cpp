@@ -6484,7 +6484,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 1> xRServiceProperties;
+    static std::array<PropertyDesc, 3> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6499,8 +6499,36 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .get = native::getXRServiceEnabled,
             .set = nullptr,
         },
+        PropertyDesc{
+            .name = atoms.intern("Space"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("XRSpace"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Where the poses are measured from: the floor (`Standing`) or the head where the session began (`Seated`). A game that is played sitting down sets `Seated` once, at the start. The picture uses the same space, so the camera stands for the floor when standing and for the player's eyes when seated.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getXRServiceSpace,
+            .set = native::setXRServiceSpace,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SessionState"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("XRSessionState"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "What the headset is doing with this game: `Focused` while the player plays, `Visible` while the headset's own menu is in front, and `None` with no headset. `SessionStateChanged` fires when it changes; a game pauses on anything but `Focused`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getXRServiceSessionState,
+            .set = nullptr,
+        },
     }};
-    static std::array<MethodDesc, 3> xRServiceMethods;
+    static std::array<MethodDesc, 6> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6520,6 +6548,37 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.",
         },
+        MethodDesc{
+            .name = atoms.intern("Recenter"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes where the head is now the play space's origin, facing where it faces. When `Space` is `Standing` the origin stays at the floor's height. The poses after it, and the picture, are measured from there. Nothing with no headset.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPlayAreaBounds"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the size of the play area the player set up on the floor, or nil where the headset knows none. The width is x and the depth is z, in meters, centered on the standing space's origin.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SimulatePose"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. Only with `--xr=simulated`; anywhere else it raises an error.",
+        },
+    }};
+    static std::array<EventDesc, 2> xRServiceEvents;
+    xRServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("UserCFrameChanged"),
+            .slot = 7,
+            .doc = "Fires when the head or a hand moves, once a frame for each that moved, with where it is now in the play space.",
+        },
+        EventDesc{
+            .name = atoms.intern("SessionStateChanged"),
+            .slot = 8,
+            .doc = "Fires when `SessionState` changes.",
+        },
     }};
     ClassDescriptor xRServiceDesc;
     xRServiceDesc.name = atoms.intern("XRService");
@@ -6529,6 +6588,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     xRServiceDesc.doc = "Where the player is in a headset: the head and the two hands. A controller's buttons, triggers and sticks are not here: they are `Enum.KeyCode` values whose names begin with `XR`, bound to `InputAction`s beside a gamepad's, and a controller vibrates through `HapticService` with `Enum.UserInputType.XRLeft` or `XRRight`.\012\012Poses are in the play space: meters from the floor where the player stood when the session began, y up. `Workspace.CurrentCamera` places the play space in the world: the camera's `CFrame` is the play space's origin, and the head moves the view from there. A game moves its player by moving the camera, never the head.\012\012With no headset, `Enabled` is false and every pose is the identity: a game that plays both ways branches on `Enabled` once, where it places its camera. A script reads the poses of the tick it runs in; the picture is drawn from later ones, at the time each frame is shown.";
     xRServiceDesc.properties = xRServiceProperties;
     xRServiceDesc.methods = xRServiceMethods;
+    xRServiceDesc.events = xRServiceEvents;
     classes.registerClass(xRServiceDesc);
 
     // --- HapticService ---
@@ -10979,6 +11039,86 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     xRHandDesc.doc = "A hand, or the controller it holds, for `XRService`.";
     xRHandDesc.items = xRHandItems;
     enums.registerEnum(xRHandDesc);
+
+    // --- XRPose ---
+    static std::array<EnumItemDesc, 3> xRPoseItems;
+    xRPoseItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Head"),
+            .value = 0,
+            .doc = "The head, between the eyes.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LeftHand"),
+            .value = 1,
+            .doc = "The left hand, where it holds its controller.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RightHand"),
+            .value = 2,
+            .doc = "The right hand, where it holds its controller.",
+        },
+    }};
+    EnumDescriptor xRPoseDesc;
+    xRPoseDesc.name = atoms.intern("XRPose");
+    xRPoseDesc.doc = "One of the poses `XRService` tracks: the head, or a hand.";
+    xRPoseDesc.items = xRPoseItems;
+    enums.registerEnum(xRPoseDesc);
+
+    // --- XRSpace ---
+    static std::array<EnumItemDesc, 2> xRSpaceItems;
+    xRSpaceItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Standing"),
+            .value = 0,
+            .doc = "The floor where the player stood when the session began, y up. A headset with no room set up gives the head's start instead.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Seated"),
+            .value = 1,
+            .doc = "The head where the session began: a seated game's origin, at the player's eyes.",
+        },
+    }};
+    EnumDescriptor xRSpaceDesc;
+    xRSpaceDesc.name = atoms.intern("XRSpace");
+    xRSpaceDesc.doc = "Where `XRService`'s poses are measured from.";
+    xRSpaceDesc.items = xRSpaceItems;
+    enums.registerEnum(xRSpaceDesc);
+
+    // --- XRSessionState ---
+    static std::array<EnumItemDesc, 5> xRSessionStateItems;
+    xRSessionStateItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("None"),
+            .value = 0,
+            .doc = "No headset: the game is on the screen.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Idle"),
+            .value = 1,
+            .doc = "A headset is there and is not showing the game yet, or has stopped showing it.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Visible"),
+            .value = 2,
+            .doc = "The game is shown, but the player is not using it: the headset's own menu is in front.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Focused"),
+            .value = 3,
+            .doc = "The game is shown and has the controllers.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ended"),
+            .value = 4,
+            .doc = "The headset's session is over, or the headset was lost.",
+        },
+    }};
+    EnumDescriptor xRSessionStateDesc;
+    xRSessionStateDesc.name = atoms.intern("XRSessionState");
+    xRSessionStateDesc.doc = "What the headset is doing with this game, for `XRService.SessionState`.";
+    xRSessionStateDesc.items = xRSessionStateItems;
+    enums.registerEnum(xRSessionStateDesc);
 
     // --- VibrationMotor ---
     static std::array<EnumItemDesc, 6> vibrationMotorItems;

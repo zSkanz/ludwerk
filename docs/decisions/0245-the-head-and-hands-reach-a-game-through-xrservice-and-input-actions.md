@@ -135,3 +135,23 @@ to a game without a special agreement), and full-body tracking.
   `SessionState`, hand tracking and the pinches (their key codes are
   reserved), and `XRService:SimulatePose` -- the simulated headset is driven
   from C++ in tests until then.
+
+## As built, second step (2026-10-18)
+
+- `XRService.Space` (`Enum.XRSpace`): both of OpenXR's spaces are made at
+  the start -- the stage, where the runtime has a floor, and local -- and the
+  poses and the eyes are located in the one chosen, from the next frame.
+  Standing without a stage is local.
+- `Recenter` is the engine's, not the runtime's: where the head is at the
+  next frame -- across the floor, and its turn about the vertical -- becomes
+  the origin of what scripts read and of the picture (the camera, then the
+  recentre, then the head). A recentre belongs to its space, and changing
+  `Space` drops it.
+- `GetPlayAreaBounds` from `xrGetReferenceSpaceBoundsRect` on the stage;
+  `SessionState` (`Enum.XRSessionState`) from the session's state, with
+  `SessionStateChanged`; `UserCFrameChanged` once a frame for each pose that
+  moved.
+- `SimulatePose` (`Enum.XRPose`) puts the simulated headset's head or a hand
+  in the play space the script reads; the simulated headset is seated 1.6 m
+  under its standing origin and has a room of 3 by 3 metres.
+- **Not yet**: hand tracking and the pinches.

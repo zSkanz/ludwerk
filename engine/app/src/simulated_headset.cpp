@@ -35,6 +35,29 @@ void SimulatedHeadset::setHead(const std::array<core::f32, 3>& position,
     m_headOrientation = orientation;
 }
 
+namespace {
+
+// Where the seated space's origin is in the standing one: the head at rest.
+constexpr core::f32 SeatedHeight = 1.6f;
+
+} // namespace
+
+void SimulatedHeadset::setPose(core::u32 which, const std::array<core::f32, 3>& position,
+                               const std::array<core::f32, 4>& orientation) noexcept
+{
+    const std::array<core::f32, 3> standing{position[0], position[1] + (m_seated ? SeatedHeight : 0.0f), position[2]};
+    if (which == 0) {
+        setHead(standing, orientation);
+        return;
+    }
+    const core::u32 hand = which == 1 ? 0u : 1u;
+    for (rhi::HeadsetPose* pose : {&m_input.grip[hand], &m_input.aim[hand]}) {
+        pose->valid = true;
+        pose->position = standing;
+        pose->orientation = orientation;
+    }
+}
+
 bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
 {
     frame = rhi::HeadsetFrame{};
@@ -53,7 +76,7 @@ bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
         const core::f32 side = index == 0 ? -0.5f : 0.5f;
         rhi::EyeView& eye = frame.eyes[index];
         eye.position = {m_headPosition[0] + right.x * side * m_desc.eyeSeparation,
-                        m_headPosition[1] + right.y * side * m_desc.eyeSeparation,
+                        m_headPosition[1] + right.y * side * m_desc.eyeSeparation - (m_seated ? SeatedHeight : 0.0f),
                         m_headPosition[2] + right.z * side * m_desc.eyeSeparation};
         eye.orientation = m_headOrientation;
         eye.tanLeft = index == 0 ? -m_desc.tanOutward : -m_desc.tanInward;
@@ -72,6 +95,13 @@ void SimulatedHeadset::readInput(rhi::HeadsetInput& input)
     input.head.valid = true;
     input.head.position = m_headPosition;
     input.head.orientation = m_headOrientation;
+    if (m_seated) {
+        input.head.position[1] -= SeatedHeight;
+        for (rhi::HeadsetPose& pose : input.grip)
+            pose.position[1] -= SeatedHeight;
+        for (rhi::HeadsetPose& pose : input.aim)
+            pose.position[1] -= SeatedHeight;
+    }
 }
 
 void SimulatedHeadset::vibrate(core::u32 hand, core::f32 amplitude, core::f32 seconds)

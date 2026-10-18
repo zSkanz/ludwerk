@@ -882,6 +882,7 @@
   "script.err.tile_cell": "A tilemap cell is a whole number, from -2147483648 to 2147483647.",
   "script.err.tile_id": "A tile is a whole number from 0 (empty) to 65535.",
   "script.err.tile_rect_too_large": "FillRect fills at most one million cells at once. Fill a larger area in parts.",
+  "script.err.xr_not_simulated": "XRService:SimulatePose works only with the simulated headset: run with --xr=simulated.",
   "script.err.simulation_unavailable": "This world has no 3D simulation to save. SaveSimulation needs the physics of a running game.",
   "script.err.network_owner_authority": "Only the authority can give a part to a player. SetNetworkOwner was called on a client.",
   "script.err.network_owner_anchored": "SetNetworkOwner takes a part that is not anchored. An anchored part does not move, so there is nothing to simulate.",

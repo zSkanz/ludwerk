@@ -1231,3 +1231,34 @@ A hand, or the controller it holds, for `XRService`.
 |---|---|---|
 | `Left` | 0 | The left hand. |
 | `Right` | 1 | The right hand. |
+
+## Enum.XRPose
+
+One of the poses `XRService` tracks: the head, or a hand.
+
+| Item | Value | Description |
+|---|---|---|
+| `Head` | 0 | The head, between the eyes. |
+| `LeftHand` | 1 | The left hand, where it holds its controller. |
+| `RightHand` | 2 | The right hand, where it holds its controller. |
+
+## Enum.XRSessionState
+
+What the headset is doing with this game, for `XRService.SessionState`.
+
+| Item | Value | Description |
+|---|---|---|
+| `None` | 0 | No headset: the game is on the screen. |
+| `Idle` | 1 | A headset is there and is not showing the game yet, or has stopped showing it. |
+| `Visible` | 2 | The game is shown, but the player is not using it: the headset's own menu is in front. |
+| `Focused` | 3 | The game is shown and has the controllers. |
+| `Ended` | 4 | The headset's session is over, or the headset was lost. |
+
+## Enum.XRSpace
+
+Where `XRService`'s poses are measured from.
+
+| Item | Value | Description |
+|---|---|---|
+| `Standing` | 0 | The floor where the player stood when the session began, y up. A headset with no room set up gives the head's start instead. |
+| `Seated` | 1 | The head where the session began: a seated game's origin, at the player's eyes. |

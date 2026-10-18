@@ -648,6 +648,23 @@ struct EngineState
         std::array<core::CFrameD, 2> hands{};
         std::array<bool, 2> handsTracked{};
         std::array<f32, 2> vibration{};
+        // `XRService.Space` (`Enum.XRSpace`) and `SessionState`
+        // (`Enum.XRSessionState`), and whether the headset is the simulated
+        // one, which alone takes `SimulatePose`.
+        u8 space = 0;
+        u8 sessionState = 0;
+        bool simulated = false;
+        // **Where `Recenter` put the play space's origin**, in the space the
+        // headset gives: every pose a script reads and the picture are
+        // measured from it. Asked by a script, made by the host at the next
+        // frame from where the head is then.
+        core::CFrameD recenter;
+        bool recenterAsked = false;
+        // The floor's rectangle, width and depth, where the headset knows one.
+        std::optional<std::array<f32, 2>> playArea;
+        // What `SimulatePose` put, the head's then each hand's, for the host
+        // to hand the simulated headset at the next frame.
+        std::array<std::optional<core::CFrameD>, 3> simulatedPoses{};
     };
     Headset headset;
     std::vector<Suspicion> suspicions;

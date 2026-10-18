@@ -39,6 +39,7 @@ struct XrCalls
     PFN_xrEnumerateViewConfigurationViews enumerateViewConfigurationViews = nullptr;
     PFN_xrEnumerateSwapchainImages enumerateSwapchainImages = nullptr;
     PFN_xrCreateReferenceSpace createReferenceSpace = nullptr;
+    PFN_xrGetReferenceSpaceBoundsRect getBoundsRect = nullptr;
     PFN_xrDestroySpace destroySpace = nullptr;
     PFN_xrDestroySession destroySession = nullptr;
     PFN_xrPollEvent pollEvent = nullptr;
@@ -82,6 +83,7 @@ struct XrCalls
         get("xrEnumerateViewConfigurationViews", enumerateViewConfigurationViews);
         get("xrEnumerateSwapchainImages", enumerateSwapchainImages);
         get("xrCreateReferenceSpace", createReferenceSpace);
+        get("xrGetReferenceSpaceBoundsRect", getBoundsRect);
         get("xrDestroySpace", destroySpace);
         get("xrDestroySession", destroySession);
         get("xrPollEvent", pollEvent);
@@ -224,8 +226,10 @@ public:
             if (eye.swapchain != XR_NULL_HANDLE)
                 (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
         }
-        if (m_space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
-            (void)m_calls.destroySpace(m_space);
+        for (const XrSpace space : {m_stage, m_local}) {
+            if (space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
+                (void)m_calls.destroySpace(space);
+        }
         if (m_session != XR_NULL_HANDLE && m_calls.destroySession != nullptr)
             (void)m_calls.destroySession(m_session);
         // The instance is the device's: SDL ends it with the device.
@@ -270,20 +274,22 @@ public:
             logFailure("SDL_CreateGPUXRSession", result);
             return false;
         }
-        // **The play space**: the floor's when the runtime knows it (a room
-        // set up), the head's start otherwise.
+        // **The play spaces**: the floor's when the runtime knows it (a room
+        // set up), and the head's start, which every runtime has. Standing
+        // uses the floor's, or the head's where there is no floor; seated,
+        // the head's.
         auto spaceInfo = made<XrReferenceSpaceCreateInfo>(XR_TYPE_REFERENCE_SPACE_CREATE_INFO);
         spaceInfo.poseInReferenceSpace.orientation.w = 1.0f;
-        spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
-        result = m_calls.createReferenceSpace(m_session, &spaceInfo, &m_space);
-        if (XR_FAILED(result)) {
-            spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
-            result = m_calls.createReferenceSpace(m_session, &spaceInfo, &m_space);
-        }
+        spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+        result = m_calls.createReferenceSpace(m_session, &spaceInfo, &m_local);
         if (XR_FAILED(result)) {
             logFailure("xrCreateReferenceSpace", result);
             return false;
         }
+        spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+        if (XR_FAILED(m_calls.createReferenceSpace(m_session, &spaceInfo, &m_stage)))
+            m_stage = XR_NULL_HANDLE;
+        m_space = m_stage != XR_NULL_HANDLE ? m_stage : m_local;
         auto headInfo = made<XrReferenceSpaceCreateInfo>(XR_TYPE_REFERENCE_SPACE_CREATE_INFO);
         headInfo.poseInReferenceSpace.orientation.w = 1.0f;
         headInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -522,6 +528,24 @@ public:
         }
     }
 
+    void setSpace(HeadsetSpace space) override
+    {
+        const XrSpace wanted = space == HeadsetSpace::Seated || m_stage == XR_NULL_HANDLE ? m_local : m_stage;
+        if (wanted != XR_NULL_HANDLE)
+            m_space = wanted;
+    }
+
+    [[nodiscard]] std::optional<std::array<f32, 2>> playArea() const override
+    {
+        if (m_stage == XR_NULL_HANDLE || m_calls.getBoundsRect == nullptr)
+            return std::nullopt;
+        XrExtent2Df bounds{};
+        if (m_calls.getBoundsRect(m_session, XR_REFERENCE_SPACE_TYPE_STAGE, &bounds) != XR_SUCCESS ||
+            bounds.width <= 0.0f || bounds.height <= 0.0f)
+            return std::nullopt;
+        return std::array<f32, 2>{bounds.width, bounds.height};
+    }
+
     void vibrate(u32 hand, f32 amplitude, f32 seconds) override
     {
         const usize haptic = Actions.size() - 1;
@@ -668,7 +692,10 @@ private:
     XrDeviceHooks m_hooks;
     XrCalls m_calls;
     XrSession m_session = XR_NULL_HANDLE;
+    // The space every pose and view is located in: one of the two below.
     XrSpace m_space = XR_NULL_HANDLE;
+    XrSpace m_stage = XR_NULL_HANDLE;
+    XrSpace m_local = XR_NULL_HANDLE;
     XrSpace m_headSpace = XR_NULL_HANDLE;
     XrActionSet m_actionSet = XR_NULL_HANDLE;
     std::array<XrAction, Actions.size()> m_actions{};

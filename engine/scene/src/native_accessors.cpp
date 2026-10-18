@@ -2211,6 +2211,29 @@ Value getXRServiceEnabled(const World& world, core::InstanceId)
     return Value{world.engineState().headset.enabled};
 }
 
+Value getXRServiceSpace(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::XRSpaceEnumId, world.engineState().headset.space}};
+}
+
+bool setXRServiceSpace(World& world, core::InstanceId, const Value& value)
+{
+    const EnumValue* space = std::get_if<EnumValue>(&value);
+    if (space == nullptr || space->enumId != generated::XRSpaceEnumId || space->value < 0 || space->value > 1)
+        return false;
+    EngineState::Headset& headset = world.engineState().headset;
+    // A new space is measured from its own origin: a recentre was of the old.
+    if (headset.space != static_cast<u8>(space->value))
+        headset.recenter = core::CFrameD{};
+    headset.space = static_cast<u8>(space->value);
+    return true;
+}
+
+Value getXRServiceSessionState(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::XRSessionStateEnumId, world.engineState().headset.sessionState}};
+}
+
 Value getNetworkServiceChannel(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkChannel)};

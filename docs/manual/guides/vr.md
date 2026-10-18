@@ -42,6 +42,26 @@ end
 With no headset, `Enabled` is false and every pose is the identity: a game
 that plays both ways branches on `Enabled` once, where it places its camera.
 
+A game played sitting down sets `XRService.Space = Enum.XRSpace.Seated` at
+the start: poses are then measured from the head where the session began,
+and the camera stands for the player's eyes instead of the floor.
+`XRService:Recenter()` makes where the head is now the origin, facing where
+it faces -- a "recentre" button in the game's menu.
+`GetPlayAreaBounds()` is the width and depth of the room the player set up,
+or nil. `UserCFrameChanged` fires when the head or a hand moves, and
+`SessionState` says whether the player is in the game (`Focused`) or in the
+headset's own menu (`Visible`): pause on anything but `Focused`.
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+XRService.SessionStateChanged:Connect(function(state: EnumXRSessionState)
+    local paused = state ~= Enum.XRSessionState.Focused
+    workspace:SetAttribute("Paused", paused)
+end)
+```
+
 ## The controllers are input
 
 Each controller's buttons, triggers, grips and sticks are `Enum.KeyCode`
@@ -80,5 +100,17 @@ HapticService:SetMotor(Enum.UserInputType.XRRight, Enum.VibrationMotor.Large, 0.
 ## Testing without a headset
 
 `--xr=simulated` runs a game with a headset that is the engine's own: two
-eyes 63 mm apart standing at 1.6 m, headless too. With `--screenshot`, each
-eye's picture is written beside the window's (`-left`, `-right`).
+eyes 63 mm apart standing at 1.6 m, in a room three meters by three,
+headless too. With `--screenshot`, each eye's picture is written beside the
+window's (`-left`, `-right`). A test moves its head and hands from a script,
+in the play space, from the next frame:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+XRService:SimulatePose(Enum.XRPose.Head, CFrame.new(0, 1.7, 0.5))
+XRService:SimulatePose(Enum.XRPose.RightHand, CFrame.new(0.25, 1.2, -0.3))
+```
+
+`SimulatePose` raises an error anywhere but under the simulated headset.

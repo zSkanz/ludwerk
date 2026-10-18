@@ -2799,6 +2799,41 @@ int xrServiceIsHandTracked(lua_State* L)
     return 1;
 }
 
+int xrServiceRecenter(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (headset.enabled)
+        headset.recenterAsked = true;
+    return 0;
+}
+
+int xrServiceGetPlayAreaBounds(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (!headset.enabled || !headset.playArea.has_value()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    pushVector3(L, core::Vec3{(*headset.playArea)[0], 0.0f, (*headset.playArea)[1]});
+    return 1;
+}
+
+int xrServiceSimulatePose(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EnumValue pose = checkEnumItem(L, 2);
+    if (pose.enumId != scene::generated::XRPoseEnumId || pose.value < 0 || pose.value > 2)
+        luaL_argerror(L, 2, "Enum.XRPose");
+    const core::CFrameD cframe = checkCFrame(L, 3);
+    scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (!headset.simulated)
+        raise(L, ENG_TR("script.err.xr_not_simulated"));
+    headset.simulatedPoses[static_cast<usize>(pose.value)] = cframe;
+    return 0;
+}
+
 // --- LocalizationService (ADR 0154) -------------------------------------------
 
 int localizationServiceGetLocales(lua_State* L)
@@ -3850,6 +3885,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "GetHeadCFrame", xrServiceGetHeadCFrame},
     {"XRService", "GetHandCFrame", xrServiceGetHandCFrame},
     {"XRService", "IsHandTracked", xrServiceIsHandTracked},
+    {"XRService", "Recenter", xrServiceRecenter},
+    {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},
+    {"XRService", "SimulatePose", xrServiceSimulatePose},
     {"HapticService", "IsVibrationSupported", hapticServiceIsVibrationSupported},
     {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
     {"HapticService", "SetMotor", hapticServiceSetMotor},
@@ -4200,6 +4238,37 @@ void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<st
     else {
         fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) + 1, 0);
     }
+}
+
+void fireXRUserCFrameChanged(lua_State* L, core::u8 pose, const core::CFrameD& cframe)
+{
+    World& w = world(L);
+    const ClassId xrClass = w.classes().findId(w.atoms().lookup("XRService"));
+    const core::InstanceId service = findServiceOfClass(L, xrClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(xrClass, w.atoms().intern("UserCFrameChanged"));
+    if (descriptor == nullptr)
+        return;
+    pushEnumItem(L, scene::EnumValue{scene::generated::XRPoseEnumId, static_cast<core::i32>(pose)});
+    pushCFrame(L, cframe);
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L) - 1, 2);
+    lua_pop(L, 2);
+}
+
+void fireXRSessionStateChanged(lua_State* L, core::u8 state)
+{
+    World& w = world(L);
+    const ClassId xrClass = w.classes().findId(w.atoms().lookup("XRService"));
+    const core::InstanceId service = findServiceOfClass(L, xrClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(xrClass, w.atoms().intern("SessionStateChanged"));
+    if (descriptor == nullptr)
+        return;
+    pushEnumItem(L, scene::EnumValue{scene::generated::XRSessionStateEnumId, static_cast<core::i32>(state)});
+    fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L), 1);
+    lua_pop(L, 1);
 }
 
 void fireTimeDilationChanged(lua_State* L)

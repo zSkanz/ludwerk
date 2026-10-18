@@ -581,6 +581,10 @@ void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<st
 // `RunService.TimeDilationChanged` (ADR 0233), fired by the host when the
 // rate its world runs at changes.
 void fireTimeDilationChanged(lua_State* L);
+// `XRService.UserCFrameChanged` (ADR 0245): `pose` an `Enum.XRPose` value.
+void fireXRUserCFrameChanged(lua_State* L, core::u8 pose, const core::CFrameD& cframe);
+// `XRService.SessionStateChanged`: `state` an `Enum.XRSessionState` value.
+void fireXRSessionStateChanged(lua_State* L, core::u8 state);
 
 // Wakes every `GraphicsService:SaveAsync` (or, with `load`, `LoadAsync`) with
 // whether the host did it (ADR 0147).

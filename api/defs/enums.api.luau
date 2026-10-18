@@ -1645,6 +1645,54 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "XRPose",
+            Records = { "ADR 0245" },
+            Doc = "One of the poses `XRService` tracks: the head, or a hand.",
+            Items = {
+                { Name = "Head", Value = 0, Doc = "The head, between the eyes." },
+                { Name = "LeftHand", Value = 1, Doc = "The left hand, where it holds its controller." },
+                { Name = "RightHand", Value = 2, Doc = "The right hand, where it holds its controller." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "XRSpace",
+            Records = { "ADR 0245" },
+            Doc = "Where `XRService`'s poses are measured from.",
+            Items = {
+                {
+                    Name = "Standing",
+                    Value = 0,
+                    Doc = "The floor where the player stood when the session began, y up. A headset with no "
+                        .. "room set up gives the head's start instead.",
+                },
+                {
+                    Name = "Seated",
+                    Value = 1,
+                    Doc = "The head where the session began: a seated game's origin, at the player's eyes.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "XRSessionState",
+            Records = { "ADR 0245" },
+            Doc = "What the headset is doing with this game, for `XRService.SessionState`.",
+            Items = {
+                { Name = "None", Value = 0, Doc = "No headset: the game is on the screen." },
+                {
+                    Name = "Idle",
+                    Value = 1,
+                    Doc = "A headset is there and is not showing the game yet, or has stopped showing it.",
+                },
+                {
+                    Name = "Visible",
+                    Value = 2,
+                    Doc = "The game is shown, but the player is not using it: the headset's own menu is in front.",
+                },
+                { Name = "Focused", Value = 3, Doc = "The game is shown and has the controllers." },
+                { Name = "Ended", Value = 4, Doc = "The headset's session is over, or the headset was lost." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "VibrationMotor",
             Doc = "One of the vibration motors of a controller, for `HapticService`.",
             Items = {
