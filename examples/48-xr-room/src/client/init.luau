@@ -20,6 +20,7 @@
 	`example_xr_room_throws` asks of it.
 ]]
 
+local Lighting = game:GetService("Lighting")
 local LocalizationService = game:GetService("LocalizationService")
 local RunService = game:GetService("RunService")
 local SceneService = game:GetService("SceneService")
@@ -34,6 +35,11 @@ local Demo = (SceneService:GetLoadData() or {}) :: Demo
 local GrabReach = 0.2
 -- How many ticks of a hand's travel its throw is measured over.
 local ThrowTicks = 4
+
+-- An afternoon sun: at noon it stands over the table and what is on it
+-- hides its own shadow, and a crate seen up close in a headset looks set
+-- down from nowhere.
+Lighting.ClockTime = 15
 
 local function block(name: string, size: vector, position: vector, color: Color3): Part
     local part = Instance.new("Part")
