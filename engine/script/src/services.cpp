@@ -2816,6 +2816,39 @@ int xrServiceGetHandJoints(lua_State* L)
     return 1;
 }
 
+int xrServiceSimulateInput(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EnumValue key = checkEnumItem(L, 2);
+    // The `XR` key codes, 152 to 170, in the order the headset reads them.
+    constexpr core::i32 XrFirst = 152;
+    if (key.enumId != scene::generated::KeyCodeEnumId || key.value < XrFirst || key.value >= XrFirst + 19)
+        luaL_argerror(L, 2, "Enum.KeyCode");
+    const f64 value = luaL_checknumber(L, 3);
+    scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (!headset.simulated)
+        raise(L, ENG_TR("script.err.xr_not_simulated"));
+    headset.simulatedKeys[static_cast<usize>(key.value - XrFirst)] = static_cast<f32>(std::clamp(value, -1.0, 1.0));
+    return 0;
+}
+
+int xrServiceGetPointerRay(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const usize hand = checkXrHand(L, 2);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (!headset.enabled || !headset.aimsTracked[hand]) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+    const core::CFrameD aim = headset.playSpaceWorld * headset.aims[hand];
+    pushVector3(L, core::Vec3{static_cast<f32>(aim.position.x), static_cast<f32>(aim.position.y),
+                              static_cast<f32>(aim.position.z)});
+    pushVector3(L, core::transformDirection(aim, core::Vec3{0.0f, 0.0f, -1.0f}));
+    return 2;
+}
+
 int xrServiceRecenter(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -3904,6 +3937,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "IsHandTracked", xrServiceIsHandTracked},
     {"XRService", "GetHandJoints", xrServiceGetHandJoints},
     {"XRService", "Recenter", xrServiceRecenter},
+    {"XRService", "SimulateInput", xrServiceSimulateInput},
+    {"XRService", "GetPointerRay", xrServiceGetPointerRay},
     {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},
     {"XRService", "SimulatePose", xrServiceSimulatePose},
     {"HapticService", "IsVibrationSupported", hapticServiceIsVibrationSupported},

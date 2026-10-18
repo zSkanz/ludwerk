@@ -6484,7 +6484,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 3> xRServiceProperties;
+    static std::array<PropertyDesc, 6> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6498,6 +6498,46 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getXRServiceEnabled,
             .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PointerHand"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("XRHand"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Which hand points at interfaces in a headset. Its ray finds the panels the screens become and every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a click where the ray meets one.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getXRServicePointerHand,
+            .set = native::setXRServicePointerHand,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PointerVisible"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the pointing hand's ray is drawn: a short beam ending in a dot where it meets an interface. It points, and clicks, either way.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRServicePointerVisible,
+            .set = native::setXRServicePointerVisible,
+        },
+        PropertyDesc{
+            .name = atoms.intern("PointerLength"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far the pointing hand reaches, in meters, and how long its beam is when it meets nothing.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getXRServicePointerLength,
+            .set = native::setXRServicePointerLength,
         },
         PropertyDesc{
             .name = atoms.intern("Space"),
@@ -6528,7 +6568,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 7> xRServiceMethods;
+    static std::array<MethodDesc, 9> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6571,6 +6611,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. Only with `--xr=simulated`; anywhere else it raises an error.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SimulateInput"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Holds one of the simulated headset's controls at `value` from the next frame: 1 for a button down and 0 up, a trigger from 0 to 1, a stick's axis from -1 to 1. The key code is one whose name begins with `XR`. Only with `--xr=simulated`; anywhere else it raises an error.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPointerRay"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns where a hand points from and the way it points, in the world, as a unit vector: the ray a game casts for its own pointing. Nil and nil while the hand is not tracked, and with no headset.",
         },
     }};
     static std::array<EventDesc, 2> xRServiceEvents;

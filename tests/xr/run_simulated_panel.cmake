@@ -1,6 +1,8 @@
 # A `ScreenGui` in a headset is a panel (ADR 0246 §1): run under the simulated
-# headset with a GPU, laid out against the panel's canvas -- the label's size
-# is half and three tenths of 1777.8 by 1000 -- and drawn into each eye.
+# headset with a GPU, laid out against the panel's canvas -- the button's size
+# is half and three tenths of 1777.8 by 1000 -- and drawn into each eye; the
+# right hand points at the button and pulls the trigger, and it is pressed
+# once (§2).
 cmake_minimum_required(VERSION 3.24)
 
 foreach(required HOST SCENE WORKDIR)
@@ -27,9 +29,15 @@ endif()
 if(NOT output MATCHES "\\[panel\\] size=889x300")
     message(FATAL_ERROR "the screen was not laid out on the panel's canvas:\n${output}")
 endif()
+if(NOT output MATCHES "\\[panel\\] ray z=-0.30 along=-0.94")
+    message(FATAL_ERROR "the right hand does not point where it was put:\n${output}")
+endif()
+if(NOT output MATCHES "\\[panel\\] activated=1")
+    message(FATAL_ERROR "pointing at the button and pulling the trigger did not activate it once:\n${output}")
+endif()
 foreach(eye left right)
     if(NOT EXISTS "${WORKDIR}/panel-${eye}.png")
         message(FATAL_ERROR "no picture for the ${eye} eye:\n${output}")
     endif()
 endforeach()
-message("the screen is a panel, laid out on its canvas")
+message("the screen is a panel, laid out on its canvas, and a hand pointing at its button presses it")

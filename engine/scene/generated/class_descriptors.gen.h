@@ -1069,6 +1069,12 @@ bool setGraphicsServiceBrightness(World& world, core::InstanceId id, const Value
 
 // XRService
 Value getXRServiceEnabled(const World& world, core::InstanceId id);
+Value getXRServicePointerHand(const World& world, core::InstanceId id);
+bool setXRServicePointerHand(World& world, core::InstanceId id, const Value& value);
+Value getXRServicePointerVisible(const World& world, core::InstanceId id);
+bool setXRServicePointerVisible(World& world, core::InstanceId id, const Value& value);
+Value getXRServicePointerLength(const World& world, core::InstanceId id);
+bool setXRServicePointerLength(World& world, core::InstanceId id, const Value& value);
 Value getXRServiceSpace(const World& world, core::InstanceId id);
 bool setXRServiceSpace(World& world, core::InstanceId id, const Value& value);
 Value getXRServiceSessionState(const World& world, core::InstanceId id);

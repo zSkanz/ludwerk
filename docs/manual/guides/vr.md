@@ -81,6 +81,23 @@ properties on the `ScreenGui` decide where:
 An interface somewhere precise -- a screen on a wall, a watch on a wrist --
 is a `SurfaceGui` on a part, which already lives in the world.
 
+The player points at interfaces with a hand -- the right one, or
+`XRService.PointerHand` -- and its trigger, or a pinch, is a click: on the
+panels, and on every `SurfaceGui` and `BillboardGui`, as a mouse's click is.
+A beam is drawn from the hand to where it points (`PointerVisible`,
+`PointerLength`). A game that points at things of its own -- a gun, a
+grabbed object -- casts the same ray:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+local from, along = XRService:GetPointerRay(Enum.XRHand.Right)
+if from and along then
+    local hit = workspace:Raycast(from, along * 20)
+end
+```
+
 ## Hands
 
 On a headset that tracks hands -- the Quest 3 does -- a player who puts the

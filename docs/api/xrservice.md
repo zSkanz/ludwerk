@@ -20,6 +20,9 @@ listed on the page of the class that declares them.
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `Enabled` | `boolean` | — | read-only | Whether a headset is drawing this game. False on the screen, on a server and in a headless run without `--xr=simulated`. |
+| `PointerHand` | `Enum.XRHand` | `Enum.XRHand.Right` | read/write | Which hand points at interfaces in a headset. Its ray finds the panels the screens become and every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a click where the ray meets one. |
+| `PointerLength` | `number` | `5` | read/write | How far the pointing hand reaches, in meters, and how long its beam is when it meets nothing. |
+| `PointerVisible` | `boolean` | `true` | read/write | Whether the pointing hand's ray is drawn: a short beam ending in a dot where it meets an interface. It points, and clicks, either way. |
 | `SessionState` | `Enum.XRSessionState` | — | read-only | What the headset is doing with this game: `Focused` while the player plays, `Visible` while the headset's own menu is in front, and `None` with no headset. `SessionStateChanged` fires when it changes; a game pauses on anything but `Focused`. |
 | `Space` | `Enum.XRSpace` | `Enum.XRSpace.Standing` | read/write | Where the poses are measured from: the floor (`Standing`) or the head where the session began (`Seated`). A game that is played sitting down sets `Seated` once, at the start. The picture uses the same space, so the camera stands for the floor when standing and for the player's eyes when seated. |
 
@@ -41,6 +44,10 @@ Where the head is in the play space, and how it is turned: between the eyes, loo
 
 Returns the size of the play area the player set up on the floor, or nil where the headset knows none. The width is x and the depth is z, in meters, centered on the standing space's origin.
 
+### `GetPointerRay(hand: Enum.XRHand): (vector?, vector?)`
+
+Returns where a hand points from and the way it points, in the world, as a unit vector: the ray a game casts for its own pointing. Nil and nil while the hand is not tracked, and with no headset.
+
 ### `IsHandTracked(hand: Enum.XRHand): boolean`
 
 Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.
@@ -48,6 +55,10 @@ Whether the headset knows where this hand is now: false when its controller is p
 ### `Recenter()`
 
 Makes where the head is now the play space's origin, facing where it faces. When `Space` is `Standing` the origin stays at the floor's height. The poses after it, and the picture, are measured from there. Nothing with no headset.
+
+### `SimulateInput(keyCode: Enum.KeyCode, value: number)`
+
+Holds one of the simulated headset's controls at `value` from the next frame: 1 for a button down and 0 up, a trigger from 0 to 1, a stick's axis from -1 to 1. The key code is one whose name begins with `XR`. Only with `--xr=simulated`; anywhere else it raises an error.
 
 ### `SimulatePose(pose: Enum.XRPose, cframe: CFrame)`
 

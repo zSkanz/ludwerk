@@ -113,3 +113,19 @@ HUD): a game draws those on a `SurfaceGui` parented to the camera.
   label half the canvas wide and three tenths tall is 889 by 300 pixels,
   and is drawn in each eye at the size and height its metres give.
 - **Not yet**: the laser, the poke and `@engine/xrcomfort` (§2, §3).
+
+## As built, second step (2026-10-18)
+
+- **The laser** (§2): the pointing hand's aim pose, placed in the world by
+  the camera, is a ray that finds the panels and every `SurfaceGui` and
+  `BillboardGui` the mouse's ray finds (`pickWorldUiRay`, of which the
+  mouse's pick is now one case), out to `PointerLength`; its trigger, or its
+  pinch, is the press and the release. While a headset draws, the window's
+  own pointer is a spectator's: it neither hovers nor presses. The beam is
+  drawn over everything, from the hand to the hit, with a round dot there.
+- `GetPointerRay` gives a game the same ray; `SimulateInput` holds one of
+  the simulated headset's controls, so a test pulls a trigger.
+- Proved under the simulated headset with a GPU (`xr_simulated_panel`): a
+  hand held low and to the right points at a button on the panel and pulls
+  the trigger, and the button's `Activated` fires once.
+- **Not yet**: the poke, and `@engine/xrcomfort` (§3).

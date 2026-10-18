@@ -2229,6 +2229,48 @@ bool setXRServiceSpace(World& world, core::InstanceId, const Value& value)
     return true;
 }
 
+Value getXRServicePointerHand(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::XRHandEnumId, world.engineState().headset.pointerHand}};
+}
+
+bool setXRServicePointerHand(World& world, core::InstanceId, const Value& value)
+{
+    const EnumValue* hand = std::get_if<EnumValue>(&value);
+    if (hand == nullptr || hand->enumId != generated::XRHandEnumId || hand->value < 0 || hand->value > 1)
+        return false;
+    world.engineState().headset.pointerHand = static_cast<u8>(hand->value);
+    return true;
+}
+
+Value getXRServicePointerVisible(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().headset.pointerVisible};
+}
+
+bool setXRServicePointerVisible(World& world, core::InstanceId, const Value& value)
+{
+    const bool* visible = std::get_if<bool>(&value);
+    if (visible == nullptr)
+        return false;
+    world.engineState().headset.pointerVisible = *visible;
+    return true;
+}
+
+Value getXRServicePointerLength(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.pointerLength)};
+}
+
+bool setXRServicePointerLength(World& world, core::InstanceId, const Value& value)
+{
+    const f64* length = std::get_if<f64>(&value);
+    if (length == nullptr || !(*length > 0.0) || !std::isfinite(*length))
+        return false;
+    world.engineState().headset.pointerLength = static_cast<f32>(*length);
+    return true;
+}
+
 Value getXRServiceSessionState(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::XRSessionStateEnumId, world.engineState().headset.sessionState}};

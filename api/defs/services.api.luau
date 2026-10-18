@@ -1788,6 +1788,38 @@ local Classes: { Schema.Class } = {
                     .. "headless run without `--xr=simulated`.",
             },
             {
+                Name = "PointerHand",
+                Type = "Enum.XRHand",
+                Default = "Enum.XRHand.Right",
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0246" },
+                Doc = "Which hand points at interfaces in a headset. Its ray finds the panels the screens become "
+                    .. "and every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a "
+                    .. "click where the ray meets one.",
+            },
+            {
+                Name = "PointerVisible",
+                Type = "boolean",
+                Default = "true",
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0246" },
+                Doc = "Whether the pointing hand's ray is drawn: a short beam ending in a dot where it meets an "
+                    .. "interface. It points, and clicks, either way.",
+            },
+            {
+                Name = "PointerLength",
+                Type = "number",
+                Default = "5",
+                Transient = true,
+                HostFact = true,
+                ErrorKey = "scene.err.number_positive",
+                Records = { "ADR 0246" },
+                Doc = "How far the pointing hand reaches, in meters, and how long its beam is when it meets "
+                    .. "nothing.",
+            },
+            {
                 Name = "Space",
                 Type = "Enum.XRSpace",
                 Default = "Enum.XRSpace.Standing",
@@ -1874,6 +1906,30 @@ local Classes: { Schema.Class } = {
                 Doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. "
                     .. "The pose is in the play space. A test uses it to move the player's head and hands from a "
                     .. "script. Only with `--xr=simulated`; anywhere else it raises an error.",
+            },
+            {
+                Name = "SimulateInput",
+                Parameters = {
+                    { Name = "keyCode", Type = "Enum.KeyCode" },
+                    { Name = "value", Type = "number" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0246" },
+                Doc = "Holds one of the simulated headset's controls at `value` from the next frame: 1 for a "
+                    .. "button down and 0 up, a trigger from 0 to 1, a stick's axis from -1 to 1. The key code is "
+                    .. "one whose name begins with `XR`. Only with `--xr=simulated`; anywhere else it raises an "
+                    .. "error.",
+            },
+            {
+                Name = "GetPointerRay",
+                Parameters = { { Name = "hand", Type = "Enum.XRHand" } },
+                Returns = { "vector?", "vector?" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0246" },
+                Doc = "Returns where a hand points from and the way it points, in the world, as a unit vector: "
+                    .. "the ray a game casts for its own pointing. Nil and nil while the hand is not tracked, and "
+                    .. "with no headset.",
             },
         },
         Events = {

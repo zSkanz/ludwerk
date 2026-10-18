@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "engine/app/picking.h"
@@ -412,6 +413,7 @@ void placeHeadsetPanels(scene::World& world, core::InstanceId uiService, const c
         world.screenGuis().forEach(
             [](core::InstanceId, scene::ScreenGuiComponent& screen) { screen.layoutDirty = true; });
     }
+    headset.playSpaceWorld = playSpace;
     std::vector<scene::EngineState::Headset::Panel> before = std::move(headset.panels);
     headset.panels.clear();
     if (!shown || !uiService.valid())
@@ -497,6 +499,59 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
         ui::buildCanvasDrawList(world, tree.id, scratch);
         emitCanvas(scratch, tree.placement, tree.brightness, tree.onTop, textures, out, gradients);
     }
+
+    // **The pointing hand's beam** (ADR 0246 §2): from the hand to where it
+    // meets an interface, ending in a dot there, or its whole length into
+    // nothing -- over everything, as the panels are.
+    const scene::EngineState::Headset& xr = world.engineState().headset;
+    const core::usize hand = xr.pointerHand == 0 ? 0u : 1u;
+    if (xr.panelsShown && xr.pointerVisible && xr.aimsTracked[hand]) {
+        const core::CFrameD aim = xr.playSpaceWorld * xr.aims[hand];
+        const Vec3 from = relative(aim.position, out.camera.origin);
+        const Vec3 along = core::transformDirection(aim, Vec3{0.0f, 0.0f, -1.0f});
+        const f32 length = xr.pointerHit.value_or(xr.pointerLength);
+        // Across the beam, turned to face the camera as well as a line can.
+        Vec3 across = core::cross(along, from);
+        const f32 wide = core::length(across);
+        across = wide > 1e-6f ? across * (1.0f / wide) : core::transformDirection(aim, Vec3{1.0f, 0.0f, 0.0f});
+        constexpr f32 BeamWidth = 0.004f;
+        ui::DrawList beam;
+        beam.scissors.push_back(core::Rect{Vec2{-1.0e9f, -1.0e9f}, Vec2{1.0e9f, 1.0e9f}});
+        ui::DrawQuad line;
+        line.min = Vec2{0.0f, 0.0f};
+        line.max = Vec2{1.0f, 1.0f};
+        line.color = core::Color3{0.85f, 0.92f, 1.0f};
+        line.alpha = 0.6f;
+        beam.quads.push_back(line);
+        CanvasPlacement placed;
+        placed.canvas = Vec2{1.0f, 1.0f};
+        placed.right = along * length;
+        placed.down = across * BeamWidth;
+        placed.topLeft = from - across * (BeamWidth * 0.5f);
+        placed.distance = core::length(from);
+        emitCanvas(beam, placed, 1.0f, true, textures, out, nullptr);
+        if (xr.pointerHit.has_value()) {
+            // The dot: a round quad a centimetre across, facing the hand.
+            const Vec3 up = core::cross(across, along);
+            constexpr f32 Dot = 0.012f;
+            ui::DrawList dot;
+            dot.scissors.push_back(core::Rect{Vec2{-1.0e9f, -1.0e9f}, Vec2{1.0e9f, 1.0e9f}});
+            ui::DrawQuad round;
+            round.min = Vec2{0.0f, 0.0f};
+            round.max = Vec2{1.0f, 1.0f};
+            round.color = core::Color3{1.0f, 1.0f, 1.0f};
+            round.cornerRadius = 0.5f;
+            dot.quads.push_back(round);
+            const Vec3 at = from + along * length;
+            CanvasPlacement spot;
+            spot.canvas = Vec2{1.0f, 1.0f};
+            spot.right = across * Dot;
+            spot.down = up * -Dot;
+            spot.topLeft = at - across * (Dot * 0.5f) + up * (Dot * 0.5f);
+            spot.distance = core::length(at);
+            emitCanvas(dot, spot, 1.0f, true, textures, out, nullptr);
+        }
+    }
 }
 
 std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService,
@@ -509,6 +564,21 @@ std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId wor
     const PickRay ray = rayThroughPixel(camera.projection, camera.view, core::DVec3{},
                                         ViewportRect{0.0f, 0.0f, viewport.x, viewport.y}, pointer);
     const Vec3 origin{static_cast<f32>(ray.origin.x), static_cast<f32>(ray.origin.y), static_cast<f32>(ray.origin.z)};
+    return pickWorldUiRay(world, workspace, uiService, viewport, camera, origin, ray.direction,
+                          std::numeric_limits<f32>::max(), solidAlong, poses);
+}
+
+std::optional<WorldUiPick> pickWorldUiRay(scene::World& world, core::InstanceId workspace, core::InstanceId uiService,
+                                          Vec2 viewport, const render::RenderCamera& camera, Vec3 origin,
+                                          Vec3 direction, f32 reach, const SolidAlong& solidAlong,
+                                          const render::DrawPoses* poses)
+{
+    if (!camera.valid)
+        return std::nullopt;
+    struct
+    {
+        Vec3 direction;
+    } const ray{direction};
 
     std::optional<WorldUiPick> best;
     bool bestOnTop = false;
@@ -522,7 +592,7 @@ std::optional<WorldUiPick> pickWorldUi(scene::World& world, core::InstanceId wor
         if (!(approach < -1e-8f))
             continue;
         const f32 along = core::dot(at.topLeft - origin, facing) / approach;
-        if (!(along > 0.0f))
+        if (!(along > 0.0f) || along > reach)
             continue;
         const Vec3 onPlane = origin + ray.direction * along - at.topLeft;
         const Vec2 pixel{core::dot(onPlane, at.right) / core::dot(at.right, at.right),

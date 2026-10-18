@@ -11503,6 +11503,24 @@
           "Transient": true
         },
         {
+          "Name": "PointerHand",
+          "Type": "Enum.XRHand",
+          "Default": "Enum.XRHand.Right",
+          "Transient": true
+        },
+        {
+          "Name": "PointerLength",
+          "Type": "number",
+          "Default": "5",
+          "Transient": true
+        },
+        {
+          "Name": "PointerVisible",
+          "Type": "boolean",
+          "Default": "true",
+          "Transient": true
+        },
+        {
           "Name": "SessionState",
           "Type": "Enum.XRSessionState",
           "ReadOnly": true,
@@ -11551,6 +11569,17 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetPointerRay",
+          "Parameters": [
+            {
+              "Name": "hand",
+              "Type": "Enum.XRHand"
+            }
+          ],
+          "Returns": ["vector?", "vector?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "IsHandTracked",
           "Parameters": [
             {
@@ -11564,6 +11593,21 @@
         {
           "Name": "Recenter",
           "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SimulateInput",
+          "Parameters": [
+            {
+              "Name": "keyCode",
+              "Type": "Enum.KeyCode"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
         },

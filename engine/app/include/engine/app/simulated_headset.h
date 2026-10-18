@@ -67,6 +67,13 @@ public:
     // and tracked from then on.
     void setPose(core::u32 which, const std::array<core::f32, 3>& position,
                  const std::array<core::f32, 4>& orientation) noexcept;
+    // **A control held at a value** (`XRService:SimulateInput`), by its
+    // place among the `XR` key codes.
+    void setKey(core::usize index, core::f32 value) noexcept
+    {
+        if (index < m_input.keys.size())
+            m_input.keys[index] = value;
+    }
     // What each controller was last asked to vibrate at, for a test to read.
     [[nodiscard]] core::f32 vibration(core::u32 hand) const noexcept { return m_vibration[hand & 1u]; }
     // The eyes' images as the last frame left them, for a test to read back.

@@ -151,4 +151,13 @@ using SolidAlong =
                                                      const SolidAlong& solidAlong,
                                                      const render::DrawPoses* poses = nullptr);
 
+// The same along any ray: `origin` relative to the camera's origin, `direction`
+// a unit vector, met no further than `reach` metres -- a headset's pointing
+// hand (ADR 0246 §2).
+[[nodiscard]] std::optional<WorldUiPick> pickWorldUiRay(scene::World& world, core::InstanceId workspace,
+                                                        core::InstanceId uiService, core::Vec2 viewport,
+                                                        const render::RenderCamera& camera, core::Vec3 origin,
+                                                        core::Vec3 direction, core::f32 reach,
+                                                        const SolidAlong& solidAlong, const render::DrawPoses* poses);
+
 } // namespace engine::app

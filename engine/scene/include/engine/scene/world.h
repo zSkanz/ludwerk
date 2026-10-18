@@ -674,6 +674,25 @@ struct EngineState
         // each is, in the play space a script reads and in the world, and its
         // canvas.
         bool panelsShown = false;
+        // **The pointer** (ADR 0246 §2): where each hand points, in the play
+        // space a script reads; where the play space is in the world this
+        // frame (the camera's `CFrame`); `XRService.PointerHand`,
+        // `PointerVisible` and `PointerLength`; how far along its ray the
+        // pointer met an interface this frame, if it met one; and whether its
+        // trigger or pinch went down or up this frame.
+        std::array<core::CFrameD, 2> aims{};
+        std::array<bool, 2> aimsTracked{};
+        core::CFrameD playSpaceWorld;
+        u8 pointerHand = 1;
+        bool pointerVisible = true;
+        f32 pointerLength = 5.0f;
+        std::optional<f32> pointerHit;
+        bool pointerDown = false;
+        bool pointerPressed = false;
+        bool pointerReleased = false;
+        // What `SimulateInput` holds the simulated headset's controls at, by
+        // their place among the `XR` key codes.
+        std::array<std::optional<f32>, 19> simulatedKeys{};
         struct Panel
         {
             core::InstanceId gui;

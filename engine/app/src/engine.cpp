@@ -7844,6 +7844,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                               turn);
                     put.reset();
                 }
+                for (core::usize key = 0; key < seen.simulatedKeys.size(); ++key) {
+                    if (seen.simulatedKeys[key].has_value())
+                        simulatedHeadset->setKey(key, *seen.simulatedKeys[key]);
+                    seen.simulatedKeys[key].reset();
+                }
             }
             if (headsetBegun) {
                 rhi::HeadsetInput read;
@@ -7880,7 +7885,21 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         script::fireXRUserCFrameChanged(L, 0, head);
                     }
                 }
+                // **The pointer's click** (ADR 0246 §2): the pointing hand's
+                // trigger, or its pinch, going down and coming up.
+                {
+                    const core::usize hand = seen.pointerHand == 0 ? 0u : 1u;
+                    constexpr core::usize TriggerLeft = 5;
+                    const bool down =
+                        read.keys[TriggerLeft + hand] > 0.5f || read.keys[rhi::HeadsetPinchLeft + hand] > 0.5f;
+                    seen.pointerPressed = down && !seen.pointerDown;
+                    seen.pointerReleased = !down && seen.pointerDown;
+                    seen.pointerDown = down;
+                }
                 for (core::u32 hand = 0; hand < 2; ++hand) {
+                    seen.aimsTracked[hand] = read.aim[hand].valid;
+                    if (read.aim[hand].valid)
+                        seen.aims[hand] = seen.recenter * cframeOf(read.aim[hand]);
                     const rhi::HeadsetPose& palm = read.joints[hand][rhi::HandJointPalm];
                     seen.jointsTracked[hand] = palm.valid;
                     if (palm.valid) {
@@ -8951,6 +8970,32 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                    snapshot.camera, inMain, solidAlong, &framePoses)
                                 : std::nullopt)
                         interaction.worldOver = picked->element;
+                    // **In a headset, the hand points** (ADR 0246 §2): its ray
+                    // finds the panels and the world's interfaces, and its
+                    // trigger or pinch is the click -- the window's pointer
+                    // is a spectator's.
+                    scene::EngineState::Headset& xr = host->world().engineState().headset;
+                    xr.pointerHit.reset();
+                    if (xr.panelsShown) {
+                        interaction.worldOver = {};
+                        interaction.pressed = xr.pointerPressed;
+                        interaction.released = xr.pointerReleased;
+                        interaction.releasedFirst = false;
+                        const core::usize hand = xr.pointerHand == 0 ? 0u : 1u;
+                        if (xr.aimsTracked[hand]) {
+                            const core::CFrameD aim = xr.playSpaceWorld * xr.aims[hand];
+                            const core::Vec3 from{static_cast<f32>(aim.position.x - cameraOrigin.x),
+                                                  static_cast<f32>(aim.position.y - cameraOrigin.y),
+                                                  static_cast<f32>(aim.position.z - cameraOrigin.z)};
+                            const core::Vec3 along = core::transformDirection(aim, core::Vec3{0.0f, 0.0f, -1.0f});
+                            if (const std::optional<app::WorldUiPick> pointed = app::pickWorldUiRay(
+                                    host->world(), host->workspace(), host->uiService(), mainViewport, snapshot.camera,
+                                    from, along, xr.pointerLength, solidAlong, &framePoses)) {
+                                interaction.worldOver = pointed->element;
+                                xr.pointerHit = pointed->distance;
+                            }
+                        }
+                    }
                 }
                 const ui::InteractionResult uiResult = [&] {
                     ENG_PROFILE_SCOPE("ui.interaction");

@@ -681,7 +681,8 @@ if(ENG_BUILD_TESTS)
         TIMEOUT 180)
 
     # **A screen is a panel in a headset** (ADR 0246 §1): laid out against the
-    # panel's canvas and drawn into the eyes.
+    # panel's canvas and drawn into the eyes; and a hand pointing at its
+    # button with the trigger pulled presses it (§2).
     add_test(NAME xr_simulated_panel
         COMMAND ${CMAKE_COMMAND}
                 -DHOST=$<TARGET_FILE:engine_host>
@@ -689,7 +690,7 @@ if(ENG_BUILD_TESTS)
                 -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-simulated-panel
                 -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_panel.cmake)
     set_tests_properties(xr_simulated_panel PROPERTIES
-        PASS_REGULAR_EXPRESSION "the screen is a panel, laid out on its canvas"
+        PASS_REGULAR_EXPRESSION "the screen is a panel, laid out on its canvas, and a hand pointing at its button presses it"
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 

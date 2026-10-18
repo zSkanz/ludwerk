@@ -1,9 +1,11 @@
 --!strict
 -- A `ScreenGui` in a headset is a panel in front of the player (ADR 0246 §1):
 -- laid out against the panel's canvas, not the window's, and drawn in each
--- eye. Run under the simulated headset with a GPU and `--screenshot`.
+-- eye; and the right hand points at its button and pulls the trigger (§2).
+-- Run under the simulated headset with a GPU and `--screenshot`.
 local RunService = game:GetService("RunService")
 local UIService = game:GetService("UIService")
+local XRService = game:GetService("XRService")
 
 local floor = Instance.new("Part")
 floor.Anchored = true
@@ -23,19 +25,40 @@ local screen = Instance.new("ScreenGui")
 screen.ReferenceHeight = 1000
 screen.Parent = UIService
 
-local label = Instance.new("TextLabel")
-label.Size = UDim2.fromScale(0.5, 0.3)
-label.Position = UDim2.fromScale(0.25, 0.35)
-label.BackgroundColor = Color3.fromRGB(200, 40, 40)
-label.TextColor = Color3.fromRGB(255, 255, 255)
-label.TextSize = 90
-label.Text = "PANEL"
-label.Parent = screen
+local button = Instance.new("TextButton")
+button.Size = UDim2.fromScale(0.5, 0.3)
+button.Position = UDim2.fromScale(0.25, 0.35)
+button.BackgroundColor = Color3.fromRGB(200, 40, 40)
+button.TextColor = Color3.fromRGB(255, 255, 255)
+button.TextSize = 90
+button.Text = "PANEL"
+button.Parent = screen
+
+local activated = 0
+button.Activated:Connect(function()
+    activated += 1
+end)
 
 local ticks = 0
 RunService.PostSimulation:Connect(function()
     ticks += 1
-    if ticks == 15 then
-        print(`[panel] size={math.round(label.AbsoluteSize.X)}x{math.round(label.AbsoluteSize.Y)}`)
+    if ticks == 5 then
+        -- The right hand held low and to the right, pointing at the
+        -- panel's middle: 1.5 metres ahead at eye height.
+        XRService:SimulatePose(
+            Enum.XRPose.RightHand,
+            CFrame.lookAt(vector.create(0.3, 1.3, -0.3), vector.create(0, 1.6, -1.5))
+        )
+    elseif ticks == 15 then
+        print(`[panel] size={math.round(button.AbsoluteSize.X)}x{math.round(button.AbsoluteSize.Y)}`)
+        local from, along = XRService:GetPointerRay(Enum.XRHand.Right)
+        if from and along then
+            print(`[panel] ray z={string.format("%.2f", from.z)} along={string.format("%.2f", along.z)}`)
+        end
+        XRService:SimulateInput(Enum.KeyCode.XRTriggerRight, 1)
+    elseif ticks == 20 then
+        XRService:SimulateInput(Enum.KeyCode.XRTriggerRight, 0)
+    elseif ticks == 26 then
+        print(`[panel] activated={activated}`)
     end
 end)

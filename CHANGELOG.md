@@ -315,6 +315,25 @@ here.
   the simple controller; `Enum.InputDeviceType.XR` says one was used last, and
   `HapticService:SetMotor` vibrates one under `Enum.UserInputType.XRLeft` or
   `XRRight`.
+- More of a headset reaches a script:
+  - `XRService.Space` chooses a standing or a seated play space, and
+    `Recenter` makes where the head is the origin.
+  - `GetPlayAreaBounds` is the size of the room the player set up.
+  - `SessionState` and `SessionStateChanged` say whether the player is in
+    the game or in the headset's menu, and `UserCFrameChanged` fires as the
+    head and hands move.
+  - On a headset that tracks hands, `GetHandJoints` returns a hand's 26
+    joints, a hand with no controller is held at its palm, and a pinch is
+    the `XRPinchLeft` or `XRPinchRight` key. `[xr] hands = false` turns hands
+    off.
+  - `SimulatePose` and `SimulateInput` move the simulated headset's head,
+    hands and controls from a test.
+- In a headset, each `ScreenGui` is shown on a panel in front of the player
+  (`XRDistance`, `XRPixelsPerMetre`, `XRFollow`), and the pointing hand
+  (`XRService.PointerHand`) clicks its buttons, and those on any
+  `SurfaceGui` or `BillboardGui`, with its trigger or a pinch, drawing a beam
+  where it points. While a headset draws, the window shows its left eye, or
+  nothing with `[xr] mirror = false`.
 - The server console's `mute <player|key> [minutes] [reason]` and `unmute`
   keep a list in `mutes.json` beside the bans, read by every world of the
   game; `NetworkService:IsMuted(player)` answers it, and what a mute stops is
