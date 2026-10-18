@@ -207,6 +207,9 @@ end
 declare extern type EnumOrientationAlignmentMode extends EnumItem with
 end
 
+declare extern type EnumXRHand extends EnumItem with
+end
+
 declare extern type EnumVibrationMotor extends EnumItem with
 end
 
@@ -4659,6 +4662,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "SaveService"): SaveService
     function GetService(self, name: "LocalizationService"): LocalizationService
     function GetService(self, name: "GraphicsService"): GraphicsService
+    function GetService(self, name: "XRService"): XRService
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CrossWorldService"): CrossWorldService
     function GetService(self, name: "InstanceService"): InstanceService
@@ -5136,6 +5140,21 @@ declare extern type GraphicsService extends Instance with
     --- menu's Revert button. Yields until it is done, at the end of the frame, and returns whether
     --- there was a file to read.
     function LoadAsync(self): boolean
+end
+
+declare extern type XRService extends Instance with
+    --- Whether a headset is drawing this game. False on the screen, on a server and in a headless run
+    --- without `--xr=simulated`.
+    read Enabled: boolean
+    --- Where the head is in the play space, and how it is turned: between the eyes, looking down its
+    --- -Z. The identity with no headset.
+    function GetHeadCFrame(self): CFrame
+    --- Where a hand holds its controller in the play space, and how it is turned. The identity with no
+    --- headset, and while the hand is not tracked (`IsHandTracked`).
+    function GetHandCFrame(self, hand: EnumXRHand): CFrame
+    --- Whether the headset knows where this hand is now: false when its controller is put down out of
+    --- sight, or asleep.
+    function IsHandTracked(self, hand: EnumXRHand): boolean
 end
 
 declare extern type HapticService extends Instance with
@@ -6711,6 +6730,25 @@ declare Enum: {
         SwipeDown: EnumKeyCode,
         SwipeLeft: EnumKeyCode,
         SwipeRight: EnumKeyCode,
+        XRButtonA: EnumKeyCode,
+        XRButtonB: EnumKeyCode,
+        XRButtonX: EnumKeyCode,
+        XRButtonY: EnumKeyCode,
+        XRMenu: EnumKeyCode,
+        XRTriggerLeft: EnumKeyCode,
+        XRTriggerRight: EnumKeyCode,
+        XRGripLeft: EnumKeyCode,
+        XRGripRight: EnumKeyCode,
+        XRThumbstickLeftX: EnumKeyCode,
+        XRThumbstickLeftY: EnumKeyCode,
+        XRThumbstickRightX: EnumKeyCode,
+        XRThumbstickRightY: EnumKeyCode,
+        XRThumbstickLeft: EnumKeyCode,
+        XRThumbstickRight: EnumKeyCode,
+        XRThumbstickLeftClick: EnumKeyCode,
+        XRThumbstickRightClick: EnumKeyCode,
+        XRPinchLeft: EnumKeyCode,
+        XRPinchRight: EnumKeyCode,
         GetEnumItems: (self: any) -> { EnumKeyCode },
     },
     InputActionType: {
@@ -6733,6 +6771,7 @@ declare Enum: {
         KeyboardMouse: EnumInputDeviceType,
         Gamepad: EnumInputDeviceType,
         Touch: EnumInputDeviceType,
+        XR: EnumInputDeviceType,
         GetEnumItems: (self: any) -> { EnumInputDeviceType },
     },
     UserInputType: {
@@ -6745,6 +6784,8 @@ declare Enum: {
         MouseWheel: EnumUserInputType,
         Gamepad: EnumUserInputType,
         Touch: EnumUserInputType,
+        XRLeft: EnumUserInputType,
+        XRRight: EnumUserInputType,
         GetEnumItems: (self: any) -> { EnumUserInputType },
     },
     InputRate: {
@@ -7047,6 +7088,11 @@ declare Enum: {
         OneAttachment: EnumOrientationAlignmentMode,
         TwoAttachment: EnumOrientationAlignmentMode,
         GetEnumItems: (self: any) -> { EnumOrientationAlignmentMode },
+    },
+    XRHand: {
+        Left: EnumXRHand,
+        Right: EnumXRHand,
+        GetEnumItems: (self: any) -> { EnumXRHand },
     },
     VibrationMotor: {
         Large: EnumVibrationMotor,

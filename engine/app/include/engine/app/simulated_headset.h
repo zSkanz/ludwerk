@@ -42,10 +42,19 @@ public:
     [[nodiscard]] rhi::HeadsetState state() const noexcept override { return rhi::HeadsetState::Running; }
     [[nodiscard]] bool beginFrame(rhi::HeadsetFrame& frame) override;
     void endFrame() override { m_frames += 1; }
+    // The head where it is put, and the hands and the controllers as set.
+    void readInput(rhi::HeadsetInput& input) override;
+    void vibrate(core::u32 hand, core::f32 amplitude, core::f32 seconds) override;
 
     // **Where the head is**, in the play space: a position in metres and a
     // unit quaternion (x, y, z, w). Standing at 1.6 m, looking ahead, until set.
     void setHead(const std::array<core::f32, 3>& position, const std::array<core::f32, 4>& orientation) noexcept;
+    // **The hands and the controllers**, as a test or a recorded path puts
+    // them: `grip`, `aim` and `keys` are read back as they are; `head` is
+    // not, being `setHead`'s.
+    void setInput(const rhi::HeadsetInput& input) noexcept { m_input = input; }
+    // What each controller was last asked to vibrate at, for a test to read.
+    [[nodiscard]] core::f32 vibration(core::u32 hand) const noexcept { return m_vibration[hand & 1u]; }
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
     [[nodiscard]] core::u64 framesEnded() const noexcept { return m_frames; }
@@ -57,6 +66,8 @@ private:
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};
     std::array<core::f32, 4> m_headOrientation{0.0f, 0.0f, 0.0f, 1.0f};
     core::u64 m_frames = 0;
+    rhi::HeadsetInput m_input{};
+    std::array<core::f32, 2> m_vibration{};
 };
 
 } // namespace engine::app

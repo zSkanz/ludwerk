@@ -1,6 +1,7 @@
 #include "engine/input/input.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 
@@ -72,8 +73,33 @@ constexpr i32 MoreVirtualCount = 12;
 constexpr i32 SwipeFirst = MoreVirtualFirst + MoreVirtualCount; // 148
 constexpr i32 SwipeCount = 4;
 
-static_assert(SwipeFirst + SwipeCount == static_cast<i32>(kKeyCodeCount),
+// **A headset's controllers** (ADR 0245): their buttons, triggers and grips,
+// each stick's two axes and the two as one, the sticks pressed in, and a
+// tracked hand's pinch. At the end, so no value a game held moved. Written by
+// the host each frame from what the runtime read (`setHeadsetInput`).
+constexpr i32 XrFirst = SwipeFirst + SwipeCount;  // 152
+constexpr i32 XrAnalogFirst = XrFirst + 5;        // the two triggers and grips, 157
+constexpr i32 XrStickAxisFirst = XrFirst + 9;     // 161: left X, left Y, right X, right Y
+constexpr i32 XrStickLeft = XrFirst + 13;         // 165
+constexpr i32 XrStickRight = XrStickLeft + 1;     // 166
+constexpr i32 XrCount = 19;
+
+static_assert(XrFirst + XrCount == static_cast<i32>(kKeyCodeCount),
               "the KeyCode ranges above must cover the whole enum with no gap");
+
+[[nodiscard]] constexpr bool isXrStick(i32 keyCode) noexcept
+{
+    return keyCode == XrStickLeft || keyCode == XrStickRight;
+}
+
+// Which hand an XR code is of: X, Y and the menu are on the left controller,
+// and each other pair is left then right, in the enum's order.
+[[nodiscard]] constexpr bool isXrLeft(i32 keyCode) noexcept
+{
+    constexpr std::array<bool, XrCount> Left{false, false, true,  true,  true,  true, false, true,  false, true,
+                                             true,  false, false, true,  false, true, false, true,  false};
+    return keyCode >= XrFirst && keyCode < XrFirst + XrCount && Left[static_cast<usize>(keyCode - XrFirst)];
+}
 
 // How long a finger may stay down and still be a tap, and how long it must
 // stay to be a long press, in ticks: a third and a half of a second at sixty.
@@ -159,6 +185,8 @@ DeviceType deviceOf(i32 keyCode) noexcept
     }
     if (inRange(keyCode, SwipeFirst, SwipeCount))
         return DeviceType::Touch;
+    if (inRange(keyCode, XrFirst, XrCount))
+        return DeviceType::XR;
     // The roadmap's clause, honoured: an on-screen control is the same thing a
     // touch control will be, so the virtual family reports `Touch` rather than
     // growing a fourth item nobody asked for.
@@ -175,7 +203,8 @@ bool isAnalog(i32 keyCode) noexcept
     // button writes 1 and a thumbstick writes a deflection, and both go through
     // the same half-deflection rule when a `Bool` action asks.
     return keyCode == MouseMovement || keyCode == MouseWheel || inRange(keyCode, PadAxisFirst, PadAxisCount) ||
-           keyCode == LeftThumbstick || keyCode == RightThumbstick || isVirtual(keyCode);
+           keyCode == LeftThumbstick || keyCode == RightThumbstick || isVirtual(keyCode) ||
+           inRange(keyCode, XrAnalogFirst, 4) || inRange(keyCode, XrStickAxisFirst, 4) || isXrStick(keyCode);
 }
 
 // The four names no device event carries, so no `platform` table has them.
@@ -191,6 +220,12 @@ static_assert(std::size(MoreVirtualNames) == static_cast<usize>(MoreVirtualCount
 constexpr std::string_view SwipeNames[] = {"SwipeUp", "SwipeDown", "SwipeLeft", "SwipeRight"};
 static_assert(std::size(SwipeNames) == static_cast<usize>(SwipeCount));
 constexpr std::string_view VirtualStickNames[] = {"VirtualStick1", "VirtualStick2"};
+constexpr std::string_view XrNames[] = {
+    "XRButtonA",         "XRButtonB",         "XRButtonX",          "XRButtonY",          "XRMenu",
+    "XRTriggerLeft",     "XRTriggerRight",    "XRGripLeft",         "XRGripRight",        "XRThumbstickLeftX",
+    "XRThumbstickLeftY", "XRThumbstickRightX", "XRThumbstickRightY", "XRThumbstickLeft",   "XRThumbstickRight",
+    "XRThumbstickLeftClick", "XRThumbstickRightClick", "XRPinchLeft", "XRPinchRight"};
+static_assert(std::size(XrNames) == static_cast<usize>(XrCount));
 
 i32 gamepadButtonSlotOf(i32 keyCode) noexcept
 {
@@ -242,6 +277,10 @@ i32 keyCodeFromName(std::string_view name) noexcept
         if (name == SwipeNames[index])
             return SwipeFirst + index;
     }
+    for (i32 index = 0; index < XrCount; ++index) {
+        if (name == XrNames[index])
+            return XrFirst + index;
+    }
     return 0;
 }
 
@@ -265,6 +304,8 @@ std::string_view keyCodeName(i32 keyCode) noexcept
         return MoreVirtualNames[keyCode - MoreVirtualFirst];
     if (inRange(keyCode, SwipeFirst, SwipeCount))
         return SwipeNames[keyCode - SwipeFirst];
+    if (inRange(keyCode, XrFirst, XrCount))
+        return XrNames[keyCode - XrFirst];
     if (keyCode == VirtualStick1 || keyCode == VirtualStick2)
         return VirtualStickNames[keyCode - VirtualStick1];
     if (keyCode == LeftThumbstick || keyCode == RightThumbstick)
@@ -545,6 +586,11 @@ struct Contribution
             return std::abs(state.axis[first]) > AnalogPressThreshold ||
                    std::abs(state.axis[first + 1]) > AnalogPressThreshold;
         }
+        if (isXrStick(code)) {
+            const usize first = static_cast<usize>(XrStickAxisFirst + (code - XrStickLeft) * 2);
+            return std::abs(state.axis[first]) > AnalogPressThreshold ||
+                   std::abs(state.axis[first + 1]) > AnalogPressThreshold;
+        }
         return std::abs(state.axis[static_cast<usize>(code)]) > AnalogPressThreshold;
     }
     return state.held[static_cast<usize>(code)];
@@ -576,6 +622,11 @@ struct Contribution
         // wants an inverted stick writes a negative number, or sets the
         // binding's `Scale` to -1 like a settings screen does.
         const usize first = static_cast<usize>(VirtualFirst + (code - VirtualStick1) * 2);
+        return core::Vec2{state.axis[first], state.axis[first + 1]};
+    }
+    if (isXrStick(code)) {
+        // NOT negated either: OpenXR's stick is +Y up, the engine's way.
+        const usize first = static_cast<usize>(XrStickAxisFirst + (code - XrStickLeft) * 2);
         return core::Vec2{state.axis[first], state.axis[first + 1]};
     }
     return core::Vec2{state.axis[RightStickX], -state.axis[RightStickY]};
@@ -614,6 +665,8 @@ namespace {
     if (inRange(keyCode, PadButtonFirst, PadButtonCount) || inRange(keyCode, PadAxisFirst, PadAxisCount) ||
         keyCode == LeftThumbstick || keyCode == RightThumbstick)
         return UserInputType::Gamepad;
+    if (inRange(keyCode, XrFirst, XrCount))
+        return isXrLeft(keyCode) ? UserInputType::XRLeft : UserInputType::XRRight;
     return UserInputType::None;
 }
 
@@ -645,6 +698,24 @@ void InputSystem::setVirtualState(i32 keyCode, f32 value) noexcept
     // prompts follows the on-screen control the way it follows a gamepad.
     if (std::abs(value) > AnalogPressThreshold)
         m_state.lastDevice = DeviceType::Touch;
+}
+
+void InputSystem::setHeadsetKeys(std::span<const f32> values) noexcept
+{
+    bool used = false;
+    for (usize at = 0; at < values.size() && at < static_cast<usize>(XrCount); ++at) {
+        const i32 code = XrFirst + static_cast<i32>(at);
+        if (isXrStick(code))
+            continue;
+        const f32 value = values[at];
+        if (isAnalog(code))
+            m_state.axis[static_cast<usize>(code)] = value;
+        else
+            setHeld(code, value > 0.5f);
+        used = used || std::abs(value) > AnalogPressThreshold;
+    }
+    if (used)
+        m_state.lastDevice = DeviceType::XR;
 }
 
 void InputSystem::setActionState(std::string_view action, core::Vec3 value, bool pressed)
@@ -718,7 +789,8 @@ void InputSystem::collectRawEvents(core::Vec2 pointerDelta, core::Vec2 wheel)
         // their own: a stick pushed left is one event about `LeftStickX`, and
         // a second one saying `LeftThumbstick` began would be the same fact
         // twice under a name no device produced.
-        if (code == LeftThumbstick || code == RightThumbstick || code == VirtualStick1 || code == VirtualStick2)
+        if (code == LeftThumbstick || code == RightThumbstick || code == VirtualStick1 || code == VirtualStick2 ||
+            isXrStick(code))
             continue;
         // A swipe is said by `TouchSwiped`, with where it began and with how
         // many fingers; as a raw press it would be a key no device has.
@@ -1236,7 +1308,7 @@ void InputSystem::dispatch(scene::World& world, Rate rate)
                             if (code == MouseMovement)
                                 amount = amount + pointerDelta;
                             else if (code == LeftThumbstick || code == RightThumbstick || code == VirtualStick1 ||
-                                     code == VirtualStick2)
+                                     code == VirtualStick2 || isXrStick(code))
                                 amount = amount + stick(selected, code);
                             else if (code == MouseWheel)
                                 amount = amount + wheel;

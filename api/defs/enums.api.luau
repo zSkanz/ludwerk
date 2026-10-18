@@ -593,6 +593,25 @@ local Definition: Schema.Definition = {
                 { Name = "SwipeDown", Value = 149, Doc = "A swipe down, as a key. See `SwipeUp`." },
                 { Name = "SwipeLeft", Value = 150, Doc = "A swipe to the left, as a key. See `SwipeUp`." },
                 { Name = "SwipeRight", Value = 151, Doc = "A swipe to the right, as a key. See `SwipeUp`." },
+                { Name = "XRButtonA", Value = 152, Doc = "The right controller's A button." },
+                { Name = "XRButtonB", Value = 153, Doc = "The right controller's B button." },
+                { Name = "XRButtonX", Value = 154, Doc = "The left controller's X button." },
+                { Name = "XRButtonY", Value = 155, Doc = "The left controller's Y button." },
+                { Name = "XRMenu", Value = 156, Doc = "The menu button, on the left controller." },
+                { Name = "XRTriggerLeft", Value = 157, Doc = "The left controller's trigger, from 0 to 1." },
+                { Name = "XRTriggerRight", Value = 158, Doc = "The right controller's trigger, from 0 to 1." },
+                { Name = "XRGripLeft", Value = 159, Doc = "The left controller's grip, from 0 to 1." },
+                { Name = "XRGripRight", Value = 160, Doc = "The right controller's grip, from 0 to 1." },
+                { Name = "XRThumbstickLeftX", Value = 161, Doc = "The left controller's thumbstick, across, from -1 (left) to 1." },
+                { Name = "XRThumbstickLeftY", Value = 162, Doc = "The left controller's thumbstick, up and down, from -1 (down) to 1." },
+                { Name = "XRThumbstickRightX", Value = 163, Doc = "The right controller's thumbstick, across, from -1 (left) to 1." },
+                { Name = "XRThumbstickRightY", Value = 164, Doc = "The right controller's thumbstick, up and down, from -1 (down) to 1." },
+                { Name = "XRThumbstickLeft", Value = 165, Doc = "The left controller's thumbstick, both axes, for a `Vector2` action." },
+                { Name = "XRThumbstickRight", Value = 166, Doc = "The right controller's thumbstick, both axes, for a `Vector2` action." },
+                { Name = "XRThumbstickLeftClick", Value = 167, Doc = "The left controller's thumbstick, pressed in." },
+                { Name = "XRThumbstickRightClick", Value = 168, Doc = "The right controller's thumbstick, pressed in." },
+                { Name = "XRPinchLeft", Value = 169, Doc = "The left hand's thumb and index finger pinched, with hand tracking and no controller." },
+                { Name = "XRPinchRight", Value = 170, Doc = "The right hand's thumb and index finger pinched, with hand tracking and no controller." },
             } :: { Schema.EnumItem },
         },
         {
@@ -664,6 +683,12 @@ local Definition: Schema.Definition = {
                         .. "show on-screen controls only when they are needed. A binding to a virtual key code, "
                         .. "such as `Enum.KeyCode.Virtual1`, also reports this type.",
                 },
+                {
+                    Name = "XR",
+                    Value = 3,
+                    Doc = "A headset's controllers, or the hands it tracks. Its key codes are the ones whose "
+                        .. "names begin with `XR`.",
+                },
             } :: { Schema.EnumItem },
         },
         {
@@ -707,6 +732,17 @@ local Definition: Schema.Definition = {
                         .. "pixels and `TouchId` identifying the finger. Even a very short tap begins and ends.\n\n"
                         .. "These events fire whether or not the interface used the touch. Use them for a game's "
                         .. "own on-screen controls, which drive actions through `InputService:SetVirtualState`.",
+                },
+                {
+                    Name = "XRLeft",
+                    Value = 9,
+                    Doc = "The left controller of a headset, or the left hand it tracks. `KeyCode` gives which "
+                        .. "button, trigger or stick. `HapticService` vibrates this controller under this type.",
+                },
+                {
+                    Name = "XRRight",
+                    Value = 10,
+                    Doc = "The right controller of a headset, or the right hand it tracks. See `XRLeft`.",
                 },
             } :: { Schema.EnumItem },
         },
@@ -1561,6 +1597,15 @@ local Definition: Schema.Definition = {
             Items = {
                 { Name = "OneAttachment", Value = 0, Doc = "The constraint's own `CFrame`." },
                 { Name = "TwoAttachment", Value = 1, Doc = "The constraint's `Attachment1`." },
+            } :: { Schema.EnumItem },
+        },
+        {
+            Name = "XRHand",
+            Records = { "ADR 0245" },
+            Doc = "A hand, or the controller it holds, for `XRService`.",
+            Items = {
+                { Name = "Left", Value = 0, Doc = "The left hand." },
+                { Name = "Right", Value = 1, Doc = "The right hand." },
             } :: { Schema.EnumItem },
         },
         {

@@ -617,8 +617,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 359: `SetRateLimit` on the three remotes (ADR 0241).
     // 363: `NetworkService`'s `DefineAction`, `CheckAction`, `ReportSuspicion`
     // and `IsMuted` (ADR 0241).
-    CHECK(coverage.declared == 363);
-    CHECK(coverage.bound == 363);
+    // 366: `XRService`'s `GetHeadCFrame`, `GetHandCFrame` and `IsHandTracked`
+    // (ADR 0245).
+    CHECK(coverage.declared == 366);
+    CHECK(coverage.bound == 366);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

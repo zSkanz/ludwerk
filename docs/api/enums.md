@@ -368,6 +368,7 @@ A kind of input device. `InputService.LastInputDeviceType` reports the kind the 
 | `KeyboardMouse` | 0 | A keyboard or a mouse. |
 | `Gamepad` | 1 | A gamepad. |
 | `Touch` | 2 | A touchscreen. A finger on the screen makes this the last device used, so a game can show on-screen controls only when they are needed. A binding to a virtual key code, such as `Enum.KeyCode.Virtual1`, also reports this type. |
+| `XR` | 3 | A headset's controllers, or the hands it tracks. Its key codes are the ones whose names begin with `XR`. |
 
 ## Enum.InputRate
 
@@ -559,6 +560,25 @@ Some items are digital (a key or a button) and some are analog (an axis, a stick
 | `SwipeDown` | 149 | A swipe down, as a key. See `SwipeUp`. |
 | `SwipeLeft` | 150 | A swipe to the left, as a key. See `SwipeUp`. |
 | `SwipeRight` | 151 | A swipe to the right, as a key. See `SwipeUp`. |
+| `XRButtonA` | 152 | The right controller's A button. |
+| `XRButtonB` | 153 | The right controller's B button. |
+| `XRButtonX` | 154 | The left controller's X button. |
+| `XRButtonY` | 155 | The left controller's Y button. |
+| `XRMenu` | 156 | The menu button, on the left controller. |
+| `XRTriggerLeft` | 157 | The left controller's trigger, from 0 to 1. |
+| `XRTriggerRight` | 158 | The right controller's trigger, from 0 to 1. |
+| `XRGripLeft` | 159 | The left controller's grip, from 0 to 1. |
+| `XRGripRight` | 160 | The right controller's grip, from 0 to 1. |
+| `XRThumbstickLeftX` | 161 | The left controller's thumbstick, across, from -1 (left) to 1. |
+| `XRThumbstickLeftY` | 162 | The left controller's thumbstick, up and down, from -1 (down) to 1. |
+| `XRThumbstickRightX` | 163 | The right controller's thumbstick, across, from -1 (left) to 1. |
+| `XRThumbstickRightY` | 164 | The right controller's thumbstick, up and down, from -1 (down) to 1. |
+| `XRThumbstickLeft` | 165 | The left controller's thumbstick, both axes, for a `Vector2` action. |
+| `XRThumbstickRight` | 166 | The right controller's thumbstick, both axes, for a `Vector2` action. |
+| `XRThumbstickLeftClick` | 167 | The left controller's thumbstick, pressed in. |
+| `XRThumbstickRightClick` | 168 | The right controller's thumbstick, pressed in. |
+| `XRPinchLeft` | 169 | The left hand's thumb and index finger pinched, with hand tracking and no controller. |
+| `XRPinchRight` | 170 | The right hand's thumb and index finger pinched, with hand tracking and no controller. |
 
 ## Enum.LineJoinMode
 
@@ -1126,6 +1146,8 @@ The kind of input an `InputObject` comes from, in the input events of `InputServ
 | `MouseWheel` | 6 | The mouse wheel turned. It fires `InputChanged`, with the amount in `Delta.z`; one notch is 1. |
 | `Gamepad` | 7 | A gamepad button or stick. `KeyCode` gives which. A stick's movement fires `InputChanged`, with the axis value in `Position`. |
 | `Touch` | 8 | A finger on a touchscreen. It fires `InputBegan` when the finger touches, `InputChanged` as it moves and `InputEnded` when it lifts, with `Position` in window pixels and `TouchId` identifying the finger. Even a very short tap begins and ends.<br><br>These events fire whether or not the interface used the touch. Use them for a game's own on-screen controls, which drive actions through `InputService:SetVirtualState`. |
+| `XRLeft` | 9 | The left controller of a headset, or the left hand it tracks. `KeyCode` gives which button, trigger or stick. `HapticService` vibrates this controller under this type. |
+| `XRRight` | 10 | The right controller of a headset, or the right hand it tracks. See `XRLeft`. |
 
 ## Enum.VehicleTransmission
 
@@ -1200,3 +1222,12 @@ How the game's window uses the display.
 | `Windowed` | 0 | A window with a border. |
 | `Borderless` | 1 | A window with no border that covers the whole display. Switching to other windows stays fast. |
 | `Fullscreen` | 2 | Exclusive use of the whole display. |
+
+## Enum.XRHand
+
+A hand, or the controller it holds, for `XRService`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Left` | 0 | The left hand. |
+| `Right` | 1 | The right hand. |

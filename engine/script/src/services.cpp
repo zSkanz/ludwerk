@@ -2688,6 +2688,18 @@ int inputServiceIsKeyDown(lua_State* L)
     return gamepad || name == "Touch";
 }
 
+// **A headset's controller** (ADR 0245 §3), by its input type: 0 left, 1
+// right, -1 neither.
+[[nodiscard]] int hapticHand(lua_State* L, int index)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::UserInputTypeEnumId)
+        return -1;
+    const scene::EnumItemDesc* described = world(L).enums().findValue(item.enumId, item.value);
+    const std::string_view name = described != nullptr ? world(L).atoms().text(described->name) : std::string_view{};
+    return name == "XRLeft" ? 0 : name == "XRRight" ? 1 : -1;
+}
+
 [[nodiscard]] platform::VibrationMotor checkVibrationMotor(lua_State* L, int index)
 {
     const scene::EnumValue item = checkEnumItem(L, index);
@@ -2698,6 +2710,10 @@ int inputServiceIsKeyDown(lua_State* L)
 
 int hapticServiceIsVibrationSupported(lua_State* L)
 {
+    if (hapticHand(L, 2) >= 0) {
+        lua_pushboolean(L, world(L).engineState().headset.enabled);
+        return 1;
+    }
     bool gamepad = false;
     lua_pushboolean(L, hapticDevice(L, 2, gamepad) && platform::vibrationSupported(gamepad));
     return 1;
@@ -2714,12 +2730,19 @@ int hapticServiceIsMotorSupported(lua_State* L)
 
 int hapticServiceSetMotor(lua_State* L)
 {
+    const int hand = hapticHand(L, 2);
     bool gamepad = false;
-    const bool known = hapticDevice(L, 2, gamepad);
+    const bool known = hand < 0 && hapticDevice(L, 2, gamepad);
     const platform::VibrationMotor motor = checkVibrationMotor(L, 3);
     const double value = luaL_checknumber(L, 4);
     if (!std::isfinite(value) || value < 0.0 || value > 1.0)
         luaL_argerror(L, 4, "a number from 0 to 1");
+    // A headset's controller has one motor, whichever is named; the host
+    // keeps it running while the value is set.
+    if (hand >= 0) {
+        world(L).engineState().headset.vibration[static_cast<usize>(hand)] = static_cast<f32>(value);
+        return 0;
+    }
     // Only a gamepad has motors by name; the rest is ignored, so a game need
     // not ask what it is running on first.
     if (known && gamepad)
@@ -2737,6 +2760,43 @@ int hapticServiceVibrate(lua_State* L)
         luaL_argerror(L, 3, "a number of seconds from 0 to 5");
     platform::vibrateDevice(static_cast<f32>(strength), static_cast<f32>(seconds));
     return 0;
+}
+
+// --- XRService (ADR 0245) ----------------------------------------------------
+//
+// What the host read of the headset this frame, from the engine's state: the
+// identity, and nothing tracked, where no headset draws.
+
+[[nodiscard]] usize checkXrHand(lua_State* L, int index)
+{
+    const scene::EnumValue item = checkEnumItem(L, index);
+    if (item.enumId != scene::generated::XRHandEnumId)
+        luaL_argerror(L, index, "Enum.XRHand");
+    return item.value == 1 ? 1u : 0u;
+}
+
+int xrServiceGetHeadCFrame(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    pushCFrame(L, world(L).engineState().headset.head);
+    return 1;
+}
+
+int xrServiceGetHandCFrame(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const usize hand = checkXrHand(L, 2);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    pushCFrame(L, headset.handsTracked[hand] ? headset.hands[hand] : core::CFrameD{});
+    return 1;
+}
+
+int xrServiceIsHandTracked(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const usize hand = checkXrHand(L, 2);
+    lua_pushboolean(L, world(L).engineState().headset.handsTracked[hand]);
+    return 1;
 }
 
 // --- LocalizationService (ADR 0154) -------------------------------------------
@@ -3787,6 +3847,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"SequencePlayer", "BindCamera", sequencePlayerBindCamera},
     {"SequencePlayer", "UnbindCamera", sequencePlayerUnbindCamera},
     {"InputAction", "GetPreferredBinding", inputActionGetPreferredBinding},
+    {"XRService", "GetHeadCFrame", xrServiceGetHeadCFrame},
+    {"XRService", "GetHandCFrame", xrServiceGetHandCFrame},
+    {"XRService", "IsHandTracked", xrServiceIsHandTracked},
     {"HapticService", "IsVibrationSupported", hapticServiceIsVibrationSupported},
     {"HapticService", "IsMotorSupported", hapticServiceIsMotorSupported},
     {"HapticService", "SetMotor", hapticServiceSetMotor},

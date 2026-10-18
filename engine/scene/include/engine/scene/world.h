@@ -632,6 +632,19 @@ struct EngineState
         std::string detail;
         u64 tick = 0;
     };
+    // **The headset, as the host read it this frame** (ADR 0245): whether one
+    // is drawing, the head and the hands in the play space, and what a script
+    // asked of each controller's vibration. Presentation: never hashed, and
+    // in the simulation only through what a script does with it.
+    struct Headset
+    {
+        bool enabled = false;
+        core::CFrameD head;
+        std::array<core::CFrameD, 2> hands{};
+        std::array<bool, 2> handsTracked{};
+        std::array<f32, 2> vibration{};
+    };
+    Headset headset;
     std::vector<Suspicion> suspicions;
     u64 suspicionsTotal = 0;
     // Every suspicion ever, by kind, for `/metrics`.

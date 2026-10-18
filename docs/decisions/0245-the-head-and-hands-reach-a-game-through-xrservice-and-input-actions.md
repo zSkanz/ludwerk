@@ -117,3 +117,21 @@ branches on `Enabled` once, where it places its camera.
 UI and pointing (ADR 0246), passthrough (ADR 0247), sending the head and hands
 to other players (ADR 0248), eye tracking (no runtime the plan names offers it
 to a game without a special agreement), and full-body tracking.
+
+## As built, first step (2026-10-18)
+
+- `XRService.Enabled`, `GetHeadCFrame`, `GetHandCFrame` and `IsHandTracked`
+  (where the hand holds its controller), from what the host read of the
+  headset at the start of the frame, for the ticks after it. Poses are the
+  engine's state as presentation, never hashed.
+- The controllers are one OpenXR action set -- grip and aim poses, trigger,
+  squeeze, thumbstick and its click, the two face buttons, the menu and the
+  haptic output -- with bindings suggested for Meta Touch, Valve Index, HTC
+  Vive and the simple controller, and they reach the input system as the
+  nineteen `XR` key codes (152 to 170), so an `InputBinding` takes one as it
+  takes a key. `Enum.InputDeviceType.XR`; `Enum.UserInputType.XRLeft` and
+  `XRRight`, which `HapticService:SetMotor` vibrates, renewed each frame.
+- **Not yet**: `Space` and `Recenter`, `GetPlayAreaBounds`, the events,
+  `SessionState`, hand tracking and the pinches (their key codes are
+  reserved), and `XRService:SimulatePose` -- the simulated headset is driven
+  from C++ in tests until then.

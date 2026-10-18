@@ -210,6 +210,7 @@
   "engine.info.curtain_lifted": "The loading screen was removed at frame {frame}, {ms} ms after it appeared.",
   "rhi.info.no_depth_clamp": "This GPU does not support depth clamping. The graphics device was created without it, and pipelines clip where they would clamp.",
   "engine.err.xr_required": "This game is played in a headset, and none was found. Put one on, or start the headset's software, and try again.",
+  "rhi.info.xr_no_controllers": "The headset's runtime took no controllers, so only the head is followed.",
   "rhi.info.xr_ready": "Drawing to the headset: {system}, through {runtime}, each eye {width} by {height}.",
   "rhi.info.xr_unavailable": "No headset to draw to, so the game is drawn on the screen: {detail}",
   "rhi.info.xr_ended": "The headset's session has ended. The game goes on on the screen.",

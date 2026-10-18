@@ -1,3 +1,4 @@
+#include <array>
 #include <doctest/doctest.h>
 #include <ostream>
 
@@ -867,6 +868,41 @@ TEST_CASE("a virtual stick drives a Direction2D action, which is why the seam ca
     // NOT negated: a virtual axis is written in the engine's own convention, so
     // there is no hardware convention to undo.
     CHECK(static_cast<double>(fixture.state(move).axis.y) == doctest::Approx(-0.25));
+}
+
+TEST_CASE("a headset's controllers drive actions through ordinary bindings, beside a gamepad's (ADR 0245)")
+{
+    Fixture fixture;
+    const InstanceId context = fixture.context();
+    const InstanceId jump = fixture.action(context, input::ActionType::Bool);
+    fixture.world->inputBindings().find(fixture.binding(jump))->keyCode = fixture.keyCode("ButtonSouth");
+    fixture.world->inputBindings().find(fixture.binding(jump))->keyCode = fixture.keyCode("XRButtonA");
+    const InstanceId move = fixture.action(context, input::ActionType::Direction2D);
+    fixture.world->inputBindings().find(fixture.binding(move))->keyCode = fixture.keyCode("XRThumbstickLeft");
+    const InstanceId fire = fixture.action(context, input::ActionType::Bool);
+    fixture.world->inputBindings().find(fixture.binding(fire))->keyCode = fixture.keyCode("XRTriggerRight");
+
+    // In the enum's order: A, B, X, Y, the menu, the triggers, the grips, the
+    // stick axes, the sticks as one, the sticks pressed in, the pinches.
+    std::array<engine::core::f32, 19> keys{};
+    keys[0] = 1.0f;     // A
+    keys[6] = 0.8f;     // the right trigger, past half
+    keys[9] = 0.5f;     // the left stick, across
+    keys[10] = -0.25f;  // and down, +Y being up as OpenXR has it
+    fixture.system.setHeadsetKeys(keys);
+    fixture.system.dispatchSimTick(*fixture.world, 1);
+    CHECK(fixture.state(jump).pressed);
+    CHECK(fixture.state(fire).pressed);
+    CHECK(static_cast<double>(fixture.state(move).axis.x) == doctest::Approx(0.5));
+    CHECK(static_cast<double>(fixture.state(move).axis.y) == doctest::Approx(-0.25));
+    CHECK(fixture.system.snapshot().lastDevice == input::DeviceType::XR);
+    CHECK(input::deviceOf(fixture.keyCode("XRButtonX")) == input::DeviceType::XR);
+
+    keys = {};
+    fixture.system.setHeadsetKeys(keys);
+    fixture.system.dispatchSimTick(*fixture.world, 2);
+    CHECK_FALSE(fixture.state(jump).pressed);
+    CHECK_FALSE(fixture.state(fire).pressed);
 }
 
 TEST_CASE("a virtual value is eaten by a sinking context, like every other input")

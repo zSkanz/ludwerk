@@ -2206,6 +2206,11 @@ Value getDataModelLuauVersion(const World& world, core::InstanceId)
     return world.engineState().luauVersion;
 }
 
+Value getXRServiceEnabled(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().headset.enabled};
+}
+
 Value getNetworkServiceChannel(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkChannel)};

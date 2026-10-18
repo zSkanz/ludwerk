@@ -285,7 +285,15 @@ here.
   eye; with none -- no runtime, nothing plugged in -- the game is drawn on the
   screen as before. `--xr=simulated` draws into a headset that is the
   engine's own, for tests, and `--screenshot` then writes each eye's
-  picture. The head and hands reach scripts in a later release.
+  picture.
+- In a headset, `XRService` tells a script where the head and the hands are
+  (`GetHeadCFrame`, `GetHandCFrame`, `IsHandTracked`, `Enabled`), in the
+  play space the camera places. The controllers' buttons, triggers, grips and
+  sticks are `Enum.KeyCode` values beginning with `XR`, bound to
+  `InputAction`s beside a gamepad's, for Meta Touch, Valve Index, HTC Vive and
+  the simple controller; `Enum.InputDeviceType.XR` says one was used last, and
+  `HapticService:SetMotor` vibrates one under `Enum.UserInputType.XRLeft` or
+  `XRRight`.
 - The server console's `mute <player|key> [minutes] [reason]` and `unmute`
   keep a list in `mutes.json` beside the bans, read by every world of the
   game; `NetworkService:IsMuted(player)` answers it, and what a mute stops is

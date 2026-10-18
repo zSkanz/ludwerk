@@ -66,4 +66,19 @@ bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
     return true;
 }
 
+void SimulatedHeadset::readInput(rhi::HeadsetInput& input)
+{
+    input = m_input;
+    input.head.valid = true;
+    input.head.position = m_headPosition;
+    input.head.orientation = m_headOrientation;
+}
+
+void SimulatedHeadset::vibrate(core::u32 hand, core::f32 amplitude, core::f32 seconds)
+{
+    (void)seconds;
+    if (hand < 2)
+        m_vibration[hand] = amplitude;
+}
+
 } // namespace engine::app

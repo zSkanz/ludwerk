@@ -6,8 +6,10 @@
 #include <SDL3/SDL_openxr.h>
 // clang-format on
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -49,6 +51,19 @@ struct XrCalls
     PFN_xrAcquireSwapchainImage acquireSwapchainImage = nullptr;
     PFN_xrWaitSwapchainImage waitSwapchainImage = nullptr;
     PFN_xrReleaseSwapchainImage releaseSwapchainImage = nullptr;
+    PFN_xrStringToPath stringToPath = nullptr;
+    PFN_xrCreateActionSet createActionSet = nullptr;
+    PFN_xrDestroyActionSet destroyActionSet = nullptr;
+    PFN_xrCreateAction createAction = nullptr;
+    PFN_xrSuggestInteractionProfileBindings suggestBindings = nullptr;
+    PFN_xrAttachSessionActionSets attachActionSets = nullptr;
+    PFN_xrSyncActions syncActions = nullptr;
+    PFN_xrGetActionStateFloat getFloat = nullptr;
+    PFN_xrGetActionStateBoolean getBoolean = nullptr;
+    PFN_xrGetActionStateVector2f getVector2 = nullptr;
+    PFN_xrCreateActionSpace createActionSpace = nullptr;
+    PFN_xrLocateSpace locateSpace = nullptr;
+    PFN_xrApplyHapticFeedback applyHaptics = nullptr;
 
     [[nodiscard]] bool load(XrInstance instance)
     {
@@ -79,6 +94,19 @@ struct XrCalls
         get("xrAcquireSwapchainImage", acquireSwapchainImage);
         get("xrWaitSwapchainImage", waitSwapchainImage);
         get("xrReleaseSwapchainImage", releaseSwapchainImage);
+        get("xrStringToPath", stringToPath);
+        get("xrCreateActionSet", createActionSet);
+        get("xrDestroyActionSet", destroyActionSet);
+        get("xrCreateAction", createAction);
+        get("xrSuggestInteractionProfileBindings", suggestBindings);
+        get("xrAttachSessionActionSets", attachActionSets);
+        get("xrSyncActions", syncActions);
+        get("xrGetActionStateFloat", getFloat);
+        get("xrGetActionStateBoolean", getBoolean);
+        get("xrGetActionStateVector2f", getVector2);
+        get("xrCreateActionSpace", createActionSpace);
+        get("xrLocateSpace", locateSpace);
+        get("xrApplyHapticFeedback", applyHaptics);
         return all;
     }
 };
@@ -88,6 +116,81 @@ void logFailure(std::string_view what, XrResult result)
     const std::array<core::I18nArg, 2> args{core::I18nArg{"what", what},
                                             core::I18nArg{"code", static_cast<core::i64>(result)}};
     core::log(core::LogLevel::Warn, ENG_TR("rhi.warn.xr_call_failed"), args);
+}
+
+// **What the controllers have**, as one action each with a left and a right
+// sub-path (ADR 0245 §2). `Key` is the place of the value in
+// `HeadsetInput::keys` for each hand, -1 where that hand has none.
+enum class ActionKind : u8
+{
+    Boolean,
+    Float,
+    Stick,
+    Pose,
+    Haptic,
+};
+struct ActionSpec
+{
+    const char* name;
+    ActionKind kind;
+    std::array<int, 2> key;
+};
+// Grip and aim, the triggers and grips, the sticks (their X; Y is the next
+// place), the sticks pressed in, A or X, B or Y, the menu, and the haptic.
+constexpr std::array<ActionSpec, 10> Actions{{
+    {"grip_pose", ActionKind::Pose, {-1, -1}},
+    {"aim_pose", ActionKind::Pose, {-1, -1}},
+    {"trigger", ActionKind::Float, {5, 6}},
+    {"squeeze", ActionKind::Float, {7, 8}},
+    {"thumbstick", ActionKind::Stick, {9, 11}},
+    {"thumbstick_click", ActionKind::Boolean, {15, 16}},
+    {"primary", ActionKind::Boolean, {2, 0}},
+    {"secondary", ActionKind::Boolean, {3, 1}},
+    {"menu", ActionKind::Boolean, {4, -1}},
+    {"haptic", ActionKind::Haptic, {-1, -1}},
+}};
+
+// **Where each action is on a controller the engine knows**, by its OpenXR
+// path under a hand, and by action. The runtime may rebind them for the
+// player; these are only suggestions. Empty where a controller has none.
+struct ProfileSpec
+{
+    const char* profile;
+    std::array<const char*, 10> left;
+    std::array<const char*, 10> right;
+};
+constexpr std::array<ProfileSpec, 4> Profiles{{
+    {"/interaction_profiles/oculus/touch_controller",
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/value", "input/thumbstick",
+      "input/thumbstick/click", "input/x/click", "input/y/click", "input/menu/click", "output/haptic"},
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/value", "input/thumbstick",
+      "input/thumbstick/click", "input/a/click", "input/b/click", "", "output/haptic"}},
+    {"/interaction_profiles/valve/index_controller",
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/value", "input/thumbstick",
+      "input/thumbstick/click", "input/a/click", "input/b/click", "", "output/haptic"},
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/value", "input/thumbstick",
+      "input/thumbstick/click", "input/a/click", "input/b/click", "", "output/haptic"}},
+    {"/interaction_profiles/htc/vive_controller",
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/click", "input/trackpad",
+      "input/trackpad/click", "", "", "input/menu/click", "output/haptic"},
+     {"input/grip/pose", "input/aim/pose", "input/trigger/value", "input/squeeze/click", "input/trackpad",
+      "input/trackpad/click", "", "", "input/menu/click", "output/haptic"}},
+    {"/interaction_profiles/khr/simple_controller",
+     {"input/grip/pose", "input/aim/pose", "input/select/click", "", "", "", "", "", "input/menu/click",
+      "output/haptic"},
+     {"input/grip/pose", "input/aim/pose", "input/select/click", "", "", "", "", "", "input/menu/click",
+      "output/haptic"}},
+}};
+
+[[nodiscard]] HeadsetPose poseOf(const XrSpaceLocation& location) noexcept
+{
+    HeadsetPose pose;
+    const XrSpaceLocationFlags known = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    pose.valid = (location.locationFlags & known) == known;
+    pose.position = {location.pose.position.x, location.pose.position.y, location.pose.position.z};
+    pose.orientation = {location.pose.orientation.x, location.pose.orientation.y, location.pose.orientation.z,
+                        location.pose.orientation.w};
+    return pose;
 }
 
 struct EyeSwapchain
@@ -107,6 +210,14 @@ public:
 
     ~OpenXrHeadset() override
     {
+        for (const XrSpace space : m_handSpaces) {
+            if (space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
+                (void)m_calls.destroySpace(space);
+        }
+        if (m_headSpace != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
+            (void)m_calls.destroySpace(m_headSpace);
+        if (m_actionSet != XR_NULL_HANDLE && m_calls.destroyActionSet != nullptr)
+            (void)m_calls.destroyActionSet(m_actionSet);
         for (EyeSwapchain& eye : m_eyes) {
             for (const TextureHandle handle : eye.handles)
                 m_hooks.unwrap(handle);
@@ -173,6 +284,15 @@ public:
             logFailure("xrCreateReferenceSpace", result);
             return false;
         }
+        auto headInfo = made<XrReferenceSpaceCreateInfo>(XR_TYPE_REFERENCE_SPACE_CREATE_INFO);
+        headInfo.poseInReferenceSpace.orientation.w = 1.0f;
+        headInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        if (XR_FAILED(m_calls.createReferenceSpace(m_session, &headInfo, &m_headSpace)))
+            m_headSpace = XR_NULL_HANDLE;
+        // **The controllers** (ADR 0245): a headset with none -- or a runtime
+        // that refuses the set -- is still drawn to.
+        if (!openControllers())
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_no_controllers"));
 
         // **An sRGB colour format the runtime takes**, its own order first:
         // the engine's last pass writes display colour, as it does a window.
@@ -343,7 +463,157 @@ public:
         m_drawing = false;
     }
 
+    void readInput(HeadsetInput& input) override
+    {
+        input = HeadsetInput{};
+        if (!m_running || m_displayTime == 0)
+            return;
+        const XrTime when = m_displayTime;
+        if (m_headSpace != XR_NULL_HANDLE) {
+            auto location = made<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
+            if (XR_SUCCEEDED(m_calls.locateSpace(m_headSpace, m_space, when, &location)))
+                input.head = poseOf(location);
+        }
+        if (m_actionSet == XR_NULL_HANDLE)
+            return;
+        const XrActiveActionSet active{m_actionSet, XR_NULL_PATH};
+        auto sync = made<XrActionsSyncInfo>(XR_TYPE_ACTIONS_SYNC_INFO);
+        sync.countActiveActionSets = 1;
+        sync.activeActionSets = &active;
+        // Not focused -- the system menu is up -- is not an error: every
+        // action reads as at rest, which is what the player is doing here.
+        if (XR_FAILED(m_calls.syncActions(m_session, &sync)))
+            return;
+        for (usize hand = 0; hand < 2; ++hand) {
+            for (usize which = 0; which < 2; ++which) {
+                const XrSpace space = m_handSpaces[which * 2 + hand];
+                if (space == XR_NULL_HANDLE)
+                    continue;
+                auto location = made<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
+                if (XR_SUCCEEDED(m_calls.locateSpace(space, m_space, when, &location)))
+                    (which == 0 ? input.grip : input.aim)[hand] = poseOf(location);
+            }
+            for (usize at = 0; at < Actions.size(); ++at) {
+                const ActionSpec& spec = Actions[at];
+                const int key = spec.key[hand];
+                if (key < 0 || m_actions[at] == XR_NULL_HANDLE)
+                    continue;
+                auto get = made<XrActionStateGetInfo>(XR_TYPE_ACTION_STATE_GET_INFO);
+                get.action = m_actions[at];
+                get.subactionPath = m_hands[hand];
+                if (spec.kind == ActionKind::Boolean) {
+                    auto state = made<XrActionStateBoolean>(XR_TYPE_ACTION_STATE_BOOLEAN);
+                    if (XR_SUCCEEDED(m_calls.getBoolean(m_session, &get, &state)) && state.isActive == XR_TRUE)
+                        input.keys[static_cast<usize>(key)] = state.currentState == XR_TRUE ? 1.0f : 0.0f;
+                }
+                else if (spec.kind == ActionKind::Float) {
+                    auto state = made<XrActionStateFloat>(XR_TYPE_ACTION_STATE_FLOAT);
+                    if (XR_SUCCEEDED(m_calls.getFloat(m_session, &get, &state)) && state.isActive == XR_TRUE)
+                        input.keys[static_cast<usize>(key)] = state.currentState;
+                }
+                else if (spec.kind == ActionKind::Stick) {
+                    auto state = made<XrActionStateVector2f>(XR_TYPE_ACTION_STATE_VECTOR2F);
+                    if (XR_SUCCEEDED(m_calls.getVector2(m_session, &get, &state)) && state.isActive == XR_TRUE) {
+                        input.keys[static_cast<usize>(key)] = state.currentState.x;
+                        input.keys[static_cast<usize>(key) + 1] = state.currentState.y;
+                    }
+                }
+            }
+        }
+    }
+
+    void vibrate(u32 hand, f32 amplitude, f32 seconds) override
+    {
+        const usize haptic = Actions.size() - 1;
+        if (hand > 1 || m_actions[haptic] == XR_NULL_HANDLE || !m_running)
+            return;
+        auto info = made<XrHapticActionInfo>(XR_TYPE_HAPTIC_ACTION_INFO);
+        info.action = m_actions[haptic];
+        info.subactionPath = m_hands[hand];
+        auto vibration = made<XrHapticVibration>(XR_TYPE_HAPTIC_VIBRATION);
+        vibration.amplitude = std::clamp(amplitude, 0.0f, 1.0f);
+        vibration.duration = static_cast<XrDuration>(std::max(seconds, 0.0f) * 1.0e9f);
+        vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+        (void)m_calls.applyHaptics(m_session, &info, reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+    }
+
 private:
+    // The action set, its actions, the hands' spaces and the bindings each
+    // known controller is suggested; attached to the session once, before
+    // it begins.
+    [[nodiscard]] bool openControllers()
+    {
+        if (XR_FAILED(m_calls.stringToPath(m_instance, "/user/hand/left", &m_hands[0])) ||
+            XR_FAILED(m_calls.stringToPath(m_instance, "/user/hand/right", &m_hands[1])))
+            return false;
+        auto setInfo = made<XrActionSetCreateInfo>(XR_TYPE_ACTION_SET_CREATE_INFO);
+        std::snprintf(setInfo.actionSetName, sizeof(setInfo.actionSetName), "%s", "gameplay");
+        std::snprintf(setInfo.localizedActionSetName, sizeof(setInfo.localizedActionSetName), "%s", "Gameplay");
+        if (XR_FAILED(m_calls.createActionSet(m_instance, &setInfo, &m_actionSet)))
+            return false;
+        for (usize at = 0; at < Actions.size(); ++at) {
+            const ActionSpec& spec = Actions[at];
+            auto info = made<XrActionCreateInfo>(XR_TYPE_ACTION_CREATE_INFO);
+            std::snprintf(info.actionName, sizeof(info.actionName), "%s", spec.name);
+            std::snprintf(info.localizedActionName, sizeof(info.localizedActionName), "%s", spec.name);
+            info.actionType = spec.kind == ActionKind::Boolean ? XR_ACTION_TYPE_BOOLEAN_INPUT
+                              : spec.kind == ActionKind::Float ? XR_ACTION_TYPE_FLOAT_INPUT
+                              : spec.kind == ActionKind::Stick ? XR_ACTION_TYPE_VECTOR2F_INPUT
+                              : spec.kind == ActionKind::Pose  ? XR_ACTION_TYPE_POSE_INPUT
+                                                               : XR_ACTION_TYPE_VIBRATION_OUTPUT;
+            info.countSubactionPaths = 2;
+            info.subactionPaths = m_hands.data();
+            if (XR_FAILED(m_calls.createAction(m_actionSet, &info, &m_actions[at])))
+                m_actions[at] = XR_NULL_HANDLE;
+        }
+        // A profile the runtime does not know is refused alone; the others
+        // still stand.
+        for (const ProfileSpec& profile : Profiles) {
+            std::vector<XrActionSuggestedBinding> bindings;
+            for (usize hand = 0; hand < 2; ++hand) {
+                const auto& paths = hand == 0 ? profile.left : profile.right;
+                for (usize at = 0; at < Actions.size(); ++at) {
+                    if (paths[at][0] == '\0' || m_actions[at] == XR_NULL_HANDLE)
+                        continue;
+                    const std::string full = std::string(hand == 0 ? "/user/hand/left/" : "/user/hand/right/") +
+                                             paths[at];
+                    XrPath path = XR_NULL_PATH;
+                    if (XR_SUCCEEDED(m_calls.stringToPath(m_instance, full.c_str(), &path)))
+                        bindings.push_back(XrActionSuggestedBinding{m_actions[at], path});
+                }
+            }
+            XrPath profilePath = XR_NULL_PATH;
+            if (bindings.empty() || XR_FAILED(m_calls.stringToPath(m_instance, profile.profile, &profilePath)))
+                continue;
+            auto suggested = made<XrInteractionProfileSuggestedBinding>(XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING);
+            suggested.interactionProfile = profilePath;
+            suggested.countSuggestedBindings = static_cast<u32>(bindings.size());
+            suggested.suggestedBindings = bindings.data();
+            (void)m_calls.suggestBindings(m_instance, &suggested);
+        }
+        for (usize which = 0; which < 2; ++which) {
+            if (m_actions[which] == XR_NULL_HANDLE)
+                continue;
+            for (usize hand = 0; hand < 2; ++hand) {
+                auto spaceInfo = made<XrActionSpaceCreateInfo>(XR_TYPE_ACTION_SPACE_CREATE_INFO);
+                spaceInfo.action = m_actions[which];
+                spaceInfo.subactionPath = m_hands[hand];
+                spaceInfo.poseInActionSpace.orientation.w = 1.0f;
+                if (XR_FAILED(m_calls.createActionSpace(m_session, &spaceInfo, &m_handSpaces[which * 2 + hand])))
+                    m_handSpaces[which * 2 + hand] = XR_NULL_HANDLE;
+            }
+        }
+        auto attach = made<XrSessionActionSetsAttachInfo>(XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO);
+        attach.countActionSets = 1;
+        attach.actionSets = &m_actionSet;
+        const XrResult attached = m_calls.attachActionSets(m_session, &attach);
+        if (XR_FAILED(attached)) {
+            logFailure("xrAttachSessionActionSets", attached);
+            return false;
+        }
+        return true;
+    }
+
     void releaseImages()
     {
         for (EyeSwapchain& eye : m_eyes) {
@@ -399,6 +669,12 @@ private:
     XrCalls m_calls;
     XrSession m_session = XR_NULL_HANDLE;
     XrSpace m_space = XR_NULL_HANDLE;
+    XrSpace m_headSpace = XR_NULL_HANDLE;
+    XrActionSet m_actionSet = XR_NULL_HANDLE;
+    std::array<XrAction, Actions.size()> m_actions{};
+    std::array<XrPath, 2> m_hands{};
+    // Grip then aim, each left then right.
+    std::array<XrSpace, 4> m_handSpaces{};
     std::array<EyeSwapchain, 2> m_eyes{};
     std::array<XrView, 2> m_views{};
     std::string m_runtime;

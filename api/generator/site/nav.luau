@@ -205,6 +205,7 @@ local Sections: { Section } = {
             { Slug = "multiplayer", Title = "Multiplayer" },
             { Slug = "online-games", Title = "Online games" },
             { Slug = "local-players", Title = "Several players at one screen" },
+            { Slug = "vr", Title = "VR" },
             { Slug = "scenes", Title = "Scenes at run time" },
             { Slug = "saves", Title = "Saving the game" },
             { Slug = "backend", Title = "Talking to a backend" },

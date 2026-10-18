@@ -70,6 +70,7 @@ enum class DeviceType : i32
     KeyboardMouse = 0,
     Gamepad = 1,
     Touch = 2,
+    XR = 3,
 };
 
 // `Enum.InputRate`'s values.
@@ -92,6 +93,8 @@ enum class UserInputType : i32
     MouseWheel = 6,
     Gamepad = 7,
     Touch = 8,
+    XRLeft = 9,
+    XRRight = 10,
 };
 
 // One raw input, as `InputService.InputBegan` / `InputChanged` / `InputEnded`
@@ -144,7 +147,7 @@ struct RawInputEvent
 // that no device event names. `input.cpp` static_asserts the arithmetic against
 // the generated enum descriptor at registration, which is the check that keeps
 // this number honest.
-inline constexpr usize kKeyCodeCount = 152;
+inline constexpr usize kKeyCodeCount = 171;
 
 // Whether a `KeyCode` is one of the sixteen virtual keys or the two composites over
 // them -- the ones `InputService:SetVirtualState` may write and nothing else
@@ -337,6 +340,13 @@ public:
     // held is a value nobody has cleared -- and `releaseAll` clears it with
     // everything else, so a press cannot survive losing focus.
     void setVirtualState(i32 keyCode, f32 value) noexcept;
+
+    // **A headset's controllers this frame** (ADR 0245): the host's reading
+    // of the runtime, one value for each `XR` key code in the enum's order --
+    // a button 0 or 1, a trigger or a grip 0 to 1, a stick's axis -1 to 1.
+    // The two sticks as one are read from their axes, and their places in
+    // `values` are not looked at. A headset used is the last device.
+    void setHeadsetKeys(std::span<const f32> values) noexcept;
 
     // **Holds the action named `action` at a value, whatever its bindings say**
     // (ADR 0107 §3): how the world running a `SubWorld` drives the sub-world's

@@ -73,6 +73,32 @@ struct HeadsetFrame
     TextureFormat format = TextureFormat::Undefined;
 };
 
+// A place and a turn in the play space, and whether the runtime knows it.
+struct HeadsetPose
+{
+    bool valid = false;
+    std::array<f32, 3> position{0.0f, 0.0f, 0.0f};
+    // x, y, z, w.
+    std::array<f32, 4> orientation{0.0f, 0.0f, 0.0f, 1.0f};
+};
+
+// **The number of controller values a frame reads** (ADR 0245): one for each
+// `Enum.KeyCode` whose name begins with `XR`, in the enum's order -- A, B, X,
+// Y, the menu, the two triggers, the two grips, the four stick axes, the two
+// sticks as one (unused here), the two sticks pressed in, the two pinches.
+inline constexpr usize HeadsetKeyCount = 19;
+
+// **What the player is doing this frame**: the head, each hand where it holds
+// its controller (`grip`) and where it points (`aim`), and the controllers'
+// buttons, triggers and sticks. Left is 0 and right 1.
+struct HeadsetInput
+{
+    HeadsetPose head;
+    std::array<HeadsetPose, 2> grip{};
+    std::array<HeadsetPose, 2> aim{};
+    std::array<f32, HeadsetKeyCount> keys{};
+};
+
 class IHeadset
 {
 public:
@@ -104,6 +130,22 @@ public:
     // **Hands the images back and shows them**, after the frame's command
     // list was submitted. Every begun frame is ended, drawn or not.
     virtual void endFrame() = 0;
+
+    // **The head, the hands and the controllers** (ADR 0245), for the frame
+    // begun last -- read at the time it will be shown. Nothing known reads
+    // as poses not valid and every key at rest.
+    virtual void readInput(HeadsetInput& input)
+    {
+        input = HeadsetInput{};
+    }
+    // **A controller's vibration** (ADR 0245 §3): `hand` 0 left, 1 right; an
+    // amplitude 0 to 1 for `seconds`, replacing what it was doing.
+    virtual void vibrate(u32 hand, f32 amplitude, f32 seconds)
+    {
+        (void)hand;
+        (void)amplitude;
+        (void)seconds;
+    }
 };
 
 } // namespace engine::rhi

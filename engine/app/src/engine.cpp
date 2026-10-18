@@ -7794,6 +7794,31 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 applyVSync(*device, *window, false);
                 headsetSynced = false;
             }
+            // **What the player does** (ADR 0245): the controllers into the
+            // input system as their `XR` key codes, the head and the hands
+            // into the engine's state for `XRService`, for the next tick --
+            // and each controller kept vibrating while a script has it set.
+            scene::EngineState::Headset& seen = host->world().engineState().headset;
+            seen.enabled = headset->state() != rhi::HeadsetState::Ended;
+            if (headsetBegun) {
+                rhi::HeadsetInput read;
+                headset->readInput(read);
+                host->input().setHeadsetKeys(read.keys);
+                const auto cframeOf = [](const rhi::HeadsetPose& pose) {
+                    return core::CFrameD{core::DVec3{pose.position[0], pose.position[1], pose.position[2]},
+                                         core::fromQuaternion(pose.orientation[0], pose.orientation[1],
+                                                              pose.orientation[2], pose.orientation[3])};
+                };
+                if (read.head.valid)
+                    seen.head = cframeOf(read.head);
+                for (core::u32 hand = 0; hand < 2; ++hand) {
+                    seen.handsTracked[hand] = read.grip[hand].valid;
+                    if (read.grip[hand].valid)
+                        seen.hands[hand] = cframeOf(read.grip[hand]);
+                    if (seen.vibration[hand] > 0.0f)
+                        headset->vibrate(hand, seen.vibration[hand], 0.1f);
+                }
+            }
         }
 
         // In the editor the world is not drawn to the screen: it is drawn into

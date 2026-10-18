@@ -54,6 +54,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`UIService`](uiservice.md) | [`Instance`](instance.md) | The parent of every `ScreenGui`. |
 | [`VoxelService`](voxelservice.md) | [`Instance`](instance.md) | A world made of blocks, for games about mining and building with cubes. |
 | [`Workspace`](workspace.md) | [`Instance`](instance.md) | The root of the 3D world, available as the global `workspace` and through `game:GetService`. |
+| [`XRService`](xrservice.md) | [`Instance`](instance.md) | Where the player is in a headset: the head and the two hands. |
 | [`XboxService`](xboxservice.md) | [`Instance`](instance.md) | Xbox identity and achievements on PC, through an optional provider. |
 
 ## Instances

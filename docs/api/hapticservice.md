@@ -10,6 +10,8 @@ Controls vibration: the motors of a gamepad and the vibration of a phone.
 
 `SetMotor` runs a motor at a level until it is set again, and 0 stops it. An engine that rumbles while it runs needs one call when it starts and one when it stops. `Vibrate` makes a phone vibrate for a short time and stop by itself.
 
+A headset's controller vibrates under `Enum.UserInputType.XRLeft` or `XRRight`. It has one motor, which `SetMotor` runs whichever motor is named.
+
 Every motor stops while the game's window is not in front, resumes when it is again, and stops when the game closes. On a dedicated server or in a headless run, every query returns false and every call is ignored.
 
 This page lists the members this class declares. Inherited members are

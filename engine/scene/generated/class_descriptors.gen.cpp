@@ -6483,6 +6483,54 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     graphicsServiceDesc.events = graphicsServiceEvents;
     classes.registerClass(graphicsServiceDesc);
 
+    // --- XRService ---
+    static std::array<PropertyDesc, 1> xRServiceProperties;
+    xRServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether a headset is drawing this game. False on the screen, on a server and in a headless run without `--xr=simulated`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRServiceEnabled,
+            .set = nullptr,
+        },
+    }};
+    static std::array<MethodDesc, 3> xRServiceMethods;
+    xRServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("GetHeadCFrame"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Where the head is in the play space, and how it is turned: between the eyes, looking down its -Z. The identity with no headset.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetHandCFrame"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Where a hand holds its controller in the play space, and how it is turned. The identity with no headset, and while the hand is not tracked (`IsHandTracked`).",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsHandTracked"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.",
+        },
+    }};
+    ClassDescriptor xRServiceDesc;
+    xRServiceDesc.name = atoms.intern("XRService");
+    xRServiceDesc.super = instanceClass;
+    xRServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    xRServiceDesc.defaultName = atoms.intern("XRService");
+    xRServiceDesc.doc = "Where the player is in a headset: the head and the two hands. A controller's buttons, triggers and sticks are not here: they are `Enum.KeyCode` values whose names begin with `XR`, bound to `InputAction`s beside a gamepad's, and a controller vibrates through `HapticService` with `Enum.UserInputType.XRLeft` or `XRRight`.\012\012Poses are in the play space: meters from the floor where the player stood when the session began, y up. `Workspace.CurrentCamera` places the play space in the world: the camera's `CFrame` is the play space's origin, and the head moves the view from there. A game moves its player by moving the camera, never the head.\012\012With no headset, `Enabled` is false and every pose is the identity: a game that plays both ways branches on `Enabled` once, where it places its camera. A script reads the poses of the tick it runs in; the picture is drawn from later ones, at the time each frame is shown.";
+    xRServiceDesc.properties = xRServiceProperties;
+    xRServiceDesc.methods = xRServiceMethods;
+    classes.registerClass(xRServiceDesc);
+
     // --- HapticService ---
     static std::array<MethodDesc, 4> hapticServiceMethods;
     hapticServiceMethods = {{
@@ -6516,7 +6564,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     hapticServiceDesc.super = instanceClass;
     hapticServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
     hapticServiceDesc.defaultName = atoms.intern("HapticService");
-    hapticServiceDesc.doc = "Controls vibration: the motors of a gamepad and the vibration of a phone.\012\012`SetMotor` runs a motor at a level until it is set again, and 0 stops it. An engine that rumbles while it runs needs one call when it starts and one when it stops. `Vibrate` makes a phone vibrate for a short time and stop by itself.\012\012Every motor stops while the game's window is not in front, resumes when it is again, and stops when the game closes. On a dedicated server or in a headless run, every query returns false and every call is ignored.";
+    hapticServiceDesc.doc = "Controls vibration: the motors of a gamepad and the vibration of a phone.\012\012`SetMotor` runs a motor at a level until it is set again, and 0 stops it. An engine that rumbles while it runs needs one call when it starts and one when it stops. `Vibrate` makes a phone vibrate for a short time and stop by itself.\012\012A headset's controller vibrates under `Enum.UserInputType.XRLeft` or `XRRight`. It has one motor, which `SetMotor` runs whichever motor is named.\012\012Every motor stops while the game's window is not in front, resumes when it is again, and stops when the game closes. On a dedicated server or in a headless run, every query returns false and every call is ignored.";
     hapticServiceDesc.methods = hapticServiceMethods;
     classes.registerClass(hapticServiceDesc);
 
@@ -8626,7 +8674,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(runContextDesc);
 
     // --- KeyCode ---
-    static std::array<EnumItemDesc, 152> keyCodeItems;
+    static std::array<EnumItemDesc, 171> keyCodeItems;
     keyCodeItems = {{
         EnumItemDesc{
             .name = atoms.intern("Unknown"),
@@ -9388,6 +9436,101 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
             .value = 151,
             .doc = "A swipe to the right, as a key. See `SwipeUp`.",
         },
+        EnumItemDesc{
+            .name = atoms.intern("XRButtonA"),
+            .value = 152,
+            .doc = "The right controller's A button.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRButtonB"),
+            .value = 153,
+            .doc = "The right controller's B button.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRButtonX"),
+            .value = 154,
+            .doc = "The left controller's X button.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRButtonY"),
+            .value = 155,
+            .doc = "The left controller's Y button.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRMenu"),
+            .value = 156,
+            .doc = "The menu button, on the left controller.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRTriggerLeft"),
+            .value = 157,
+            .doc = "The left controller's trigger, from 0 to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRTriggerRight"),
+            .value = 158,
+            .doc = "The right controller's trigger, from 0 to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRGripLeft"),
+            .value = 159,
+            .doc = "The left controller's grip, from 0 to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRGripRight"),
+            .value = 160,
+            .doc = "The right controller's grip, from 0 to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickLeftX"),
+            .value = 161,
+            .doc = "The left controller's thumbstick, across, from -1 (left) to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickLeftY"),
+            .value = 162,
+            .doc = "The left controller's thumbstick, up and down, from -1 (down) to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickRightX"),
+            .value = 163,
+            .doc = "The right controller's thumbstick, across, from -1 (left) to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickRightY"),
+            .value = 164,
+            .doc = "The right controller's thumbstick, up and down, from -1 (down) to 1.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickLeft"),
+            .value = 165,
+            .doc = "The left controller's thumbstick, both axes, for a `Vector2` action.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickRight"),
+            .value = 166,
+            .doc = "The right controller's thumbstick, both axes, for a `Vector2` action.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickLeftClick"),
+            .value = 167,
+            .doc = "The left controller's thumbstick, pressed in.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRThumbstickRightClick"),
+            .value = 168,
+            .doc = "The right controller's thumbstick, pressed in.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRPinchLeft"),
+            .value = 169,
+            .doc = "The left hand's thumb and index finger pinched, with hand tracking and no controller.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRPinchRight"),
+            .value = 170,
+            .doc = "The right hand's thumb and index finger pinched, with hand tracking and no controller.",
+        },
     }};
     EnumDescriptor keyCodeDesc;
     keyCodeDesc.name = atoms.intern("KeyCode");
@@ -9466,7 +9609,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(gamepadTypeDesc);
 
     // --- InputDeviceType ---
-    static std::array<EnumItemDesc, 3> inputDeviceTypeItems;
+    static std::array<EnumItemDesc, 4> inputDeviceTypeItems;
     inputDeviceTypeItems = {{
         EnumItemDesc{
             .name = atoms.intern("KeyboardMouse"),
@@ -9483,6 +9626,11 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
             .value = 2,
             .doc = "A touchscreen. A finger on the screen makes this the last device used, so a game can show on-screen controls only when they are needed. A binding to a virtual key code, such as `Enum.KeyCode.Virtual1`, also reports this type.",
         },
+        EnumItemDesc{
+            .name = atoms.intern("XR"),
+            .value = 3,
+            .doc = "A headset's controllers, or the hands it tracks. Its key codes are the ones whose names begin with `XR`.",
+        },
     }};
     EnumDescriptor inputDeviceTypeDesc;
     inputDeviceTypeDesc.name = atoms.intern("InputDeviceType");
@@ -9491,7 +9639,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(inputDeviceTypeDesc);
 
     // --- UserInputType ---
-    static std::array<EnumItemDesc, 9> userInputTypeItems;
+    static std::array<EnumItemDesc, 11> userInputTypeItems;
     userInputTypeItems = {{
         EnumItemDesc{
             .name = atoms.intern("None"),
@@ -9537,6 +9685,16 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
             .name = atoms.intern("Touch"),
             .value = 8,
             .doc = "A finger on a touchscreen. It fires `InputBegan` when the finger touches, `InputChanged` as it moves and `InputEnded` when it lifts, with `Position` in window pixels and `TouchId` identifying the finger. Even a very short tap begins and ends.\012\012These events fire whether or not the interface used the touch. Use them for a game's own on-screen controls, which drive actions through `InputService:SetVirtualState`.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRLeft"),
+            .value = 9,
+            .doc = "The left controller of a headset, or the left hand it tracks. `KeyCode` gives which button, trigger or stick. `HapticService` vibrates this controller under this type.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("XRRight"),
+            .value = 10,
+            .doc = "The right controller of a headset, or the right hand it tracks. See `XRLeft`.",
         },
     }};
     EnumDescriptor userInputTypeDesc;
@@ -10801,6 +10959,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     orientationAlignmentModeDesc.doc = "The target an `AlignOrientation` turns toward.";
     orientationAlignmentModeDesc.items = orientationAlignmentModeItems;
     enums.registerEnum(orientationAlignmentModeDesc);
+
+    // --- XRHand ---
+    static std::array<EnumItemDesc, 2> xRHandItems;
+    xRHandItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Left"),
+            .value = 0,
+            .doc = "The left hand.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Right"),
+            .value = 1,
+            .doc = "The right hand.",
+        },
+    }};
+    EnumDescriptor xRHandDesc;
+    xRHandDesc.name = atoms.intern("XRHand");
+    xRHandDesc.doc = "A hand, or the controller it holds, for `XRService`.";
+    xRHandDesc.items = xRHandItems;
+    enums.registerEnum(xRHandDesc);
 
     // --- VibrationMotor ---
     static std::array<EnumItemDesc, 6> vibrationMotorItems;

@@ -678,6 +678,21 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # **Where the player is, to a script** (ADR 0245): `XRService` under the
+    # simulated headset -- enabled, the head standing at 1.6 m -- and flat,
+    # where every pose is the identity.
+    add_test(NAME xr_service_simulated
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=20 --exit
+                --rhi=null --xr=simulated)
+    set_tests_properties(xr_service_simulated PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[xr\\] enabled=true head=1.60 left=false"
+        TIMEOUT 60)
+    add_test(NAME xr_service_flat
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=20 --exit --rhi=null)
+    set_tests_properties(xr_service_flat PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[xr\\] enabled=false head=0.00 left=false"
+        TIMEOUT 60)
+
     # **The render half of the frame runs headless**: a Render-rate
     # context reads an injected stick and a bound render step runs.
     add_test(NAME host_headless_render_rate

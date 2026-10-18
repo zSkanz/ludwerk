@@ -1761,6 +1761,61 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Event },
     },
     {
+        Name = "XRService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Records = { "ADR 0245" },
+        Doc = "Where the player is in a headset: the head and the two hands. A controller's buttons, triggers "
+            .. "and sticks are not here: they are `Enum.KeyCode` values whose names begin with `XR`, bound to "
+            .. "`InputAction`s beside a gamepad's, and a controller vibrates through `HapticService` with "
+            .. "`Enum.UserInputType.XRLeft` or `XRRight`.\n\n"
+            .. "Poses are in the play space: meters from the floor where the player stood when the session "
+            .. "began, y up. `Workspace.CurrentCamera` places the play space in the world: the camera's "
+            .. "`CFrame` is the play space's origin, and the head moves the view from there. A game moves "
+            .. "its player by moving the camera, never the head.\n\n"
+            .. "With no headset, `Enabled` is false and every pose is the identity: a game that plays both "
+            .. "ways branches on `Enabled` once, where it places its camera. A script reads the poses of the "
+            .. "tick it runs in; the picture is drawn from later ones, at the time each frame is shown.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether a headset is drawing this game. False on the screen, on a server and in a "
+                    .. "headless run without `--xr=simulated`.",
+            },
+        },
+        Methods = {
+            {
+                Name = "GetHeadCFrame",
+                Parameters = {},
+                Returns = { "CFrame" },
+                ThreadSafety = "Unsafe",
+                Doc = "Where the head is in the play space, and how it is turned: between the eyes, looking "
+                    .. "down its -Z. The identity with no headset.",
+            },
+            {
+                Name = "GetHandCFrame",
+                Parameters = { { Name = "hand", Type = "Enum.XRHand" } },
+                Returns = { "CFrame" },
+                ThreadSafety = "Unsafe",
+                Doc = "Where a hand holds its controller in the play space, and how it is turned. The identity "
+                    .. "with no headset, and while the hand is not tracked (`IsHandTracked`).",
+            },
+            {
+                Name = "IsHandTracked",
+                Parameters = { { Name = "hand", Type = "Enum.XRHand" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the headset knows where this hand is now: false when its controller is put "
+                    .. "down out of sight, or asleep.",
+            },
+        },
+    },
+    {
         Name = "HapticService",
         Extends = "Instance",
         Module = "scene",
@@ -1770,6 +1825,8 @@ local Classes: { Schema.Class } = {
             .. "`SetMotor` runs a motor at a level until it is set again, and 0 stops it. An engine that rumbles "
             .. "while it runs needs one call when it starts and one when it stops. `Vibrate` makes a phone "
             .. "vibrate for a short time and stop by itself.\n\n"
+            .. "A headset's controller vibrates under `Enum.UserInputType.XRLeft` or `XRRight`. It has "
+            .. "one motor, which `SetMotor` runs whichever motor is named.\n\n"
             .. "Every motor stops while the game's window is not in front, resumes when it is again, and stops "
             .. "when the game closes. On a dedicated server or in a headless run, every query returns false and "
             .. "every call is ignored.",

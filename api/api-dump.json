@@ -11477,6 +11477,50 @@
       "Events": []
     },
     {
+      "Name": "XRService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "GetHandCFrame",
+          "Parameters": [
+            {
+              "Name": "hand",
+              "Type": "Enum.XRHand"
+            }
+          ],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetHeadCFrame",
+          "Parameters": [],
+          "Returns": ["CFrame"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "IsHandTracked",
+          "Parameters": [
+            {
+              "Name": "hand",
+              "Type": "Enum.XRHand"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "XboxService",
       "Extends": "Instance",
       "Integration": "xbox",
@@ -15141,6 +15185,10 @@
         {
           "Name": "Touch",
           "Value": 2
+        },
+        {
+          "Name": "XR",
+          "Value": 3
         }
       ]
     },
@@ -15797,6 +15845,82 @@
         {
           "Name": "X",
           "Value": 37
+        },
+        {
+          "Name": "XRButtonA",
+          "Value": 152
+        },
+        {
+          "Name": "XRButtonB",
+          "Value": 153
+        },
+        {
+          "Name": "XRButtonX",
+          "Value": 154
+        },
+        {
+          "Name": "XRButtonY",
+          "Value": 155
+        },
+        {
+          "Name": "XRGripLeft",
+          "Value": 159
+        },
+        {
+          "Name": "XRGripRight",
+          "Value": 160
+        },
+        {
+          "Name": "XRMenu",
+          "Value": 156
+        },
+        {
+          "Name": "XRPinchLeft",
+          "Value": 169
+        },
+        {
+          "Name": "XRPinchRight",
+          "Value": 170
+        },
+        {
+          "Name": "XRThumbstickLeft",
+          "Value": 165
+        },
+        {
+          "Name": "XRThumbstickLeftClick",
+          "Value": 167
+        },
+        {
+          "Name": "XRThumbstickLeftX",
+          "Value": 161
+        },
+        {
+          "Name": "XRThumbstickLeftY",
+          "Value": 162
+        },
+        {
+          "Name": "XRThumbstickRight",
+          "Value": 166
+        },
+        {
+          "Name": "XRThumbstickRightClick",
+          "Value": 168
+        },
+        {
+          "Name": "XRThumbstickRightX",
+          "Value": 163
+        },
+        {
+          "Name": "XRThumbstickRightY",
+          "Value": 164
+        },
+        {
+          "Name": "XRTriggerLeft",
+          "Value": 157
+        },
+        {
+          "Name": "XRTriggerRight",
+          "Value": 158
         },
         {
           "Name": "Y",
@@ -16868,6 +16992,14 @@
         {
           "Name": "Touch",
           "Value": 8
+        },
+        {
+          "Name": "XRLeft",
+          "Value": 9
+        },
+        {
+          "Name": "XRRight",
+          "Value": 10
         }
       ]
     },
@@ -17003,6 +17135,19 @@
         {
           "Name": "Windowed",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "XRHand",
+      "Items": [
+        {
+          "Name": "Left",
+          "Value": 0
+        },
+        {
+          "Name": "Right",
+          "Value": 1
         }
       ]
     }
