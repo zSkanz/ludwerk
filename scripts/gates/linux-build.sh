@@ -102,8 +102,15 @@ if [ "$perf" = "without" ]; then
     left="gpu-golden|perf"
     echo "(the tests that measure time are left to a run of their own: ENG_GATE_PERF=without)"
 fi
+# Only the tests a change can affect, where the local gate says which
+# (ADR 0249): their names, as one expression.
+selected=()
+if [ -n "${ENG_GATE_TESTS:-}" ]; then
+    selected=(--tests-regex "$ENG_GATE_TESTS")
+    echo "(only the tests this change can affect: ENG_GATE_TESTS)"
+fi
 xvfb-run -a ctest --preset "$preset" --output-on-failure --no-tests=error -j "$(nproc)" \
-    --label-exclude "$left" 2>&1 | tee "$ctestLog"
+    --label-exclude "$left" "${selected[@]}" 2>&1 | tee "$ctestLog"
 ctestStatus=${PIPESTATUS[0]}
 set -e
 if [ "$ctestStatus" -ne 0 ]; then

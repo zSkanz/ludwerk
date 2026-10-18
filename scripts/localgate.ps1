@@ -34,6 +34,12 @@
 #   scripts/localgate.ps1 -Only perf          # the tests that measure time, alone,
 #                                             # against the trees already built --
 #                                             # what the full run does last
+#   scripts/localgate.ps1 -Affected           # THE INNER LOOP AND EACH PUSH OF A
+#                                             # BATCH (ADR 0249): only the stages and
+#                                             # tests this change can affect, since
+#                                             # the merge base with origin/dev
+#                                             # (-Base <rev> for another), each with
+#                                             # why; the full run once per batch
 #
 # **The full run is three lanes at once** (ADR 0148): the docs lint alone; this
 # machine's own build -- luau, then windows, then android, which needs the
@@ -83,7 +89,15 @@ param(
     # The tests that measure time (`LABELS perf`) are left out of the windows
     # and linux stages, for the `perf` stage to run by themselves. What the
     # full run passes its lanes; not usually typed.
-    [switch]$PerfApart
+    [switch]$PerfApart,
+    # **Only what this change can affect** (ADR 0249): the stages and the
+    # tests `tools/repo/affected.luau` says the files changed since the
+    # merge base with -Base reach, each with why. The full run is once per
+    # batch, and on CI at every push.
+    [switch]$Affected,
+    [string]$Base = 'origin/dev',
+    # The plan an -Affected run wrote, handed to its lanes; not usually typed.
+    [string]$Plan
 )
 . "$PSScriptRoot/lib/brand.ps1"
 # `-File` hands a lane its stages as one string; a lane is a list.
@@ -180,6 +194,14 @@ function Invoke-Stage {
     # is not available here", and the formatting gate runs in that same image
     # because that is where the pinned clang-format lives.
     if (($Name -eq 'linux' -or $Name -eq 'format' -or $Name -eq 'shipping' -or $Name -eq 'lavapipe') -and $SkipLinux) { return }
+    # A stage this change cannot affect (ADR 0249), said with why.
+    $decided = if ($script:affectedPlan) { $script:affectedPlan.stages.$Name } else { $null }
+    if ($decided -and -not $decided.run) {
+        Write-Host ""
+        Write-Host "=== $Name === not run: $($decided.why)" -ForegroundColor DarkGray
+        $script:results += "  skip  $Name ($($decided.why))"
+        return
+    }
 
     Write-Host ""
     Write-Host "=== $Name ===" -ForegroundColor Cyan
@@ -249,6 +271,47 @@ function Initialize-Tier2Image {
     if ($LASTEXITCODE -ne 0) { throw "the Tier-2 image failed to build" }
 }
 
+# --- What this change can affect (ADR 0249) -----------------------------------
+#
+# Asked once, by the run a person started, of CTest's listing of this
+# machine's tree and of git; its lanes read the plan it wrote. A plan that
+# cannot be made is the full suite, said so.
+$script:affectedPlan = $null
+if ($Affected -and -not $Plan) {
+    $Plan = Join-Path $env:TEMP "engine-affected-$PID.json"
+    $listing = Join-Path $env:TEMP "engine-affected-tests-$PID.json"
+    $vcvarsPlan = Get-DeveloperShellEnv
+    if (-not $env:ENG_BUILD_ROOT) {
+        $env:ENG_BUILD_ROOT = Join-Path $env:LOCALAPPDATA "$BrandName\build"
+    }
+    $planScript = @"
+chcp 65001 >nul
+call "$vcvarsPlan" >nul || exit /b 1
+cmake --preset win-msvc-dev >nul || exit /b 1
+ctest --preset win-msvc-dev --show-only=json-v1 > "$listing" 2>nul
+"@
+    $planTemp = Join-Path $env:TEMP "engine-affected-$PID.cmd"
+    Set-Content -Path $planTemp -Value $planScript -Encoding ascii
+    & cmd.exe /c $planTemp
+    $listed = $LASTEXITCODE
+    Remove-Item $planTemp -ErrorAction SilentlyContinue
+    if ($listed -eq 0) {
+        & lute tools/repo/affected.luau $listing --base $Base --out $Plan
+        $listed = $LASTEXITCODE
+    }
+    Remove-Item $listing -ErrorAction SilentlyContinue
+    if ($listed -ne 0) {
+        Write-Host "[gate] affected: no plan could be made; the full suite" -ForegroundColor Yellow
+        $Plan = ''
+    }
+}
+if ($Plan) {
+    $script:affectedPlan = Get-Content $Plan -Raw | ConvertFrom-Json
+    # The tests that measure time are their own stage's, which the plan asks
+    # for or not.
+    $PerfApart = $true
+}
+
 # --- The full run: three lanes at once (ADR 0148) -----------------------------
 #
 # A full run is not run here: it starts three copies of this script, each with
@@ -262,6 +325,10 @@ if (-not $Only -and -not $Stages -and -not $Serial) {
         'host'      = @('luau', 'windows', 'android')
         'container' = @('format', 'linux', 'shipping')
     }
+    # The real-image goldens, which the full run leaves to be asked for,
+    # where a change to the renderer asks (ADR 0249).
+    if ($script:affectedPlan -and $script:affectedPlan.stages.lavapipe.run) { $lanes['container'] += 'lavapipe' }
+    if ($script:affectedPlan) { Write-Host "[gate] affected: $($script:affectedPlan.summary)" -ForegroundColor Cyan }
     $self = Join-Path $PSScriptRoot 'localgate.ps1'
     $started = [Diagnostics.Stopwatch]::StartNew()
     $running = @()
@@ -270,6 +337,7 @@ if (-not $Only -and -not $Stages -and -not $Serial) {
         $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$self`"", '-Stages', ($lanes[$lane] -join ','))
         if ($SkipLinux) { $arguments += '-SkipLinux' }
         if ($AllowSkips) { $arguments += '-AllowSkips' }
+        if ($Plan) { $arguments += @('-Plan', "`"$Plan`"") }
         # The tests that measure time wait for the lanes to be over (below).
         $arguments += '-PerfApart'
         Write-Host "[gate] lane $lane`: $($lanes[$lane] -join ' -> ')" -ForegroundColor Cyan
@@ -293,6 +361,7 @@ if (-not $Only -and -not $Stages -and -not $Serial) {
     $perfLog = Join-Path $env:TEMP "engine-localgate-lane-perf-$PID.txt"
     $perfArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$self`"", '-Stages', 'perf')
     if ($SkipLinux) { $perfArguments += '-SkipLinux' }
+    if ($Plan) { $perfArguments += @('-Plan', "`"$Plan`"") }
     Write-Host "[gate] lane perf: the tests that measure time, alone, now the other lanes are over" -ForegroundColor Cyan
     $perfProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList $perfArguments -NoNewWindow -PassThru `
         -RedirectStandardOutput $perfLog -RedirectStandardError "$perfLog.err"
@@ -349,7 +418,8 @@ Invoke-Stage 'docs' {
     # checkout adds of its own when `ENG_EXTRA_CHECKS` names them, and a clone
     # and the hosted runner have none: the gate is run again without them, so
     # that what only a clone meets is met here first.
-    if ($env:ENG_EXTRA_CHECKS) {
+    # Not in a run of what a change affects: the batch's full run does it.
+    if ($env:ENG_EXTRA_CHECKS -and -not $script:affectedPlan) {
         $extra = $env:ENG_EXTRA_CHECKS
         Remove-Item Env:ENG_EXTRA_CHECKS
         try {
@@ -440,7 +510,11 @@ Invoke-Stage 'windows' {
     $ctestJobs = [Environment]::ProcessorCount
     # CTest's own listing of this tree, for `tools/repo/skiplists.luau` below.
     $skipListing = Join-Path $env:TEMP "engine-localgate-tests-$PID.json"
-    $ctestFilter = if ($Tests) { "-R `"$Tests`"" } else { '' }
+    $ctestFilter = if ($Tests) {
+        "-R `"$Tests`""
+    } elseif ($script:affectedPlan -and $script:affectedPlan.regex) {
+        "-R `"$($script:affectedPlan.regex)`""
+    } else { '' }
     # The tests that measure time: left to the `perf` stage where the full run
     # asked for that, and said to have run here where it did not.
     if ($PerfApart) { $ctestFilter = "$ctestFilter -LE perf" }
@@ -485,21 +559,36 @@ type "$ctestLog"
     }
     # The inner loop stops at the tests it was asked for.
     if ($Tests) { return }
+    # A step this change cannot affect (ADR 0249), said with why.
+    $stepRuns = {
+        param([string]$Step)
+        $decided = if ($script:affectedPlan) { $script:affectedPlan.steps.$Step } else { $null }
+        if ($decided -and -not $decided.run) {
+            Write-Host "[gate] windows: $Step not run: $($decided.why)" -ForegroundColor DarkGray
+            return $false
+        }
+        return $true
+    }
 
     # The CLI's own path to the same suite. The tooling loop's gate wants `ludwerk test` green
     # on both tiers, and it is a different path from ctest's: it launches the
     # engine, reads the per-case report and emits TAP. ctest proves the engine;
     # this proves the tool a developer types.
-    $tap = Join-Path $env:TEMP "engine-test-$PID.tap"
-    & (Get-BashPath) 'scripts/ludwerk.sh' test tests/conformance | Set-Content -Path $tap -Encoding utf8
-    if ($LASTEXITCODE -ne 0) { throw "ludwerk test failed" }
-    Get-Content $tap -Tail 1
-    Remove-Item $tap -ErrorAction SilentlyContinue
+    if (& $stepRuns 'conformance') {
+        $tap = Join-Path $env:TEMP "engine-test-$PID.tap"
+        & (Get-BashPath) 'scripts/ludwerk.sh' test tests/conformance | Set-Content -Path $tap -Encoding utf8
+        if ($LASTEXITCODE -ne 0) { throw "ludwerk test failed" }
+        Get-Content $tap -Tail 1
+        Remove-Item $tap -ErrorAction SilentlyContinue
+    }
 
     # The tooling loop's gate's first item: a dev server, this build headless against it, a
     # file mutated by the test, and the reload confirmed over the WebSocket.
-    & lute test tests/hotreload
-    if ($LASTEXITCODE -ne 0) { throw "the hot-reload gate failed" }
+    if (& $stepRuns 'hotreload') {
+        & lute test tests/hotreload
+        if ($LASTEXITCODE -ne 0) { throw "the hot-reload gate failed" }
+    }
+    if (-not (& $stepRuns 'packaging')) { return }
 
     # The flagship work's packaging chain: `ludwerk new`, `ludwerk build`, the built folder RUN with
     # no arguments, and the icon read back out of the artifact. Here rather than
@@ -554,8 +643,11 @@ Invoke-Stage 'linux' {
     # Docker Desktop after it exits -- a disposable container takes its own
     # evidence with it.
     $perfMode = if ($PerfApart) { 'without' } else { 'with' }
+    # The tests this change can affect (ADR 0249), or every one.
+    $gateTests = if ($script:affectedPlan -and $script:affectedPlan.regex) { $script:affectedPlan.regex } else { '' }
     docker run --name engine-tier2-gate `
         -e "ENG_GATE_PERF=$perfMode" `
+        -e "ENG_GATE_TESTS=$gateTests" `
         -v "${repo}:/repo" `
         -v "${buildVolume}:/build" `
         engine-tier2:latest bash scripts/gates/linux-build.sh
