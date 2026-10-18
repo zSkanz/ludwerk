@@ -2805,6 +2805,7 @@
   "engine.editor.export_window.target.windows": "Windows",
   "engine.editor.export_window.target.linux": "Linux",
   "engine.editor.export_window.target.android": "Android",
+  "engine.editor.export_window.target.quest": "Meta Quest",
   "engine.editor.export_window.target.windows_server": "Windows server",
   "engine.editor.export_window.target.linux_server": "Linux server",
   "engine.editor.export_window.state.checking": "checking...",

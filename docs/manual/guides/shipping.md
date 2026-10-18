@@ -71,6 +71,7 @@ buttons; clicking one opens its folder.
 | Windows | `dist/windows/<Executable>.exe`, `content/`, `game/`, and a `.zip` beside the folder | No console window. The icon and the file properties (product, company, version, description) are in the executable. |
 | Linux | `dist/linux/<executable>`, `content/`, `game/`, `<executable>.desktop`, `icon.png`, and a `.tar.gz` beside the folder | The archive carries the execute bit, wherever it was made. |
 | Android | `dist/android/<name>-<version>.apk` | Signed with the debug key, or your release key. |
+| Meta Quest | `dist/quest/<name>-<version>.apk` | The Android build as a VR app, for a game with `[xr] enabled`: the same settings and key as Android. |
 
 The archive beside the folder is the thing to send somebody. It is named
 `<name>-<version>-<target>`.

@@ -41,6 +41,18 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!--
+        **A headset's build** (ADR 0248 §1): the quest target of
+        `ludwerk build` writes what makes the APK a VR app between these marks
+        and the two pairs below: head tracking, OpenXR's permissions and the
+        queries that find the runtime; the categories that start the game in
+        the headset; the headsets it is for. A phone's build leaves them
+        empty. (No two hyphens in a row in here: XML forbids them in a
+        comment.)
+    -->
+    <!-- engine:xr-manifest -->
+    <!-- /engine:xr-manifest -->
+
     <application
         android:label="@string/app_name"
         android:icon="${engineIcon}"
@@ -49,6 +61,9 @@
         android:theme="@style/AppTheme"
         android:enableOnBackInvokedCallback="false"
         android:hardwareAccelerated="true">
+
+        <!-- engine:xr-application -->
+        <!-- /engine:xr-application -->
 
         <activity
             android:name="engine.player.PlayerActivity"
@@ -62,6 +77,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- engine:xr-categories -->
+                <!-- /engine:xr-categories -->
             </intent-filter>
         </activity>
     </application>

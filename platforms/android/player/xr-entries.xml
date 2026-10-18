@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    **What makes an APK a VR app on the Quest** (ADR 0248 §1). The quest
+    target of `ludwerk build` copies each section below between the marks of
+    the same name in AndroidManifest.xml; a phone's build leaves those marks
+    empty. Not a manifest: nothing reads this file but the export.
+
+    - xr-manifest: the head tracking the app needs, the hand tracking it may
+      use, OpenXR's permissions, and the queries that find the runtime.
+    - xr-categories: what starts the game in the headset. Without the Oculus
+      category the Quest shows an app in a flat window, the most common
+      mistake there is, and the export refuses a headset's build without it.
+    - xr-application: the headsets it is for.
+-->
+<sections xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- engine:xr-manifest -->
+    <uses-feature android:name="android.hardware.vr.headtracking" android:required="true" android:version="1" />
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+    <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+    <queries>
+        <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
+        <intent><action android:name="org.khronos.openxr.OpenXRRuntimeService" /></intent>
+        <intent><action android:name="org.khronos.openxr.OpenXRApiLayerService" /></intent>
+    </queries>
+    <!-- /engine:xr-manifest -->
+
+    <!-- engine:xr-categories -->
+    <category android:name="com.oculus.intent.category.VR" />
+    <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
+    <!-- /engine:xr-categories -->
+
+    <!-- engine:xr-application -->
+    <meta-data android:name="com.oculus.supportedDevices" android:value="quest3|quest3s|questpro" />
+    <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
+    <!-- /engine:xr-application -->
+</sections>

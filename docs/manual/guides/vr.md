@@ -178,6 +178,20 @@ controller was used.
 HapticService:SetMotor(Enum.UserInputType.XRRight, Enum.VibrationMotor.Large, 0.6)
 ```
 
+## On the Quest, standalone
+
+The Quest runs the game on its own, from an APK:
+
+```
+ludwerk build --target=quest
+```
+
+It is the Android build -- the same `[export.android]` settings and key --
+with the OpenXR loader beside the game and a manifest that starts it in the
+headset rather than in a flat window. Install it with `adb install -r` with
+the Quest connected and in developer mode; it appears among the headset's
+apps. A game needs `[xr] enabled = true` to be built for the Quest.
+
 ## Testing without a headset
 
 `--xr=simulated` runs a game with a headset that is the engine's own: two

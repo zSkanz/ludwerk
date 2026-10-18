@@ -288,6 +288,12 @@ local function run(options: Options): number
         end
         host = runnableHost(chosen, player)
 
+        if chosen.xr then
+            local xrSection = project.config.xr
+            if typeof(xrSection) ~= "table" or xrSection.enabled ~= true then
+                return tr("cli.build.err.quest_no_xr")
+            end
+        end
         if chosen.platform == "android" then
             local tools, toolsError = android.findTools()
             if tools == nil then
@@ -539,6 +545,7 @@ local function run(options: Options): number
         local laidOut = progress.step(reporter, "layout", function(): string?
             android.stage({
                 library = player,
+                xr = chosen.xr,
                 engineContent = engineContent,
                 shaders = shaders :: string,
                 stage = stage,
@@ -603,7 +610,7 @@ local function run(options: Options): number
             if settings.vibrate == false and uses.haptics then
                 progress.note(reporter, tr("cli.build.warn.android_no_vibrate"))
             end
-            local manifestError = android.writeManifest(tools, stage, android.permissions(settings, uses))
+            local manifestError = android.writeManifest(tools, stage, android.permissions(settings, uses), chosen.xr)
             if manifestError ~= nil then
                 return manifestError
             end

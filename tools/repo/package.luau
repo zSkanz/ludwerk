@@ -279,6 +279,14 @@ local function copyAndroidPlayer(from: string, desktopContent: string, target: s
     if not copyFile(joined(from, "libmain.so"), joined(target, "libmain.so"), "the Android player") then
         return
     end
+    -- **The OpenXR loader beside it** (ADR 0248 §1), for the Quest's build.
+    if fs.exists(joined(from, "libopenxr_loader.so")) then
+        copyFile(
+            joined(from, "libopenxr_loader.so"),
+            joined(target, "libopenxr_loader.so"),
+            "the Android player's OpenXR loader"
+        )
+    end
     copyRequiredTree(joined(from, "content"), joined(target, "content"), "the Android player content", {
         shaders = true,
         templates = true,

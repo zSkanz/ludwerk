@@ -528,11 +528,76 @@ end
 local PermissionsBegin = "<!-- engine:permissions -->"
 local PermissionsEnd = "<!-- /engine:permissions -->"
 
+--- **What makes an APK a VR app on the Quest** (ADR 0248 §1): three
+--- sections of the template's `xr-entries.xml`, each copied between the
+--- marks of its name in the manifest -- data the template keeps beside the
+--- manifest it belongs in, which says what each is for.
+export type XrEntries = {
+    manifest: { string },
+    categories: { string },
+    application: { string },
+}
+
+-- The lines between a section's two marks, trimmed; nothing without them.
+local function section(text: string, name: string): { string }?
+    local begin = `<!-- engine:{name} -->`
+    local finish = `<!-- /engine:{name} -->`
+    local from = string.find(text, begin, 1, true)
+    local to = string.find(text, finish, 1, true)
+    if from == nil or to == nil or to < from then
+        return nil
+    end
+    local lines: { string } = {}
+    for line in string.gmatch(string.sub(text, from + #begin, to - 1), "[^\r\n]+") do
+        local trimmed = string.match(line, "^%s*(.-)%s*$") :: string
+        if trimmed ~= "" then
+            -- Nested lines keep their indent past the section's own.
+            local indent = #(string.match(line, "^(%s*)") :: string) - 4
+            table.insert(lines, string.rep(" ", math.max(0, indent)) .. trimmed)
+        end
+    end
+    return lines
+end
+
+--- A template's `xr-entries.xml`, read; nothing when a section is missing.
+local function xrEntries(text: string): XrEntries?
+    local manifest = section(text, "xr-manifest")
+    local categories = section(text, "xr-categories")
+    local application = section(text, "xr-application")
+    if manifest == nil or categories == nil or application == nil then
+        return nil
+    end
+    return { manifest = manifest, categories = categories, application = application }
+end
+
+--- The category without which a Quest shows the game in a window.
+local OculusCategory = "com.oculus.intent.category.VR"
+
+-- The text between `begin` and its closing mark replaced by `lines`, each at
+-- `indent`.
+local function between(text: string, name: string, lines: { string }, indent: string): string?
+    local begin = `<!-- engine:{name} -->`
+    local finish = `<!-- /engine:{name} -->`
+    local from = string.find(text, begin, 1, true)
+    local to = string.find(text, finish, 1, true)
+    if from == nil or to == nil or to < from then
+        -- A template from before the headset's marks makes a phone's build
+        -- as it always did, and refuses a headset's.
+        return if #lines == 0 then text else nil
+    end
+    local out: { string } = { begin }
+    for _, line in lines do
+        table.insert(out, indent .. line)
+    end
+    table.insert(out, indent .. finish)
+    return string.sub(text, 1, from - 1) .. table.concat(out, "\n") .. string.sub(text, to + #finish)
+end
+
 --- The template's manifest with its permissions replaced by `declared`. The
 --- template itself declares all of them between two marks, so a package made
 --- with no export in front of it can do everything; an export writes its own
 --- copy with what its game uses. Nothing when the marks are not there.
-local function manifestWith(template: string, declared: { string }): string?
+local function manifestWith(template: string, declared: { string }, xr: XrEntries?): string?
     local from = string.find(template, PermissionsBegin, 1, true)
     local to = string.find(template, PermissionsEnd, 1, true)
     if from == nil or to == nil or to < from then
@@ -543,16 +608,44 @@ local function manifestWith(template: string, declared: { string }): string?
         table.insert(lines, `    <uses-permission android:name="{name}" />`)
     end
     table.insert(lines, "    " .. PermissionsEnd)
-    return string.sub(template, 1, from - 1) .. table.concat(lines, "\n") .. string.sub(template, to + #PermissionsEnd)
+    local written: string? = string.sub(template, 1, from - 1)
+        .. table.concat(lines, "\n")
+        .. string.sub(template, to + #PermissionsEnd)
+    -- A headset's entries, or none: a phone's build empties the marks an
+    -- export of a headset's build filled.
+    written = between(written :: string, "xr-manifest", if xr then xr.manifest else {}, "    ")
+    written = if written
+        then between(written, "xr-categories", if xr then xr.categories else {}, "                ")
+        else nil
+    written = if written then between(written, "xr-application", if xr then xr.application else {}, "        ") else nil
+    return written
+end
+
+--- **Whether a manifest starts the game in a headset** (ADR 0248 §1): the
+--- export's own check of a headset's build, so an APK that would open in a
+--- flat window is never made.
+local function startsInHeadset(manifest: string): boolean
+    return string.find(manifest, OculusCategory, 1, true) ~= nil
 end
 
 --- Writes the game's manifest into the stage, where the template's build
 --- takes it from in place of its own.
-local function writeManifest(tools: Tools, stageDir: string, declared: { string }): string?
+local function writeManifest(tools: Tools, stageDir: string, declared: { string }, xr: boolean?): string?
     local source = projectlib.joined(tools.template, "app", "src", "main", "AndroidManifest.xml")
-    local written = if fs.exists(source) then manifestWith(fs.readFileToString(source), declared) else nil
+    local entries: XrEntries? = nil
+    if xr then
+        local entriesPath = projectlib.joined(tools.template, "xr-entries.xml")
+        entries = if fs.exists(entriesPath) then xrEntries(fs.readFileToString(entriesPath)) else nil
+        if entries == nil then
+            return tr("cli.build.err.quest_entries", { path = entriesPath })
+        end
+    end
+    local written = if fs.exists(source) then manifestWith(fs.readFileToString(source), declared, entries) else nil
     if written == nil then
         return tr("cli.build.err.android_manifest", { path = source })
+    end
+    if xr and not startsInHeadset(written :: string) then
+        return tr("cli.build.err.quest_not_vr", { path = source })
     end
     fs.writeStringToFile(projectlib.joined(stageDir, "AndroidManifest.xml"), written :: string)
     return nil
@@ -585,6 +678,9 @@ end
 
 export type StageOptions = {
     library: string,
+    -- A headset's build: the OpenXR loader beside the player, from the
+    -- player's own folder (ADR 0248 §1).
+    xr: boolean?,
     engineContent: string,
     shaders: string,
     stage: string,
@@ -600,6 +696,12 @@ local function stage(options: StageOptions)
     local jni = projectlib.joined(options.stage, "jniLibs", Abi)
     fs.createDirectory(jni, { makeParents = true })
     fs.copy(options.library, projectlib.joined(jni, "libmain.so"))
+    if options.xr then
+        local loader = projectlib.joined(path.dirname(options.library), "libopenxr_loader.so")
+        if fs.exists(loader) then
+            fs.copy(loader, projectlib.joined(jni, "libopenxr_loader.so"))
+        end
+    end
     local assets = projectlib.joined(options.stage, "assets")
     copyEngineContent(options.engineContent, projectlib.joined(assets, "content"), options.shaders)
     options.composeGame(projectlib.joined(assets, "game"))
@@ -1021,6 +1123,8 @@ return {
     projectUses = projectUses,
     permissions = permissions,
     manifestWith = manifestWith,
+    startsInHeadset = startsInHeadset,
+    xrEntries = xrEntries,
     writeManifest = writeManifest,
     loadAlignment = loadAlignment,
     checkPages = checkPages,

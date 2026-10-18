@@ -160,7 +160,9 @@ ludwerk build --status
 ```
 
 Exports the game ([Shipping a game](manual:guides/shipping)). The targets are
-`windows` (`win64` is its old name), `linux`, `android`, and for a game whose
+`windows` (`win64` is its old name), `linux`, `android`, `quest` (the
+Android build as a VR app for the Meta Quest, for a game with `[xr]
+enabled`), and for a game whose
 `[export] multiplayer` is `dedicated`, `windows-server` and `linux-server`.
 Every target builds from any desktop whose installation carries its player.
 

@@ -34,6 +34,9 @@ export type Target = {
     buildPath: string,
     -- The variable that points at one somewhere else.
     variable: string,
+    -- **A headset's build** (ADR 0248 §1): the OpenXR loader packaged beside
+    -- the player, and a manifest that starts the game in the headset.
+    xr: boolean,
 }
 
 local Windows = {
@@ -63,7 +66,7 @@ local Android = {
     variable = "ENG_PLAYER_HOST_ANDROID",
 }
 
-local function target(name: string, base: typeof(Windows), server: boolean): Target
+local function target(name: string, base: typeof(Windows), server: boolean, xr: boolean?): Target
     return {
         name = name,
         platform = base.platform,
@@ -73,6 +76,7 @@ local function target(name: string, base: typeof(Windows), server: boolean): Tar
         preset = base.preset,
         buildPath = base.buildPath,
         variable = base.variable,
+        xr = xr == true,
     }
 end
 
@@ -81,6 +85,8 @@ local All: { Target } = {
     target("windows", Windows, false),
     target("linux", Linux, false),
     target("android", Android, false),
+    -- The Meta Quest: the same arm64 player, as a VR app.
+    target("quest", Android, false, true),
     target("windows-server", Windows, true),
     target("linux-server", Linux, true),
 }

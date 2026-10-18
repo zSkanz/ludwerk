@@ -111,3 +111,26 @@ first, and the export's check will grow the ones a build can be checked for.
 Publishing to the Meta Horizon Store (the maintainer's account and decision),
 Apple's visionOS (closed under R15), and full-body avatars from the head and
 hands (inverse kinematics is the animation category's, and a game's).
+
+## As built, first step (2026-10-18)
+
+- **The `quest` target** (§1) of `ludwerk build`, and a card for it in the
+  Export window: the Android player and its settings, with the Khronos
+  OpenXR loader the Android build already makes copied beside `libmain.so`
+  -- in the package and in the APK -- and the VR entries written into the
+  manifest. The entries are data in the Android template
+  (`platforms/android/player/xr-entries.xml`), three sections copied between
+  three pairs of marks in its manifest that a phone's build leaves empty:
+  head tracking, hand tracking, OpenXR's permissions and the `<queries>`
+  for the runtime; the Oculus and Khronos categories in the launcher's
+  intent filter; `com.oculus.supportedDevices`. The export refuses a
+  headset's build whose manifest lacks the Oculus category, and a project
+  without `[xr] enabled`.
+- `examples/48-xr-room` (§5) builds for it: an APK of 13.8 MB with
+  `lib/arm64-v8a/libopenxr_loader.so` and every entry above; its Android
+  build has neither.
+- **Not yet**: foveation and the target's default quality (§1, to be
+  measured on the device), the head and hands in a match (§2), Play in
+  headset (§3), recorded paths for the simulated headset (§4), and the
+  scene permission (with ADR 0247). Whether the APK starts in the headset
+  is the maintainer's to see.

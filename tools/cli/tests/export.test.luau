@@ -10,6 +10,7 @@
 ]]
 
 local assert = require("@std/test/assert")
+local fs = require("@std/fs")
 local test = require("@std/test")
 
 local android = require("../export/android")
@@ -145,12 +146,58 @@ test.suite("export", function(suite)
         assert.eq(android.manifestWith("<manifest></manifest>", {}), nil)
     end)
 
+    suite:case("a headset's manifest starts the game in the headset, and a phone's has none of it", function()
+        local template = table.concat({
+            "<manifest>",
+            "    <!-- engine:permissions -->",
+            "    <!-- /engine:permissions -->",
+            "    <!-- engine:xr-manifest -->",
+            "    <!-- /engine:xr-manifest -->",
+            "    <application>",
+            "        <!-- engine:xr-application -->",
+            "        <!-- /engine:xr-application -->",
+            "        <activity><intent-filter>",
+            "                <!-- engine:xr-categories -->",
+            "                <!-- /engine:xr-categories -->",
+            "        </intent-filter></activity>",
+            "    </application>",
+            "</manifest>",
+        }, "\n")
+        local entries = android.xrEntries(fs.readFileToString("platforms/android/player/xr-entries.xml"))
+        assert.that(entries ~= nil, "the template's xr-entries.xml has its three sections")
+        local headset = android.manifestWith(template, {}, entries) :: string
+        assert.that(android.startsInHeadset(headset), headset)
+        for _, entry in
+            {
+                "org.khronos.openxr.intent.category.IMMERSIVE_HMD",
+                "android.hardware.vr.headtracking",
+                "org.khronos.openxr.permission.OPENXR",
+                "org.khronos.openxr.runtime_broker",
+                "quest3|quest3s|questpro",
+            }
+        do
+            assert.that(string.find(headset, entry, 1, true) ~= nil, entry)
+        end
+        -- A phone's build of the headset's manifest empties the marks again.
+        local phone = android.manifestWith(headset, {}) :: string
+        assert.that(not android.startsInHeadset(phone), phone)
+        assert.that(string.find(phone, "openxr", 1, true) == nil, phone)
+        assert.eq(android.manifestWith(phone, {}), phone)
+        -- A template from before the headset's marks: a phone's build as
+        -- ever, and no headset's.
+        local older = "<manifest>\n    <!-- engine:permissions -->\n    <!-- /engine:permissions -->\n</manifest>"
+        assert.that(android.manifestWith(older, {}) ~= nil, "a phone's build of an older template")
+        assert.eq(android.manifestWith(older, {}, entries), nil)
+    end)
+
     suite:case("the targets, and v1's name for the first", function()
         local names: { string } = {}
         for _, target in targets.All do
             table.insert(names, target.name)
         end
-        assert.eq(table.concat(names, ","), "windows,linux,android,windows-server,linux-server")
+        assert.eq(table.concat(names, ","), "windows,linux,android,quest,windows-server,linux-server")
+        assert.that((targets.find("quest") :: targets.Target).xr, "quest is a headset's build")
+        assert.that(not (targets.find("android") :: targets.Target).xr, "android is a phone's build")
         assert.eq((targets.find("win64") :: targets.Target).name, "windows")
         assert.that((targets.find("linux-server") :: targets.Target).server, "linux-server is a server")
         assert.eq(targets.find("macos"), nil)

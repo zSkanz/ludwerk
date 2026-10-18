@@ -335,6 +335,10 @@ here.
   where it points. With hand tracking, a fingertip pushed into a button
   presses it. While a headset draws, the window shows its left eye, or
   nothing with `[xr] mirror = false`.
+- `ludwerk build --target=quest`, and the Export window's Meta Quest card,
+  build a game with `[xr] enabled` as an APK that runs standalone on the
+  Quest, starting in the headset. `examples/48-xr-room` is a room to try it
+  in: things to pick up and throw, a teleport, and a panel of buttons.
 - `@engine/xrcomfort` moves a player in a headset without making them sick:
   a teleport with an arc onto anything flat enough to stand on, snap or
   smooth turns, smooth movement with a vignette, a seated mode and height

@@ -11232,6 +11232,13 @@ void startStatus(ExportUi& ui)
     ui.statusProcess = platform::ChildProcess::start(ui.cli->command({"build", ui.root.string(), "--status"}), options);
 }
 
+// **An Android build**: a phone's, or the Quest's (ADR 0248 §1), which is the
+// same player with the same package, version and key.
+[[nodiscard]] bool androidTarget(std::string_view name)
+{
+    return name == "android" || name == "quest";
+}
+
 void startNextExport(ExportUi& ui)
 {
     if (ui.run || ui.queue.empty() || !ui.cli)
@@ -11244,14 +11251,14 @@ void startNextExport(ExportUi& ui)
     // in its own `dist/<target>`.
     if (ui.output[0] != '\0' && ui.queue.empty() && ui.finished.empty())
         arguments.push_back("--output=" + std::string(ui.output.data()));
-    if (target == "android" && ui.bumpVersionCode)
+    if (androidTarget(target) && ui.bumpVersionCode)
         arguments.emplace_back("--bump-version-code");
 
     platform::ChildProcess::Options options;
     options.workingDirectory = ui.cli->workingDirectory;
     // **The password goes in the child's environment**, never its command line
     // (ADR 0104 §3), and only for the export that signs with it.
-    if (target == "android" && ui.release && ui.password[0] != '\0')
+    if (androidTarget(target) && ui.release && ui.password[0] != '\0')
         options.environment.emplace_back("ENG_ANDROID_KEYSTORE_PASSWORD", std::string(ui.password.data()));
 
     ui.progress = ExportRun{};
@@ -11289,13 +11296,13 @@ void finishExport(ExportUi& ui)
         ui.recent = loadRecentExports(recentExportsFile(), ui.root);
         ui.celebrateAt = ImGui::GetTime();
         // The version code went up in the file, so the field follows it.
-        if (done.target == "android" && ui.bumpVersionCode) {
+        if (androidTarget(done.target) && ui.bumpVersionCode) {
             readExportSettings(ui);
             ui.bumpVersionCode = false;
         }
         // Remembered only once it has signed something: a password that did
         // not open the keystore is not worth keeping.
-        if (done.target == "android" && ui.release && ui.rememberPassword && ui.password[0] != '\0' && ui.cli) {
+        if (androidTarget(done.target) && ui.release && ui.rememberPassword && ui.password[0] != '\0' && ui.cli) {
             platform::ChildProcess::Options options;
             options.workingDirectory = ui.cli->workingDirectory;
             options.environment.emplace_back("ENG_ANDROID_KEYSTORE_PASSWORD", std::string(ui.password.data()));
@@ -11661,6 +11668,8 @@ void drawPlatformWindow(ExportUi& ui)
         return core::tr(ENG_TR("engine.editor.export_window.target.linux"));
     if (name == "android")
         return core::tr(ENG_TR("engine.editor.export_window.target.android"));
+    if (name == "quest")
+        return core::tr(ENG_TR("engine.editor.export_window.target.quest"));
     if (name == "windows-server")
         return core::tr(ENG_TR("engine.editor.export_window.target.windows_server"));
     return core::tr(ENG_TR("engine.editor.export_window.target.linux_server"));
@@ -11684,6 +11693,7 @@ void drawTargetCard(ExportUi& ui, std::string_view name, const IconAtlas* icons)
     // The platform's mark: a tile in its colour, with its initial.
     const ImU32 mark = name.starts_with("windows") ? IM_COL32(0, 120, 215, 255)
                        : name.starts_with("linux") ? IM_COL32(233, 84, 32, 255)
+                       : name == "quest"           ? IM_COL32(28, 110, 220, 255)
                                                    : IM_COL32(61, 220, 132, 255);
     const float tile = size.y - pad * 2.0f;
     draw->AddRectFilled(ImVec2(min.x + pad, min.y + pad), ImVec2(min.x + pad + tile, min.y + pad + tile), mark, 6.0f);
@@ -11713,7 +11723,7 @@ void drawTargetCard(ExportUi& ui, std::string_view name, const IconAtlas* icons)
         colour = ImGui::GetColorU32(themeColor(palette().warning));
     }
     else if (status->ready) {
-        state = name == "android" && !ui.phone.empty()
+        state = androidTarget(name) && !ui.phone.empty()
                     ? core::tr(ENG_TR("engine.editor.export_window.state.phone_connected"), {{"phone", ui.phone}})
                 : dedicated && !server ? core::tr(ENG_TR("engine.editor.export_window.state.client_joins"),
                                                   {{"server", std::string_view(ui.server.data())}})
@@ -11766,7 +11776,7 @@ void drawExportSettings(Editor& editor, ExportUi& ui, EditorDialogs& dialogs)
         if (ImGui::IsItemDeactivatedAfterEdit())
             writeExportSetting(ui, "export.linux.executable", core::tomlString(ui.linuxExecutable.data()));
     }
-    else if (ui.selected == "android") {
+    else if (androidTarget(ui.selected)) {
         ImGui::TextUnformatted(core::tr(ENG_TR("engine.editor.export_settings.package")));
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##package", config.id.c_str(), ui.package.data(), ui.package.size());
@@ -12102,7 +12112,7 @@ void drawExportWindow(Editor& editor, EditorDialogs& dialogs, const IconAtlas* i
         ImGui::PopStyleColor();
     }
 
-    std::vector<std::string> cards{"windows", "linux", "android"};
+    std::vector<std::string> cards{"windows", "linux", "android", "quest"};
     if (ui.multiplayer == 2) {
         cards.emplace_back("windows-server");
         cards.emplace_back("linux-server");
