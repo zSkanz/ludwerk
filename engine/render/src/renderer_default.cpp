@@ -1203,6 +1203,11 @@ private:
     core::usize shaderCount_ = 0;
 
     rhi::TextureHandle shadowMap_{};
+    // The fit a headset frame's first eye drew `shadowMap_` with, for the
+    // second (`ShadowView::reuse`). Not a view's: the two eyes are two views
+    // and one map.
+    ShadowCascades headsetShadowFit_{};
+    bool headsetShadowDrawn_ = false;
     // The local-light atlas and this frame's assignment of its tiles. Held
     // across frames only so the vector behind `localCandidates_` keeps its
     // capacity; nothing in either survives a frame.
@@ -9508,9 +9513,14 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // it. Held per renderer rather than globally, for the reason the
     // exposure and the environment chain are: this is the history of one view,
     // and two views in one process are two histories.
-    const ShadowCascades cascades = fitShadowCascades(fit, shadowFitted_ ? &shadowFit_ : nullptr);
+    // The second eye of a headset frame takes the first eye's fit and map.
+    const bool shadowReused = world.shadowView.has_value() && world.shadowView->reuse && headsetShadowDrawn_;
+    const ShadowCascades cascades =
+        shadowReused ? headsetShadowFit_ : fitShadowCascades(fit, shadowFitted_ ? &shadowFit_ : nullptr);
     shadowFit_ = cascades;
     shadowFitted_ = true;
+    headsetShadowFit_ = cascades;
+    headsetShadowDrawn_ = world.shadowView.has_value();
 
     // The foliage cull (ADR 0116), before any pass reads what it writes.
     cullFoliage(device, cmd, world, meshes);
@@ -9538,14 +9548,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // a phone was a depth target of a million texels cleared and stored for
     // every frame of a game with its shadows off.
     const u32 cascadesDrawn = world.environment.globalShadows ? settings_.shadowCascades : 0u;
+    // A map another eye of this frame drew is read, not drawn again.
+    const u32 cascadesRendered = shadowReused ? 0u : cascadesDrawn;
     cmd.pushDebugGroup("shadow");
-    if (cascadesDrawn != 0)
+    if (cascadesRendered != 0)
         cmd.beginRenderPass({
             .colorAttachments = {},
             .depthStencil = {.texture = shadowMap_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
             .debugName = "shadow",
         });
-    if (world.camera.valid && cascadesDrawn != 0) {
+    if (world.camera.valid && cascadesRendered != 0) {
         f32 splits[kShadowCascadeCount + 1]{};
         shadowSplits(world.camera.nearPlane, settings_.shadowDistance, kShadowSplitLambda, splits);
 
@@ -9556,7 +9568,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // gets the same answer as one that falls outside a cascade entirely.
         // `Lighting.GlobalShadows` off (ADR 0096) is no cascade drawn, and
         // every far plane out of reach.
-        for (u32 index = 0; index < cascadesDrawn; ++index) {
+        for (u32 index = 0; index < cascadesRendered; ++index) {
             const auto tile = static_cast<f32>(settings_.shadowTileResolution);
             const f32 x = static_cast<f32>(index & 1u) * tile;
             const f32 y = static_cast<f32>(index >> 1u) * tile;
@@ -9601,7 +9613,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 drawFoliage(cmd, world, meshes, cascades.viewProjection[index], FoliagePass::Shadow);
         }
     }
-    if (cascadesDrawn != 0)
+    if (cascadesRendered != 0)
         cmd.endRenderPass();
     cmd.popDebugGroup();
 
@@ -10063,6 +10075,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // sixteen, and the bytes High always sent.
         frame.environmentParams[3] =
             static_cast<f32>(settings_.measuredShadowTaps != 0 ? settings_.measuredShadowTaps : settings_.shadowTaps);
+        // **A standalone headset's tent** (minus one): four bilinear
+        // comparisons a texel and a half across. The disc's sixteen taps
+        // over a five-centimetre penumbra were a soft smear under a cube a
+        // player looks at from half a metre, and the most of a Quest's
+        // frame its shading took. A measurement's taps still say.
+        if (world.headsetEye && world.headsetLean && settings_.measuredShadowTaps == 0)
+            frame.environmentParams[3] = -1.0f;
         // `[debug] skip` (ADR 0171): zero unless a measurement asked.
         frame.clusterParams[3] =
             static_cast<f32>(settings_.measuredSkip | (settings_.shadowUnderCasters ? 0u : MeasureSkip::ShadowUnder));

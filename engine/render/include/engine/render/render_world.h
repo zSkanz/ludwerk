@@ -839,6 +839,10 @@ struct ShadowView
     f32 nearPlane = 0.1f;
     // `ShadowFit::firstSplit`.
     f32 firstSplit = 0.0f;
+    // **The map the frame's first eye drew**: the second eye's fit is the
+    // first's, so it draws no map of its own and reads that one. A Quest's
+    // GPU drew the same two cascades twice a frame.
+    bool reuse = false;
 };
 
 struct RenderWorld
@@ -855,7 +859,8 @@ struct RenderWorld
     bool headsetEye = false;
     bool headsetScreenEffects = false;
     // A standalone headset's eye -- the GPU is a phone's: no bloom, sun rays
-    // or depth of field, and two shadow cascades at most.
+    // or depth of field, two shadow cascades at most, and the sun's shadow
+    // filtered by a four-tap tent (`sampleCascade`).
     bool headsetLean = false;
     RenderEnvironment environment;
     // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a

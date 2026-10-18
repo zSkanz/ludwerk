@@ -10049,6 +10049,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             snapshot.headsetLean = true;
 #endif
                         }
+                        bool shadowMapDrawn = false;
                         for (core::u32 index = 0; index < 2; ++index) {
                             SplitPicture& picture = eyePictures[index];
                             if (!picture.texture.valid() || picture.width != headsetFrame.width ||
@@ -10091,7 +10092,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             // No jitter: an eye has no temporal anti-aliasing to
                             // gather it (`RenderWorld::headsetEye`).
                             const u64 eyeStarted = platform::nowNs();
+                            // The second eye reads the map the first drew.
+                            if (snapshot.shadowView.has_value())
+                                snapshot.shadowView->reuse = shadowMapDrawn;
                             renderer->render(*device, *cmd, eyeTarget, snapshot, meshCache);
+                            shadowMapDrawn = true;
                             eyePassMs += msSince(eyeStarted);
                             eyePasses += 1;
                             renderer->presentEye(*device, *cmd, picture.texture,

@@ -574,9 +574,15 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float texelWorld = CascadeTexelWorld[cascade];
     const float depthRange = max(CascadeDepthRange[cascade], 1e-3f);
 
+    // **A standalone headset's tent** (`EnvironmentParams.w` below nought):
+    // four bilinear comparisons, half a texel to each side, which is a tent
+    // three texels wide -- a millimetre or two of the first cascade, crisp
+    // and attached where a cube stands on a table, for four reads.
+    const bool tent = EnvironmentParams.w < 0.0f;
+
     // The kernel's reach in texels: the authored world penumbra over this
     // cascade's texel, never under a texel and a half and never over six.
-    const float radiusTexels = clamp(ShadowParams.x / max(texelWorld, 1e-6f), 1.5f, 6.0f);
+    const float radiusTexels = tent ? 1.5f : clamp(ShadowParams.x / max(texelWorld, 1e-6f), 1.5f, 6.0f);
 
     // Normal offset, sideways to the light only (the reference renderers' form):
     // the part of the normal that points along the light would move the lookup
@@ -629,6 +635,21 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float2 centre = tile + local * 0.5f;
     const float reference = shadowReference(atlas, pointSampler, centre, lowest, highest, ndc.z, texelWorld, depthRange,
                                             radiusTexels, nol, cascade, normal, atlasSize);
+
+    [branch]
+    if (tent)
+    {
+        const float2 apart = 0.5f * texelUv;
+        float lit = shadowTapPcf(atlas, pointSampler, clamp(centre + float2(-apart.x, -apart.y), lowest, highest),
+                                 reference, atlasSize);
+        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(apart.x, -apart.y), lowest, highest), reference,
+                            atlasSize);
+        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(-apart.x, apart.y), lowest, highest), reference,
+                            atlasSize);
+        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(apart.x, apart.y), lowest, highest), reference,
+                            atlasSize);
+        return lit * 0.25f;
+    }
 
     // **How many taps is the level's to say** (ADR 0172): `EnvironmentParams.w`
     // -- four at Low, eight at Medium, and zero for the sixteen of High and

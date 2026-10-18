@@ -33,7 +33,12 @@ for a headset.
 is fitted from the head with a view as wide as the two eyes together, so
 both eyes see the same shadow, texel for texel. Its first cascade ends two
 metres out, where a player looks at what they hold and what is on the table
-in front of them. Occlusion, contact shadows and the screen's reflections and
+in front of them. The map is drawn once a frame, and the second eye reads
+what the first drew. A standalone headset filters it with four reads, which
+gives an edge two or three millimetres wide that stays attached where a cube
+stands on a table. A flat game's sixteen-read filter, softened over five
+centimetres, smeared it at half a metre and took most of the GPU's frame.
+Occlusion, contact shadows and the screen's reflections and
 bounced light are not drawn in the eyes. Each eye would mark them from its
 own picture, so the two would disagree, which a pair of eyes sees as
 shimmer. `screen_effects = true` draws them anyway. A game usually sets
