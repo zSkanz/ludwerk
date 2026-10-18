@@ -4638,7 +4638,7 @@ private:
         // A chassis at rest is asleep, and a sleeping body is not stepped:
         // the throttle or the wheel wakes it, and so does any input that
         // changes -- a brake let off on a hill rolls the car away. **A brake
-        // held does not** (D677): a car asleep and braked has nothing to do,
+        // held does not**: a car asleep and braked has nothing to do,
         // and one woken every tick it was braked never slept -- the solver's
         // friction at walking pace let it creep down a 10 degree slope at one
         // to two centimetres a second for as long as it stood. Compared with

@@ -951,7 +951,7 @@ TEST_CASE("a stopped car two centimetres off the authority's is settled onto it 
     CHECK(after < 0.001);
 }
 
-TEST_CASE("a braked car comes to rest and stays there, and rolls when let off on a slope (D677)")
+TEST_CASE("a braked car comes to rest and stays there, and rolls when let off on a slope")
 {
     // Driven, then braked: two seconds after slowing to a walk it is asleep
     // and stays still -- on a 10 degree slope too, where a car woken by its
