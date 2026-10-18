@@ -384,12 +384,15 @@ task.spawn(function()
     -- own: what the rules allow for a long frame, they allow wherever it fell.
     hitches = math.max(hitches, runLong + (serverLongAtEnd - serverLongAtStart))
     task.wait(1)
-
-    local where = Workspace:WaitForChild("Where") :: RemoteFunction
+    -- **Where the authority's car is, at the same tick**: the engine's own
+    -- measure (`PredictedDrift`, this car against the authority's at the tick
+    -- an answer is for). Its place now against the authority's place answered
+    -- a round trip later measured a car still moving as one stopped apart --
+    -- 4.6 mm at 1.7 cm/s and 300 ms, 12.3 mm once -- while the two at one
+    -- tick were never more than 3 mm apart.
     local stop = 0
     for _ = 1, 11 do
-        local server = where:InvokeServerAsync() :: vector
-        stop = math.max(stop, vector.magnitude(car.Position - server))
+        stop = math.max(stop, NetworkService:GetStats().PredictedDrift)
         task.wait(0.1)
     end
     braking = false

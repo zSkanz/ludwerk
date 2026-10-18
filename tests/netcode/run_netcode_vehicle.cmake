@@ -9,7 +9,8 @@
 #   - a straight and a corner are not corrected (one where the link lost the
 #     tick a change began, and one more for each long frame either machine
 #     had);
-#   - stopped, the replica's car is where the authority's is, to a centimetre;
+#   - stopped, the replica's car is where the authority's is, to a centimetre,
+#     at the same tick (`PredictedDrift`, not two places a round trip apart);
 #   - the furthest any correction moved it is in the table: what a
 #     correction looks like when there is one;
 #   - the car as it is drawn never jumps: frame to frame, its drawn place

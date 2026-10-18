@@ -3234,12 +3234,18 @@ TEST_CASE("an action's name crosses once, an intent that overtakes it waits for 
     CHECK(held().empty());
     name("Jump");
     std::string seen;
+    core::u64 seenTick = 0;
     for (core::u64 at = 2; at < 12 && seen.empty(); ++at) {
         send(first + at, false);
         match.authority->receive(match.server.world, match.server.workspace);
         seen = held();
+        seenTick = player->intentTick;
     }
     CHECK(seen == "Jump");
+    // **On its own tick**: the name came while that tick was still queued,
+    // so the press is part of the tick it was made in -- not carried to a
+    // later one, which is what a name lost for longer than the queue costs.
+    CHECK(seenTick == first);
 
     // Given again under another name, the number still means what it did:
     // a peer cannot make one action read as another.

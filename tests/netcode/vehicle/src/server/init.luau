@@ -123,11 +123,6 @@ remote("Jumps").OnServerInvoke = function(player: Player, start: boolean): numbe
     return if watch then watch.most else 0
 end
 
-remote("Where").OnServerInvoke = function(player: Player): vector
-    local car = cars[player]
-    return if car then car.Position else vector.zero
-end
-
 -- **A parked car in the way** (`Condition.Touch`): twenty metres ahead of
 -- the asker's, nobody's, which the bot drives into at a walking pace.
 remote("Park").OnServerInvoke = function(player: Player): boolean

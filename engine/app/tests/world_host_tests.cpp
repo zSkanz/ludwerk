@@ -860,6 +860,97 @@ TEST_CASE("a predicted car turned off the authority's heading is turned back by 
     CHECK(std::abs(after) < 0.3f * std::abs(before));
 }
 
+TEST_CASE("a stopped car two centimetres off the authority's is settled onto it by the answers")
+{
+    // Under `VehicleCorrectionMetres` a car is not corrected but pulled, a
+    // fifth of the way each answer. Stopped, it must end where the authority
+    // has it -- not keep whatever offset it stopped with: the vehicle gate at
+    // 300 ms once stopped 11 mm from the authority's car with no correction.
+    // Here a parked car is moved 2 cm on this machine, and each answer says
+    // the authority's car is where it was.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local floor = Instance.new("Part")
+        floor.Anchored = true
+        floor.Size = vector.create(400, 1, 400)
+        floor.Position = vector.create(0, -0.5, 0)
+        floor.Parent = workspace
+        local walker = Instance.new("CharacterBody")
+        walker.Name = "Walker"
+        walker.Position = vector.create(-8, 3, 0)
+        walker.Parent = workspace
+
+        local car = Instance.new("Part")
+        car.Name = "Car"
+        car.Size = vector.create(2, 0.6, 4)
+        car.Position = vector.create(0, 1.2, 0)
+        car.Parent = workspace
+        local controller = Instance.new("VehicleController")
+        controller.Name = "Controller"
+        controller.Brake = 1
+        controller.Parent = car
+        for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+            local front = corner[2] < 0
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+            hub.Parent = car
+            local wheel = Instance.new("VehicleWheel")
+            wheel.Attachment = hub
+            wheel.MaxSteerAngle = if front then 30 else 0
+            wheel.Driven = not front
+            wheel.Parent = controller
+        end
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    // Settled on its wheels, and still.
+    for (int tick = 0; tick < 240; ++tick)
+        host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    scene::World& world = host.world();
+    const core::InstanceId walker = world.findFirstChild(host.workspace(), world.atoms().lookup("Walker"));
+    const core::InstanceId car = world.findFirstChild(host.workspace(), world.atoms().lookup("Car"));
+    REQUIRE(walker.valid());
+    REQUIRE(car.valid());
+    scene::PhysicsSync* physics = host.physics();
+    REQUIRE(physics != nullptr);
+    const core::CFrameD resting = world.parts().find(car)->cframe;
+    const auto off = [&]() {
+        const core::DVec3 apart = world.parts().find(car)->cframe.position - resting.position;
+        return std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z);
+    };
+
+    // This machine's car two centimetres along, still on its wheels.
+    world.parts().find(car)->cframe.position.x += 0.02;
+    host.tick();
+    const core::f64 before = off();
+    MESSAGE("off by ", before * 1000.0, " mm");
+    REQUIRE(before > 0.015);
+
+    for (int answer = 0; answer < 40; ++answer) {
+        host.tick();
+        const std::optional<scene::CharacterCommand> command = physics->lastCommand(walker);
+        REQUIRE(command.has_value());
+        const core::u64 at = 3000 + static_cast<core::u64>(answer);
+        physics->remember(at);
+        scene::CharacterReplayStart start;
+        start.tick = at;
+        start.transform = world.parts().find(walker)->cframe;
+        start.verticalVelocity = world.characterBodies().find(walker)->verticalVelocity;
+        start.grounded = world.characterBodies().find(walker)->grounded;
+        scene::CharacterReplayStart::Body authority;
+        authority.id = car;
+        authority.cframe = resting;
+        start.bodies.push_back(authority);
+        const std::vector<scene::CharacterCommand> one{*command};
+        (void)physics->replay(walker, start, one);
+    }
+    const core::f64 after = off();
+    MESSAGE("after forty answers ", after * 1000.0, " mm");
+    CHECK(after < 0.001);
+}
+
 TEST_CASE("a replay from the tick a predicted touch launched or moved the character is the live step again")
 {
     // A pad's predicted touch runs after the step solves, and what it writes --
