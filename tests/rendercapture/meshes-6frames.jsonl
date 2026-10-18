@@ -28,12 +28,12 @@
 {"op":"createShader","shader":18,"stage":"Fragment","bytes":536,"samplers":0,"uniformBuffers":0,"name":"shadow_instanced"}
 {"op":"createShader","shader":19,"stage":"Vertex","bytes":8060,"samplers":0,"uniformBuffers":1,"name":"pbr_instanced"}
 {"op":"createShader","shader":20,"stage":"Fragment","bytes":101672,"samplers":15,"uniformBuffers":2,"name":"pbr_instanced"}
-{"op":"createShader","shader":21,"stage":"Vertex","bytes":1368,"samplers":0,"uniformBuffers":0,"name":"ssao"}
-{"op":"createShader","shader":22,"stage":"Fragment","bytes":7312,"samplers":1,"uniformBuffers":1,"name":"ssao"}
+{"op":"createShader","shader":21,"stage":"Vertex","bytes":1416,"samplers":0,"uniformBuffers":0,"name":"ssao"}
+{"op":"createShader","shader":22,"stage":"Fragment","bytes":7680,"samplers":1,"uniformBuffers":1,"name":"ssao"}
 {"op":"createShader","shader":23,"stage":"Vertex","bytes":1424,"samplers":0,"uniformBuffers":0,"name":"ssao_blur"}
 {"op":"createShader","shader":24,"stage":"Fragment","bytes":5088,"samplers":2,"uniformBuffers":1,"name":"ssao_blur"}
-{"op":"createShader","shader":25,"stage":"Vertex","bytes":1488,"samplers":0,"uniformBuffers":0,"name":"contact_shadow"}
-{"op":"createShader","shader":26,"stage":"Fragment","bytes":7692,"samplers":1,"uniformBuffers":1,"name":"contact_shadow"}
+{"op":"createShader","shader":25,"stage":"Vertex","bytes":1540,"samplers":0,"uniformBuffers":0,"name":"contact_shadow"}
+{"op":"createShader","shader":26,"stage":"Fragment","bytes":7920,"samplers":1,"uniformBuffers":1,"name":"contact_shadow"}
 {"op":"createShader","shader":27,"stage":"Vertex","bytes":1328,"samplers":0,"uniformBuffers":0,"name":"bloom_down"}
 {"op":"createShader","shader":28,"stage":"Fragment","bytes":4368,"samplers":1,"uniformBuffers":1,"name":"bloom_down"}
 {"op":"createShader","shader":29,"stage":"Vertex","bytes":1328,"samplers":0,"uniformBuffers":0,"name":"bloom_up"}
@@ -459,7 +459,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -493,7 +493,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"5ccabc98d201ec75"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"f66a0e1b908366f5"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -1178,7 +1178,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -1212,7 +1212,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"0cefe1d84d501607"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"3eca82829396d987"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -1888,7 +1888,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -1922,7 +1922,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"9ea78c13a2b9b3ed"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"a9b4d1d04c4cea6d"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -2592,7 +2592,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -2626,7 +2626,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"562ffebf636d3957"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"059be2b48ff9a4d7"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -3296,7 +3296,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -3330,7 +3330,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"bba927fe59dad9db"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"4de5948dec30875b"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -4000,7 +4000,7 @@
 {"op":"setPipeline","pipeline":20}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":640.0000,"h":360.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":640,"h":360}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":48,"digest":"49eb7e352ec34a86"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":64,"digest":"174089b3cbce0d86"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}
@@ -4034,7 +4034,7 @@
 {"op":"setPipeline","pipeline":22}
 {"op":"setViewport","x":0.0000,"y":0.0000,"w":1280.0000,"h":720.0000,"minDepth":0.0000,"maxDepth":1.0000}
 {"op":"setScissor","x":0,"y":0,"w":1280,"h":720}
-{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":80,"digest":"999c63e1fb83469e"}
+{"op":"bindUniforms","stage":"Fragment","slot":0,"bytes":96,"digest":"1872e48a66a2159e"}
 {"op":"bindTextures","stage":"Fragment","firstSlot":0,"count":1}
 {"op":"textureBinding","texture":16,"sampler":5}
 {"op":"draw","vertices":3,"instances":1,"firstVertex":0,"firstInstance":0}

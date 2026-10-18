@@ -28,12 +28,12 @@
 {"op":"createShader","shader":18,"stage":"Fragment","bytes":536,"samplers":0,"uniformBuffers":0,"name":"shadow_instanced"}
 {"op":"createShader","shader":19,"stage":"Vertex","bytes":8060,"samplers":0,"uniformBuffers":1,"name":"pbr_instanced"}
 {"op":"createShader","shader":20,"stage":"Fragment","bytes":101672,"samplers":15,"uniformBuffers":2,"name":"pbr_instanced"}
-{"op":"createShader","shader":21,"stage":"Vertex","bytes":1368,"samplers":0,"uniformBuffers":0,"name":"ssao"}
-{"op":"createShader","shader":22,"stage":"Fragment","bytes":7312,"samplers":1,"uniformBuffers":1,"name":"ssao"}
+{"op":"createShader","shader":21,"stage":"Vertex","bytes":1416,"samplers":0,"uniformBuffers":0,"name":"ssao"}
+{"op":"createShader","shader":22,"stage":"Fragment","bytes":7680,"samplers":1,"uniformBuffers":1,"name":"ssao"}
 {"op":"createShader","shader":23,"stage":"Vertex","bytes":1424,"samplers":0,"uniformBuffers":0,"name":"ssao_blur"}
 {"op":"createShader","shader":24,"stage":"Fragment","bytes":5088,"samplers":2,"uniformBuffers":1,"name":"ssao_blur"}
-{"op":"createShader","shader":25,"stage":"Vertex","bytes":1488,"samplers":0,"uniformBuffers":0,"name":"contact_shadow"}
-{"op":"createShader","shader":26,"stage":"Fragment","bytes":7692,"samplers":1,"uniformBuffers":1,"name":"contact_shadow"}
+{"op":"createShader","shader":25,"stage":"Vertex","bytes":1540,"samplers":0,"uniformBuffers":0,"name":"contact_shadow"}
+{"op":"createShader","shader":26,"stage":"Fragment","bytes":7920,"samplers":1,"uniformBuffers":1,"name":"contact_shadow"}
 {"op":"createShader","shader":27,"stage":"Vertex","bytes":1328,"samplers":0,"uniformBuffers":0,"name":"bloom_down"}
 {"op":"createShader","shader":28,"stage":"Fragment","bytes":4368,"samplers":1,"uniformBuffers":1,"name":"bloom_down"}
 {"op":"createShader","shader":29,"stage":"Vertex","bytes":1328,"samplers":0,"uniformBuffers":0,"name":"bloom_up"}
