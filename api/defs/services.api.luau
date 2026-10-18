@@ -1835,6 +1835,17 @@ local Classes: { Schema.Class } = {
                     .. "down out of sight, or asleep.",
             },
             {
+                Name = "GetHandJoints",
+                Parameters = { { Name = "hand", Type = "Enum.XRHand" } },
+                Returns = { "{ CFrame }?" },
+                ThreadSafety = "Unsafe",
+                Doc = "Returns the 26 joints of a hand tracked as a hand, with no controller in it, in the play "
+                    .. "space, or nil. The order is OpenXR's: the palm, the wrist, then each finger from the thumb "
+                    .. "out, from its root to its tip. A hand tracked this way is also held at its palm "
+                    .. "(`GetHandCFrame`), and a pinch of its thumb and index finger is the `XRPinchLeft` or "
+                    .. "`XRPinchRight` key. `[xr] hands = false` in `project.toml` turns hands off.",
+            },
+            {
                 Name = "Recenter",
                 Parameters = {},
                 Returns = {},

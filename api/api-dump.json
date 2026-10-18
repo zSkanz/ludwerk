@@ -11513,6 +11513,17 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "GetHandJoints",
+          "Parameters": [
+            {
+              "Name": "hand",
+              "Type": "Enum.XRHand"
+            }
+          ],
+          "Returns": ["{ CFrame }?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetHeadCFrame",
           "Parameters": [],
           "Returns": ["CFrame"],

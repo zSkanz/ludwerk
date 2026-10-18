@@ -12,6 +12,7 @@ engine_add_module(app
         src/external_changes.cpp
         src/managed_world.cpp
         src/simulated_headset.cpp
+        src/headset_hands.cpp
         src/manager_link.cpp
         src/manager_main.cpp
         src/admin_channel.cpp
@@ -394,6 +395,7 @@ engine_add_module_tests(app
         tests/frame_pacing_tests.cpp
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp
+        tests/headset_hands_tests.cpp
         tests/foliage_editor_tests.cpp
         tests/script_sides_tests.cpp
         tests/script_matrix_tests.cpp
@@ -688,13 +690,13 @@ if(ENG_BUILD_TESTS)
                 --rhi=null --xr=simulated)
     set_tests_properties(xr_service_simulated PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "\\[xr\\] enabled=true head=1.60 left=false.*\\[xr\\] simulated=true head=1.00,1.70,2.00 left=true 1.20 area=3.00x3.00 state=Focused.*\\[xr\\] recentred=-?0.00,1.70,-?0.00 look=-?0.00,-1.00 seated=0.10 space=Seated moves=true states=Focused"
+            "\\[xr\\] enabled=true head=1.60 left=false.*\\[xr\\] simulated=true head=1.00,1.70,2.00 left=true 1.20 area=3.00x3.00 state=Focused.*\\[xr\\] recentred=-?0.00,1.70,-?0.00 look=-?0.00,-1.00 seated=0.10 space=Seated moves=true states=Focused joints=true"
         TIMEOUT 60)
     add_test(NAME xr_service_flat
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=50 --exit --rhi=null)
     set_tests_properties(xr_service_flat PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "\\[xr\\] enabled=false head=0.00 left=false.*\\[xr\\] simulated=false head=0.00,0.00,0.00 left=false 0.00 area=nil state=None.*\\[xr\\] recentred=0.00,0.00,0.00 look=-?0.00,-1.00 seated=0.00 space=Seated moves=false states=\n"
+            "\\[xr\\] enabled=false head=0.00 left=false.*\\[xr\\] simulated=false head=0.00,0.00,0.00 left=false 0.00 area=nil state=None.*\\[xr\\] recentred=0.00,0.00,0.00 look=-?0.00,-1.00 seated=0.00 space=Seated moves=false states= joints=true"
         TIMEOUT 60)
 
     # **The render half of the frame runs headless**: a Render-rate

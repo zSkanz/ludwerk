@@ -5178,6 +5178,12 @@ declare extern type XRService extends Instance with
     --- Whether the headset knows where this hand is now: false when its controller is put down out of
     --- sight, or asleep.
     function IsHandTracked(self, hand: EnumXRHand): boolean
+    --- Returns the 26 joints of a hand tracked as a hand, with no controller in it, in the play space,
+    --- or nil. The order is OpenXR's: the palm, the wrist, then each finger from the thumb out, from
+    --- its root to its tip. A hand tracked this way is also held at its palm (`GetHandCFrame`), and a
+    --- pinch of its thumb and index finger is the `XRPinchLeft` or `XRPinchRight` key. `[xr] hands =
+    --- false` in `project.toml` turns hands off.
+    function GetHandJoints(self, hand: EnumXRHand): { CFrame }?
     --- Makes where the head is now the play space's origin, facing where it faces. When `Space` is
     --- `Standing` the origin stays at the floor's height. The poses after it, and the picture, are
     --- measured from there. Nothing with no headset.

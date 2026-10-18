@@ -5,6 +5,7 @@
 #include <SDL3/SDL_gpu.h>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "engine/rhi/xr.h"
 
@@ -26,6 +27,10 @@ struct XrDeviceAsk
 {
     u64 instance = 0;
     u64 system = 0;
+    // The extensions asked of the runtime beyond SDL's own, each one it
+    // lists: an instance asked for one it does not have is not made.
+    std::vector<const char*> extensions;
+    bool handTracking = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

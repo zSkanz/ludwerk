@@ -647,6 +647,10 @@ struct EngineState
         core::CFrameD head;
         std::array<core::CFrameD, 2> hands{};
         std::array<bool, 2> handsTracked{};
+        // **Each hand's 26 joints** (ADR 0245 §4), where it is tracked as a
+        // hand -- no controller in it -- in OpenXR's order.
+        std::array<std::array<core::CFrameD, 26>, 2> joints{};
+        std::array<bool, 2> jointsTracked{};
         std::array<f32, 2> vibration{};
         // `XRService.Space` (`Enum.XRSpace`) and `SessionState`
         // (`Enum.XRSessionState`), and whether the headset is the simulated

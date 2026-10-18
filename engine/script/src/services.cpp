@@ -2799,6 +2799,23 @@ int xrServiceIsHandTracked(lua_State* L)
     return 1;
 }
 
+int xrServiceGetHandJoints(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const usize hand = checkXrHand(L, 2);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    if (!headset.enabled || !headset.jointsTracked[hand]) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, static_cast<int>(headset.joints[hand].size()), 0);
+    for (usize joint = 0; joint < headset.joints[hand].size(); ++joint) {
+        pushCFrame(L, headset.joints[hand][joint]);
+        lua_rawseti(L, -2, static_cast<int>(joint + 1));
+    }
+    return 1;
+}
+
 int xrServiceRecenter(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -3885,6 +3902,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "GetHeadCFrame", xrServiceGetHeadCFrame},
     {"XRService", "GetHandCFrame", xrServiceGetHandCFrame},
     {"XRService", "IsHandTracked", xrServiceIsHandTracked},
+    {"XRService", "GetHandJoints", xrServiceGetHandJoints},
     {"XRService", "Recenter", xrServiceRecenter},
     {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},
     {"XRService", "SimulatePose", xrServiceSimulatePose},

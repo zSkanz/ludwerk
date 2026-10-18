@@ -65,6 +65,10 @@ struct XrCalls
     PFN_xrCreateActionSpace createActionSpace = nullptr;
     PFN_xrLocateSpace locateSpace = nullptr;
     PFN_xrApplyHapticFeedback applyHaptics = nullptr;
+    // XR_EXT_hand_tracking's, where it was asked for and given.
+    PFN_xrCreateHandTrackerEXT createHandTracker = nullptr;
+    PFN_xrDestroyHandTrackerEXT destroyHandTracker = nullptr;
+    PFN_xrLocateHandJointsEXT locateHandJoints = nullptr;
 
     [[nodiscard]] bool load(XrInstance instance)
     {
@@ -110,6 +114,22 @@ struct XrCalls
         get("xrLocateSpace", locateSpace);
         get("xrApplyHapticFeedback", applyHaptics);
         return all;
+    }
+
+    void loadHands(XrInstance instance)
+    {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        if (getProc == nullptr)
+            return;
+        const auto get = [&](const char* name, auto& out) {
+            PFN_xrVoidFunction found = nullptr;
+            if (XR_FAILED(getProc(instance, name, &found)))
+                found = nullptr;
+            out = reinterpret_cast<std::remove_reference_t<decltype(out)>>(found);
+        };
+        get("xrCreateHandTrackerEXT", createHandTracker);
+        get("xrDestroyHandTrackerEXT", destroyHandTracker);
+        get("xrLocateHandJointsEXT", locateHandJoints);
     }
 };
 
@@ -206,12 +226,16 @@ struct EyeSwapchain
 class OpenXrHeadset final : public IHeadset
 {
 public:
-    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks))
+    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
     {
+        for (const XrHandTrackerEXT tracker : m_handTrackers) {
+            if (tracker != XR_NULL_HANDLE && m_calls.destroyHandTracker != nullptr)
+                (void)m_calls.destroyHandTracker(tracker);
+        }
         for (const XrSpace space : m_handSpaces) {
             if (space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
                 (void)m_calls.destroySpace(space);
@@ -245,8 +269,14 @@ public:
         if (XR_SUCCEEDED(m_calls.getInstanceProperties(m_instance, &instance)))
             m_runtime = instance.runtimeName;
         auto system = made<XrSystemProperties>(XR_TYPE_SYSTEM_PROPERTIES);
+        auto tracking = made<XrSystemHandTrackingPropertiesEXT>(XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT);
+        if (m_handTracking)
+            system.next = &tracking;
         if (XR_SUCCEEDED(m_calls.getSystemProperties(m_instance, m_system, &system)))
             m_systemName = system.systemName;
+        // The runtime knows the extension; this headset may still have no
+        // cameras for hands.
+        m_handTracking = m_handTracking && tracking.supportsHandTracking == XR_TRUE;
 
         // **Two eyes**, at the size the runtime recommends for each.
         u32 count = 0;
@@ -299,6 +329,17 @@ public:
         // that refuses the set -- is still drawn to.
         if (!openControllers())
             core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_no_controllers"));
+        // **The hands** (ADR 0245 §4), where the headset tracks them.
+        if (m_handTracking) {
+            m_calls.loadHands(m_instance);
+            for (usize hand = 0; hand < 2 && m_calls.createHandTracker != nullptr; ++hand) {
+                auto info = made<XrHandTrackerCreateInfoEXT>(XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT);
+                info.hand = hand == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+                info.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+                if (XR_FAILED(m_calls.createHandTracker(m_session, &info, &m_handTrackers[hand])))
+                    m_handTrackers[hand] = XR_NULL_HANDLE;
+            }
+        }
 
         // **An sRGB colour format the runtime takes**, its own order first:
         // the engine's last pass writes display colour, as it does a window.
@@ -479,6 +520,31 @@ public:
             auto location = made<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
             if (XR_SUCCEEDED(m_calls.locateSpace(m_headSpace, m_space, when, &location)))
                 input.head = poseOf(location);
+        }
+        // Each hand's joints, where it is tracked as a hand now.
+        for (usize hand = 0; hand < 2; ++hand) {
+            if (m_handTrackers[hand] == XR_NULL_HANDLE || m_calls.locateHandJoints == nullptr)
+                continue;
+            std::array<XrHandJointLocationEXT, HandJointCount> located{};
+            auto locations = made<XrHandJointLocationsEXT>(XR_TYPE_HAND_JOINT_LOCATIONS_EXT);
+            locations.jointCount = static_cast<uint32_t>(located.size());
+            locations.jointLocations = located.data();
+            auto info = made<XrHandJointsLocateInfoEXT>(XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT);
+            info.baseSpace = m_space;
+            info.time = when;
+            if (XR_FAILED(m_calls.locateHandJoints(m_handTrackers[hand], &info, &locations)) ||
+                locations.isActive != XR_TRUE)
+                continue;
+            const XrSpaceLocationFlags known =
+                XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+            for (usize joint = 0; joint < HandJointCount; ++joint) {
+                const XrHandJointLocationEXT& one = located[joint];
+                HeadsetPose& pose = input.joints[hand][joint];
+                pose.valid = (one.locationFlags & known) == known;
+                pose.position = {one.pose.position.x, one.pose.position.y, one.pose.position.z};
+                pose.orientation = {one.pose.orientation.x, one.pose.orientation.y, one.pose.orientation.z,
+                                    one.pose.orientation.w};
+            }
         }
         if (m_actionSet == XR_NULL_HANDLE)
             return;
@@ -702,6 +768,10 @@ private:
     std::array<XrPath, 2> m_hands{};
     // Grip then aim, each left then right.
     std::array<XrSpace, 4> m_handSpaces{};
+    // Whether the runtime was asked for hand tracking and the headset has
+    // it, and each hand's tracker.
+    bool m_handTracking = false;
+    std::array<XrHandTrackerEXT, 2> m_handTrackers{};
     std::array<EyeSwapchain, 2> m_eyes{};
     std::array<XrView, 2> m_views{};
     std::string m_runtime;
@@ -719,6 +789,38 @@ private:
 
 void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
 {
+    // **The extensions the runtime lists, of those asked**: the list is read
+    // through the loader before any instance exists.
+    extensions.clear();
+    handTracking = false;
+    if (request.hands && SDL_OpenXR_LoadLibrary()) {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        PFN_xrVoidFunction found = nullptr;
+        if (getProc != nullptr &&
+            XR_SUCCEEDED(getProc(XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties", &found)) &&
+            found != nullptr) {
+            const auto enumerate = reinterpret_cast<PFN_xrEnumerateInstanceExtensionProperties>(found);
+            uint32_t count = 0;
+            if (XR_SUCCEEDED(enumerate(nullptr, 0, &count, nullptr)) && count > 0) {
+                std::vector<XrExtensionProperties> listed(count,
+                                                          made<XrExtensionProperties>(XR_TYPE_EXTENSION_PROPERTIES));
+                if (XR_SUCCEEDED(enumerate(nullptr, count, &count, listed.data()))) {
+                    for (const XrExtensionProperties& one : listed) {
+                        if (std::string_view{one.extensionName} == XR_EXT_HAND_TRACKING_EXTENSION_NAME)
+                            handTracking = true;
+                    }
+                }
+            }
+        }
+        SDL_OpenXR_UnloadLibrary();
+    }
+    if (handTracking)
+        extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    if (!extensions.empty()) {
+        SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
+                              static_cast<Sint64>(extensions.size()));
+        SDL_SetPointerProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_NAMES_POINTER, extensions.data());
+    }
     SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_ENABLE_BOOLEAN, true);
     SDL_SetPointerProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_INSTANCE_POINTER, &instance);
     SDL_SetPointerProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_SYSTEM_ID_POINTER, &system);
@@ -735,8 +837,9 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
 {
     if (!ask.ready())
         return nullptr;
-    auto headset = std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance),
-                                                   static_cast<XrSystemId>(ask.system), std::move(hooks));
+    auto headset =
+        std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
+                                        std::move(hooks), ask.handTracking);
     if (!headset->open())
         return nullptr;
     return headset;

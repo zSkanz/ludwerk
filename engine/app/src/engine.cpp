@@ -3,6 +3,7 @@
 #include "engine/app/admin_channel.h"
 #include "engine/app/admin_server.h"
 #include "engine/app/editor_drive.h"
+#include "engine/app/headset_hands.h"
 #include "engine/app/health_server.h"
 #include "engine/app/managed_world.h"
 #include "engine/app/match_keys.h"
@@ -1636,7 +1637,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                    .driverIfSameCard = gpuDriver.byDefault,
                                                    .xr = {.enabled = options.xr && !options.headless,
                                                           .application = options.xrApplication,
-                                                          .applicationVersion = 0}},
+                                                          .applicationVersion = 0,
+                                                          .hands = options.xrHands}},
                                                   &error);
     if (device == nullptr)
         return error;
@@ -1984,6 +1986,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // window is -- its own picture, its own history -- and then copied into
     // the runtime's image. Their views beside the split screen's.
     std::array<SplitPicture, 2> eyePictures;
+    HandPinches handPinches;
     constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
     // The engine's own, when asked for (ADR 0248 §4); gone before the device.
     std::unique_ptr<SimulatedHeadset> simulatedHeadset =
@@ -7845,6 +7848,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             if (headsetBegun) {
                 rhi::HeadsetInput read;
                 headset->readInput(read);
+                // The hands themselves: a palm where no controller is held,
+                // and a pinch as its key.
+                readHands(read, handPinches, options.xrHands);
                 host->input().setHeadsetKeys(read.keys);
                 const auto cframeOf = [](const rhi::HeadsetPose& pose) {
                     return core::CFrameD{core::DVec3{static_cast<f64>(pose.position[0]),
@@ -7875,6 +7881,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     }
                 }
                 for (core::u32 hand = 0; hand < 2; ++hand) {
+                    const rhi::HeadsetPose& palm = read.joints[hand][rhi::HandJointPalm];
+                    seen.jointsTracked[hand] = palm.valid;
+                    if (palm.valid) {
+                        for (core::usize joint = 0; joint < rhi::HandJointCount; ++joint)
+                            seen.joints[hand][joint] = seen.recenter * cframeOf(read.joints[hand][joint]);
+                    }
                     seen.handsTracked[hand] = read.grip[hand].valid;
                     if (read.grip[hand].valid) {
                         const core::CFrameD grip = seen.recenter * cframeOf(read.grip[hand]);

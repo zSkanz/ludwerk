@@ -155,3 +155,21 @@ to a game without a special agreement), and full-body tracking.
   in the play space the script reads; the simulated headset is seated 1.6 m
   under its standing origin and has a room of 3 by 3 metres.
 - **Not yet**: hand tracking and the pinches.
+
+## As built, third step (2026-10-18)
+
+- **Hands** (§4): `XR_EXT_hand_tracking` is asked of the runtime only when
+  its loader lists it -- an instance asked for an extension the runtime
+  lacks is not made at all -- and used only where the headset says it
+  tracks hands. Each hand's 26 joints are located in the play space at the
+  frame's display time, and `GetHandJoints` returns them, recentred like
+  every other pose.
+- What the host makes of them is apart from the frame loop
+  (`app::readHands`) and tested with made-up hands: a hand with no
+  controller is held at its palm (`GetHandCFrame`, the grip and the aim),
+  and its thumb and index tips closer than 2 cm are a pinch until they are
+  3.5 cm apart -- the `XRPinchLeft` and `XRPinchRight` keys. `[xr] hands =
+  false` drops the joints.
+- **Not yet**: a recorded hand for the simulated headset (ADR 0248 §4's
+  paths); the pinch is proved on made-up joints, and on the Quest 3 by the
+  maintainer.

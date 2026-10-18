@@ -449,6 +449,8 @@ struct EngineOptions
     // `[xr] mirror`: while a headset draws, the window shows its left eye,
     // or nothing.
     bool xrMirror = true;
+    // `[xr] hands`: the hands themselves, where the headset tracks them.
+    bool xrHands = true;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

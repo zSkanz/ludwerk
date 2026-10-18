@@ -6528,7 +6528,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 6> xRServiceMethods;
+    static std::array<MethodDesc, 7> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6547,6 +6547,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetHandJoints"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the 26 joints of a hand tracked as a hand, with no controller in it, in the play space, or nil. The order is OpenXR's: the palm, the wrist, then each finger from the thumb out, from its root to its tip. A hand tracked this way is also held at its palm (`GetHandCFrame`), and a pinch of its thumb and index finger is the `XRPinchLeft` or `XRPinchRight` key. `[xr] hands = false` in `project.toml` turns hands off.",
         },
         MethodDesc{
             .name = atoms.intern("Recenter"),

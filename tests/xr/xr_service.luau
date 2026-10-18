@@ -62,7 +62,8 @@ RunService.PostSimulation:Connect(function()
         local head = XRService:GetHeadCFrame()
         print(
             `[xr] recentred={turned} seated={fixed(head.Position.y)} space={XRService.Space.Name} `
-                .. `moves={headMoves > 0} states={table.concat(states, ",")}`
+                .. `moves={headMoves > 0} states={table.concat(states, ",")} `
+                .. `joints={XRService:GetHandJoints(Enum.XRHand.Left) == nil}`
         )
     end
 end)

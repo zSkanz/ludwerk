@@ -32,6 +32,9 @@ struct XrRequest
     // The application's name and version, as the runtime lists it.
     std::string application = {};
     u32 applicationVersion = 0;
+    // `[xr] hands` (ADR 0245 §4): the hands themselves, joint by joint,
+    // where the runtime tracks them.
+    bool hands = true;
 };
 
 // One eye's view this frame: where it is and how it is turned, in the play
@@ -98,6 +101,15 @@ struct HeadsetPose
 // Y, the menu, the two triggers, the two grips, the four stick axes, the two
 // sticks as one (unused here), the two sticks pressed in, the two pinches.
 inline constexpr usize HeadsetKeyCount = 19;
+// Where the pinches are among them.
+inline constexpr usize HeadsetPinchLeft = 17;
+
+// **A hand's joints** (ADR 0245 §4), in OpenXR's order: the palm, the wrist,
+// then each finger from the thumb out, from its root to its tip.
+inline constexpr usize HandJointCount = 26;
+inline constexpr usize HandJointPalm = 0;
+inline constexpr usize HandJointThumbTip = 5;
+inline constexpr usize HandJointIndexTip = 10;
 
 // **What the player is doing this frame**: the head, each hand where it holds
 // its controller (`grip`) and where it points (`aim`), and the controllers'
@@ -108,6 +120,9 @@ struct HeadsetInput
     std::array<HeadsetPose, 2> grip{};
     std::array<HeadsetPose, 2> aim{};
     std::array<f32, HeadsetKeyCount> keys{};
+    // Each hand's joints where it is tracked as a hand -- no controller in
+    // it -- and every one not valid where it is not.
+    std::array<std::array<HeadsetPose, HandJointCount>, 2> joints{};
 };
 
 class IHeadset

@@ -181,6 +181,9 @@ struct ProjectConfig
     // `[xr] mirror` (ADR 0244 §5): the window shows the left eye, or, false,
     // nothing.
     bool xrMirror = true;
+    // `[xr] hands` (ADR 0245 §4): the hands themselves where a headset
+    // tracks them; false for a game played only with controllers.
+    bool xrHands = true;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

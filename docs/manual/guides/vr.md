@@ -65,6 +65,16 @@ XRService.SessionStateChanged:Connect(function(state: EnumXRSessionState)
 end)
 ```
 
+## Hands
+
+On a headset that tracks hands -- the Quest 3 does -- a player who puts the
+controllers down plays with their hands. `GetHandCFrame` then follows the
+palm, and a pinch of the thumb and the index finger is the `XRPinchLeft` or
+`XRPinchRight` key, so a "select" action bound to the trigger can bind the
+pinch beside it. `GetHandJoints` returns the hand's 26 joints for a game
+that draws or reads the fingers. A game played only with controllers says
+`hands = false` under `[xr]`.
+
 ## The controllers are input
 
 Each controller's buttons, triggers, grips and sticks are `Enum.KeyCode`
