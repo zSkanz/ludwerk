@@ -541,6 +541,9 @@ struct EngineOptions
     bool fullscreen = false;
 #endif
     bool resizable = true;
+    // `--hidden-window`: a window with its swapchain, never shown -- what a
+    // test of a window's own paths runs with.
+    bool hiddenWindow = false;
 
     i32 width = 1280;
     i32 height = 720;

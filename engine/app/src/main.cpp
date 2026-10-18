@@ -298,11 +298,12 @@ void sayStartFailure(int code)
 // closed without a word.
 [[nodiscard]] bool runsWithNoWindow(int argc, char** argv)
 {
-    constexpr std::array<std::string_view, 20> Quiet{
+    constexpr std::array<std::string_view, 21> Quiet{
         "--headless",      "--serve",        "--version",         "--run-tests",        "--check-scripts",
         "--replay",        "--bench",        "--write-types",     "--import-",          "--partition",
         "--save-scene",    "--capture-out",  "--two-worlds",      "--replica-gate",     "--reads-mesh-format",
-        "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags", "--bots="};
+        "--record-replay", "--describe-rig", "--bake-irradiance", "--print-luau-flags", "--bots=",
+        "--hidden-window"};
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg = argv[index];
         for (const std::string_view quiet : Quiet) {
@@ -406,6 +407,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
 
         if (arg == "--headless") {
             options.headless = true;
+            continue;
+        }
+        // **A real window nobody sees**: its swapchain, its present modes and
+        // its frames, for a test of what only a window does.
+        if (arg == "--hidden-window") {
+            options.hiddenWindow = true;
             continue;
         }
         // **The three networked postures** (ADR 0070). Each is a flag rather

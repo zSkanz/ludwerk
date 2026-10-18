@@ -723,6 +723,18 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION "the room shows where nothing is drawn"
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
+    # **A headset and a window together** (ADR 0244): the first headset frames
+    # and the window's change of present mode they make, through a real,
+    # hidden window -- the case a real headset met before any test did.
+    add_test(NAME xr_simulated_window
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSCENE=${CMAKE_SOURCE_DIR}/tests/xr/xr_passthrough.luau
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_window.cmake)
+    set_tests_properties(xr_simulated_window PROPERTIES
+        PASS_REGULAR_EXPRESSION "a window and a headset draw together, VSync on and off at the start"
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
 
     # **Where the player is, to a script** (ADR 0245): `XRService` under the
     # simulated headset -- enabled, the head standing at 1.6 m -- and flat,

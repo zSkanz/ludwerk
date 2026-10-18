@@ -1738,6 +1738,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 .height = placement.has_value() ? placement->height : options.height,
                 // The editor is always a window you can size; a game says.
                 .resizable = options.editor || options.resizable,
+                .visible = !options.hiddenWindow,
             },
             &error);
         if (window == nullptr)
