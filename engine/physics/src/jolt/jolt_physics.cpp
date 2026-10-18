@@ -2809,12 +2809,76 @@ public:
         record.standIn = JPH::BodyID();
     }
 
+    // **What carries a character standing on a kinematic body is that body's
+    // move THIS tick**: its target, which `step` spends after the characters
+    // have stepped. The ground velocity the character itself keeps is the
+    // body's as the character's last update found it -- the move of the tick
+    // before -- so a rider was carried a tick behind its platform, and by a
+    // velocity a machine that placed the platform differently (a replica
+    // drawing it from snapshots) did not have: a correction by one tick of the
+    // platform's travel, every tick of a ride.
+    void prepareCarry(std::span<CharacterRecord* const> records)
+    {
+        m_carryTargets.clear();
+        if (m_kinematicMoves.empty())
+            return;
+        const JPH::BodyInterface& bodies = m_system.GetBodyInterfaceNoLock();
+        for (const CharacterRecord* record : records) {
+            if (record->character->GetGroundState() != JPH::CharacterBase::EGroundState::OnGround)
+                continue;
+            const JPH::BodyID ground = record->character->GetGroundBodyID();
+            if (ground.IsInvalid() || bodies.GetMotionType(ground) != JPH::EMotionType::Kinematic)
+                continue;
+            m_carryTargets.push_back(CarryTarget{ground, bodies.GetPosition(ground), bodies.GetRotation(ground),
+                                                 bodies.GetPosition(ground), bodies.GetRotation(ground)});
+        }
+        if (m_carryTargets.empty())
+            return;
+        const auto byId = [](const CarryTarget& a, const CarryTarget& b) { return a.id < b.id; };
+        std::sort(m_carryTargets.begin(), m_carryTargets.end(), byId);
+        m_carryTargets.erase(std::unique(m_carryTargets.begin(), m_carryTargets.end(),
+                                         [](const CarryTarget& a, const CarryTarget& b) { return a.id == b.id; }),
+                             m_carryTargets.end());
+        // In the order written, so the last target of a body wins, as `step`
+        // spends them.
+        for (const PendingMove& pending : m_kinematicMoves) {
+            const auto at = std::lower_bound(m_carryTargets.begin(), m_carryTargets.end(),
+                                             CarryTarget{pending.id, {}, {}, {}, {}}, byId);
+            if (at == m_carryTargets.end() || at->id != pending.id)
+                continue;
+            at->targetPosition = pending.position;
+            at->targetRotation = pending.rotation;
+        }
+    }
+
+    // The velocity that keeps a character where it stands on its ground:
+    // the point under it carried by the ground's move this tick, or, on a
+    // body nothing moves by a target, the ground's own velocity.
+    [[nodiscard]] JPH::Vec3 groundCarry(const JPH::CharacterVirtual& character, f32 fixedDt) const
+    {
+        if (character.GetGroundState() != JPH::CharacterBase::EGroundState::OnGround)
+            return JPH::Vec3::sZero();
+        const JPH::BodyID ground = character.GetGroundBodyID();
+        const auto at = std::lower_bound(m_carryTargets.begin(), m_carryTargets.end(), ground,
+                                         [](const CarryTarget& a, JPH::BodyID id) { return a.id < id; });
+        if (at == m_carryTargets.end() || at->id != ground)
+            return character.GetGroundVelocity();
+        if (fixedDt <= 0.0f)
+            return JPH::Vec3::sZero();
+        const JPH::RVec3 here = character.GetPosition();
+        const JPH::Vec3 local = at->rotation.Conjugated() * JPH::Vec3(here - at->position);
+        const JPH::RVec3 there = at->targetPosition + at->targetRotation * local;
+        return JPH::Vec3(there - here) / fixedDt;
+    }
+
     void moveCharacter(CharacterHandle handle, core::Vec3 velocity, f32 fixedDt, bool walking)
     {
         CharacterRecord* record = resolve(handle);
         if (record == nullptr) {
             return;
         }
+        CharacterRecord* const one[] = {record};
+        prepareCarry(one);
         stepCharacter(*record, velocity, fixedDt, walking, m_temp, false);
         placeInnerBody(*record);
     }
@@ -2844,6 +2908,12 @@ public:
         m_characterStep = {};
         m_stepping.clear();
         ++m_stepCall;
+        m_carryRecords.clear();
+        for (const CharacterMove& move : moves) {
+            if (CharacterRecord* record = resolve(move.character); record != nullptr)
+                m_carryRecords.push_back(record);
+        }
+        prepareCarry(m_carryRecords);
         // What each step could reach, from what the call found: read here, on
         // this thread, because on the pool another character's step is
         // changing its own as this one asks.
@@ -2854,9 +2924,7 @@ public:
             if (record == nullptr)
                 continue;
             const JPH::CharacterVirtual& character = *record->character;
-            JPH::Vec3 moving = toJolt(move.velocity);
-            if (character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
-                moving += character.GetGroundVelocity();
+            JPH::Vec3 moving = toJolt(move.velocity) + groundCarry(character, move.fixedDt);
             const f32 dt = std::max(move.fixedDt, 0.0f);
             record->stepCall = m_stepCall;
             record->startPosition = character.GetPosition();
@@ -3061,9 +3129,7 @@ public:
         // Only while grounded. A character in mid-air is not standing on
         // anything, and carrying the last platform's velocity through a jump
         // would launch it.
-        JPH::Vec3 inherited = JPH::Vec3::sZero();
-        if (record.character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
-            inherited = record.character->GetGroundVelocity();
+        const JPH::Vec3 inherited = groundCarry(*record.character, fixedDt);
 
         record.character->SetLinearVelocity(toJolt(velocity) + inherited);
 
@@ -5358,6 +5424,19 @@ private:
     std::vector<CharacterPair> m_previousCharacterPairs;
     // Cleared every `step`; see `setBodyTransform`.
     std::vector<PendingMove> m_kinematicMoves;
+    // Where each kinematic body a character stands on is this tick and where
+    // its target puts it, by body id: what `groundCarry` reads. Made by
+    // `prepareCarry` before a character steps, read-only while they do.
+    struct CarryTarget
+    {
+        JPH::BodyID id;
+        JPH::RVec3 position;
+        JPH::Quat rotation;
+        JPH::RVec3 targetPosition;
+        JPH::Quat targetRotation;
+    };
+    std::vector<CarryTarget> m_carryTargets;
+    std::vector<CharacterRecord*> m_carryRecords;
     // Scratch for the diff, kept as a member so a tick with ten thousand
     // contacts does not allocate one.
     std::vector<ContactPair> m_carried;

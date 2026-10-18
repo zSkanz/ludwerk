@@ -1188,6 +1188,13 @@ public:
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count());
     }
 
+    [[nodiscard]] std::optional<scene::RememberedGround> rememberedGround(core::u64 tick,
+                                                                          core::InstanceId character) const override
+    {
+        const scene::PhysicsSync* physics = m_host.physics();
+        return physics != nullptr ? physics->rememberedGround(tick, character) : std::nullopt;
+    }
+
     [[nodiscard]] std::optional<core::CFrameD> remembered(core::u64 tick, core::InstanceId id) const override
     {
         const scene::PhysicsSync* physics = m_host.physics();
@@ -1981,6 +1988,10 @@ constexpr std::string_view MovingServer = R"(
         if (replica == nullptr || after < 60)
             continue;
         const replication::Stats stats = replica->stats();
+        // The first second is the character arriving -- falling onto a
+        // platform that moves under it -- and not what is measured.
+        if (after == 60)
+            seen = stats.corrections;
         if (stats.corrections != seen) {
             seen = stats.corrections;
             ++corrections;
@@ -2000,11 +2011,13 @@ constexpr std::string_view MovingServer = R"(
 
 TEST_CASE("what a player predicts that moves with no input is not corrected when the authority tunes their queue")
 {
-    // Falling, beside a crate sliding, pushed by a block: in lockstep, with
-    // the authority standing an intent in, and with two of the replica's
-    // intents arriving together. The rule said a player sending nothing was
-    // at rest: 7 and 9 corrections in a fall, one sliding, one pushed.
-    for (const char* mode : {"fall", "slide", "pushed"}) {
+    // Falling, riding a platform a script carries, beside a crate sliding,
+    // pushed by a block: in lockstep, with the authority standing an intent
+    // in, and with two of the replica's intents arriving together. The rule
+    // said a player sending nothing was at rest: 7 and 9 corrections in a
+    // fall, one sliding, one pushed. A rider was corrected every tick of the
+    // ride, by a tick of the platform's travel.
+    for (const char* mode : {"fall", "ride", "slide", "pushed"}) {
         for (const int skew : {0, 1, 2}) {
             CAPTURE(mode);
             CAPTURE(skew);

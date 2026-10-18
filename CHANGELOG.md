@@ -11,6 +11,12 @@ here.
 
 ### Fixed
 
+- A player whose machine's clock runs fast is no longer corrected by
+  however far they moved in the input the server dropped. Their input queued
+  up at the server until the server caught up by dropping some of it, and a
+  falling player then jumped 10 m. Their clock now runs a few percent slow
+  until the queue is back to its length. The server still drops input past a
+  ceiling, for a machine that stalled or floods, and logs it when it does.
 - What a player predicts that moves while they touch nothing is no longer
   corrected by a tick of its own travel. The server held or skipped the
   ticks of a player sending no input to tune their queue -- harmless for one
@@ -310,6 +316,12 @@ here.
 
 ### Changed
 
+- **Behaviour change: a character on a moving platform rides it without
+  lagging a tick**, in a single-player game too. A character standing on a
+  part that a script moves was carried by the velocity the platform had a tick
+  earlier, so it trailed the platform by one tick of travel. It is now carried
+  by where the platform goes in the same tick. In a multiplayer game, a player
+  riding a platform was corrected every tick of the ride; now they are not.
 - **Behaviour change: a client's calls of one remote are limited.** On the
   server, each player may call one `RemoteEvent`, `UnreliableRemoteEvent` or
   `RemoteFunction` 240 times a second, with up to 480 at once, and send at

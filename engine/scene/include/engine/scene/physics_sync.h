@@ -97,6 +97,7 @@ public:
     [[nodiscard]] std::optional<core::CFrameD> remembered(u64 tick, core::InstanceId id) const override;
     [[nodiscard]] std::optional<CharacterReplayStart::Vehicle>
     rememberedVehicle(u64 tick, core::InstanceId controller) const override;
+    [[nodiscard]] std::optional<RememberedGround> rememberedGround(u64 tick, core::InstanceId character) const override;
     [[nodiscard]] std::optional<PredictedAttributes> rememberedAttributes(u64 tick, core::InstanceId id) const override;
     // **Who runs the predicted steps**: the script runtime, handed in by
     // `app`. Null: nothing runs in the step.
@@ -740,6 +741,9 @@ private:
         bool grounded = false;
         i32 state = 0;
         core::InstanceId groundPart{};
+        // Where that part was then, on this machine: what a character on a
+        // moving base is measured from (based movement).
+        core::CFrameD groundCFrame{};
         core::Vec3 move{};
         bool jump = false;
         f32 vertical = 0.0f;

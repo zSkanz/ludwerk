@@ -52,6 +52,13 @@ using PredictedAttributes = std::vector<std::pair<core::NameAtom, Value>>;
 
 // Where a replay starts: the authority's word on the character at the tick it
 // last answered, including the two things a transform does not say.
+// A character's ground, as a replica remembered it (based movement).
+struct RememberedGround
+{
+    core::InstanceId part;
+    core::CFrameD cframe;
+};
+
 struct CharacterReplayStart
 {
     // The intent tick the authority answered: where a replay that re-steps
@@ -223,6 +230,16 @@ public:
     {
         (void)tick;
         (void)id;
+        return std::nullopt;
+    }
+    // **The part a character stood on after the step of `tick`, and where
+    // that part was then on this machine** (based movement): nothing when it
+    // stood on nothing, or the tick was not remembered.
+    [[nodiscard]] virtual std::optional<RememberedGround> rememberedGround(core::u64 tick,
+                                                                           core::InstanceId character) const
+    {
+        (void)tick;
+        (void)character;
         return std::nullopt;
     }
     // A vehicle's engine, gearbox and wheels after the step of `tick`, as

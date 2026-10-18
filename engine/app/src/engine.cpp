@@ -429,6 +429,13 @@ public:
         return physics != nullptr ? physics->rememberedAttributes(tick, id) : std::nullopt;
     }
 
+    [[nodiscard]] std::optional<scene::RememberedGround> rememberedGround(core::u64 tick,
+                                                                          core::InstanceId character) const override
+    {
+        const scene::PhysicsSync* physics = m_host != nullptr ? m_host->physics() : nullptr;
+        return physics != nullptr ? physics->rememberedGround(tick, character) : std::nullopt;
+    }
+
     [[nodiscard]] std::optional<scene::CharacterReplayStart::Vehicle>
     rememberedVehicle(core::u64 tick, core::InstanceId controller) const override
     {

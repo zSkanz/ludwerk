@@ -1333,12 +1333,15 @@ void PhysicsSync::remember(u64 tick)
         if (part == nullptr || body == nullptr)
             continue;
         characters.push_back(m_characters.at(key).handle);
+        const PartComponent* ground =
+            body->grounded && body->groundPart.valid() ? m_scene.parts().find(body->groundPart) : nullptr;
         island.entities.push_back(IslandEntity{.id = id,
                                                .cframe = part->cframe,
                                                .character = true,
                                                .grounded = body->grounded,
                                                .state = body->state,
                                                .groundPart = body->groundPart,
+                                               .groundCFrame = ground != nullptr ? ground->cframe : core::CFrameD{},
                                                .move = body->moveDirection,
                                                .jump = body->jumpRequested,
                                                .vertical = body->verticalVelocity,
@@ -1397,6 +1400,18 @@ std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId 
     for (const IslandEntity& entity : island->second.entities) {
         if (entity.id == id)
             return entity.cframe;
+    }
+    return std::nullopt;
+}
+
+std::optional<RememberedGround> PhysicsSync::rememberedGround(u64 tick, core::InstanceId character) const
+{
+    const auto island = m_islands.find(tick);
+    if (island == m_islands.end())
+        return std::nullopt;
+    for (const IslandEntity& entity : island->second.entities) {
+        if (entity.id == character && entity.character && entity.grounded && entity.groundPart.valid())
+            return RememberedGround{entity.groundPart, entity.groundCFrame};
     }
     return std::nullopt;
 }
@@ -1666,7 +1681,45 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 putVehicle(vehicle);
             for (std::vector<core::CFrameD>& each : frames)
                 each.reserve(count);
+            // **A base moves through the replay as it moved live** (based
+            // movement): the part a character stands on and this machine does
+            // not step -- drawn between snapshots, or a script's -- is where
+            // it is NOW for every tick a replay steps again, and a character on
+            // it was not carried at all: corrected again at the next answer,
+            // tick after tick, all along a ride. Each tick's pose, as the
+            // live step remembered it, is the base's target for that tick of
+            // the replay; read before the replay remembers over them.
+            struct BaseMove
+            {
+                usize at = 0;
+                core::InstanceId part;
+                core::CFrameD cframe;
+            };
+            std::vector<BaseMove> baseMoves;
             for (usize at = 0; at < count; ++at) {
+                const auto later = m_islands.find(tick + 1 + at);
+                if (later == m_islands.end())
+                    continue;
+                for (const IslandEntity& entity : later->second.entities) {
+                    if (!entity.character || !entity.grounded || !entity.groundPart.valid())
+                        continue;
+                    const bool inIsland =
+                        std::any_of(saved.entities.begin(), saved.entities.end(), [&](const IslandEntity& held) {
+                            return held.id == entity.groundPart && held.body;
+                        });
+                    if (!inIsland)
+                        baseMoves.push_back(BaseMove{at, entity.groundPart, entity.groundCFrame});
+                }
+            }
+            for (usize at = 0; at < count; ++at) {
+                for (const BaseMove& move : baseMoves) {
+                    if (move.at != at || move.part.index >= m_bodies.size())
+                        continue;
+                    const BodyRecord& base = m_bodies[move.part.index];
+                    if (base.generation == move.part.generation && base.live &&
+                        base.backendMotion == physics::MotionType::Kinematic)
+                        m_backend.setBodyTransform(m_world, base.handle, move.cframe);
+                }
                 // **Every character by its own command of this tick** (ADR
                 // 0208), in one step: they share the world they stand in.
                 m_replaying.clear();
@@ -1689,6 +1742,16 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 for (usize index = 0; index < steps.size(); ++index)
                     frames[index].push_back(all[index].part->cframe);
                 remember(tick + 1 + at);
+            }
+            // Each base back on its live course: where it is now, still.
+            for (const BaseMove& move : baseMoves) {
+                if (move.part.index >= m_bodies.size())
+                    continue;
+                const BodyRecord& base = m_bodies[move.part.index];
+                const PartComponent* place = m_scene.parts().find(move.part);
+                if (place != nullptr && base.generation == move.part.generation && base.live &&
+                    base.backendMotion == physics::MotionType::Kinematic)
+                    m_backend.setBodyTransform(m_world, base.handle, place->cframe);
             }
             for (One& one : all) {
                 one.body->moveDirection = one.pendingMove;

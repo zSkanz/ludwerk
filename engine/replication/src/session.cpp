@@ -8831,6 +8831,45 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         if (answers[index].has_value())
             all.push_back(Answer{static_cast<u8>(index), answeredCharacters[index], std::move(*answers[index])});
     }
+    // **A character on a moving base is where it is ON the base** (based
+    // movement): the part it stands on is drawn here between snapshots, a
+    // round trip and more behind the character predicted on it, so in the
+    // world's frame the two machines never agree while the base moves --
+    // every tick of a ride on a platform a script carries was a correction.
+    // The authority's answer is moved from where its snapshot has the base
+    // to where this machine had the base at the answered tick: what is then
+    // compared, corrected and stepped again is the character's place on it.
+    // A base this machine steps itself -- predicted, its own -- is already
+    // where the authority has it, and is left.
+    if (m_replay != nullptr) {
+        for (Answer& one : all) {
+            const std::optional<scene::RememberedGround> ground =
+                m_replay->rememberedGround(m_ackedIntent, one.character);
+            if (!ground.has_value() || !one.start.grounded)
+                continue;
+            u32 baseNet = 0;
+            for (const auto& [netId, local] : m_locals) {
+                if (local == ground->part) {
+                    baseNet = netId;
+                    break;
+                }
+            }
+            if (baseNet == 0 || m_predictedParts.contains(baseNet) || m_ownedParts.contains(baseNet))
+                continue;
+            const EntityState* base = findEntity(state, baseNet);
+            if (base == nullptr)
+                continue;
+            const generated::ClassDesc& desc = generated::Classes[base->schema];
+            for (usize at = 0; at < base->fields.size(); ++at) {
+                const generated::FieldDesc* field = fieldAt(desc, at);
+                if (field == nullptr || field->name != "CFrame" || field->pool != "parts")
+                    continue;
+                const core::CFrameD theirs = asCFrame(base->fields[at]);
+                one.start.transform = ground->cframe * (core::inverse(theirs) * one.start.transform);
+                break;
+            }
+        }
+    }
     // The predicted parts at the answered tick, from this whole state: the
     // machine's, said with the first answer.
     for (const auto& [netId, away] : m_predictedParts) {
