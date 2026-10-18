@@ -38,6 +38,8 @@ what the first drew. A standalone headset filters it with four reads, which
 gives an edge two or three millimeters wide that stays attached where a cube
 stands on a table. A flat game's sixteen-read filter, softened over five
 centimeters, smeared it at half a meter and took most of the GPU's frame.
+The shadow starts at the base of what casts it, under a millimeter away: an
+eye's depth bias is two millimeters, where a flat game's is eight.
 Occlusion, contact shadows and the screen's reflections and
 bounced light are not drawn in the eyes. Each eye would mark them from its
 own picture, so the two would disagree, which a pair of eyes sees as

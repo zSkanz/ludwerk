@@ -9513,6 +9513,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // it. Held per renderer rather than globally, for the reason the
     // exposure and the environment chain are: this is the history of one view,
     // and two views in one process are two histories.
+    // The cascades' residual depth bias: a headset's eye's own.
+    const f32 depthBias = world.headsetEye ? kHeadsetShadowDepthBiasMetres : kShadowDepthBiasMetres;
     // The second eye of a headset frame takes the first eye's fit and map.
     const bool shadowReused = world.shadowView.has_value() && world.shadowView->reuse && headsetShadowDrawn_;
     const ShadowCascades cascades =
@@ -9859,7 +9861,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 texel > 0.0f ? std::clamp(penumbra / texel, kShadowFilterMinTexels, kShadowFilterMaxTexels) : 0.0f;
             contact.cascadeFar[index] = drawn ? cascades.farDistance[index] : kUnreachableDistance;
             contact.biasReach[index] =
-                drawn ? kShadowDepthBiasMetres + texel * (kShadowSlopeTexels * kShadowMostSlope + 2.0f * kernel) : 0.0f;
+                drawn ? depthBias + texel * (kShadowSlopeTexels * kShadowMostSlope + 2.0f * kernel) : 0.0f;
         }
         const std::array<rhi::TextureBinding, 1> depthBinding{rhi::TextureBinding{depth_, pointSampler_}};
         fullscreenPass(cmd, contactPipeline_, contact_, renderWidth_, renderHeight_, "contact-shadow", depthBinding,
@@ -10049,7 +10051,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         frame.shadowParams[0] = shadowPenumbra(world.environment.shadowSoftness);
         frame.shadowParams[1] = kShadowNormalOffsetTexels;
         frame.shadowParams[2] = kShadowCascadeBlend;
-        frame.shadowParams[3] = kShadowDepthBiasMetres;
+        frame.shadowParams[3] = depthBias;
 
         // The local atlas: one matrix per TILE, and how many of them are live.
         // Zero live tiles is what a scene with no casting spot or point gets,

@@ -11,6 +11,9 @@ here.
 
 ### Fixed
 
+- In a headset, a cube resting on a table casts its shadow from its base. The
+  shadow started 4 to 7 millimeters away from it, which at arm's length
+  reads as floating.
 - In a headset, both eyes see the same shadows: the sun's cascades are
   fitted once from the head, with a first cascade two meters out for what
   the player holds. Occlusion, contact shadows and the screen's reflections

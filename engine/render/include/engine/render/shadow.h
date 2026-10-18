@@ -225,6 +225,16 @@ inline constexpr f32 kShadowNormalOffsetTexels = 1.5f;
 // every shadow off the thing that casts it. Two centimetres is a visible band of
 // lit floor under a character.
 inline constexpr f32 kShadowDepthBiasMetres = 0.008f;
+// **Two millimetres in a headset's eye.** A cube resting on a table stores
+// its far faces in the map, its bottom on the table's plane, and the bias is
+// how far past them a receiver has to be to be in shadow: the shadow starts
+// the bias times the cosine of the sun's height away from the cube's base.
+// Eight millimetres was a gap of 6.8 mm at a sun 30 degrees high and 4.3 at
+// 60, measured from 60 cm above at a Quest's settings -- a cube a player sees
+// float. Two is under a millimetre at both, with no acne on the table, the
+// cube or a plate two millimetres thick: a headset's first cascade has
+// texels of a few millimetres, where a flat game's are centimetres.
+inline constexpr f32 kHeadsetShadowDepthBiasMetres = 0.002f;
 // The slope term of a cascade's bias, as `engine_brdf.hlsli` has it
 // (`EngineShadowSlopeTexels`, `EngineShadowMostSlope`): written a second time,
 // and the two have to agree -- the contact mask is whole for as far as the
