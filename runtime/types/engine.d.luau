@@ -4967,6 +4967,23 @@ declare extern type DataService extends Instance with
     --- with `DataBusy`. Raises an error on a player's machine, and in a game that is not a server. A
     --- record already held by this world is returned at once.
     function LoadAsync(self, player: Player): DataRecord
+    --- Moves items and money between owners: all of the moves, or none. A move is `Move`, an item's id,
+    --- or `Pay`, a whole amount of `Currency`, from `From` to `To`. An owner is a `Player` or a name
+    --- the game gives what no player owns, such as a guild's bank. For money, a nil owner is the game
+    --- itself: what it pays comes from nowhere, and what is paid to it is gone. Returns true, or false
+    --- and why: `ItemNotThere` where an item is not where a move says it is, `NotEnough` where a
+    --- balance would fall below nought. It is on the disk before it returns, and each move is logged
+    --- with the transaction and the world.
+    function TransactAsync(self, moves: { { Move: number?, Pay: number?, Currency: string?, From: (Player | string)?, To: (Player | string)? } }): (boolean, string?)
+    --- Makes an item of `kind` for `owner` and returns its id. Its `fields` are what a save slot can
+    --- hold. No id is ever given twice, even after the item is destroyed.
+    function CreateItemAsync(self, owner: Player | string, kind: string, fields: { [string]: any }?): number
+    --- Destroys an item. Returns false where there is no item with that id.
+    function DestroyItemAsync(self, id: number): boolean
+    --- Returns the items `owner` has, oldest first.
+    function GetItemsAsync(self, owner: Player | string): { { Id: number, Kind: string, Fields: { [string]: any } } }
+    --- Returns how much of `currency` `owner` has: nought where they have never had any.
+    function GetBalanceAsync(self, owner: Player | string, currency: string): number
 end
 
 declare extern type LocalizationService extends Instance with

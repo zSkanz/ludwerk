@@ -5750,13 +5750,43 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(saveServiceDesc);
 
     // --- DataService ---
-    static std::array<MethodDesc, 1> dataServiceMethods;
+    static std::array<MethodDesc, 6> dataServiceMethods;
     dataServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("LoadAsync"),
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the player's record, empty for a player who has none yet, and holds it for this world until the player leaves or `Release` is called. Where another world holds it, waits for that world to write it and let it go, for up to ten seconds, and then raises an error that begins with `DataBusy`. Raises an error on a player's machine, and in a game that is not a server. A record already held by this world is returned at once.",
+        },
+        MethodDesc{
+            .name = atoms.intern("TransactAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Moves items and money between owners: all of the moves, or none. A move is `Move`, an item's id, or `Pay`, a whole amount of `Currency`, from `From` to `To`. An owner is a `Player` or a name the game gives what no player owns, such as a guild's bank. For money, a nil owner is the game itself: what it pays comes from nowhere, and what is paid to it is gone. Returns true, or false and why: `ItemNotThere` where an item is not where a move says it is, `NotEnough` where a balance would fall below nought. It is on the disk before it returns, and each move is logged with the transaction and the world.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CreateItemAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes an item of `kind` for `owner` and returns its id. Its `fields` are what a save slot can hold. No id is ever given twice, even after the item is destroyed.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DestroyItemAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Destroys an item. Returns false where there is no item with that id.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetItemsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the items `owner` has, oldest first.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetBalanceAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns how much of `currency` `owner` has: nought where they have never had any.",
         },
     }};
     ClassDescriptor dataServiceDesc;

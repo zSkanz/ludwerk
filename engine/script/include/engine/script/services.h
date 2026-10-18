@@ -539,6 +539,15 @@ public:
         core::InstanceId player;
     };
     std::vector<DataWaiter> dataWaiters;
+    // A thread waiting for an operation on items or money, and what its
+    // answer is turned into (`DataOpKind` in `data_service.cpp`).
+    struct DataOpWaiter
+    {
+        core::u32 id = 0;
+        int threadRef = -1;
+        core::u8 kind = 0;
+    };
+    std::vector<DataOpWaiter> dataOpWaiters;
     // `SaveService.OnMigrate`, or -1.
     int migrateHandler = -1;
     // Each slot's `Changed`, by name, made when first asked for.

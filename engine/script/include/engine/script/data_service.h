@@ -9,6 +9,11 @@ struct lua_State;
 namespace engine::script {
 
 int dataServiceLoadAsync(lua_State* L);
+int dataServiceTransactAsync(lua_State* L);
+int dataServiceCreateItemAsync(lua_State* L);
+int dataServiceDestroyItemAsync(lua_State* L);
+int dataServiceGetItemsAsync(lua_State* L);
+int dataServiceGetBalanceAsync(lua_State* L);
 
 // The `DataRecord` value type's members. Once, at boot, before the sandbox.
 void registerDataTypes(lua_State* L);

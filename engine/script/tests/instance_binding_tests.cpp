@@ -624,9 +624,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 372: `XRService`'s `SimulateInput` and `GetPointerRay` (ADR 0246).
     // 373: `XRService:SupportsPassthrough` (ADR 0247); 375: `GetRoomAsync`
     // and `CreateRoomParts`; 378: `CreateAnchorAsync`, `LoadAnchorsAsync`
-    // and `XRAnchor:SaveAsync`; 379: `DataService:LoadAsync` (ADR 0238).
-    CHECK(coverage.declared == 379);
-    CHECK(coverage.bound == 379);
+    // and `XRAnchor:SaveAsync`; 379: `DataService:LoadAsync` (ADR 0238); 384:
+    // its items, money and transactions.
+    CHECK(coverage.declared == 384);
+    CHECK(coverage.bound == 384);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

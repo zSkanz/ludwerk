@@ -216,6 +216,11 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         state.dataAnswers.push_back(std::move(answer));
         return;
     }
+    if (type == "data-result") {
+        state.dataResults.push_back(scene::EngineState::DataResult{static_cast<core::u32>(root["id"].asInteger(0)),
+                                                                   std::string(root["answer"].asString())});
+        return;
+    }
     if (type == "channel-merging") {
         state.channelMerging.push_back(root["seconds"].asNumber(60.0));
         return;
@@ -455,6 +460,17 @@ void ManagedWorld::sendData(scene::EngineState& state) const
         asked.field("type", "data-load");
         asked.field("id", static_cast<core::i64>(load.id));
         asked.field("account", std::string_view{load.account});
+        asked.endObject();
+        send(asked);
+    }
+    std::vector<scene::EngineState::DataOp> ops;
+    ops.swap(state.dataOps);
+    for (const scene::EngineState::DataOp& op : ops) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "data-op");
+        asked.field("id", static_cast<core::i64>(op.id));
+        asked.field("request", std::string_view{op.request});
         asked.endObject();
         send(asked);
     }

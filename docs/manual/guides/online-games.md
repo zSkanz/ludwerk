@@ -355,6 +355,36 @@ A record belongs to the player's account where they joined with one (see
 [Who may join, and accounts](manual:guides/multiplayer)), and to the key
 their copy of the game joined with where they did not.
 
+### Items and money
+
+What changes hands is not in a record. An item is a row of its own, with an
+id that is never given twice, and money is a balance per owner and currency.
+Both move only in a transaction, which makes all of its moves or none:
+
+```luau
+--!strict
+local DataService = game:GetService("DataService")
+
+local function sell(seller: Player, buyer: Player, swordId: number)
+    local ok, reason = DataService:TransactAsync({
+        { Move = swordId, From = seller, To = buyer },
+        { Pay = 250, Currency = "Gold", From = buyer, To = seller },
+    })
+    if not ok then
+        print(reason) -- ItemNotThere, NotEnough
+    end
+end
+```
+
+A transaction is on the disk before `TransactAsync` returns, so a server that
+crashes a moment later has done it, and one that crashes before has not:
+nothing is duplicated and nothing is lost. Every move is logged with its
+transaction and its world. An owner is a `Player`, or a name the game gives
+what no player owns, such as a guild's bank. For money, nil is the game
+itself: that is how gold enters the game, as a reward, and leaves it, as a
+purchase from the shop. `CreateItemAsync`, `DestroyItemAsync`,
+`GetItemsAsync` and `GetBalanceAsync` complete it.
+
 The database is SQLite's. Copy it, with the front door's key, to keep the
 game's players: they are what a server's operator must not lose.
 
@@ -671,6 +701,5 @@ yours to answer for.
 - A second front door: while the one front door is down, no new player gets
   in, and those already in a world stay.
 - Accounts themselves: see [Who may join, and accounts](manual:guides/multiplayer).
-- Trading items and money between players, values shared by every world, and
-  a backup taken while the game runs: the rest of the data service is still
-  to come.
+- Values shared by every world, and a backup taken while the game runs: the
+  rest of the data service is still to come.

@@ -7,6 +7,7 @@
 #include <span>
 #include <utility>
 
+#include "engine/app/data_ops.h"
 #include "engine/app/match_keys.h"
 #include "engine/app/travel_pass.h"
 #include "engine/core/base64.h"
@@ -993,6 +994,17 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
     if (type == "data-load" && m_data != nullptr) {
         m_data->load(dataName(world), static_cast<core::u32>(root["id"].asInteger(0)), root["account"].asString(),
                      static_cast<core::i64>(now / 1'000'000u));
+        return;
+    }
+    if (type == "data-op" && m_data != nullptr) {
+        core::JsonWriter result(core::JsonLayout::Compact);
+        result.beginObject();
+        result.field("type", "data-result");
+        result.field("id", root["id"].asInteger(0));
+        result.field("answer",
+                     std::string_view{runDataOp(m_data->store(), dataName(world), root["request"].asString())});
+        result.endObject();
+        send(world, result);
         return;
     }
     if (type == "data-write" && m_data != nullptr) {

@@ -12,6 +12,7 @@ engine_add_module(app
         src/external_changes.cpp
         src/managed_world.cpp
         src/data_broker.cpp
+        src/data_ops.cpp
         src/data_store.cpp
         src/simulated_headset.cpp
         src/headset_hands.cpp
@@ -769,6 +770,18 @@ if(ENG_BUILD_TESTS)
         set_tests_properties(data_record PROPERTIES
             PASS_REGULAR_EXPRESSION "the record is kept between runs of the server"
             TIMEOUT 120)
+        # **A trade killed in the middle** (ADR 0238 §3), eight times: nothing
+        # duplicated, nothing lost.
+        add_test(NAME data_trade_killed
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/trade
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-trade
+                    -DPORT=47813
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_trade.cmake)
+        set_tests_properties(data_trade_killed PROPERTIES
+            PASS_REGULAR_EXPRESSION "runs killed while trading, and nothing was duplicated or lost"
+            TIMEOUT 180)
     endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the

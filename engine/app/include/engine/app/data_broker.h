@@ -57,6 +57,9 @@ public:
     // The world holding `account`'s record, or empty.
     [[nodiscard]] std::string_view holder(std::string_view account) const;
     [[nodiscard]] std::size_t held() const noexcept { return m_holders.size(); }
+    // The database itself, for what holds no record: items, money and
+    // transactions (ADR 0238 §3).
+    [[nodiscard]] IDataStore& store() noexcept { return *m_store; }
 
 private:
     void give(std::string world, core::u32 id, std::string account);

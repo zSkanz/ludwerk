@@ -128,6 +128,11 @@ here.
   database: `DataService:LoadAsync` returns it as a `DataRecord`, held by the world
   the player is in and written behind. The manager keeps the database for
   every world of the game, and a server with no manager keeps its own.
+- Items and money change hands in transactions that make all of their moves
+  or none, on the disk before they return: `DataService:TransactAsync`,
+  `CreateItemAsync`, `DestroyItemAsync`, `GetItemsAsync` and
+  `GetBalanceAsync`. A server killed in the middle of a trade loses nothing
+  and duplicates nothing.
 - Every match is encrypted, with nothing for a game to do: a dedicated server,
   a host and a test alike, and through a relay that cannot read what it
   carries. Each copy of a game keeps a key beside its saves, and

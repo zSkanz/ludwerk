@@ -185,3 +185,33 @@ purpose), and copying backups off the machine, which is the operator's.
 - **Not yet**: `Version` and `OnMigrate`, items, money and transactions (§3),
   shared values (§4), a game's own backend (§5), the backup and the console's
   `data` commands (§7).
+
+## As built, items, money and transactions (2026-10-18)
+
+- `TransactAsync`, `CreateItemAsync`, `DestroyItemAsync`, `GetItemsAsync`
+  and `GetBalanceAsync` (§3). The database's schema is version 2: `items`
+  (an id SQLite never gives twice, a kind, an owner, the fields as a saved
+  value's text), `balances`, `transactions` and `moves`. A database of
+  version 1 is brought up to 2 where it is opened.
+- **A transaction is one SQLite transaction**: every move, then its line in
+  the move log with the transaction and the world, then the commit -- or a
+  rollback that leaves nothing. An item moves only from whoever the move says
+  holds it, and money only from a balance that holds it; a refusal says which
+  (`ItemNotThere`, `NotEnough`, `Invalid`). Making and destroying an item are
+  transactions too, logged as moves from and to the game.
+- **An owner** is a player's account or a name the game gives, such as a
+  guild's bank. For money, nil is the game itself: it pays from nowhere and is
+  paid into nothing, which is how money enters and leaves.
+- Each operation is one request and one answer in JSON: over a managed
+  world's pipe (`data-op`, `data-result`), and run in the process by a server
+  that keeps its own database. The same code answers both.
+- Proved by `data_trade_killed`: a server trades a sword for gold back and
+  forth and is killed (the process ended, with no warning) at a different
+  moment in each of eight runs. Each run first counts five swords and a
+  thousand gold, and so does a last run that is not killed. And by the
+  stores' tests: a transaction that fails part way changes nothing, an id
+  destroyed is not given again, and what was traded is there after the file
+  is closed.
+- **Not yet**: killing the manager in the middle of a trade (the same
+  database and the same transaction, not yet a test of its own), a console
+  command that undoes a transaction, and the move log's 90 days.

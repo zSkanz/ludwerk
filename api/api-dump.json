@@ -2085,6 +2085,67 @@
       "Properties": [],
       "Methods": [
         {
+          "Name": "CreateItemAsync",
+          "Parameters": [
+            {
+              "Name": "owner",
+              "Type": "Player | string"
+            },
+            {
+              "Name": "kind",
+              "Type": "string"
+            },
+            {
+              "Name": "fields",
+              "Type": "{ [string]: any }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["number"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DestroyItemAsync",
+          "Parameters": [
+            {
+              "Name": "id",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetBalanceAsync",
+          "Parameters": [
+            {
+              "Name": "owner",
+              "Type": "Player | string"
+            },
+            {
+              "Name": "currency",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetItemsAsync",
+          "Parameters": [
+            {
+              "Name": "owner",
+              "Type": "Player | string"
+            }
+          ],
+          "Returns": ["{ { Id: number, Kind: string, Fields: { [string]: any } } }"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "LoadAsync",
           "Parameters": [
             {
@@ -2093,6 +2154,18 @@
             }
           ],
           "Returns": ["DataRecord"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "TransactAsync",
+          "Parameters": [
+            {
+              "Name": "moves",
+              "Type": "{ { Move: number?, Pay: number?, Currency: string?, From: (Player | string)?, To: (Player | string)? } }"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
           "Yields": true,
           "ThreadSafety": "Unsafe"
         }

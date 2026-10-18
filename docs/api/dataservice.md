@@ -15,8 +15,38 @@ listed on the page of the class that declares them.
 
 ## Methods
 
+### `CreateItemAsync(owner: Player | string, kind: string, fields: { [string]: any }? = nil): number`
+
+This method yields: the calling thread waits until it completes.
+
+Makes an item of `kind` for `owner` and returns its id. Its `fields` are what a save slot can hold. No id is ever given twice, even after the item is destroyed.
+
+### `DestroyItemAsync(id: number): boolean`
+
+This method yields: the calling thread waits until it completes.
+
+Destroys an item. Returns false where there is no item with that id.
+
+### `GetBalanceAsync(owner: Player | string, currency: string): number`
+
+This method yields: the calling thread waits until it completes.
+
+Returns how much of `currency` `owner` has: nought where they have never had any.
+
+### `GetItemsAsync(owner: Player | string): { { Id: number, Kind: string, Fields: { [string]: any } } }`
+
+This method yields: the calling thread waits until it completes.
+
+Returns the items `owner` has, oldest first.
+
 ### `LoadAsync(player: Player): DataRecord`
 
 This method yields: the calling thread waits until it completes.
 
 Returns the player's record, empty for a player who has none yet, and holds it for this world until the player leaves or `Release` is called. Where another world holds it, waits for that world to write it and let it go, for up to ten seconds, and then raises an error that begins with `DataBusy`. Raises an error on a player's machine, and in a game that is not a server. A record already held by this world is returned at once.
+
+### `TransactAsync(moves: { { Move: number?, Pay: number?, Currency: string?, From: (Player | string)?, To: (Player | string)? } }): (boolean, string?)`
+
+This method yields: the calling thread waits until it completes.
+
+Moves items and money between owners: all of the moves, or none. A move is `Move`, an item's id, or `Pay`, a whole amount of `Currency`, from `From` to `To`. An owner is a `Player` or a name the game gives what no player owns, such as a guild's bank. For money, a nil owner is the game itself: what it pays comes from nowhere, and what is paid to it is gone. Returns true, or false and why: `ItemNotThere` where an item is not where a move says it is, `NotEnough` where a balance would fall below nought. It is on the disk before it returns, and each move is logged with the transaction and the world.

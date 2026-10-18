@@ -1,0 +1,8 @@
+# The data service's trade test (ADR 0238 §3): a server trading a sword for
+# gold back and forth, killed at a moment nobody chose, again and again.
+
+[project]
+name = "Data Trade"
+id = "dev.ludwerk.data-trade"
+version = "1.0.0"
+engine = "0.1"

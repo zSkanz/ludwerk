@@ -5,12 +5,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "engine/core/error.h"
 #include "engine/core/i18n.h"
+#include "engine/core/json.h"
+#include "engine/core/json_writer.h"
 #include "engine/core/log.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
@@ -54,6 +57,127 @@ constexpr core::u64 MaxRecordBytes = 4u * 1024u * 1024u;
     if (!player.local && !player.publicKey.empty())
         return "key:" + player.publicKey;
     return "local:" + std::to_string(player.userId);
+}
+
+// What a script may do with records: on a server with a database.
+void requireData(lua_State* L)
+{
+    const scene::EngineState& state = world(L).engineState();
+    if (state.networkTopology == scene::NetworkTopology::Replica || threadMakesLocal(L))
+        raise(L, ENG_TR("script.err.data_client"));
+    if (!state.dataAvailable)
+        raise(L, ENG_TR("script.err.data_unavailable"));
+}
+
+// **Whose items or money**: a player's account, or a name the game gives
+// what no player owns -- a guild's bank, an auction house. Nil is the game
+// itself, where `game` allows it: money it pays comes from nowhere.
+[[nodiscard]] std::string checkOwner(lua_State* L, int index, bool game)
+{
+    index = lua_absindex(L, index);
+    if (game && lua_isnoneornil(L, index))
+        return {};
+    if (lua_type(L, index) == LUA_TSTRING) {
+        size_t length = 0;
+        const char* text = lua_tolstring(L, index, &length);
+        if (length == 0 || length > 128)
+            raise(L, ENG_TR("script.err.data_owner"));
+        return std::string(text, length);
+    }
+    const core::InstanceId player = checkInstance(L, index);
+    const scene::PlayerComponent* component = world(L).players().find(player);
+    if (component == nullptr)
+        luaL_typeerrorL(L, index, "Player or string");
+    return accountOf(*component);
+}
+
+// A whole number of at most 2^53, as an item's id or an amount is.
+[[nodiscard]] core::i64 checkWhole(lua_State* L, int index, core::i64 least)
+{
+    const core::f64 number = luaL_checknumber(L, index);
+    if (!std::isfinite(number) || std::floor(number) != number || number < static_cast<core::f64>(least) ||
+        number > 9.0e15)
+        raise(L, ENG_TR("script.err.data_whole_number"));
+    return static_cast<core::i64>(number);
+}
+
+// What an operation's answer becomes in the thread that waits for it.
+enum class DataOpKind : core::u8
+{
+    Transact,
+    Create,
+    Destroy,
+    Items,
+    Balance,
+};
+
+int askOp(lua_State* L, const core::JsonWriter& request, DataOpKind kind)
+{
+    scene::EngineState& state = world(L).engineState();
+    const core::u32 id = state.nextDataLoad++;
+    state.dataOps.push_back(scene::EngineState::DataOp{id, request.text()});
+    lua_pushthread(L);
+    services(L).dataOpWaiters.push_back(ServiceState::DataOpWaiter{id, lua_ref(L, -1), static_cast<core::u8>(kind)});
+    lua_pop(L, 1);
+    return lua_yield(L, 0);
+}
+
+// The answer, as the waiting thread gets it; the number of values pushed,
+// or -1 where it is an error, its message pushed.
+int pushOpAnswer(lua_State* co, DataOpKind kind, std::string_view text)
+{
+    core::JsonDocument document;
+    const bool parsed = static_cast<bool>(document.parse(text, "data-result"));
+    const core::JsonValue root = document.root();
+    const bool ok = parsed && root["ok"].asBool(false);
+    switch (kind) {
+    case DataOpKind::Transact:
+        lua_pushboolean(co, ok ? 1 : 0);
+        if (ok) {
+            lua_pushnil(co);
+        }
+        else {
+            const std::string_view reason = parsed ? root["reason"].asString("Failed") : "Failed";
+            lua_pushlstring(co, reason.data(), reason.size());
+        }
+        return 2;
+    case DataOpKind::Create:
+        if (!ok) {
+            const std::string said = core::formatKeyPrefixed(ENG_TR("script.err.data_item_failed"));
+            lua_pushlstring(co, said.data(), said.size());
+            return -1;
+        }
+        lua_pushnumber(co, static_cast<core::f64>(root["item"].asInteger(0)));
+        return 1;
+    case DataOpKind::Destroy:
+        lua_pushboolean(co, ok ? 1 : 0);
+        return 1;
+    case DataOpKind::Items: {
+        const core::JsonValue items = root["items"];
+        lua_createtable(co, static_cast<int>(items.size()), 0);
+        for (core::usize at = 0; at < items.size(); ++at) {
+            const core::JsonValue item = items.at(at);
+            lua_createtable(co, 0, 3);
+            lua_pushnumber(co, static_cast<core::f64>(item["id"].asInteger(0)));
+            lua_setfield(co, -2, "Id");
+            const std::string_view kindName = item["kind"].asString();
+            lua_pushlstring(co, kindName.data(), kindName.size());
+            lua_setfield(co, -2, "Kind");
+            const std::string_view fields = item["fields"].asString();
+            if (fields.empty())
+                lua_createtable(co, 0, 0);
+            else
+                pushSavedValue(co, fields);
+            lua_setfield(co, -2, "Fields");
+            lua_rawseti(co, -2, static_cast<int>(at + 1));
+        }
+        return 1;
+    }
+    case DataOpKind::Balance:
+        lua_pushnumber(co, static_cast<core::f64>(root["balance"].asInteger(0)));
+        return 1;
+    }
+    return 0;
 }
 
 [[nodiscard]] ServiceState::HeldRecord& checkRecord(lua_State* L, int index)
@@ -237,10 +361,7 @@ int dataServiceLoadAsync(lua_State* L)
     requireYieldable(L, "LoadAsync");
     scene::World& w = world(L);
     scene::EngineState& state = w.engineState();
-    if (state.networkTopology == scene::NetworkTopology::Replica || threadMakesLocal(L))
-        raise(L, ENG_TR("script.err.data_client"));
-    if (!state.dataAvailable)
-        raise(L, ENG_TR("script.err.data_unavailable"));
+    requireData(L);
     const scene::PlayerComponent* component = w.players().find(player);
     if (component == nullptr)
         luaL_typeerrorL(L, 2, "Player");
@@ -257,6 +378,127 @@ int dataServiceLoadAsync(lua_State* L)
     kept.dataWaiters.push_back(ServiceState::DataWaiter{id, lua_ref(L, -1), account, player});
     lua_pop(L, 1);
     return lua_yield(L, 0);
+}
+
+int dataServiceTransactAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    requireYieldable(L, "TransactAsync");
+    requireData(L);
+    core::JsonWriter request(core::JsonLayout::Compact);
+    request.beginObject();
+    request.field("op", "transact");
+    request.key("moves");
+    request.beginArray();
+    const int count = lua_objlen(L, 2);
+    if (count == 0)
+        raise(L, ENG_TR("script.err.data_no_moves"));
+    for (int at = 1; at <= count; ++at) {
+        lua_rawgeti(L, 2, at);
+        if (lua_type(L, -1) != LUA_TTABLE)
+            raise(L, ENG_TR("script.err.data_move"));
+        const int move = lua_gettop(L);
+        request.beginObject();
+        lua_getfield(L, move, "Move");
+        lua_getfield(L, move, "Pay");
+        const bool isItem = !lua_isnil(L, -2);
+        if (isItem == !lua_isnil(L, -1))
+            raise(L, ENG_TR("script.err.data_move"));
+        if (isItem) {
+            request.field("item", checkWhole(L, -2, 1));
+        }
+        else {
+            request.field("amount", checkWhole(L, -1, 1));
+            lua_getfield(L, move, "Currency");
+            size_t length = 0;
+            const char* currency = lua_tolstring(L, -1, &length);
+            if (currency == nullptr || length == 0 || length > 32)
+                raise(L, ENG_TR("script.err.data_currency"));
+            request.field("currency", std::string_view{currency, length});
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        lua_getfield(L, move, "From");
+        request.field("from", std::string_view{checkOwner(L, -1, !isItem)});
+        lua_pop(L, 1);
+        lua_getfield(L, move, "To");
+        request.field("to", std::string_view{checkOwner(L, -1, !isItem)});
+        lua_pop(L, 1);
+        request.endObject();
+        lua_pop(L, 1);
+    }
+    request.endArray();
+    request.endObject();
+    return askOp(L, request, DataOpKind::Transact);
+}
+
+int dataServiceCreateItemAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, "CreateItemAsync");
+    requireData(L);
+    const std::string owner = checkOwner(L, 2, false);
+    size_t length = 0;
+    const char* kind = luaL_checklstring(L, 3, &length);
+    if (length == 0 || length > 64)
+        raise(L, ENG_TR("script.err.data_item_kind"));
+    // An item's fields are a saved value, of at most 64 KiB written.
+    const std::string fields = lua_isnoneornil(L, 4) ? std::string{} : encodeSavedValue(L, 4, 64u * 1024u);
+    core::JsonWriter request(core::JsonLayout::Compact);
+    request.beginObject();
+    request.field("op", "create");
+    request.field("owner", std::string_view{owner});
+    request.field("kind", std::string_view{kind, length});
+    request.field("fields", std::string_view{fields});
+    request.endObject();
+    return askOp(L, request, DataOpKind::Create);
+}
+
+int dataServiceDestroyItemAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::i64 item = checkWhole(L, 2, 1);
+    requireYieldable(L, "DestroyItemAsync");
+    requireData(L);
+    core::JsonWriter request(core::JsonLayout::Compact);
+    request.beginObject();
+    request.field("op", "destroy");
+    request.field("item", item);
+    request.endObject();
+    return askOp(L, request, DataOpKind::Destroy);
+}
+
+int dataServiceGetItemsAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, "GetItemsAsync");
+    requireData(L);
+    core::JsonWriter request(core::JsonLayout::Compact);
+    request.beginObject();
+    request.field("op", "items");
+    request.field("owner", std::string_view{checkOwner(L, 2, false)});
+    request.endObject();
+    return askOp(L, request, DataOpKind::Items);
+}
+
+int dataServiceGetBalanceAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, "GetBalanceAsync");
+    requireData(L);
+    const std::string owner = checkOwner(L, 2, false);
+    size_t length = 0;
+    const char* currency = luaL_checklstring(L, 3, &length);
+    if (length == 0 || length > 32)
+        raise(L, ENG_TR("script.err.data_currency"));
+    core::JsonWriter request(core::JsonLayout::Compact);
+    request.beginObject();
+    request.field("op", "balance");
+    request.field("owner", std::string_view{owner});
+    request.field("currency", std::string_view{currency, length});
+    request.endObject();
+    return askOp(L, request, DataOpKind::Balance);
 }
 
 void registerDataTypes(lua_State* L)
@@ -332,6 +574,30 @@ void resumeDataWaiters(lua_State* L, core::f64 dt)
         }
         pushRecord(co, record);
         (void)resumeScheduled(L, co, 1);
+    }
+
+    // **Items, money and transactions**: each answer to its thread.
+    std::vector<scene::EngineState::DataResult> results;
+    results.swap(state.dataResults);
+    for (const scene::EngineState::DataResult& result : results) {
+        const auto waiter =
+            std::find_if(kept.dataOpWaiters.begin(), kept.dataOpWaiters.end(),
+                         [&](const ServiceState::DataOpWaiter& waiting) { return waiting.id == result.id; });
+        if (waiter == kept.dataOpWaiters.end())
+            continue;
+        const ServiceState::DataOpWaiter asked = *waiter;
+        kept.dataOpWaiters.erase(waiter);
+        lua_getref(L, asked.threadRef);
+        lua_State* co = lua_tothread(L, -1);
+        lua_pop(L, 1);
+        (void)lua_unref(L, asked.threadRef);
+        if (co == nullptr)
+            continue;
+        const int pushed = pushOpAnswer(co, static_cast<DataOpKind>(asked.kind), result.answer);
+        if (pushed < 0)
+            (void)resumeScheduledWithError(L, co);
+        else
+            (void)resumeScheduled(L, co, pushed);
     }
 
     // **Written behind**, and let go of where the player is no longer here.

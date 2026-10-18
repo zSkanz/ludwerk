@@ -1053,6 +1053,68 @@ local Classes: { Schema.Class } = {
                     .. "that begins with `DataBusy`. Raises an error on a player's machine, and in a game that is "
                     .. "not a server. A record already held by this world is returned at once.",
             },
+            {
+                Name = "TransactAsync",
+                Parameters = {
+                    {
+                        Name = "moves",
+                        Type = "{ { Move: number?, Pay: number?, Currency: string?, From: (Player | string)?, "
+                            .. "To: (Player | string)? } }",
+                    },
+                },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Moves items and money between owners: all of the moves, or none. A move is `Move`, an "
+                    .. "item's id, or `Pay`, a whole amount of `Currency`, from `From` to `To`. An owner is a "
+                    .. "`Player` or a name the game gives what no player owns, such as a guild's bank. For money, "
+                    .. "a nil owner is the game itself: what it pays comes from nowhere, and what is paid to it is "
+                    .. "gone. Returns true, or false and why: `ItemNotThere` where an item is not where a move says "
+                    .. "it is, `NotEnough` where a balance would fall below nought. It is on the disk before it "
+                    .. "returns, and each move is logged with the transaction and the world.",
+            },
+            {
+                Name = "CreateItemAsync",
+                Parameters = {
+                    { Name = "owner", Type = "Player | string" },
+                    { Name = "kind", Type = "string" },
+                    { Name = "fields", Type = "{ [string]: any }?", Default = "nil" },
+                },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Makes an item of `kind` for `owner` and returns its id. Its `fields` are what a save slot "
+                    .. "can hold. No id is ever given twice, even after the item is destroyed.",
+            },
+            {
+                Name = "DestroyItemAsync",
+                Parameters = { { Name = "id", Type = "number" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Destroys an item. Returns false where there is no item with that id.",
+            },
+            {
+                Name = "GetItemsAsync",
+                Parameters = { { Name = "owner", Type = "Player | string" } },
+                Returns = { "{ { Id: number, Kind: string, Fields: { [string]: any } } }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Returns the items `owner` has, oldest first.",
+            },
+            {
+                Name = "GetBalanceAsync",
+                Parameters = { { Name = "owner", Type = "Player | string" }, { Name = "currency", Type = "string" } },
+                Returns = { "number" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Returns how much of `currency` `owner` has: nought where they have never had any.",
+            },
         } :: { Schema.Method },
     },
     {

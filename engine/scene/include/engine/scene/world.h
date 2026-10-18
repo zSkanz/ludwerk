@@ -1050,6 +1050,20 @@ struct EngineState
     std::vector<DataLoad> dataLoads;
     std::vector<DataWrite> dataWrites;
     std::vector<DataAnswer> dataAnswers;
+    // **Items, money and transactions** (ADR 0238 §3): each a request and its
+    // answer as JSON, by the number the script waits on.
+    struct DataOp
+    {
+        u32 id = 0;
+        std::string request;
+    };
+    struct DataResult
+    {
+        u32 id = 0;
+        std::string answer;
+    };
+    std::vector<DataOp> dataOps;
+    std::vector<DataResult> dataResults;
     u32 nextDataLoad = 1;
     struct ChannelInfo
     {

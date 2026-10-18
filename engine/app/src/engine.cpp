@@ -3,6 +3,7 @@
 #include "engine/app/admin_channel.h"
 #include "engine/app/admin_server.h"
 #include "engine/app/data_broker.h"
+#include "engine/app/data_ops.h"
 #include "engine/app/editor_drive.h"
 #include "engine/app/headset_hands.h"
 #include "engine/app/health_server.h"
@@ -3320,6 +3321,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             (void)localData->write("self", write.account, StoredRecord{write.body, write.version}, write.release,
                                    nowMs);
         state.dataWrites.clear();
+        for (const scene::EngineState::DataOp& op : state.dataOps)
+            state.dataResults.push_back(
+                scene::EngineState::DataResult{op.id, runDataOp(localData->store(), "self", op.request)});
+        state.dataOps.clear();
         localData->tick(nowMs);
         for (DataBroker::Answer& answer : localData->takeAnswers()) {
             scene::EngineState::DataAnswer given;
