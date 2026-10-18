@@ -1033,6 +1033,19 @@ local Classes: { Schema.Class } = {
         Module = "scene",
         Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
         LazyService = true,
+        Properties = {
+            {
+                Name = "Version",
+                Type = "number",
+                Default = "1",
+                Transient = true,
+                HostFact = true,
+                ErrorKey = "script.err.data_version",
+                Doc = "The version of the format of the game's records, a whole number from 1. Set it before the "
+                    .. "first call to `LoadAsync`. A record written at an older version is passed to `OnMigrate` "
+                    .. "once and then written at this version.",
+            },
+        } :: { Schema.Property },
         Records = { "ADR 0238" },
         Doc = "Keeps each player's record in an online game's database, on the server. The database is the "
             .. "manager's (`servers.toml`), which every world of the game shares; a server run without a manager "
@@ -1115,7 +1128,61 @@ local Classes: { Schema.Class } = {
                 Records = { "ADR 0238" },
                 Doc = "Returns how much of `currency` `owner` has: nought where they have never had any.",
             },
+            {
+                Name = "GetAsync",
+                Parameters = { { Name = "scope", Type = "string" }, { Name = "key", Type = "string" } },
+                Returns = { "any", "number" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Returns a value no player owns, such as an auction's listings or a world event's progress, "
+                    .. "and its version. Nil and 0 for a value never written.",
+            },
+            {
+                Name = "SetAsync",
+                Parameters = {
+                    { Name = "scope", Type = "string" },
+                    { Name = "key", Type = "string" },
+                    { Name = "value", Type = "any" },
+                    { Name = "version", Type = "number" },
+                },
+                Returns = { "boolean", "number" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Writes a shared value, but only while its version is still `version`, the one `GetAsync` "
+                    .. "returned. Returns whether it was written, and the version it has now: a world that lost "
+                    .. "to another reads it again. The value is what a save slot can hold, of at most 256 KiB "
+                    .. "written; nil clears it.",
+            },
+            {
+                Name = "UpdateAsync",
+                Parameters = {
+                    { Name = "scope", Type = "string" },
+                    { Name = "key", Type = "string" },
+                    { Name = "transform", Type = "(any) -> any" },
+                },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0238" },
+                Doc = "Calls `transform` with a shared value as it is, and writes what it returns, unless another "
+                    .. "world wrote first. Then `transform` is called again with what that world wrote. Returns "
+                    .. "the value written. The function must not yield, and may run more than once. No lock is "
+                    .. "held while it runs.",
+            },
         } :: { Schema.Method },
+        Callbacks = {
+            {
+                Name = "OnMigrate",
+                Parameters = { { Name = "record", Type = "DataRecord" }, { Name = "fromVersion", Type = "number" } },
+                Returns = {},
+                Doc = "Called to update a record written at an older `Version`. The callback edits the record "
+                    .. "in place. It runs once, in its own thread, before `LoadAsync` returns the record, and the "
+                    .. "record is then written at the current version. If it raises an error, the error is logged "
+                    .. "and the record is left as it was read.",
+            },
+        } :: { Schema.Callback },
     },
     {
         Name = "LocalizationService",

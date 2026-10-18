@@ -135,6 +135,41 @@ void checkTransactions(engine::app::IDataStore& store)
 
 } // namespace
 
+namespace {
+
+// A shared value is written only at the version it was read at.
+void checkShared(engine::app::IDataStore& store)
+{
+    CHECK(store.getShared("auction", "sword").version == 0);
+    const engine::app::SharedWrite first = store.setShared("auction", "sword", "bid=10", 0);
+    CHECK(first.ok);
+    CHECK(first.now.version == 1);
+    // Another world read version 0 too, and loses.
+    const engine::app::SharedWrite late = store.setShared("auction", "sword", "bid=12", 0);
+    CHECK_FALSE(late.ok);
+    CHECK(late.now.value == "bid=10");
+    CHECK(late.now.version == 1);
+    CHECK(store.setShared("auction", "sword", "bid=12", 1).ok);
+    CHECK(store.getShared("auction", "sword").value == "bid=12");
+    CHECK(store.getShared("auction", "shield").value.empty());
+}
+
+} // namespace
+
+TEST_CASE("data store > a shared value is written only at the version it was read at")
+{
+    const auto memory = engine::app::makeMemoryDataStore();
+    checkShared(*memory);
+#if ENG_ENABLE_DATA
+    const std::filesystem::path folder = std::filesystem::temp_directory_path() / "engine-data-shared-test";
+    std::filesystem::remove_all(folder);
+    std::string error;
+    const auto store = engine::app::openDataStore(folder / "game.db", error);
+    REQUIRE_MESSAGE(store != nullptr, error);
+    checkShared(*store);
+#endif
+}
+
 TEST_CASE("data store > a transaction moves everything or nothing, in memory")
 {
     const auto store = engine::app::makeMemoryDataStore();

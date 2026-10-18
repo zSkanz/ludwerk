@@ -2413,6 +2413,21 @@ Value getPhysicsServiceFixedTimestep(const World& world, core::InstanceId)
     return world.engineState().requestedFixedTimestep;
 }
 
+Value getDataServiceVersion(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().dataVersion};
+}
+
+bool setDataServiceVersion(World& world, core::InstanceId, const Value& value)
+{
+    // A whole number from 1, as `SaveService.Version` is.
+    const f64* number = std::get_if<f64>(&value);
+    if (number == nullptr || !std::isfinite(*number) || *number < 1.0 || std::floor(*number) != *number)
+        return false;
+    world.engineState().dataVersion = *number;
+    return true;
+}
+
 Value getSaveServiceVersion(const World& world, core::InstanceId)
 {
     return Value{world.engineState().saveVersion};

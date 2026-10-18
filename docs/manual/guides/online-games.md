@@ -385,6 +385,45 @@ itself: that is how gold enters the game, as a reward, and leaves it, as a
 purchase from the shop. `CreateItemAsync`, `DestroyItemAsync`,
 `GetItemsAsync` and `GetBalanceAsync` complete it.
 
+### Values no player owns
+
+An auction's listings, a guild's bank, a world event's progress: a shared
+value belongs to the game, and any world may change it.
+`DataService:UpdateAsync` reads it, calls your function with it, and writes
+what the function returns. If another world wrote first, it calls the
+function again with what that world wrote. No world waits on another's
+script:
+
+```luau
+--!strict
+local DataService = game:GetService("DataService")
+
+local total = DataService:UpdateAsync("event", "wolves", function(old: any): any
+    return ((old :: number?) or 0) + 1
+end)
+```
+
+`GetAsync` returns a value and its version, and `SetAsync` writes only at
+the version it is given, for a game that wants that loop in its own hands.
+
+### When a record's format changes
+
+Set `DataService.Version` when the game's records change shape, and
+`OnMigrate` brings an older record up to date the first time it is loaded:
+
+```luau
+--!strict
+local DataService = game:GetService("DataService")
+
+DataService.Version = 2
+DataService.OnMigrate = function(record: DataRecord, fromVersion: number)
+    if fromVersion < 2 then
+        record:Set("Purse", { Gold = record:Get("Gold") })
+        record:Remove("Gold")
+    end
+end
+```
+
 The database is SQLite's. Copy it, with the front door's key, to keep the
 game's players: they are what a server's operator must not lose.
 
@@ -701,5 +740,5 @@ yours to answer for.
 - A second front door: while the one front door is down, no new player gets
   in, and those already in a world stay.
 - Accounts themselves: see [Who may join, and accounts](manual:guides/multiplayer).
-- Values shared by every world, and a backup taken while the game runs: the
-  rest of the data service is still to come.
+- A backup taken while the game runs, and a game's own backend in place of
+  the database: the rest of the data service is still to come.

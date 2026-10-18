@@ -215,3 +215,24 @@ purpose), and copying backups off the machine, which is the operator's.
 - **Not yet**: killing the manager in the middle of a trade (the same
   database and the same transaction, not yet a test of its own), a console
   command that undoes a transaction, and the move log's 90 days.
+
+## As built, versions and shared values (2026-10-18)
+
+- `DataService.Version` and `OnMigrate` (§2), as `SaveService`'s: a record
+  written at an older version, with something in it, is passed to
+  `OnMigrate` once, in a thread of its own, before `LoadAsync` returns it,
+  and is then written at the current version. `data_migrate` writes a
+  record with version 1 of a game and loads it with version 2, which
+  migrates it once; a second run of version 2 does not.
+- `GetAsync`, `SetAsync` and `UpdateAsync` (§4). The schema is version 3,
+  with `shared`: a value per scope and key, and its version. A write reads
+  and writes in one SQLite transaction, at the version the world read or
+  not at all. `UpdateAsync` is that loop: the value is read, the function
+  makes the next one, and it is written at the version read. Where another
+  world wrote first, the answer already holds what it wrote, so the function
+  runs again on it with no second read. No lock is held across the script.
+  After 32 losses in a row it raises an error.
+- `data_shared`: three threads add one to the same value 200 times each, at
+  once, and it ends at 600, version 600. Threads of one world interleave
+  their reads and writes across frames as three worlds would, and lose to
+  each other as often.

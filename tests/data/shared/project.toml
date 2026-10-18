@@ -1,0 +1,8 @@
+# The data service's shared values (ADR 0238 §4): three threads add one to
+# the same value 200 times each, at once, and none of the 600 is lost.
+
+[project]
+name = "Data Shared"
+id = "dev.ludwerk.data-shared"
+version = "1.0.0"
+engine = "0.1"

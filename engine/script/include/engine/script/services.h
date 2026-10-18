@@ -546,7 +546,26 @@ public:
         core::u32 id = 0;
         int threadRef = -1;
         core::u8 kind = 0;
+        // `UpdateAsync`'s: its function, the value it updates, and how many
+        // times another world wrote first.
+        int functionRef = -1;
+        std::string scope;
+        std::string key;
+        core::u32 conflicts = 0;
+        // Whether what it waits on is a write, and the error it ends with.
+        bool writing = false;
+        std::string error;
     };
+    // `DataService.OnMigrate`, or -1; and each record being migrated, by the
+    // migrating thread and the thread that waits for the record.
+    int dataMigrateHandler = -1;
+    struct DataMigration
+    {
+        int coRef = -1;
+        int waiterRef = -1;
+        std::string account;
+    };
+    std::vector<DataMigration> dataMigrations;
     std::vector<DataOpWaiter> dataOpWaiters;
     // `SaveService.OnMigrate`, or -1.
     int migrateHandler = -1;

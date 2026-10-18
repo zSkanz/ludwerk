@@ -779,6 +779,24 @@ if(ENG_BUILD_TESTS)
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-trade
                     -DPORT=47813
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_trade.cmake)
+        # **Shared values and a record migrated** (ADR 0238 §2, §4).
+        add_test(NAME data_shared
+            COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/data/shared" --headless --frames=3000 --exit --serve=47814
+                    "--saves=${CMAKE_CURRENT_BINARY_DIR}/data-shared")
+        set_tests_properties(data_shared PROPERTIES
+            PASS_REGULAR_EXPRESSION "\\[shared\\] value=600 writes=600 stale=false"
+            TIMEOUT 120)
+        add_test(NAME data_migrate
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DV1=${CMAKE_SOURCE_DIR}/tests/data/migrate/v1
+                    -DV2=${CMAKE_SOURCE_DIR}/tests/data/migrate/v2
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-migrate
+                    -DPORT=47815
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_migrate.cmake)
+        set_tests_properties(data_migrate PROPERTIES
+            PASS_REGULAR_EXPRESSION "the record was migrated once, and kept at the new version"
+            TIMEOUT 120)
         set_tests_properties(data_trade_killed PROPERTIES
             PASS_REGULAR_EXPRESSION "runs killed while trading, and nothing was duplicated or lost"
             TIMEOUT 180)

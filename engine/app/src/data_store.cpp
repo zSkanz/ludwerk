@@ -111,7 +111,24 @@ public:
         return found != m_balances.end() ? found->second : 0;
     }
 
+    [[nodiscard]] SharedDatum getShared(std::string_view scope, std::string_view key) override
+    {
+        const auto found = m_shared.find({std::string{scope}, std::string{key}});
+        return found != m_shared.end() ? found->second : SharedDatum{};
+    }
+
+    [[nodiscard]] SharedWrite setShared(std::string_view scope, std::string_view key, std::string_view value,
+                                        core::i64 version) override
+    {
+        SharedDatum& held = m_shared[{std::string{scope}, std::string{key}}];
+        if (held.version != version)
+            return {false, held};
+        held = SharedDatum{std::string{value}, version + 1};
+        return {true, held};
+    }
+
 private:
+    std::map<std::pair<std::string, std::string>, SharedDatum> m_shared;
     std::map<std::string, StoredRecord, std::less<>> m_records;
     std::map<core::i64, DataItem> m_items;
     std::map<std::pair<std::string, std::string>, core::i64> m_balances;
@@ -125,7 +142,7 @@ private:
 // by a newer build is refused rather than read wrong. Each version's tables
 // are made by the step that reaches it, so a database of any older version
 // is brought up to this one where it is opened.
-constexpr int SchemaVersion = 2;
+constexpr int SchemaVersion = 3;
 
 // A prepared statement, reset and its bindings cleared when it goes out of use.
 class Statement
@@ -246,6 +263,13 @@ public:
                 return false;
             }
         }
+        // Version 3 (ADR 0238 §4): values no player owns, each with its
+        // version.
+        if (version < 3 && !step(error,
+                                 "CREATE TABLE shared (scope TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL, "
+                                 "version INTEGER NOT NULL, PRIMARY KEY (scope, key)) WITHOUT ROWID",
+                                 3))
+            return false;
         const std::array<const char*, Count> texts{
             "SELECT body, version FROM records WHERE account = ?1",
             "INSERT INTO records (account, body, version, written) VALUES (?1, ?2, ?3, ?4) "
@@ -263,6 +287,9 @@ public:
             "DELETE FROM items WHERE id = ?1",
             "SELECT id, kind, owner, fields FROM items WHERE owner = ?1 ORDER BY id",
             "SELECT amount FROM balances WHERE owner = ?1 AND currency = ?2",
+            "SELECT value, version FROM shared WHERE scope = ?1 AND key = ?2",
+            "INSERT INTO shared (scope, key, value, version) VALUES (?1, ?2, ?3, ?4) "
+            "ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, version = excluded.version",
         };
         for (const char* text : texts) {
             auto statement = std::make_unique<Statement>(m_database, text);
@@ -410,6 +437,40 @@ public:
         return amount;
     }
 
+    [[nodiscard]] SharedDatum getShared(std::string_view scope, std::string_view key) override
+    {
+        Statement& select = use(SharedOf);
+        select.text(1, scope).text(2, key);
+        SharedDatum held;
+        if (select.step() == SQLITE_ROW)
+            held = SharedDatum{columnText(select.get(), 0), sqlite3_column_int64(select.get(), 1)};
+        select.reset();
+        return held;
+    }
+
+    [[nodiscard]] SharedWrite setShared(std::string_view scope, std::string_view key, std::string_view value,
+                                        core::i64 version) override
+    {
+        // Read and written in one transaction: no other write comes between.
+        std::string ignored;
+        if (!run("BEGIN IMMEDIATE", ignored))
+            return {false, getShared(scope, key)};
+        const SharedDatum now = getShared(scope, key);
+        if (now.version != version) {
+            (void)run("ROLLBACK", ignored);
+            return {false, now};
+        }
+        Statement& write = use(WriteShared);
+        write.text(1, scope).text(2, key).blob(3, value).integer(4, version + 1);
+        const bool written = write.step() == SQLITE_DONE;
+        write.reset();
+        if (!written || !run("COMMIT", ignored)) {
+            (void)run("ROLLBACK", ignored);
+            return {false, now};
+        }
+        return {true, SharedDatum{std::string{value}, version + 1}};
+    }
+
 private:
     enum Which : std::size_t
     {
@@ -425,6 +486,8 @@ private:
         DeleteItem,
         ItemsOf,
         BalanceOf,
+        SharedOf,
+        WriteShared,
         Count,
     };
 

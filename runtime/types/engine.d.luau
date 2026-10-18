@@ -4961,6 +4961,15 @@ declare extern type SaveService extends Instance with
 end
 
 declare extern type DataService extends Instance with
+    --- The version of the format of the game's records, a whole number from 1. Set it before the first
+    --- call to `LoadAsync`. A record written at an older version is passed to `OnMigrate` once and then
+    --- written at this version.
+    Version: number
+    --- Called to update a record written at an older `Version`. The callback edits the record in place.
+    --- It runs once, in its own thread, before `LoadAsync` returns the record, and the record is then
+    --- written at the current version. If it raises an error, the error is logged and the record is
+    --- left as it was read.
+    OnMigrate: ((record: DataRecord, fromVersion: number) -> ())?
     --- Returns the player's record, empty for a player who has none yet, and holds it for this world
     --- until the player leaves or `Release` is called. Where another world holds it, waits for that
     --- world to write it and let it go, for up to ten seconds, and then raises an error that begins
@@ -4984,6 +4993,18 @@ declare extern type DataService extends Instance with
     function GetItemsAsync(self, owner: Player | string): { { Id: number, Kind: string, Fields: { [string]: any } } }
     --- Returns how much of `currency` `owner` has: nought where they have never had any.
     function GetBalanceAsync(self, owner: Player | string, currency: string): number
+    --- Returns a value no player owns, such as an auction's listings or a world event's progress, and
+    --- its version. Nil and 0 for a value never written.
+    function GetAsync(self, scope: string, key: string): (any, number)
+    --- Writes a shared value, but only while its version is still `version`, the one `GetAsync`
+    --- returned. Returns whether it was written, and the version it has now: a world that lost to
+    --- another reads it again. The value is what a save slot can hold, of at most 256 KiB written; nil
+    --- clears it.
+    function SetAsync(self, scope: string, key: string, value: any, version: number): (boolean, number)
+    --- Calls `transform` with a shared value as it is, and writes what it returns, unless another world
+    --- wrote first. Then `transform` is called again with what that world wrote. Returns the value
+    --- written. The function must not yield, and may run more than once. No lock is held while it runs.
+    function UpdateAsync(self, scope: string, key: string, transform: (any) -> any): any
 end
 
 declare extern type LocalizationService extends Instance with

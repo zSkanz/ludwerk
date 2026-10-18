@@ -133,6 +133,11 @@ here.
   `CreateItemAsync`, `DestroyItemAsync`, `GetItemsAsync` and
   `GetBalanceAsync`. A server killed in the middle of a trade loses nothing
   and duplicates nothing.
+- Values no player owns, such as an auction or a world event, with versions:
+  `DataService:GetAsync`, `SetAsync` and `UpdateAsync`, which writes only
+  where no other world wrote first and otherwise runs its function again.
+  `DataService.Version` and `OnMigrate` bring an older record up to date
+  where it is loaded.
 - Every match is encrypted, with nothing for a game to do: a dedicated server,
   a host and a test alike, and through a relay that cannot read what it
   carries. Each copy of a game keeps a key beside its saves, and

@@ -5750,7 +5750,23 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(saveServiceDesc);
 
     // --- DataService ---
-    static std::array<MethodDesc, 6> dataServiceMethods;
+    static std::array<PropertyDesc, 1> dataServiceProperties;
+    dataServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Version"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The version of the format of the game's records, a whole number from 1. Set it before the first call to `LoadAsync`. A record written at an older version is passed to `OnMigrate` once and then written at this version.",
+            .errKeyOnInvalidSet = ENG_TR("script.err.data_version"),
+            .get = native::getDataServiceVersion,
+            .set = native::setDataServiceVersion,
+        },
+    }};
+    static std::array<MethodDesc, 9> dataServiceMethods;
     dataServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("LoadAsync"),
@@ -5788,6 +5804,24 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns how much of `currency` `owner` has: nought where they have never had any.",
         },
+        MethodDesc{
+            .name = atoms.intern("GetAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns a value no player owns, such as an auction's listings or a world event's progress, and its version. Nil and 0 for a value never written.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Writes a shared value, but only while its version is still `version`, the one `GetAsync` returned. Returns whether it was written, and the version it has now: a world that lost to another reads it again. The value is what a save slot can hold, of at most 256 KiB written; nil clears it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("UpdateAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Calls `transform` with a shared value as it is, and writes what it returns, unless another world wrote first. Then `transform` is called again with what that world wrote. Returns the value written. The function must not yield, and may run more than once. No lock is held while it runs.",
+        },
     }};
     ClassDescriptor dataServiceDesc;
     dataServiceDesc.name = atoms.intern("DataService");
@@ -5796,6 +5830,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     dataServiceDesc.lazyService = true;
     dataServiceDesc.defaultName = atoms.intern("DataService");
     dataServiceDesc.doc = "Keeps each player's record in an online game's database, on the server. The database is the manager's (`servers.toml`), which every world of the game shares; a server run without a manager keeps its own, `data.db` in its saves folder.\012\012A record holds what a `SaveSlot` holds. It is held by one world at a time: the world a player is in. It is written every 30 seconds while it changes, when the player leaves or travels, and when the world stops, so a world that crashes loses at most the last 30 seconds of it.";
+    dataServiceDesc.properties = dataServiceProperties;
     dataServiceDesc.methods = dataServiceMethods;
     classes.registerClass(dataServiceDesc);
 

@@ -104,6 +104,24 @@ std::string runDataOp(IDataStore& store, std::string_view world, std::string_vie
         }
         answer.endArray();
     }
+    else if (op == "get") {
+        const SharedDatum held = store.getShared(root["scope"].asString(), root["key"].asString());
+        answer.field("ok", true);
+        answer.field("value", std::string_view{held.value});
+        answer.field("version", held.version);
+    }
+    else if (op == "set") {
+        const std::optional<core::i64> version = wholeNumber(root["version"]);
+        if (!version.has_value())
+            return refused("Invalid");
+        const SharedWrite written =
+            store.setShared(root["scope"].asString(), root["key"].asString(), root["value"].asString(), *version);
+        answer.field("ok", written.ok);
+        if (!written.ok)
+            answer.field("reason", "Conflict");
+        answer.field("value", std::string_view{written.now.value});
+        answer.field("version", written.now.version);
+    }
     else if (op == "balance") {
         answer.field("ok", true);
         answer.field("balance", store.balance(root["owner"].asString(), root["currency"].asString()));

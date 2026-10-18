@@ -56,6 +56,23 @@ struct DataTransaction
     core::i64 id = 0;
 };
 
+// **A value no player owns** (ADR 0238 §4) -- an auction's listings, a
+// world event's progress -- as a saved value's text, and its version: every
+// write makes the next, and 0 is a value never written.
+struct SharedDatum
+{
+    std::string value;
+    core::i64 version = 0;
+};
+
+// What a write of a shared value did: written, or refused because another
+// world wrote first -- and the value as it is now, either way.
+struct SharedWrite
+{
+    bool ok = false;
+    SharedDatum now;
+};
+
 class IDataStore
 {
 public:
@@ -78,6 +95,12 @@ public:
     [[nodiscard]] virtual bool destroyItem(std::string_view world, core::i64 id) = 0;
     [[nodiscard]] virtual std::vector<DataItem> items(std::string_view owner) = 0;
     [[nodiscard]] virtual core::i64 balance(std::string_view owner, std::string_view currency) = 0;
+
+    [[nodiscard]] virtual SharedDatum getShared(std::string_view scope, std::string_view key) = 0;
+    // Written only while its version is still `version`, on the disk before
+    // it returns.
+    [[nodiscard]] virtual SharedWrite setShared(std::string_view scope, std::string_view key, std::string_view value,
+                                                core::i64 version) = 0;
 };
 
 // Kept in memory, for a test, and for a server with nowhere to write.

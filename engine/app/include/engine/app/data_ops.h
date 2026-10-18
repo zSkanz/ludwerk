@@ -8,8 +8,11 @@
 //   `destroy`   `item`
 //   `items`     `owner`
 //   `balance`   `owner`, `currency`
+//   `get`       `scope`, `key`
+//   `set`       `scope`, `key`, `value`, `version`
 // and the answer has `ok`, and `reason` where it is false; then `transaction`,
-// `item`, `items` ([{`id`, `kind`, `fields`}]) or `balance`.
+// `item`, `items` ([{`id`, `kind`, `fields`}]) or `balance`; a shared value's
+// `value` and `version`, as they are now, whether a `set` wrote or not.
 #pragma once
 
 #include <string>

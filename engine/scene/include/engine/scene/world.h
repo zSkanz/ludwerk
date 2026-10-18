@@ -1026,6 +1026,9 @@ struct EngineState
     // the writes of records it holds, each letting it go or not; and the
     // answers. The host carries them each frame.
     bool dataAvailable = false;
+    // `DataService.Version` (ADR 0238 §2): the records' format, as the
+    // game's code knows it.
+    f64 dataVersion = 1.0;
     struct DataLoad
     {
         u32 id = 0;

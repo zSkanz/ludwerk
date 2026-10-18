@@ -13,6 +13,12 @@ A record holds what a `SaveSlot` holds. It is held by one world at a time: the w
 This page lists the members this class declares. Inherited members are
 listed on the page of the class that declares them.
 
+## Properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Version` | `number` | `1` | read/write | The version of the format of the game's records, a whole number from 1. Set it before the first call to `LoadAsync`. A record written at an older version is passed to `OnMigrate` once and then written at this version. |
+
 ## Methods
 
 ### `CreateItemAsync(owner: Player | string, kind: string, fields: { [string]: any }? = nil): number`
@@ -26,6 +32,12 @@ Makes an item of `kind` for `owner` and returns its id. Its `fields` are what a 
 This method yields: the calling thread waits until it completes.
 
 Destroys an item. Returns false where there is no item with that id.
+
+### `GetAsync(scope: string, key: string): (any, number)`
+
+This method yields: the calling thread waits until it completes.
+
+Returns a value no player owns, such as an auction's listings or a world event's progress, and its version. Nil and 0 for a value never written.
 
 ### `GetBalanceAsync(owner: Player | string, currency: string): number`
 
@@ -45,8 +57,29 @@ This method yields: the calling thread waits until it completes.
 
 Returns the player's record, empty for a player who has none yet, and holds it for this world until the player leaves or `Release` is called. Where another world holds it, waits for that world to write it and let it go, for up to ten seconds, and then raises an error that begins with `DataBusy`. Raises an error on a player's machine, and in a game that is not a server. A record already held by this world is returned at once.
 
+### `SetAsync(scope: string, key: string, value: any, version: number): (boolean, number)`
+
+This method yields: the calling thread waits until it completes.
+
+Writes a shared value, but only while its version is still `version`, the one `GetAsync` returned. Returns whether it was written, and the version it has now: a world that lost to another reads it again. The value is what a save slot can hold, of at most 256 KiB written; nil clears it.
+
 ### `TransactAsync(moves: { { Move: number?, Pay: number?, Currency: string?, From: (Player | string)?, To: (Player | string)? } }): (boolean, string?)`
 
 This method yields: the calling thread waits until it completes.
 
 Moves items and money between owners: all of the moves, or none. A move is `Move`, an item's id, or `Pay`, a whole amount of `Currency`, from `From` to `To`. An owner is a `Player` or a name the game gives what no player owns, such as a guild's bank. For money, a nil owner is the game itself: what it pays comes from nowhere, and what is paid to it is gone. Returns true, or false and why: `ItemNotThere` where an item is not where a move says it is, `NotEnough` where a balance would fall below nought. It is on the disk before it returns, and each move is logged with the transaction and the world.
+
+### `UpdateAsync(scope: string, key: string, transform: (any) -> any): any`
+
+This method yields: the calling thread waits until it completes.
+
+Calls `transform` with a shared value as it is, and writes what it returns, unless another world wrote first. Then `transform` is called again with what that world wrote. Returns the value written. The function must not yield, and may run more than once. No lock is held while it runs.
+
+## Callbacks
+
+A callback is a function that a script assigns and the engine calls. Each
+callback holds one function, and assigning nil removes it.
+
+### `OnMigrate = function(record: DataRecord, fromVersion: number): ()`
+
+Called to update a record written at an older `Version`. The callback edits the record in place. It runs once, in its own thread, before `LoadAsync` returns the record, and the record is then written at the current version. If it raises an error, the error is logged and the record is left as it was read.

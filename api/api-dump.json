@@ -2082,7 +2082,14 @@
       "Extends": "Instance",
       "LazyService": true,
       "Tags": ["NotCreatable", "Service"],
-      "Properties": [],
+      "Properties": [
+        {
+          "Name": "Version",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        }
+      ],
       "Methods": [
         {
           "Name": "CreateItemAsync",
@@ -2114,6 +2121,22 @@
             }
           ],
           "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetAsync",
+          "Parameters": [
+            {
+              "Name": "scope",
+              "Type": "string"
+            },
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["any", "number"],
           "Yields": true,
           "ThreadSafety": "Unsafe"
         },
@@ -2158,6 +2181,30 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "SetAsync",
+          "Parameters": [
+            {
+              "Name": "scope",
+              "Type": "string"
+            },
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "any"
+            },
+            {
+              "Name": "version",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean", "number"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "TransactAsync",
           "Parameters": [
             {
@@ -2168,9 +2215,45 @@
           "Returns": ["boolean", "string?"],
           "Yields": true,
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UpdateAsync",
+          "Parameters": [
+            {
+              "Name": "scope",
+              "Type": "string"
+            },
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "transform",
+              "Type": "(any) -> any"
+            }
+          ],
+          "Returns": ["any"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
         }
       ],
-      "Events": []
+      "Events": [],
+      "Callbacks": [
+        {
+          "Name": "OnMigrate",
+          "Parameters": [
+            {
+              "Name": "record",
+              "Type": "DataRecord"
+            },
+            {
+              "Name": "fromVersion",
+              "Type": "number"
+            }
+          ],
+          "Returns": []
+        }
+      ]
     },
     {
       "Name": "DebugService",

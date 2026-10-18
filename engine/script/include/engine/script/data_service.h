@@ -2,6 +2,9 @@
 // player is here, read from the game's database and written behind.
 #pragma once
 
+#include <string_view>
+
+#include "engine/core/id.h"
 #include "engine/core/types.h"
 
 struct lua_State;
@@ -14,6 +17,13 @@ int dataServiceCreateItemAsync(lua_State* L);
 int dataServiceDestroyItemAsync(lua_State* L);
 int dataServiceGetItemsAsync(lua_State* L);
 int dataServiceGetBalanceAsync(lua_State* L);
+int dataServiceGetAsync(lua_State* L);
+int dataServiceSetAsync(lua_State* L);
+int dataServiceUpdateAsync(lua_State* L);
+
+// `DataService.OnMigrate`, read and set through the instance.
+bool dataCallbackGet(lua_State* L, core::InstanceId id, std::string_view key);
+bool dataCallbackSet(lua_State* L, core::InstanceId id, std::string_view key, int valueIndex);
 
 // The `DataRecord` value type's members. Once, at boot, before the sandbox.
 void registerDataTypes(lua_State* L);

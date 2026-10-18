@@ -1,0 +1,7 @@
+# The same game at Version 2 (ADR 0238 §2): gold became a purse.
+
+[project]
+name = "Data Migrate"
+id = "dev.ludwerk.data-migrate"
+version = "2.0.0"
+engine = "0.1"

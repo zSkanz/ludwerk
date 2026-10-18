@@ -1,0 +1,7 @@
+# A record written at Version 1 (ADR 0238 §2), for v2 to migrate.
+
+[project]
+name = "Data Migrate"
+id = "dev.ludwerk.data-migrate"
+version = "1.0.0"
+engine = "0.1"
