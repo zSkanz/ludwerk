@@ -2030,6 +2030,192 @@ TEST_CASE("what a player predicts that moves with no input is not corrected when
     }
 }
 
+namespace {
+
+// **A player on a platform a script carries**, over the engine's own
+// replication settings and a link that holds every message: walking on it,
+// hopping on it, jumping onto it from the floor, jumping off it with the
+// platform's own motion, and standing on one that turns.
+constexpr std::string_view RiderShared = R"(
+local RunService = game:GetService("RunService")
+local Rider = {}
+function Rider.bind()
+    RunService:BindToPredictedStep("rider", function(step)
+        local body = step.Character :: CharacterBody
+        if step:GetIntent("Walk") == true then
+            body:Move(vector.create(0, 0, 1))
+        end
+        if step:GetIntent("Jump") == true and body.Grounded then
+            body:Jump()
+        end
+    end)
+end
+return Rider
+)";
+
+constexpr std::string_view RiderServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Rider = require("@shared/rider")
+local floor = Instance.new("Part")
+floor.Anchored = true
+floor.Size = vector.create(200, 1, 200)
+floor.Position = vector.create(0, -0.5, 0)
+floor.Parent = workspace
+local platform = Instance.new("Part")
+platform.Name = "Platform"
+platform.Anchored = true
+platform.Size = vector.create(6, 0.2, 6)
+platform.Position = vector.create(0, 0.1, 0)
+platform.Parent = workspace
+local ticks = 0
+RunService.PreSimulation:Connect(function()
+    ticks += 1
+    if Case == "spin" then
+        platform.CFrame = CFrame.new(0, 0.1, 0) * CFrame.fromEuler(0, ticks * 0.02, 0)
+    else
+        platform.Position = vector.create(3 * math.sin(ticks / 60), 0.1, 0)
+    end
+end)
+Rider.bind()
+local function arrive(player: Player)
+    if player.UserId == 1 then
+        return
+    end
+    local body = Instance.new("CharacterBody")
+    body.Name = "Rider"
+    body.Size = vector.create(1, 2, 1)
+    body.WalkSpeed = 4
+    body.Position = if Case == "jumpon"
+        then vector.create(0, 1.2, -6)
+        elseif Case == "spin" then vector.create(2, 1.2, 0)
+        elseif Case == "walk" then vector.create(0, 1.2, -2)
+        else vector.create(0, 1.2, 0)
+    body.Parent = workspace
+    player.Character = body
+    workspace:SetAttribute("Started", true)
+end
+for _, player in NetworkService:GetPlayers() do
+    arrive(player)
+end
+NetworkService.PlayerAdded:Connect(arrive)
+NetworkService:Host(47192)
+)";
+
+constexpr std::string_view RiderClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Rider = require("@shared/rider")
+NetworkService:Join("memory:47192")
+local ticks = 0
+local bound = false
+RunService:BindToIntent("course", function(intent)
+    local walk = false
+    local jump = false
+    if Case == "walk" then
+        walk = ticks >= 60 and ticks < 90 or ticks >= 150 and ticks < 180
+    elseif Case == "hop" then
+        jump = ticks >= 60 and ticks % 90 < 3
+    elseif Case == "jumpon" then
+        walk = ticks >= 60 and ticks < 140
+        jump = ticks >= 95 and ticks < 98
+    elseif Case == "jumpoff" then
+        walk = ticks >= 60 and ticks < 200
+        jump = ticks >= 80 and ticks < 83
+    end
+    intent:Set("Walk", walk)
+    intent:Set("Jump", jump)
+end)
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    if NetworkService.State ~= Enum.NetworkState.Connected or not me or not me.Character then
+        return
+    end
+    if not bound then
+        bound = true
+        Rider.bind()
+    end
+    ticks += 1
+end)
+)";
+
+struct RiderRun
+{
+    int corrections = 0;
+    double largest = 0.0;
+};
+
+[[nodiscard]] RiderRun rider(std::string_view kase, core::u32 polls)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const std::string head = std::string("local Case = \"") + std::string(kase) + "\"\n";
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/rider.luau", std::string(RiderShared));
+    server.project.write("src/server/init.luau", head + std::string(RiderServer));
+    server.bootDelayed(wire, polls);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/rider.luau", std::string(RiderShared));
+    client.project.write("src/client/init.luau", head + std::string(RiderClient));
+    client.bootDelayed(wire, polls);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    scene::World& world = client.host->world();
+    int after = -1;
+    core::u64 seen = 0;
+    RiderRun run;
+    for (int frame = 0; frame < 1000; ++frame) {
+        server.frame();
+        client.frame();
+        if (!std::holds_alternative<bool>(
+                world.getAttribute(client.host->workspace(), world.atoms().lookup("Started"))))
+            continue;
+        ++after;
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr || after < 60)
+            continue;
+        const replication::Stats stats = replica->stats();
+        // The first second is the player arriving, and not what is measured.
+        if (after == 60)
+            seen = stats.corrections;
+        if (stats.corrections != seen) {
+            seen = stats.corrections;
+            ++run.corrections;
+            run.largest = std::max(run.largest, stats.lastCorrectionMetres);
+        }
+    }
+    CHECK(after > 600);
+    if (!log.firstError().empty())
+        MESSAGE("MEASURE rider " << kase << " polls=" << polls << " logged: " << log.firstError());
+    return run;
+}
+
+} // namespace
+
+TEST_CASE("a player on a moving platform, walking, hopping, jumping on or off, or turned: measured")
+{
+    // Two, five and nine frames each way: 67, 167 and 300 ms there and back.
+    // Measured, not yet held: with the platform drawn between snapshots a
+    // few ticks in the past, every case is corrected -- a walker on it by
+    // about a tick of its travel, nearly every tick. Drawn as each snapshot
+    // arrives, the walk is not corrected at all and jumping off it is
+    // corrected at most once; landing on it, hopping on it and its turning
+    // still are.
+    for (const std::string_view kase : {"walk", "hop", "jumpon", "jumpoff", "spin"}) {
+        for (const core::u32 polls : {2u, 5u, 9u}) {
+            const std::string name(kase);
+            CAPTURE(name);
+            CAPTURE(polls);
+            const RiderRun run = rider(kase, polls);
+            MESSAGE("MEASURE rider " << kase << " polls=" << polls << ": " << run.corrections
+                                     << " correction(s), largest " << run.largest);
+        }
+    }
+}
+
 TEST_CASE("a car handed over moving is where the authority has it, whatever tick the authority stood in")
 {
     // A car's correction that is the car's speed times one tick is a tick
