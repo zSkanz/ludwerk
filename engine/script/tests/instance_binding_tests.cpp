@@ -619,8 +619,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // and `IsMuted` (ADR 0241).
     // 366: `XRService`'s `GetHeadCFrame`, `GetHandCFrame` and `IsHandTracked`
     // (ADR 0245).
-    CHECK(coverage.declared == 366);
-    CHECK(coverage.bound == 366);
+    // 370: `XRService`'s `Recenter`, `GetPlayAreaBounds`, `SimulatePose` and
+    // `GetHandJoints` (ADR 0245).
+    CHECK(coverage.declared == 370);
+    CHECK(coverage.bound == 370);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 
