@@ -6,6 +6,6 @@
   "panel.turn.smooth": "Virar: contínuo",
   "panel.passthrough.on": "Passthrough: ligado",
   "panel.passthrough.off": "Passthrough: desligado",
-  "panel.passthrough.none": "Passthrough: este headset não tem",
+  "panel.passthrough.none": "Passthrough: indisponível (no Link, ative nas configurações de desenvolvedor da Meta)",
   "flat.hint": "Esta sala é feita para um headset. Abra com --xr, com o headset conectado."
 }

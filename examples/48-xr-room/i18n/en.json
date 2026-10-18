@@ -6,6 +6,6 @@
   "panel.turn.smooth": "Turning: smooth",
   "panel.passthrough.on": "Passthrough: on",
   "panel.passthrough.off": "Passthrough: off",
-  "panel.passthrough.none": "Passthrough: not on this headset",
+  "panel.passthrough.none": "Passthrough: unavailable (over Link, turn it on in Meta's developer settings)",
   "flat.hint": "This room is made for a headset. Start it with --xr, with your headset connected."
 }
