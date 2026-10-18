@@ -16,11 +16,15 @@
 namespace engine::app {
 namespace {
 
+#if ENG_ENABLE_DATA
+// When a row was written: the database's alone, so a build without one has
+// no use for it.
 [[nodiscard]] core::i64 unixNow()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
+#endif
 
 // A move that names an item and nothing else, or an amount and its currency
 // and nothing else, from one owner to another.
