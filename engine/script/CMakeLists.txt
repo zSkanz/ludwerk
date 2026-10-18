@@ -32,6 +32,7 @@ engine_add_module(script
         src/print_tree.cpp
         src/save_store.cpp
         src/save_service.cpp
+        src/data_service.cpp
         src/crypto_service.cpp
         src/cross_world.cpp
         src/instance_service.cpp

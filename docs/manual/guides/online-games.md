@@ -324,6 +324,40 @@ text or binary, at most 1 MiB, and at most eight sockets are open at once. A
 client's game opens one only with `websocket_client = true` under
 `[permissions]` in `project.toml`.
 
+## A player's record
+
+`DataService` keeps what a player has -- a level, an inventory, money -- in
+the game's database, which every world of the game shares. The manager keeps
+it in `data/<project id>.db` beside `servers.toml`; a server run with no
+manager keeps its own, `data.db` in its saves folder, and the code is the same.
+
+```luau
+--!strict
+local DataService = game:GetService("DataService")
+local NetworkService = game:GetService("NetworkService")
+
+NetworkService.PlayerAdded:Connect(function(player: Player)
+    local record = DataService:LoadAsync(player)
+    record:Set("Level", ((record:Get("Level") :: number?) or 0) + 1)
+end)
+```
+
+A record holds what a save slot holds, and it is held by one world at a time:
+the world the player is in. It is written behind -- every 30 seconds while it
+changes, when the player leaves or travels, and when the world stops -- so a
+world that crashes loses at most the last 30 seconds of it. A world that asks
+for a record another world still holds waits up to ten seconds for that world
+to let it go, and then raises an error that begins with `DataBusy`.
+`record:Save()` writes it at once, and `record:Release()` writes it and lets
+it go.
+
+A record belongs to the player's account where they joined with one (see
+[Who may join, and accounts](manual:guides/multiplayer)), and to the key
+their copy of the game joined with where they did not.
+
+The database is SQLite's. Copy it, with the front door's key, to keep the
+game's players: they are what a server's operator must not lose.
+
 ## Trying it in the editor
 
 With a `servers.toml` in the project, the Run view has **This game's worlds**.
@@ -637,3 +671,6 @@ yours to answer for.
 - A second front door: while the one front door is down, no new player gets
   in, and those already in a world stay.
 - Accounts themselves: see [Who may join, and accounts](manual:guides/multiplayer).
+- Trading items and money between players, values shared by every world, and
+  a backup taken while the game runs: the rest of the data service is still
+  to come.

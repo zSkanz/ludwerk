@@ -1021,6 +1021,36 @@ struct EngineState
     // warning that this channel is to be merged, in seconds.
     u32 networkChannel = 1;
     std::vector<u32> channelRequests;
+    // **The data service** (ADR 0238): whether this world has a database to
+    // ask -- the manager's, or a server's own; the records scripts asked for;
+    // the writes of records it holds, each letting it go or not; and the
+    // answers. The host carries them each frame.
+    bool dataAvailable = false;
+    struct DataLoad
+    {
+        u32 id = 0;
+        std::string account;
+    };
+    struct DataWrite
+    {
+        std::string account;
+        std::string body;
+        f64 version = 1.0;
+        bool release = false;
+    };
+    struct DataAnswer
+    {
+        u32 id = 0;
+        bool ok = false;
+        bool busy = false;
+        bool found = false;
+        std::string body;
+        f64 version = 1.0;
+    };
+    std::vector<DataLoad> dataLoads;
+    std::vector<DataWrite> dataWrites;
+    std::vector<DataAnswer> dataAnswers;
+    u32 nextDataLoad = 1;
     struct ChannelInfo
     {
         u32 channel = 0;

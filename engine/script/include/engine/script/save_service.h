@@ -8,6 +8,7 @@
 
 #include "engine/core/id.h"
 #include "engine/core/types.h"
+#include "engine/script/save_store.h"
 
 struct lua_State;
 
@@ -35,5 +36,10 @@ void resumeSaveWaiters(lua_State* L, core::f64 dt);
 [[nodiscard]] std::string encodeSavedValue(lua_State* L, int index, core::usize limit);
 // And back, pushed; nil for text that is not one.
 void pushSavedValue(lua_State* L, std::string_view text);
+
+// **A value as a save holds it** (ADR 0238: a `DataRecord` holds what a slot
+// does), raising for one it cannot; and pushed back as a fresh Luau value.
+[[nodiscard]] SaveValue saveValueFrom(lua_State* L, int index);
+void pushSaveValueOf(lua_State* L, const SaveValue& value);
 
 } // namespace engine::script

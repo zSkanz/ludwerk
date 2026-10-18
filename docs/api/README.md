@@ -25,6 +25,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`ContentProvider`](contentprovider.md) | [`Instance`](instance.md) | Loads assets before they are shown. |
 | [`CrossWorldService`](crossworldservice.md) | [`Instance`](instance.md) | Sends a game's events between its worlds: a guild's chat, a world boss that appears for everyone, an operator's announcement. |
 | [`CryptoService`](cryptoservice.md) | [`Instance`](instance.md) | Provides cryptographic functions: unpredictable random values, two hashes, and a hash for passwords. |
+| [`DataService`](dataservice.md) | [`Instance`](instance.md) | Keeps each player's record in an online game's database, on the server. |
 | [`DebugService`](debugservice.md) | [`Instance`](instance.md) | Controls the debug overlay and gives access to the engine's statistics and log. |
 | [`DialogueService`](dialogueservice.md) | [`Instance`](instance.md) | Plays lines of dialogue and reports the captions that are current. |
 | [`GlobalScriptService`](globalscriptservice.md) | [`Instance`](instance.md) | Holds the scripts of the whole game, which run in every scene. |

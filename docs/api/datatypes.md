@@ -316,6 +316,46 @@ The handle that `Signal:Connect` and `Signal:Once` return. Use it to disconnect 
 
 Disconnects the handler. Calling it again does nothing. A fire that was queued before the call can still run the handler once.
 
+## DataRecord
+
+A player's record in an online game's database, returned by `DataService:LoadAsync` and held by this world. It holds values under string keys, as a `SaveSlot` does, and raises the same errors for a value it cannot hold. Once it is let go, by `Release` or as its player leaves, every member but `Released` raises an error.
+
+## DataRecord — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `Released` | `boolean` | — | read-only | Whether this world has let the record go. |
+
+## DataRecord — methods
+
+### `Get(key: string): any`
+
+Returns a copy of the value stored under `key`, or nil.
+
+### `GetKeys(): { string }`
+
+Returns every key, sorted.
+
+### `Release()`
+
+Writes the record and lets it go, so another world can load it. Doing it again does nothing.
+
+### `Remove(key: string)`
+
+Removes `key` and its value.
+
+### `Save()`
+
+Writes the record now, without waiting for the next write behind. It does not wait for the database.
+
+### `Set(key: string, value: any)`
+
+Stores a copy of `value` under `key`. A value of nil removes the key. Raises an error for a value that cannot be saved, and for one that would make the record larger than 4 MB.
+
+### `Update(key: string, transform: (any) -> any): any`
+
+Calls `transform` with the value stored under `key`, stores what it returns, and returns that value. The function must not yield.
+
 ## InputObject
 
 One input, as passed by `InputService.InputBegan`, `InputChanged` and `InputEnded`. It is a read-only snapshot of what happened on one tick, not a live object.

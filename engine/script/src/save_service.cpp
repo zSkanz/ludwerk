@@ -585,6 +585,17 @@ void resumeSaveWaiters(lua_State* L, core::f64 dt)
     }
 }
 
+SaveValue saveValueFrom(lua_State* L, int index)
+{
+    std::vector<const void*> path;
+    return toSaveValue(L, index, 0, path);
+}
+
+void pushSaveValueOf(lua_State* L, const SaveValue& value)
+{
+    pushSaveValue(L, value);
+}
+
 std::string encodeSavedValue(lua_State* L, int index, core::usize limit)
 {
     std::vector<const void*> path;

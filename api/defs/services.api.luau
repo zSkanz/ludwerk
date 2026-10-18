@@ -1028,6 +1028,34 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Callback },
     },
     {
+        Name = "DataService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        LazyService = true,
+        Records = { "ADR 0238" },
+        Doc = "Keeps each player's record in an online game's database, on the server. The database is the "
+            .. "manager's (`servers.toml`), which every world of the game shares; a server run without a manager "
+            .. "keeps its own, `data.db` in its saves folder.\n\n"
+            .. "A record holds what a `SaveSlot` holds. It is held by one world at a time: the world a player is "
+            .. "in. It is written every 30 seconds while it changes, when the player leaves or travels, and "
+            .. "when the world stops, so a world that crashes loses at most the last 30 seconds of it.",
+        Methods = {
+            {
+                Name = "LoadAsync",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "DataRecord" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Returns the player's record, empty for a player who has none yet, and holds it for this "
+                    .. "world until the player leaves or `Release` is called. Where another world holds it, waits "
+                    .. "for that world to write it and let it go, for up to ten seconds, and then raises an error "
+                    .. "that begins with `DataBusy`. Raises an error on a player's machine, and in a game that is "
+                    .. "not a server. A record already held by this world is returned at once.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "LocalizationService",
         Extends = "Instance",
         Module = "scene",

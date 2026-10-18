@@ -26,6 +26,7 @@
 #include <string_view>
 #include <vector>
 
+#include "engine/app/data_broker.h"
 #include "engine/app/manager_link.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/crypto.h"
@@ -111,6 +112,9 @@ public:
         // At most this many worlds and instances at once, 0 for no limit
         // beyond each template's: the editor's eight (ADR 0225 §3).
         core::u32 mostWorlds = 0;
+        // **The game's data** (ADR 0238): absent, the database in `data/`
+        // under `root`, named after the project; a test gives one in memory.
+        std::function<std::unique_ptr<IDataStore>()> dataStore;
     };
 
     // One row of `worlds`.
@@ -203,6 +207,10 @@ private:
         core::u64 lowSinceNs = 0;
         core::u64 mergeAtNs = 0;
 
+        // **Which run of the world this is**, for the records it holds (ADR
+        // 0238): a world started again holds none of what its last run did.
+        core::u64 dataRun = 0;
+
         // --- An instance (ADR 0221) -------------------------------------
         bool instance = false;
         std::string templateName;
@@ -257,9 +265,15 @@ private:
     [[nodiscard]] World* routed(std::string_view target, core::u32 travellers);
     void closed(World& instance, std::string_view reason);
     void say(std::string_view text) const;
+    // ADR 0238: the name a run of a world holds records under, and the
+    // database's answers sent to the worlds that asked.
+    [[nodiscard]] static std::string dataName(const World& world);
+    void dataAnswers(core::u64 nowNs);
 
     Options m_options;
     core::Ed25519Pair m_signing;
+    std::unique_ptr<DataBroker> m_data;
+    core::u64 m_nextDataRun = 1;
     std::vector<std::unique_ptr<World>> m_worlds;
     // The launcher before an update, for one that fails.
     WorldLauncher m_launcherBefore;

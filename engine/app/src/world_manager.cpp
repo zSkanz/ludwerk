@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <span>
 #include <utility>
 
 #include "engine/app/match_keys.h"
@@ -232,6 +233,27 @@ std::optional<core::EngineError> WorldManager::start()
         core::log(core::LogLevel::Info, ENG_TR("manager.info.front_door"), args);
     }
 #endif
+
+    // **The game's data** (ADR 0238 §1): one database, this process's alone.
+    // One that cannot be opened is said, and the game runs on with its data
+    // kept in memory -- and lost when the manager stops.
+    std::unique_ptr<IDataStore> store;
+    if (m_options.dataStore) {
+        store = m_options.dataStore();
+    }
+    else {
+        const std::filesystem::path file =
+            m_options.root / "data" /
+            ((m_options.projectId.empty() ? std::string{"game"} : m_options.projectId) + ".db");
+        std::string why;
+        store = openDataStore(file, why);
+        if (store == nullptr) {
+            const std::array<core::I18nArg, 2> args{core::I18nArg{"path", file.string()},
+                                                    core::I18nArg{"why", std::string_view{why}}};
+            core::log(core::LogLevel::Error, ENG_TR("data.err.not_opened"), args);
+        }
+    }
+    m_data = std::make_unique<DataBroker>(store != nullptr ? std::move(store) : makeMemoryDataStore());
 
     for (const ServersConfig::World& config : m_options.config.worlds) {
         auto world = std::make_unique<World>();
@@ -683,6 +705,40 @@ core::u16 WorldManager::freePort() const
     return 0;
 }
 
+std::string WorldManager::dataName(const World& world)
+{
+    return world.config.name + "#" + std::to_string(world.dataRun);
+}
+
+void WorldManager::dataAnswers(core::u64 nowNs)
+{
+    if (m_data == nullptr)
+        return;
+    m_data->tick(static_cast<core::i64>(nowNs / 1'000'000u));
+    for (const DataBroker::Answer& answer : m_data->takeAnswers()) {
+        const auto world = std::find_if(m_worlds.begin(), m_worlds.end(), [&](const std::unique_ptr<World>& one) {
+            return one->process != nullptr && dataName(*one) == answer.world;
+        });
+        if (world == m_worlds.end())
+            continue;
+        core::JsonWriter record(core::JsonLayout::Compact);
+        record.beginObject();
+        record.field("type", "data-record");
+        record.field("id", static_cast<core::i64>(answer.id));
+        record.field("ok", answer.ok);
+        record.field("busy", answer.busy);
+        record.field("found", answer.record.has_value());
+        if (answer.record.has_value()) {
+            record.field("version", answer.record->version);
+            record.field("body", std::string_view{core::base64Encode(std::span<const core::u8>(
+                                     reinterpret_cast<const core::u8*>(answer.record->body.data()),
+                                     answer.record->body.size()))});
+        }
+        record.endObject();
+        send(**world, record);
+    }
+}
+
 WorldManager::World* WorldManager::worldNamed(std::string_view name)
 {
     // **The one that takes players now**: during an update, the new build's
@@ -705,6 +761,7 @@ void WorldManager::launch(World& world)
     // reconnects finds the same world.
     if (world.port == 0)
         world.port = freePort();
+    world.dataRun = m_nextDataRun++;
     WorldLaunch launch;
     launch.name = world.config.name;
     launch.scene = world.config.scene;
@@ -932,6 +989,22 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
                                                              static_cast<core::f64>(NsPerSecond));
         return;
     }
+    // **A player's record** (ADR 0238 §2): asked for, and written.
+    if (type == "data-load" && m_data != nullptr) {
+        m_data->load(dataName(world), static_cast<core::u32>(root["id"].asInteger(0)), root["account"].asString(),
+                     static_cast<core::i64>(now / 1'000'000u));
+        return;
+    }
+    if (type == "data-write" && m_data != nullptr) {
+        StoredRecord record;
+        record.version = root["version"].asNumber(1.0);
+        if (const std::optional<std::vector<core::u8>> body = core::base64Decode(root["body"].asString());
+            body.has_value())
+            record.body.assign(body->begin(), body->end());
+        (void)m_data->write(dataName(world), root["account"].asString(), record, root["release"].asBool(false),
+                            static_cast<core::i64>(now / 1'000'000u));
+        return;
+    }
     if (type == "channels") {
         // **The channels of the world this one is** (ADR 0230 §4), for a menu.
         const std::string base = world.base.empty() ? world.config.name : world.base;
@@ -1043,6 +1116,9 @@ void WorldManager::health(World& world)
         if (world.process != nullptr)
             readWorld(world);
         world.process.reset();
+        // What it wrote as it stopped is written; what it held is let go.
+        if (m_data != nullptr)
+            m_data->worldGone(dataName(world), static_cast<core::i64>(now / 1'000'000u));
         if (world.stopAsked || m_stopping) {
             world.state = State::Stopped;
             return;
@@ -1256,6 +1332,7 @@ void WorldManager::frame()
         old.drainedSinceNs = now;
         moveAll(old, next);
     }
+    dataAnswers(now);
     // Drained: stopped once empty, or after a while whatever it holds.
     for (const std::unique_ptr<World>& world : m_worlds) {
         if (world->state != State::Draining || world->stopAsked)

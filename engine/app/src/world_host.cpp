@@ -379,6 +379,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().rewindCapMs = options.rewindCapMs;
     m_world->engineState().kickOverLimit = options.kickOverLimit;
     m_world->engineState().managedWorld = options.managedWorld;
+    m_world->engineState().dataAvailable = options.dataAvailable;
     m_world->engineState().networkChannel = options.managedWorld.empty() ? 1u : channelOf(options.managedWorld);
     m_seed = options.seed;
 

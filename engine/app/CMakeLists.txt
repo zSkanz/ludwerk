@@ -11,6 +11,8 @@ engine_add_module(app
         src/project_watch.cpp
         src/external_changes.cpp
         src/managed_world.cpp
+        src/data_broker.cpp
+        src/data_store.cpp
         src/simulated_headset.cpp
         src/headset_hands.cpp
         src/manager_link.cpp
@@ -150,6 +152,12 @@ endif()
 # engine refuses a networked posture by name rather than failing to connect.
 if(ENG_ENABLE_REPLICATION)
     target_link_libraries(engine_app PRIVATE engine::replication)
+endif()
+
+# The data service's database (ADR 0238 §6), in a build that can be a server.
+target_compile_definitions(engine_app PRIVATE ENG_ENABLE_DATA=$<BOOL:${ENG_ENABLE_DATA}>)
+if(ENG_ENABLE_DATA)
+    target_link_libraries(engine_app PRIVATE engine::sqlite)
 endif()
 
 # The physics backend, for the same reason and by the same rule (ADR 0023): the
@@ -413,6 +421,7 @@ engine_add_module_tests(app
         tests/server_console_tests.cpp
         tests/join_request_tests.cpp
         tests/world_manager_tests.cpp
+        tests/data_broker_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp
@@ -464,6 +473,11 @@ engine_add_module_tests(app
         tests/screen_split_tests.cpp
         tests/mouths_tests.cpp
 )
+
+# The data service's database is tested where it is built (ADR 0238).
+if(ENG_BUILD_TESTS)
+    target_compile_definitions(engine_app_tests PRIVATE ENG_ENABLE_DATA=$<BOOL:${ENG_ENABLE_DATA}>)
+endif()
 
 # The wire and the world hash describe the same state: a gate that needs the
 # replication module's own field applier, so it is built where the module is.
@@ -742,6 +756,20 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "\\[room\\] planes=7 floor=1 ceiling=1 walls=4 tables=1 table=0\\.75 1\\.20x0\\.70 facing=1\\.00 parts=7 ball=0\\.85"
         TIMEOUT 60)
+    # **A player's record kept between runs of a server** (ADR 0238 §2):
+    # a listen host's own database, in its saves folder.
+    if(ENG_ENABLE_DATA AND ENG_ENABLE_REPLICATION)
+        add_test(NAME data_record
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/data/record
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-record
+                    -DPORT=47812
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_record.cmake)
+        set_tests_properties(data_record PROPERTIES
+            PASS_REGULAR_EXPRESSION "the record is kept between runs of the server"
+            TIMEOUT 120)
+    endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the
     # same place.

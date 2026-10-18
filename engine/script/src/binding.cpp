@@ -116,6 +116,8 @@ const char* typeName(UserdataTag tag) noexcept
         return "IntentWriter";
     case UserdataTag::PredictedStep:
         return "PredictedStep";
+    case UserdataTag::DataRecord:
+        return "DataRecord";
     case UserdataTag::AnimationTrack:
         return "AnimationTrack";
     case UserdataTag::InputObject:

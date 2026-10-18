@@ -174,6 +174,9 @@ enum class UserdataTag : int
     // What a predicted step's function is handed, by the run it belongs
     // to -- good only while that run is on.
     PredictedStep = 30,
+    // ADR 0238: a player's record this world holds, a pointer to what
+    // `ServiceState` keeps for the account for the VM's lifetime.
+    DataRecord = 31,
 
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.

@@ -16,6 +16,7 @@
 #include "engine/core/dmath.h"
 #include "engine/scene/world.h"
 #include "engine/script/animation.h"
+#include "engine/script/data_service.h"
 #include "engine/script/input_events.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/materials.h"
@@ -1812,6 +1813,7 @@ void registerDatatypes(lua_State* L)
     registerEnumTypes(L, ctx, atoms);
     registerTweenTypes(L);
     registerSaveTypes(L);
+    registerDataTypes(L);
     registerSceneTypes(L);
     registerIntentWriter(L);
     registerPredictedStep(L);

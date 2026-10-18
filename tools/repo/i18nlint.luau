@@ -686,6 +686,9 @@ local EditorDataLiterals: { [string]: boolean } = {
 --- with, written in Luau comments.
 local EditorDataFiles: { [string]: boolean } = {
     ["engine/app/src/scene_definitions.cpp"] = true,
+    -- The data service's statements (ADR 0238), in SQLite's language; what
+    -- it says to a person goes through the catalog.
+    ["engine/app/src/data_store.cpp"] = true,
 }
 
 local function proseLiteral(text: string): boolean

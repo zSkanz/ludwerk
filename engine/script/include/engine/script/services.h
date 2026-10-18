@@ -519,6 +519,26 @@ public:
         std::string slot;
     };
     std::vector<SaveWaiter> saveWaiters;
+    // **The records this world holds** (ADR 0238 §2), by account, kept for
+    // the VM's lifetime so a `DataRecord` a script still has never dangles:
+    // one let go is empty, and the next load of its account fills it again.
+    struct HeldRecord
+    {
+        SaveSlotData data;
+        bool released = true;
+        core::InstanceId player;
+        core::f64 sinceWrite = 0.0;
+    };
+    std::map<std::string, std::unique_ptr<HeldRecord>, std::less<>> records;
+    // A thread waiting for `DataService:LoadAsync`'s answer.
+    struct DataWaiter
+    {
+        core::u32 id = 0;
+        int threadRef = -1;
+        std::string account;
+        core::InstanceId player;
+    };
+    std::vector<DataWaiter> dataWaiters;
     // `SaveService.OnMigrate`, or -1.
     int migrateHandler = -1;
     // Each slot's `Changed`, by name, made when first asked for.

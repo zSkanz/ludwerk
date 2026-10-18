@@ -2078,6 +2078,28 @@
       ]
     },
     {
+      "Name": "DataService",
+      "Extends": "Instance",
+      "LazyService": true,
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "LoadAsync",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["DataRecord"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "DebugService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -12577,6 +12599,91 @@
           "Name": "Disconnect",
           "Parameters": [],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Operators": []
+    },
+    {
+      "Name": "DataRecord",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "Released",
+          "Type": "boolean",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "Get",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["any"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetKeys",
+          "Parameters": [],
+          "Returns": ["{ string }"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Release",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Remove",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Save",
+          "Parameters": [],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Set",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "Update",
+          "Parameters": [
+            {
+              "Name": "key",
+              "Type": "string"
+            },
+            {
+              "Name": "transform",
+              "Type": "(any) -> any"
+            }
+          ],
+          "Returns": ["any"],
           "ThreadSafety": "Unsafe"
         }
       ],

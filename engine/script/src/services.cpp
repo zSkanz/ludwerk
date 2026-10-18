@@ -34,6 +34,7 @@
 #include "engine/script/content_provider.h"
 #include "engine/script/cross_world.h"
 #include "engine/script/crypto_service.h"
+#include "engine/script/data_service.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/instance_service.h"
@@ -4043,6 +4044,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "IsMuted", networkServiceIsMuted},
     {"NetworkService", "GetLocalAddresses", networkServiceGetLocalAddresses},
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
+    {"DataService", "LoadAsync", dataServiceLoadAsync},
     {"SaveService", "ListSlots", saveServiceListSlots},
     {"SaveService", "DeleteSlot", saveServiceDeleteSlot},
     {"CryptoService", "RandomBytes", cryptoServiceRandomBytes},

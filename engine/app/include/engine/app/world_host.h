@@ -235,6 +235,9 @@ struct WorldHostOptions
     // before its first script runs: which channel it is (ADR 0230) is read
     // from it on the first line.
     std::string managedWorld{};
+    // **A server, with a database to ask** (ADR 0238): the manager's, or its
+    // own. Set before the first tick, which may already ask for a record.
+    bool dataAvailable = false;
     // **The size of what the world will be drawn into**, known before the
     // first frame: `UIService.ViewportSize`, `Camera.ViewportSize` and the
     // camera's conversions read it from a script's first line, where they

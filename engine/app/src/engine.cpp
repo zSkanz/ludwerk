@@ -2,6 +2,7 @@
 
 #include "engine/app/admin_channel.h"
 #include "engine/app/admin_server.h"
+#include "engine/app/data_broker.h"
 #include "engine/app/editor_drive.h"
 #include "engine/app/headset_hands.h"
 #include "engine/app/health_server.h"
@@ -24,6 +25,7 @@
 #endif
 #include <lua.h>
 
+#include "engine/script/data_service.h"
 #include "engine/script/debugger.h"
 
 // `std::sort` for the frame-time median, and `std::ptrdiff_t` beside it. Both
@@ -3052,6 +3054,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .rewindCapMs = options.rewindCapMs,
         .kickOverLimit = options.kickOverLimit,
         .managedWorld = options.managedWorld,
+        .dataAvailable = options.network.topology == replication::Topology::Dedicated ||
+                         options.network.topology == replication::Topology::Host,
         .saveDirectory = options.saveDirectory,
         .enabledIntegrations = options.enabledIntegrations,
         .integrationConfigurations = options.integrationConfigurations,
@@ -3279,6 +3283,57 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         });
         managedWorld->setUnixClock([]() { return unixSecondsNow(); });
     }
+    // **A server with no manager keeps its players' records itself** (ADR
+    // 0238 §1), in its saves folder; a managed world asks the manager's.
+    std::unique_ptr<DataBroker> localData;
+    if (!managedWorld.has_value() && (options.network.topology == replication::Topology::Dedicated ||
+                                      options.network.topology == replication::Topology::Host)) {
+        std::unique_ptr<IDataStore> store;
+        if (!options.saveDirectory.empty()) {
+            const std::filesystem::path file = options.saveDirectory / "data.db";
+            std::string why;
+            store = openDataStore(file, why);
+            if (store == nullptr) {
+                const std::array<core::I18nArg, 2> args{core::I18nArg{"path", file.string()},
+                                                        core::I18nArg{"why", std::string_view{why}}};
+                core::log(core::LogLevel::Error, ENG_TR("data.err.not_opened"), args);
+            }
+        }
+        localData = std::make_unique<DataBroker>(store != nullptr ? std::move(store) : makeMemoryDataStore());
+    }
+    // The records scripts asked for and wrote, carried to the database and
+    // its answers back: once a frame, and once more as the world stops.
+    const auto routeData = [&host, &managedWorld, &localData]() {
+        scene::EngineState& state = host->world().engineState();
+        if (managedWorld.has_value()) {
+            managedWorld->sendData(state);
+            return;
+        }
+        if (localData == nullptr)
+            return;
+        state.dataAvailable = true;
+        const core::i64 nowMs = static_cast<core::i64>(platform::nowNs() / 1'000'000u);
+        for (const scene::EngineState::DataLoad& load : state.dataLoads)
+            localData->load("self", load.id, load.account, nowMs);
+        state.dataLoads.clear();
+        for (const scene::EngineState::DataWrite& write : state.dataWrites)
+            (void)localData->write("self", write.account, StoredRecord{write.body, write.version}, write.release,
+                                   nowMs);
+        state.dataWrites.clear();
+        localData->tick(nowMs);
+        for (DataBroker::Answer& answer : localData->takeAnswers()) {
+            scene::EngineState::DataAnswer given;
+            given.id = answer.id;
+            given.ok = answer.ok;
+            given.busy = answer.busy;
+            given.found = answer.record.has_value();
+            if (answer.record.has_value()) {
+                given.body = std::move(answer.record->body);
+                given.version = answer.record->version;
+            }
+            state.dataAnswers.push_back(std::move(given));
+        }
+    };
     if (consoleReads || managedWorld.has_value())
         consoleInput.start();
     network.setJoinGate([&serverConsole, &managedWorld, &host](replication::JoinAsk& ask) {
@@ -6644,6 +6699,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     managedWorld->managerGone();
                 if (managedWorld->stopping())
                     quit = true;
+            }
+            else {
+                routeData();
             }
         }
 
@@ -10379,6 +10437,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         if (device->lost())
             quit = true;
     }
+
+    // **The world stops: every record it holds written and let go** (ADR
+    // 0238 §2), before the process goes.
+    script::releaseDataRecords(host->runtime().state());
+    routeData();
 
     if (packCheck->state.load() == 2) {
         host->close();

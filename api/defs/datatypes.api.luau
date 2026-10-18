@@ -2002,6 +2002,78 @@ local Datatypes: { Schema.Datatype } = {
         } :: { Schema.Method },
     },
     {
+        Name = "DataRecord",
+        Module = "script",
+        Records = { "ADR 0238" },
+        Doc = "A player's record in an online game's database, returned by `DataService:LoadAsync` and held by "
+            .. "this world. It holds values under string keys, as a `SaveSlot` does, and raises the same errors "
+            .. "for a value it cannot hold. Once it is let go, by `Release` or as its player leaves, every member "
+            .. "but `Released` raises an error.",
+        Properties = {
+            {
+                Name = "Released",
+                Type = "boolean",
+                ReadOnly = true,
+                Doc = "Whether this world has let the record go.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "Get",
+                Parameters = { { Name = "key", Type = "string" } },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "Returns a copy of the value stored under `key`, or nil.",
+            },
+            {
+                Name = "Set",
+                Parameters = { { Name = "key", Type = "string" }, { Name = "value", Type = "any" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Stores a copy of `value` under `key`. A value of nil removes the key. Raises an error for "
+                    .. "a value that cannot be saved, and for one that would make the record larger than 4 MB.",
+            },
+            {
+                Name = "Update",
+                Parameters = { { Name = "key", Type = "string" }, { Name = "transform", Type = "(any) -> any" } },
+                Returns = { "any" },
+                ThreadSafety = "Unsafe",
+                Doc = "Calls `transform` with the value stored under `key`, stores what it returns, and returns "
+                    .. "that value. The function must not yield.",
+            },
+            {
+                Name = "Remove",
+                Parameters = { { Name = "key", Type = "string" } },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Removes `key` and its value.",
+            },
+            {
+                Name = "GetKeys",
+                Parameters = {},
+                Returns = { "{ string }" },
+                ThreadSafety = "Unsafe",
+                Doc = "Returns every key, sorted.",
+            },
+            {
+                Name = "Save",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Writes the record now, without waiting for the next write behind. It does not wait for "
+                    .. "the database.",
+            },
+            {
+                Name = "Release",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Writes the record and lets it go, so another world can load it. Doing it again does "
+                    .. "nothing.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "SaveSlot",
         Module = "script",
         Records = { "ADR 0111" },

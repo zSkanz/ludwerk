@@ -16,6 +16,7 @@
 #include "engine/script/builtins.h"
 #include "engine/script/bytecode.h"
 #include "engine/script/crypto_service.h"
+#include "engine/script/data_service.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/debugger.h"
 #include "engine/script/input_events.h"
@@ -834,6 +835,9 @@ void ScriptRuntime::resumeTimers()
     // Saves (ADR 0111): the periodic write, and the threads waiting on a slot
     // or a write. Every tick, so shutdown's ticks finish a save too.
     resumeSaveWaiters(m_impl->state, m_world.engineState().fixedTimestep);
+    // A player's records (ADR 0238): the database's answers, and each record
+    // written behind.
+    resumeDataWaiters(m_impl->state, m_world.engineState().fixedTimestep);
     // Passwords hashed on their own thread since the last tick (ADR 0151).
     resumeCryptoWaiters(m_impl->state);
     resumeIntegrationWaiters(m_impl->state);

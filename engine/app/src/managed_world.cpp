@@ -1,6 +1,7 @@
 #include "engine/app/managed_world.h"
 
 #include <algorithm>
+#include <span>
 #include <utility>
 
 #include "engine/core/base64.h"
@@ -201,6 +202,20 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         state.channelAnswers.push_back(std::move(answer));
         return;
     }
+    // **A record the manager's database gave, or refused** (ADR 0238).
+    if (type == "data-record") {
+        scene::EngineState::DataAnswer answer;
+        answer.id = static_cast<core::u32>(root["id"].asInteger(0));
+        answer.ok = root["ok"].asBool(false);
+        answer.busy = root["busy"].asBool(false);
+        answer.found = root["found"].asBool(false);
+        answer.version = root["version"].asNumber(1.0);
+        if (const std::optional<std::vector<core::u8>> body = core::base64Decode(root["body"].asString());
+            body.has_value())
+            answer.body.assign(body->begin(), body->end());
+        state.dataAnswers.push_back(std::move(answer));
+        return;
+    }
     if (type == "channel-merging") {
         state.channelMerging.push_back(root["seconds"].asNumber(60.0));
         return;
@@ -352,6 +367,8 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
         send(asked);
     }
 
+    sendData(state);
+
     // **Events for the game's other worlds**, and the topics it hears.
     std::vector<scene::EngineState::CrossWorldMessage> published;
     published.swap(state.crossWorldOut);
@@ -422,6 +439,38 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
         m_tickSum = 0.0;
         m_tickWorst = 0.0;
         m_ticks = 0;
+    }
+}
+
+void ManagedWorld::sendData(scene::EngineState& state) const
+{
+    // **The records scripts asked for, and the writes** (ADR 0238), to the
+    // manager's database.
+    state.dataAvailable = true;
+    std::vector<scene::EngineState::DataLoad> loads;
+    loads.swap(state.dataLoads);
+    for (const scene::EngineState::DataLoad& load : loads) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "data-load");
+        asked.field("id", static_cast<core::i64>(load.id));
+        asked.field("account", std::string_view{load.account});
+        asked.endObject();
+        send(asked);
+    }
+    std::vector<scene::EngineState::DataWrite> writes;
+    writes.swap(state.dataWrites);
+    for (const scene::EngineState::DataWrite& write : writes) {
+        core::JsonWriter written(core::JsonLayout::Compact);
+        written.beginObject();
+        written.field("type", "data-write");
+        written.field("account", std::string_view{write.account});
+        written.field("body", std::string_view{core::base64Encode(std::span<const core::u8>(
+                                  reinterpret_cast<const core::u8*>(write.body.data()), write.body.size()))});
+        written.field("version", write.version);
+        written.field("release", write.release);
+        written.endObject();
+        send(written);
     }
 }
 

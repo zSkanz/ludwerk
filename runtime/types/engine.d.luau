@@ -694,6 +694,28 @@ declare extern type Tween with
     function Cancel(self): ()
 end
 
+declare extern type DataRecord with
+    --- Whether this world has let the record go.
+    read Released: boolean
+    --- Returns a copy of the value stored under `key`, or nil.
+    function Get(self, key: string): any
+    --- Stores a copy of `value` under `key`. A value of nil removes the key. Raises an error for a
+    --- value that cannot be saved, and for one that would make the record larger than 4 MB.
+    function Set(self, key: string, value: any): ()
+    --- Calls `transform` with the value stored under `key`, stores what it returns, and returns that
+    --- value. The function must not yield.
+    function Update(self, key: string, transform: (any) -> any): any
+    --- Removes `key` and its value.
+    function Remove(self, key: string): ()
+    --- Returns every key, sorted.
+    function GetKeys(self): { string }
+    --- Writes the record now, without waiting for the next write behind. It does not wait for the
+    --- database.
+    function Save(self): ()
+    --- Writes the record and lets it go, so another world can load it. Doing it again does nothing.
+    function Release(self): ()
+end
+
 declare extern type SaveSlot with
     --- The name of the slot.
     read Name: string
@@ -4701,6 +4723,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "Lighting"): Lighting
     function GetService(self, name: "ReplicatedStorage"): ReplicatedStorage
     function GetService(self, name: "SaveService"): SaveService
+    function GetService(self, name: "DataService"): DataService
     function GetService(self, name: "LocalizationService"): LocalizationService
     function GetService(self, name: "GraphicsService"): GraphicsService
     function GetService(self, name: "XRService"): XRService
@@ -4935,6 +4958,15 @@ declare extern type SaveService extends Instance with
     function ListSlots(self): { string }
     --- Deletes a slot and its backup. A `SaveSlot` object already obtained for it is emptied.
     function DeleteSlot(self, name: string): ()
+end
+
+declare extern type DataService extends Instance with
+    --- Returns the player's record, empty for a player who has none yet, and holds it for this world
+    --- until the player leaves or `Release` is called. Where another world holds it, waits for that
+    --- world to write it and let it go, for up to ten seconds, and then raises an error that begins
+    --- with `DataBusy`. Raises an error on a player's machine, and in a game that is not a server. A
+    --- record already held by this world is returned at once.
+    function LoadAsync(self, player: Player): DataRecord
 end
 
 declare extern type LocalizationService extends Instance with

@@ -73,6 +73,10 @@ public:
     void frame(scene::World& world, core::InstanceId dataModel, replication::IReplication* replication, core::u16 port,
                core::u64 nowNs, core::f64 tickMs);
 
+    // **A player's records** (ADR 0238): what scripts asked for and wrote,
+    // to the manager's database. Each frame, and once more as the world stops.
+    void sendData(scene::EngineState& state) const;
+
     // The manager said stop, or is gone.
     [[nodiscard]] bool stopping() const noexcept { return m_stopping; }
     void managerGone() noexcept { m_stopping = true; }

@@ -1,0 +1,8 @@
+# The data service's test game (ADR 0238): a listen host whose server
+# loads its player's record, adds a level and lets it go.
+
+[project]
+name = "Data Record"
+id = "dev.ludwerk.data-record"
+version = "1.0.0"
+engine = "0.1"

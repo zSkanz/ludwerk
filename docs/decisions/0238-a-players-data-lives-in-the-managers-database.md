@@ -152,3 +152,36 @@ the two are what a server's operator must keep.
 
 Several machines sharing one database (server meshing is out of scope on
 purpose), and copying backups off the machine, which is the operator's.
+
+## As built, the records (2026-10-18)
+
+- **SQLite 3.53.4**, of 2026-07-24, the newest release at least two weeks old
+  when it was pinned. It is vendored by a new kind of manifest row, an
+  **archive**: the release's zip, pinned by its SHA-256 and by each file's,
+  because the amalgamation is in no git tree. `vendor.luau sync` checks the
+  archive's hash before anything is unpacked, and `status` re-hashes the
+  three files every run. Built with `SQLITE_OMIT_LOAD_EXTENSION` and
+  `SQLITE_DQS=0`, in every build that can be a server (`ENG_ENABLE_DATA`): not
+  the player profile, a phone, the web or the Xbox app. "Public Domain" is
+  on R6's list by this ADR.
+- **The records** (§2): `DataService:LoadAsync` and `DataRecord` (`Get`,
+  `Set`, `Update`, `Remove`, `GetKeys`, `Save`, `Release`, `Released`). A record is
+  written in a save slot's format. One process opens the database: the
+  manager, whose worlds ask over their pipes (`data-load`, `data-write`,
+  `data-record`), or a server with no manager, which keeps `data.db` in its
+  saves folder. Each run of a world holds records under its own name, so a
+  world started again holds none of what the run before it held; a world
+  that stops writes everything it holds as it goes, and the manager reads
+  those lines before it lets go of the rest.
+- **Whose record**: the account a ticket named; else the key the player's
+  copy of the game joined with; else, for the players at a hosting machine,
+  their number there -- that machine's key exists only once it listens.
+- Proved by the broker's tests (a second world waits and is given the record
+  when the first lets it go, is refused after ten seconds, and a world that
+  died has its records let go and its late write refused), the database's
+  (a record read back after the file is closed), and `data_record`: a hosting
+  machine run twice with the same saves, the second run finding the level
+  the first wrote.
+- **Not yet**: `Version` and `OnMigrate`, items, money and transactions (§3),
+  shared values (§4), a game's own backend (§5), the backup and the console's
+  `data` commands (§7).

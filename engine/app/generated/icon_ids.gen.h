@@ -153,6 +153,7 @@ inline constexpr std::string_view ClassContentProvider = "class.ContentProvider"
 inline constexpr std::string_view ClassCrossWorldService = "class.CrossWorldService";
 inline constexpr std::string_view ClassCryptoService = "class.CryptoService";
 inline constexpr std::string_view ClassDataModel = "class.DataModel";
+inline constexpr std::string_view ClassDataService = "class.DataService";
 inline constexpr std::string_view ClassDebugService = "class.DebugService";
 inline constexpr std::string_view ClassDecal = "class.Decal";
 inline constexpr std::string_view ClassDepthOfFieldEffect = "class.DepthOfFieldEffect";
