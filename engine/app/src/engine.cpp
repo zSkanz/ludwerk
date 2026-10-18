@@ -4276,6 +4276,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             FrameWindowState state;
             state.focused = platform::windowFocused(*window);
             state.minimized = platform::windowMinimized(*window);
+            // **A headset in use is never behind** (ADR 0244): while its
+            // session shows the game, the headset paces the loop, and the
+            // window having the keyboard or not is nothing to the player
+            // wearing it. Held to the background rate, a player who clicked
+            // away from the mirror to share the screen saw the game in the
+            // headset at ten frames a second.
+            if (headset != nullptr &&
+                (headset->state() == rhi::HeadsetState::Running || headset->state() == rhi::HeadsetState::Paused)) {
+                state.focused = true;
+                state.minimized = false;
+            }
             state.refreshRate = platform::windowRefreshRate(*window);
             // The profiler's line is this display's frame.
             if (state.refreshRate >= 1.0f)

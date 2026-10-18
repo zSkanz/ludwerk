@@ -28,6 +28,13 @@ foreach(sync --vsync --no-vsync)
     if(NOT output MATCHES "Ran 40 frames")
         message(FATAL_ERROR "the host did not run its frames with ${sync}:\n${output}")
     endif()
+    # **A window without the keyboard does not slow the headset**: the
+    # hidden window never has it, and the headset in use paces the frames,
+    # not the background rate.
+    if(output MATCHES "is in the background")
+        message(FATAL_ERROR "the headset was held to the window's background rate with ${sync}:
+${output}")
+    endif()
     # Started with VSync on, the window is asked for VSync off once the
     # headset draws: the change this test is for.
     if(sync STREQUAL "--vsync" AND NOT output MATCHES "VSync requested: on.*VSync requested: off")
