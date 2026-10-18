@@ -2857,6 +2857,97 @@ int xrServiceSupportsPassthrough(lua_State* L)
     return 1;
 }
 
+int xrServiceGetRoomAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, "GetRoomAsync");
+    scene::EngineState::Headset& headset = world(L).engineState().headset;
+    // No headset, no room: answered now rather than never.
+    if (!headset.enabled) {
+        lua_pushnil(L);
+        return 1;
+    }
+    headset.roomAsked = true;
+    lua_pushthread(L);
+    services(L).roomWaiters.push_back(lua_ref(L, -1));
+    lua_pop(L, 1);
+    return lua_yield(L, 0);
+}
+
+// The room as `GetRoomAsync` returns it, or nil where the headset knows none.
+void pushRoom(lua_State* L, const scene::EngineState::Headset& headset)
+{
+    if (!headset.roomKnown) {
+        lua_pushnil(L);
+        return;
+    }
+    lua_createtable(L, 0, 1);
+    lua_createtable(L, static_cast<int>(headset.room.size()), 0);
+    for (usize at = 0; at < headset.room.size(); ++at) {
+        const scene::EngineState::Headset::RoomPlane& plane = headset.room[at];
+        lua_createtable(L, 0, 3);
+        pushEnumItem(L, scene::EnumValue{scene::generated::XRPlaneKindEnumId, static_cast<core::i32>(plane.kind)});
+        lua_setfield(L, -2, "Kind");
+        pushCFrame(L, plane.cframe);
+        lua_setfield(L, -2, "CFrame");
+        pushVector3(L, plane.size);
+        lua_setfield(L, -2, "Size");
+        lua_rawseti(L, -2, static_cast<int>(at + 1));
+    }
+    lua_setfield(L, -2, "Planes");
+}
+
+// **The room made solid**: a slab behind each plane, so the face toward the
+// room is the plane, in the world where the play space is now.
+int xrServiceCreateRoomParts(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    World& w = world(L);
+    const scene::EngineState::Headset& headset = w.engineState().headset;
+    const ClassId folderClass = w.classes().findId(w.atoms().intern("Folder"));
+    const ClassId partClass = w.classes().findId(w.atoms().intern("Part"));
+    const core::InstanceId workspace = findServiceOfClass(L, w.classes().findId(w.atoms().intern("Workspace")));
+    if (!headset.roomKnown || folderClass == scene::InvalidClass || partClass == scene::InvalidClass ||
+        !workspace.valid()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const core::NameAtom folderName = w.atoms().intern("XRRoom");
+    if (const core::InstanceId before = w.findFirstChild(workspace, folderName); before.valid())
+        (void)w.destroy(before);
+    const auto set = [&w, partClass](core::InstanceId part, std::string_view name, const scene::Value& value) {
+        const scene::PropertyDesc* property = w.classes().findProperty(partClass, w.atoms().intern(name));
+        if (property != nullptr && property->set != nullptr)
+            (void)property->set(w, part, value);
+    };
+    // What a client-side script makes is this machine's alone (ADR 0186).
+    const bool local = threadMakesLocal(L);
+    const core::InstanceId folder = w.create(folderClass);
+    if (local)
+        w.setLocal(folder);
+    w.setName(folder, folderName);
+    static constexpr std::array<std::string_view, 8> KindNames{"Floor", "Ceiling", "Wall",   "Table",
+                                                               "Couch", "Door",    "Window", "Other"};
+    constexpr f32 Thickness = 0.1f;
+    for (const scene::EngineState::Headset::RoomPlane& plane : headset.room) {
+        const core::InstanceId part = w.create(partClass);
+        if (local)
+            w.setLocal(part);
+        w.setName(part, w.atoms().intern(KindNames[std::min<usize>(plane.kind, KindNames.size() - 1)]));
+        const core::CFrameD behind{core::DVec3{0.0, 0.0, -0.5 * static_cast<f64>(Thickness)}, core::Mat3{}};
+        set(part, "Anchored", scene::Value{true});
+        set(part, "CastShadow", scene::Value{false});
+        set(part, "Fade", scene::Value{1.0});
+        set(part, "Size",
+            scene::Value{core::Vec3{std::max(plane.size.x, 0.01f), std::max(plane.size.y, 0.01f), Thickness}});
+        set(part, "CFrame", scene::Value{headset.playSpaceWorld * plane.cframe * behind});
+        (void)w.setParent(part, folder);
+    }
+    (void)w.setParent(folder, workspace);
+    pushInstance(L, folder);
+    return 1;
+}
+
 int xrServiceRecenter(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -3946,6 +4037,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "GetHandJoints", xrServiceGetHandJoints},
     {"XRService", "Recenter", xrServiceRecenter},
     {"XRService", "SupportsPassthrough", xrServiceSupportsPassthrough},
+    {"XRService", "GetRoomAsync", xrServiceGetRoomAsync},
+    {"XRService", "CreateRoomParts", xrServiceCreateRoomParts},
     {"XRService", "SimulateInput", xrServiceSimulateInput},
     {"XRService", "GetPointerRay", xrServiceGetPointerRay},
     {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},
@@ -4331,6 +4424,22 @@ void fireXRSessionStateChanged(lua_State* L, core::u8 state)
     pushEnumItem(L, scene::EnumValue{scene::generated::XRSessionStateEnumId, static_cast<core::i32>(state)});
     fireInstanceEvent(L, service, descriptor->slot, lua_gettop(L), 1);
     lua_pop(L, 1);
+}
+
+void resumeXRRoomWaiters(lua_State* L)
+{
+    std::vector<int> waiting;
+    waiting.swap(services(L).roomWaiters);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    for (const int threadRef : waiting) {
+        lua_getref(L, threadRef);
+        if (lua_State* co = lua_tothread(L, -1); co != nullptr) {
+            pushRoom(co, headset);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, threadRef);
+    }
 }
 
 void fireTimeDilationChanged(lua_State* L)

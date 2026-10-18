@@ -4,11 +4,13 @@
 // clang-format off
 #include <openxr/openxr.h>
 #include <SDL3/SDL_openxr.h>
+#include <SDL3/SDL_system.h>
 #include <SDL3/SDL_timer.h>
 // clang-format on
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -17,6 +19,7 @@
 
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
+#include "engine/core/math.h"
 #include "sdlgpu_enums.h"
 
 namespace engine::rhi::sdlgpu {
@@ -83,6 +86,30 @@ struct XrCalls
     // XR_META_performance_metrics'.
     PFN_xrSetPerformanceMetricsStateMETA setMetricsState = nullptr;
     PFN_xrQueryPerformanceMetricsCounterMETA queryMetric = nullptr;
+    // XR_FB_spatial_entity, its query and XR_FB_scene's.
+    PFN_xrQuerySpacesFB querySpaces = nullptr;
+    PFN_xrRetrieveSpaceQueryResultsFB retrieveSpaces = nullptr;
+    PFN_xrGetSpaceComponentStatusFB componentStatus = nullptr;
+    PFN_xrGetSpaceBoundingBox2DFB boundingBox2D = nullptr;
+    PFN_xrGetSpaceSemanticLabelsFB semanticLabels = nullptr;
+
+    void loadScene(XrInstance instance)
+    {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        if (getProc == nullptr)
+            return;
+        const auto get = [&](const char* name, auto& out) {
+            PFN_xrVoidFunction found = nullptr;
+            if (XR_FAILED(getProc(instance, name, &found)))
+                found = nullptr;
+            out = reinterpret_cast<std::remove_reference_t<decltype(out)>>(found);
+        };
+        get("xrQuerySpacesFB", querySpaces);
+        get("xrRetrieveSpaceQueryResultsFB", retrieveSpaces);
+        get("xrGetSpaceComponentStatusFB", componentStatus);
+        get("xrGetSpaceBoundingBox2DFB", boundingBox2D);
+        get("xrGetSpaceSemanticLabelsFB", semanticLabels);
+    }
 
     void loadPassthrough(XrInstance instance)
     {
@@ -278,8 +305,8 @@ class OpenXrHeadset final : public IHeadset
 {
 public:
     OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
-                  bool fbPassthrough, bool metrics)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_metrics(metrics),
+                  bool fbPassthrough, bool metrics, bool scene)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_scene(scene), m_metrics(metrics),
           m_fbPassthrough(fbPassthrough), m_depthLayer(depthLayer), m_handTracking(handTracking)
     {}
 
@@ -455,6 +482,11 @@ public:
         }
         if (m_fbPassthrough)
             m_calls.loadPassthrough(m_instance);
+        if (m_scene) {
+            m_calls.loadScene(m_instance);
+            m_scene = m_calls.querySpaces != nullptr && m_calls.retrieveSpaces != nullptr &&
+                      m_calls.componentStatus != nullptr && m_calls.boundingBox2D != nullptr;
+        }
         // **The runtime's measurements** of the game's frames, where it
         // offers them: turned on once, read when the timing is taken.
         if (m_metrics) {
@@ -496,6 +528,18 @@ public:
             }
             else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
                 m_state = HeadsetState::Ended;
+            }
+            else if (event.type == XR_TYPE_EVENT_DATA_SPACE_QUERY_RESULTS_AVAILABLE_FB) {
+                const auto& available = reinterpret_cast<const XrEventDataSpaceQueryResultsAvailableFB&>(event);
+                if (available.requestId == m_roomQuery)
+                    collectRoom();
+            }
+            else if (event.type == XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB) {
+                const auto& complete = reinterpret_cast<const XrEventDataSpaceQueryCompleteFB&>(event);
+                if (complete.requestId == m_roomQuery && m_roomAsked) {
+                    m_roomAsked = false;
+                    m_roomReady = true;
+                }
             }
             event = made<XrEventDataBuffer>(XR_TYPE_EVENT_DATA_BUFFER);
         }
@@ -788,6 +832,68 @@ public:
         return taken;
     }
 
+    void requestRoom() override
+    {
+        if (m_roomAsked)
+            return;
+        m_room = HeadsetRoom{};
+        if (!m_scene) {
+            m_roomReady = true;
+            return;
+        }
+#if defined(SDL_PLATFORM_ANDROID)
+        // **The player is asked first**, on the Quest: the room is theirs.
+        // The answer comes on another thread; the query waits for it.
+        m_roomAsked = true;
+        m_permission = 0;
+        if (!SDL_RequestAndroidPermission(
+                "com.oculus.permission.USE_SCENE",
+                [](void* self, const char*, bool granted) {
+                    static_cast<OpenXrHeadset*>(self)->m_permission.store(granted ? 1 : 2);
+                },
+                this)) {
+            m_roomAsked = false;
+            m_roomReady = true;
+        }
+#else
+        m_roomAsked = true;
+        m_permission = 1;
+#endif
+    }
+
+    [[nodiscard]] bool takeRoom(HeadsetRoom& out) override
+    {
+        // The player's answer, then the runtime's query.
+        if (m_roomAsked && m_roomQuery == 0 && m_permission.load() != 0) {
+            if (m_permission.load() == 2) {
+                m_roomAsked = false;
+                m_roomReady = true;
+            }
+            else {
+                auto filter = made<XrSpaceComponentFilterInfoFB>(XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB);
+                filter.componentType = XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB;
+                auto info = made<XrSpaceQueryInfoFB>(XR_TYPE_SPACE_QUERY_INFO_FB);
+                info.queryAction = XR_SPACE_QUERY_ACTION_LOAD_FB;
+                info.maxResultCount = 256;
+                info.timeout = XR_INFINITE_DURATION;
+                info.filter = reinterpret_cast<const XrSpaceFilterInfoBaseHeaderFB*>(&filter);
+                if (XR_FAILED(m_calls.querySpaces(
+                        m_session, reinterpret_cast<const XrSpaceQueryInfoBaseHeaderFB*>(&info), &m_roomQuery))) {
+                    m_roomQuery = 0;
+                    m_roomAsked = false;
+                    m_roomReady = true;
+                }
+            }
+        }
+        if (!m_roomReady)
+            return false;
+        m_roomReady = false;
+        m_roomQuery = 0;
+        out = std::move(m_room);
+        m_room = HeadsetRoom{};
+        return true;
+    }
+
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
 
     void setPassthrough(bool on) override
@@ -1024,6 +1130,81 @@ private:
         return true;
     }
 
+    // **What a room query found**: each space with a rectangle, where it is in
+    // the play space, how big, and what the scene calls it.
+    void collectRoom()
+    {
+        auto results = made<XrSpaceQueryResultsFB>(XR_TYPE_SPACE_QUERY_RESULTS_FB);
+        if (XR_FAILED(m_calls.retrieveSpaces(m_session, m_roomQuery, &results)) || results.resultCountOutput == 0)
+            return;
+        std::vector<XrSpaceQueryResultFB> found(results.resultCountOutput);
+        results.resultCapacityInput = static_cast<u32>(found.size());
+        results.results = found.data();
+        if (XR_FAILED(m_calls.retrieveSpaces(m_session, m_roomQuery, &results)))
+            return;
+        m_room.known = true;
+        for (const XrSpaceQueryResultFB& one : found) {
+            auto status = made<XrSpaceComponentStatusFB>(XR_TYPE_SPACE_COMPONENT_STATUS_FB);
+            if (XR_FAILED(m_calls.componentStatus(one.space, XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB, &status)) ||
+                status.enabled != XR_TRUE)
+                continue;
+            XrRect2Df rect{};
+            if (XR_FAILED(m_calls.boundingBox2D(m_session, one.space, &rect)))
+                continue;
+            auto location = made<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
+            if (XR_FAILED(m_calls.locateSpace(one.space, m_space, m_displayTime, &location)))
+                continue;
+            const HeadsetPose origin = poseOf(location);
+            if (!origin.valid)
+                continue;
+            HeadsetPlane plane;
+            plane.width = rect.extent.width;
+            plane.height = rect.extent.height;
+            // The rectangle's middle, from the space's origin along its own x and y.
+            const core::Mat3 turn = core::fromQuaternion(origin.orientation[0], origin.orientation[1],
+                                                         origin.orientation[2], origin.orientation[3]);
+            const core::Vec3 middle = turn * core::Vec3{rect.offset.x + rect.extent.width * 0.5f,
+                                                        rect.offset.y + rect.extent.height * 0.5f, 0.0f};
+            plane.pose = origin;
+            plane.pose.position = {origin.position[0] + middle.x, origin.position[1] + middle.y,
+                                   origin.position[2] + middle.z};
+            plane.kind = 7;
+            if (m_calls.semanticLabels != nullptr) {
+                auto labels = made<XrSemanticLabelsFB>(XR_TYPE_SEMANTIC_LABELS_FB);
+                if (XR_SUCCEEDED(m_calls.semanticLabels(m_session, one.space, &labels)) &&
+                    labels.bufferCountOutput > 0) {
+                    std::string text(labels.bufferCountOutput, '\0');
+                    labels.bufferCapacityInput = labels.bufferCountOutput;
+                    labels.buffer = text.data();
+                    if (XR_SUCCEEDED(m_calls.semanticLabels(m_session, one.space, &labels)))
+                        plane.kind = kindOf(text);
+                }
+            }
+            m_room.planes.push_back(plane);
+        }
+    }
+
+    // `Enum.XRPlaneKind` from the scene's first label.
+    [[nodiscard]] static u8 kindOf(std::string_view labels) noexcept
+    {
+        const std::string_view first = labels.substr(0, labels.find(','));
+        if (first.starts_with("FLOOR"))
+            return 0;
+        if (first.starts_with("CEILING"))
+            return 1;
+        if (first.starts_with("WALL") || first.starts_with("INVISIBLE_WALL"))
+            return 2;
+        if (first.starts_with("TABLE"))
+            return 3;
+        if (first.starts_with("COUCH"))
+            return 4;
+        if (first.starts_with("DOOR"))
+            return 5;
+        if (first.starts_with("WINDOW"))
+            return 6;
+        return 7;
+    }
+
     void sessionBecame(XrSessionState state)
     {
         switch (state) {
@@ -1077,6 +1258,15 @@ private:
     std::array<XrPath, 2> m_hands{};
     // Grip then aim, each left then right.
     std::array<XrSpace, 4> m_handSpaces{};
+    // **The room**: whether the runtime has the scene, whether it was asked
+    // for, the player's answer (0 none yet, 1 yes, 2 no), the query, and the
+    // planes found so far.
+    bool m_scene = false;
+    bool m_roomAsked = false;
+    bool m_roomReady = false;
+    std::atomic<int> m_permission{0};
+    XrAsyncRequestIdFB m_roomQuery = 0;
+    HeadsetRoom m_room;
     // **How the frames have gone**, since the timing was last taken; when the
     // last wait came back; and whether the runtime measures the game too.
     HeadsetTiming m_timing{};
@@ -1124,6 +1314,10 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     depthLayer = false;
     fbPassthrough = false;
     metrics = false;
+    scene = false;
+    bool entity = false;
+    bool query = false;
+    bool sceneListed = false;
     if (SDL_OpenXR_LoadLibrary()) {
         const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
         PFN_xrVoidFunction found = nullptr;
@@ -1146,6 +1340,12 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             fbPassthrough = true;
                         if (name == XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)
                             metrics = true;
+                        if (name == XR_FB_SPATIAL_ENTITY_EXTENSION_NAME)
+                            entity = true;
+                        if (name == XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME)
+                            query = true;
+                        if (name == XR_FB_SCENE_EXTENSION_NAME)
+                            sceneListed = true;
                     }
                 }
             }
@@ -1160,6 +1360,12 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
         extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
     if (metrics)
         extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
+    scene = entity && query && sceneListed;
+    if (scene) {
+        extensions.push_back(XR_FB_SPATIAL_ENTITY_EXTENSION_NAME);
+        extensions.push_back(XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME);
+        extensions.push_back(XR_FB_SCENE_EXTENSION_NAME);
+    }
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -1181,9 +1387,9 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
 {
     if (!ask.ready())
         return nullptr;
-    auto headset = std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance),
-                                                   static_cast<XrSystemId>(ask.system), std::move(hooks),
-                                                   ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics);
+    auto headset = std::make_unique<OpenXrHeadset>(
+        reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system), std::move(hooks),
+        ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics, ask.scene);
     if (!headset->open())
         return nullptr;
     return headset;

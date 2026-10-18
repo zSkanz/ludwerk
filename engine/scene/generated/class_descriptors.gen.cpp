@@ -6581,7 +6581,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 10> xRServiceMethods;
+    static std::array<MethodDesc, 12> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6606,6 +6606,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns whether this headset can show the player's room behind the game (`Passthrough`). False with no headset.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetRoomAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the player's room as the headset knows it: its floor, ceiling, walls, tables and the rest, each a rectangle in the play space. A plane's `CFrame` is its middle, the rectangle across its x and y and facing along its z, into the room; `Size` is its width and height. It waits for the headset, which may first ask the player to let the game see the room. Nil with no headset, where the headset knows no room, or when the player says no.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CreateRoomParts"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` it puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting no shadow. Physics, raycasts and navigation then use the real room. Each part is a slab behind its plane, so its face toward the room is where the plane is. The parts are placed where the play space is in the world now, the current camera's `CFrame`. A folder made before is replaced. Nil before a room was returned.",
         },
         MethodDesc{
             .name = atoms.intern("GetHandJoints"),
@@ -11231,6 +11243,56 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     xRSessionStateDesc.doc = "What the headset is doing with this game, for `XRService.SessionState`.";
     xRSessionStateDesc.items = xRSessionStateItems;
     enums.registerEnum(xRSessionStateDesc);
+
+    // --- XRPlaneKind ---
+    static std::array<EnumItemDesc, 8> xRPlaneKindItems;
+    xRPlaneKindItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Floor"),
+            .value = 0,
+            .doc = "The floor.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Ceiling"),
+            .value = 1,
+            .doc = "The ceiling.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Wall"),
+            .value = 2,
+            .doc = "A wall, or a side of the room the player marked as one.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Table"),
+            .value = 3,
+            .doc = "The top of a table or a desk.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Couch"),
+            .value = 4,
+            .doc = "The seat of a couch.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Door"),
+            .value = 5,
+            .doc = "A door's frame.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Window"),
+            .value = 6,
+            .doc = "A window's frame.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Other"),
+            .value = 7,
+            .doc = "Anything else the player marked in the room.",
+        },
+    }};
+    EnumDescriptor xRPlaneKindDesc;
+    xRPlaneKindDesc.name = atoms.intern("XRPlaneKind");
+    xRPlaneKindDesc.doc = "What a flat part of the player's room is, in `XRService:GetRoomAsync`.";
+    xRPlaneKindDesc.items = xRPlaneKindItems;
+    enums.registerEnum(xRPlaneKindDesc);
 
     // --- VibrationMotor ---
     static std::array<EnumItemDesc, 6> vibrationMotorItems;

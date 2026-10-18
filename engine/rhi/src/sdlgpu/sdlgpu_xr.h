@@ -37,6 +37,8 @@ struct XrDeviceAsk
     bool fbPassthrough = false;
     // XR_META_performance_metrics, listed: the runtime's measurements.
     bool metrics = false;
+    // XR_FB_spatial_entity, its query and XR_FB_scene, all listed: the room.
+    bool scene = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

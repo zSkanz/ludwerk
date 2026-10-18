@@ -11546,6 +11546,12 @@
       ],
       "Methods": [
         {
+          "Name": "CreateRoomParts",
+          "Parameters": [],
+          "Returns": ["Folder?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetHandCFrame",
           "Parameters": [
             {
@@ -11588,6 +11594,13 @@
             }
           ],
           "Returns": ["vector?", "vector?"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetRoomAsync",
+          "Parameters": [],
+          "Returns": ["{ Planes: { { Kind: Enum.XRPlaneKind, CFrame: CFrame, Size: vector } } }?"],
+          "Yields": true,
           "ThreadSafety": "Unsafe"
         },
         {
@@ -17314,6 +17327,43 @@
         {
           "Name": "Right",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "XRPlaneKind",
+      "Items": [
+        {
+          "Name": "Ceiling",
+          "Value": 1
+        },
+        {
+          "Name": "Couch",
+          "Value": 4
+        },
+        {
+          "Name": "Door",
+          "Value": 5
+        },
+        {
+          "Name": "Floor",
+          "Value": 0
+        },
+        {
+          "Name": "Other",
+          "Value": 7
+        },
+        {
+          "Name": "Table",
+          "Value": 3
+        },
+        {
+          "Name": "Wall",
+          "Value": 2
+        },
+        {
+          "Name": "Window",
+          "Value": 6
         }
       ]
     },

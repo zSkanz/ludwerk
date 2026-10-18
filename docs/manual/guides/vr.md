@@ -201,6 +201,30 @@ for augmented reality builds only what stands in the room -- a creature on
 the floor, a board on the table. `Lighting.XRPassthroughOpacity`, from 0 to
 1, fades the game's world over the room, for a portal or a transition.
 
+Where the headset knows the room -- the Quest's scene, which the player
+captures once in its settings -- a game can ask for it, and make it solid:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+local room = XRService:GetRoomAsync()
+if room then
+    for _, plane in room.Planes do
+        print(plane.Kind, plane.CFrame.Position, plane.Size)
+    end
+    XRService:CreateRoomParts()
+end
+```
+
+Each plane is a rectangle in the play space, facing into the room. The
+first time a game asks, the Quest asks the player whether it may see the
+room; the answer is nil when they say no. `CreateRoomParts` puts an
+invisible, anchored part behind each plane in `Workspace.XRRoom`, so a ball
+bounces on the real table and a raycast finds the real wall. The simulated
+headset has a room of its own for a test: a floor, a ceiling, four walls and
+a table.
+
 ## On the Quest, standalone
 
 The Quest runs the game on its own, from an APK:

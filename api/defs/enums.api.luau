@@ -1718,6 +1718,21 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "XRPlaneKind",
+            Records = { "ADR 0247" },
+            Doc = "What a flat part of the player's room is, in `XRService:GetRoomAsync`.",
+            Items = {
+                { Name = "Floor", Value = 0, Doc = "The floor." },
+                { Name = "Ceiling", Value = 1, Doc = "The ceiling." },
+                { Name = "Wall", Value = 2, Doc = "A wall, or a side of the room the player marked as one." },
+                { Name = "Table", Value = 3, Doc = "The top of a table or a desk." },
+                { Name = "Couch", Value = 4, Doc = "The seat of a couch." },
+                { Name = "Door", Value = 5, Doc = "A door's frame." },
+                { Name = "Window", Value = 6, Doc = "A window's frame." },
+                { Name = "Other", Value = 7, Doc = "Anything else the player marked in the room." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "VibrationMotor",
             Doc = "One of the vibration motors of a controller, for `HapticService`.",
             Items = {

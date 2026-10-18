@@ -222,6 +222,9 @@ end
 declare extern type EnumXRSessionState extends EnumItem with
 end
 
+declare extern type EnumXRPlaneKind extends EnumItem with
+end
+
 declare extern type EnumVibrationMotor extends EnumItem with
 end
 
@@ -5214,6 +5217,19 @@ declare extern type XRService extends Instance with
     --- Returns whether this headset can show the player's room behind the game (`Passthrough`). False
     --- with no headset.
     function SupportsPassthrough(self): boolean
+    --- Returns the player's room as the headset knows it: its floor, ceiling, walls, tables and the
+    --- rest, each a rectangle in the play space. A plane's `CFrame` is its middle, the rectangle across
+    --- its x and y and facing along its z, into the room; `Size` is its width and height. It waits for
+    --- the headset, which may first ask the player to let the game see the room. Nil with no headset,
+    --- where the headset knows no room, or when the player says no.
+    function GetRoomAsync(self): { Planes: { { Kind: EnumXRPlaneKind, CFrame: CFrame, Size: vector } } }?
+    --- Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` it
+    --- puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting no
+    --- shadow. Physics, raycasts and navigation then use the real room. Each part is a slab behind its
+    --- plane, so its face toward the room is where the plane is. The parts are placed where the play
+    --- space is in the world now, the current camera's `CFrame`. A folder made before is replaced. Nil
+    --- before a room was returned.
+    function CreateRoomParts(self): Folder?
     --- Returns the 26 joints of a hand tracked as a hand, with no controller in it, in the play space,
     --- or nil. The order is OpenXR's: the palm, the wrist, then each finger from the thumb out, from
     --- its root to its tip. A hand tracked this way is also held at its palm (`GetHandCFrame`), and a
@@ -7205,6 +7221,17 @@ declare Enum: {
         Focused: EnumXRSessionState,
         Ended: EnumXRSessionState,
         GetEnumItems: (self: any) -> { EnumXRSessionState },
+    },
+    XRPlaneKind: {
+        Floor: EnumXRPlaneKind,
+        Ceiling: EnumXRPlaneKind,
+        Wall: EnumXRPlaneKind,
+        Table: EnumXRPlaneKind,
+        Couch: EnumXRPlaneKind,
+        Door: EnumXRPlaneKind,
+        Window: EnumXRPlaneKind,
+        Other: EnumXRPlaneKind,
+        GetEnumItems: (self: any) -> { EnumXRPlaneKind },
     },
     VibrationMotor: {
         Large: EnumVibrationMotor,

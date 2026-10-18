@@ -29,6 +29,10 @@ listed on the page of the class that declares them.
 
 ## Methods
 
+### `CreateRoomParts(): Folder?`
+
+Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` it puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting no shadow. Physics, raycasts and navigation then use the real room. Each part is a slab behind its plane, so its face toward the room is where the plane is. The parts are placed where the play space is in the world now, the current camera's `CFrame`. A folder made before is replaced. Nil before a room was returned.
+
 ### `GetHandCFrame(hand: Enum.XRHand): CFrame`
 
 Where a hand holds its controller in the play space, and how it is turned. The identity with no headset, and while the hand is not tracked (`IsHandTracked`).
@@ -48,6 +52,12 @@ Returns the size of the play area the player set up on the floor, or nil where t
 ### `GetPointerRay(hand: Enum.XRHand): (vector?, vector?)`
 
 Returns where a hand points from and the way it points, in the world, as a unit vector: the ray a game casts for its own pointing. Nil and nil while the hand is not tracked, and with no headset.
+
+### `GetRoomAsync(): { Planes: { { Kind: Enum.XRPlaneKind, CFrame: CFrame, Size: vector } } }?`
+
+This method yields: the calling thread waits until it completes.
+
+Returns the player's room as the headset knows it: its floor, ceiling, walls, tables and the rest, each a rectangle in the play space. A plane's `CFrame` is its middle, the rectangle across its x and y and facing along its z, into the room; `Size` is its width and height. It waits for the headset, which may first ask the player to let the game see the room. Nil with no headset, where the headset knows no room, or when the player says no.
 
 ### `IsHandTracked(hand: Enum.XRHand): boolean`
 

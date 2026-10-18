@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine/core/types.h"
 #include "engine/rhi/types.h"
@@ -125,6 +126,26 @@ struct HeadsetPose
     std::array<f32, 4> orientation{0.0f, 0.0f, 0.0f, 1.0f};
 };
 
+// **One flat part of the player's room** (ADR 0247 §2): a floor, a wall, a
+// table's top. `pose` is its middle, the plane across its own x and y and
+// facing along its +z, into the room; `width` along x and `height` along y.
+// `kind` is `Enum.XRPlaneKind`'s value.
+struct HeadsetPlane
+{
+    u8 kind = 7;
+    HeadsetPose pose;
+    f32 width = 0.0f;
+    f32 height = 0.0f;
+};
+
+// **The room, as the headset knows it**: `known` false where it knows none or
+// the player refused it.
+struct HeadsetRoom
+{
+    bool known = false;
+    std::vector<HeadsetPlane> planes;
+};
+
 // **The number of controller values a frame reads** (ADR 0245): one for each
 // `Enum.KeyCode` whose name begins with `XR`, in the enum's order -- A, B, X,
 // Y, the menu, the two triggers, the two grips, the four stick axes, the two
@@ -197,6 +218,15 @@ public:
         (void)hand;
         (void)amplitude;
         (void)seconds;
+    }
+    // **The room** (ADR 0247 §2): asked for, and answered at a later frame --
+    // the runtime finds it, and the player may be asked to let the game see
+    // it. `takeRoom` is true once, the frame the answer comes.
+    virtual void requestRoom() {}
+    [[nodiscard]] virtual bool takeRoom(HeadsetRoom& out)
+    {
+        (void)out;
+        return false;
     }
     // **How the frames have gone since this was last called**, and starts
     // counting again.

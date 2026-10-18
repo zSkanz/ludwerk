@@ -1900,6 +1900,32 @@ local Classes: { Schema.Class } = {
                     .. "False with no headset.",
             },
             {
+                Name = "GetRoomAsync",
+                Parameters = {},
+                Returns = { "{ Planes: { { Kind: Enum.XRPlaneKind, CFrame: CFrame, Size: vector } } }?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0247" },
+                Doc = "Returns the player's room as the headset knows it: its floor, ceiling, walls, tables and "
+                    .. "the rest, each a rectangle in the play space. A plane's `CFrame` is its middle, the "
+                    .. "rectangle across its x and y and facing along its z, into the room; `Size` is its width "
+                    .. "and height. It waits for the headset, which may first ask the player to let the game see "
+                    .. "the room. Nil with no headset, where the headset knows no room, or when the player says no.",
+            },
+            {
+                Name = "CreateRoomParts",
+                Parameters = {},
+                Returns = { "Folder?" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0247" },
+                Doc = "Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` "
+                    .. "it puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting "
+                    .. "no shadow. Physics, raycasts and navigation then use the real room. Each part is a slab "
+                    .. "behind its plane, so its face toward the room is where the plane is. The parts are placed "
+                    .. "where the play space is in the world now, the current camera's `CFrame`. A folder made "
+                    .. "before is replaced. Nil before a room was returned.",
+            },
+            {
                 Name = "GetHandJoints",
                 Parameters = { { Name = "hand", Type = "Enum.XRHand" } },
                 Returns = { "{ CFrame }?" },

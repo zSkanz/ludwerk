@@ -679,6 +679,18 @@ struct EngineState
         // asks for, and whether the headset can.
         bool passthrough = false;
         bool passthroughSupported = false;
+        // **The room** (ADR 0247 §2): whether a script waits for it, and the
+        // headset's last answer -- whether it knows one, and each plane in the
+        // play space a script reads, its width and height as x and y.
+        struct RoomPlane
+        {
+            u8 kind = 7;
+            core::CFrameD cframe;
+            core::Vec3 size{};
+        };
+        bool roomAsked = false;
+        bool roomKnown = false;
+        std::vector<RoomPlane> room;
         // **The pointer** (ADR 0246 §2): where each hand points, in the play
         // space a script reads; where the play space is in the world this
         // frame (the camera's `CFrame`); `XRService.PointerHand`,

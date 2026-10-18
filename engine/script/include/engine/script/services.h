@@ -320,6 +320,9 @@ public:
     std::vector<InstanceWaiter> instanceWaiters;
     // `NetworkService:GetChannelsAsync` (ADR 0230), the same way.
     std::vector<InstanceWaiter> channelWaiters;
+    // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
+    // headset's answer, each its thread's reference.
+    std::vector<int> roomWaiters;
 
     // `CrossWorldService` (ADR 0223): each callback by its topic, and how
     // many this world published in the second it is in.
@@ -585,6 +588,9 @@ void fireTimeDilationChanged(lua_State* L);
 void fireXRUserCFrameChanged(lua_State* L, core::u8 pose, const core::CFrameD& cframe);
 // `XRService.SessionStateChanged`: `state` an `Enum.XRSessionState` value.
 void fireXRSessionStateChanged(lua_State* L, core::u8 state);
+// Wakes every `XRService:GetRoomAsync` with the room the host put in the
+// engine's state (ADR 0247 §2).
+void resumeXRRoomWaiters(lua_State* L);
 
 // Wakes every `GraphicsService:SaveAsync` (or, with `load`, `LoadAsync`) with
 // whether the host did it (ADR 0147).

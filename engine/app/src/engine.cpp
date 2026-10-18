@@ -7837,6 +7837,26 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // **The room seen through** (ADR 0247 §1), where the headset can.
             seen.passthroughSupported = headset->supportsPassthrough();
             headset->setPassthrough(seen.passthrough);
+            // **The room** (ADR 0247 §2): asked for by a script, answered at a
+            // later frame, and kept in the play space a script reads.
+            if (seen.roomAsked) {
+                seen.roomAsked = false;
+                headset->requestRoom();
+            }
+            if (rhi::HeadsetRoom room; headset->takeRoom(room)) {
+                seen.roomKnown = room.known;
+                seen.room.clear();
+                for (const rhi::HeadsetPlane& plane : room.planes) {
+                    const core::CFrameD given{
+                        core::DVec3{static_cast<f64>(plane.pose.position[0]), static_cast<f64>(plane.pose.position[1]),
+                                    static_cast<f64>(plane.pose.position[2])},
+                        core::fromQuaternion(plane.pose.orientation[0], plane.pose.orientation[1],
+                                             plane.pose.orientation[2], plane.pose.orientation[3])};
+                    seen.room.push_back(
+                        {plane.kind, seen.recenter * given, core::Vec3{plane.width, plane.height, 0.0f}});
+                }
+                script::resumeXRRoomWaiters(host->runtime().state());
+            }
             // **The poses a script put** (`XRService:SimulatePose`), in the
             // play space it reads -- the recentred one -- handed to the
             // simulated headset in the space the headset gives.

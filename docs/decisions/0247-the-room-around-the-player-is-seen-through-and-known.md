@@ -114,3 +114,28 @@ on the Quest today).
   the left eye's picture is clear over the horizon and solid on the floor,
   read by `imgprobe`, which now reads alpha.
 - **Not yet**: the room's planes and mesh (§2), and anchors (§3).
+
+## As built, the room's planes (2026-10-18)
+
+- `XRService:GetRoomAsync()` returns `{ Planes = { { Kind, CFrame, Size } } }`,
+  each plane a rectangle in the play space a script reads: its `CFrame` is
+  its middle, the rectangle across its x and y, facing along its z into the
+  room. `Enum.XRPlaneKind` names the floor, the ceiling, a wall, a table, a
+  couch, a door, a window, or anything else.
+- On the Quest it is the scene the player captured, through
+  `XR_FB_spatial_entity`, its query and `XR_FB_scene`: every space with a
+  rectangle, located in the play space, and its kind from its first
+  semantic label. The player is asked first, at run time, for
+  `com.oculus.permission.USE_SCENE`, which the Quest's manifest now lists.
+  A refusal, or a runtime without the scene, answers nil.
+- `XRService:CreateRoomParts()` makes a slab, 10 cm thick, behind each plane
+  in `Workspace.XRRoom`: anchored, collidable, not drawn and casting no
+  shadow, placed where the play space is in the world when it is called.
+  The slab sits behind the plane so a thin plane cannot be passed through
+  by a fast fall.
+- The simulated headset answers with a recorded room, a floor three metres
+  by three, a ceiling at 2.5, four walls and a table whose top is 0.75 up.
+  `xr_room` proves it: the seven planes come back, and a ball dropped on the
+  table rests on its top.
+- **Not yet**: the room's mesh (`room.Mesh`, `XR_META_spatial_entity_mesh`),
+  and anchors (§3).

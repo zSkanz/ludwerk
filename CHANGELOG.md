@@ -338,6 +338,11 @@ here.
 - A headset with cameras shows the player's real room behind the game:
   `XRService.Passthrough`, where `SupportsPassthrough` says it can, with
   `Lighting.XRPassthroughOpacity` to fade between the two.
+- A game asks the headset for the player's room with
+  `XRService:GetRoomAsync`: its floor, ceiling, walls and tables, each a
+  rectangle of an `Enum.XRPlaneKind`. `XRService:CreateRoomParts` makes them
+  solid, invisible parts. On the Quest it is the scene the player captured,
+  and the player is asked first.
 - A headset is given each eye's depth with its picture, where its runtime
   takes depth, so the picture it moves to where the head has turned holds
   steadier. `[xr] depth = false`, or `--xr-depth=off`, turns it off to

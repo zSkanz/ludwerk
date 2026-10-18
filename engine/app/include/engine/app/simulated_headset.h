@@ -84,6 +84,11 @@ public:
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
     [[nodiscard]] rhi::TextureHandle depthImage(core::u32 eye) const noexcept { return m_depthImages[eye]; }
+    // **A recorded room** (ADR 0247 §2), as the Quest's scene gives one: a
+    // floor three metres by three, the ceiling at 2.5, four walls, and a table
+    // whose top is 0.75 up -- answered at the frame after it is asked for.
+    void requestRoom() override { m_roomAsked = true; }
+    [[nodiscard]] bool takeRoom(rhi::HeadsetRoom& out) override;
     // Its frames at 72 Hz, each on time: the shape of the numbers a runtime's
     // timing has, for the log a test reads.
     [[nodiscard]] rhi::HeadsetTiming takeTiming() override
@@ -118,6 +123,7 @@ private:
     std::array<rhi::TextureHandle, 2> m_depthImages{};
     bool m_passthrough = false;
     core::u64 m_framesTaken = 0;
+    bool m_roomAsked = false;
     core::f32 m_near = 0.0f;
     core::f32 m_far = 0.0f;
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};

@@ -145,6 +145,40 @@ void SimulatedHeadset::readInput(rhi::HeadsetInput& input)
     }
 }
 
+bool SimulatedHeadset::takeRoom(rhi::HeadsetRoom& out)
+{
+    if (!m_roomAsked)
+        return false;
+    m_roomAsked = false;
+    out = rhi::HeadsetRoom{};
+    out.known = true;
+    // A plane facing along `facing` (its +z), its x across and y along.
+    const auto plane = [&out](core::u8 kind, core::Vec3 middle, core::Mat3 turn, core::f32 width, core::f32 height) {
+        rhi::HeadsetPlane made;
+        made.kind = kind;
+        made.pose.valid = true;
+        made.pose.position = {middle.x, middle.y, middle.z};
+        core::toQuaternion(turn, made.pose.orientation[0], made.pose.orientation[1], made.pose.orientation[2],
+                           made.pose.orientation[3]);
+        made.width = width;
+        made.height = height;
+        out.planes.push_back(made);
+    };
+    constexpr core::f32 HalfPi = 1.57079633f;
+    constexpr core::f32 Pi = 3.14159265f;
+    // The floor faces up and the ceiling down: a quarter turn about x each way.
+    plane(0, {0.0f, 0.0f, 0.0f}, core::fromAxisAngle({1.0f, 0.0f, 0.0f}, -HalfPi), 3.0f, 3.0f);
+    plane(1, {0.0f, 2.5f, 0.0f}, core::fromAxisAngle({1.0f, 0.0f, 0.0f}, HalfPi), 3.0f, 3.0f);
+    // The walls face in: the north wall's +z is +z, the others turned to it.
+    plane(2, {0.0f, 1.25f, -1.5f}, core::fromAxisAngle({0.0f, 1.0f, 0.0f}, 0.0f), 3.0f, 2.5f);
+    plane(2, {0.0f, 1.25f, 1.5f}, core::fromAxisAngle({0.0f, 1.0f, 0.0f}, Pi), 3.0f, 2.5f);
+    plane(2, {-1.5f, 1.25f, 0.0f}, core::fromAxisAngle({0.0f, 1.0f, 0.0f}, HalfPi), 3.0f, 2.5f);
+    plane(2, {1.5f, 1.25f, 0.0f}, core::fromAxisAngle({0.0f, 1.0f, 0.0f}, -HalfPi), 3.0f, 2.5f);
+    // The table's top, facing up.
+    plane(3, {0.0f, 0.75f, -0.8f}, core::fromAxisAngle({1.0f, 0.0f, 0.0f}, -HalfPi), 1.2f, 0.7f);
+    return true;
+}
+
 void SimulatedHeadset::vibrate(core::u32 hand, core::f32 amplitude, core::f32 seconds)
 {
     (void)seconds;

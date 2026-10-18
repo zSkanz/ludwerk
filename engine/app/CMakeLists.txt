@@ -732,6 +732,16 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "\\[comfort\\] landed=-0.20,-2.2[0-9] faded=1.00 walled=-0.20,-2.2[0-9] turned=-30,-60 rest=0.00"
         TIMEOUT 60)
+    # **The player's room** (ADR 0247 §2): the simulated headset's recorded
+    # room, from `GetRoomAsync`, made solid by `CreateRoomParts` -- a ball
+    # dropped on the table rests on its top.
+    add_test(NAME xr_room
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_room.luau" --headless --frames=150 --exit
+                --rhi=null --xr=simulated)
+    set_tests_properties(xr_room PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "\\[room\\] planes=7 floor=1 ceiling=1 walls=4 tables=1 table=0\\.75 1\\.20x0\\.70 facing=1\\.00 parts=7 ball=0\\.85"
+        TIMEOUT 60)
     # **The headset's timing in the log** (what the first test on a device
     # sends back): every five seconds of frames, the display's rate and the
     # frames' own, the late and the undrawn, the eyes' passes.

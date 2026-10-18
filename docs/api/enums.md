@@ -1242,6 +1242,21 @@ A hand, or the controller it holds, for `XRService`.
 | `Left` | 0 | The left hand. |
 | `Right` | 1 | The right hand. |
 
+## Enum.XRPlaneKind
+
+What a flat part of the player's room is, in `XRService:GetRoomAsync`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Floor` | 0 | The floor. |
+| `Ceiling` | 1 | The ceiling. |
+| `Wall` | 2 | A wall, or a side of the room the player marked as one. |
+| `Table` | 3 | The top of a table or a desk. |
+| `Couch` | 4 | The seat of a couch. |
+| `Door` | 5 | A door's frame. |
+| `Window` | 6 | A window's frame. |
+| `Other` | 7 | Anything else the player marked in the room. |
+
 ## Enum.XRPose
 
 One of the poses `XRService` tracks: the head, or a hand.
