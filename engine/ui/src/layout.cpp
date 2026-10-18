@@ -906,12 +906,19 @@ f32 screenScale(const scene::ScreenGuiComponent& screen, core::Vec2 windowSize) 
     return screen.referenceHeight > 0.0f && windowSize.y > 0.0f ? windowSize.y / screen.referenceHeight : 1.0f;
 }
 
-bool screenLive(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept
+bool screenOwned(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept
 {
     if (!screen.player.valid())
         return true;
     const scene::PlayerComponent* player = world.players().find(screen.player);
     return player != nullptr && player->local && world.alive(screen.player) && !world.destroyed(screen.player);
+}
+
+bool screenLive(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept
+{
+    // In a headset every screen is a panel in the world (ADR 0246 §1), and
+    // the screen's own layout, drawing and pointer leave it alone.
+    return !world.engineState().headset.panelsShown && screenOwned(world, screen);
 }
 
 core::Rect screenRegion(const scene::World& world, const scene::ScreenGuiComponent& screen,

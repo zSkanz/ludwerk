@@ -98,3 +98,18 @@ The settings are a player's, so the module saves them through `SaveService`
 A virtual keyboard (the runtime's own, `XR_FB_keyboard` on the Quest, is a
 later step), and UI drawn in front of the eyes deliberately (subtitles, a
 HUD): a game draws those on a `SurfaceGui` parented to the camera.
+
+## As built, first step (2026-10-18)
+
+- **Each `ScreenGui` is a panel** (§1) while a headset draws: the screen's
+  own layout, drawing and pointer leave every screen alone then
+  (`ui::screenLive`), and each one this machine shows is laid out against
+  a canvas of its own -- 1280 by 720, or `ReferenceHeight` tall at 16:9 --
+  and drawn as one more canvas in the world, beside `SurfaceGui` and
+  `BillboardGui`, over the world. The host places it each frame from the
+  head `XRService` reads, by its `XRFollow`; when the headset stops, the
+  screens are laid out for the screen again.
+- Proved under the simulated headset with a GPU (`xr_simulated_panel`): a
+  label half the canvas wide and three tenths tall is 889 by 300 pixels,
+  and is drawn in each eye at the size and height its metres give.
+- **Not yet**: the laser, the poke and `@engine/xrcomfort` (§2, §3).

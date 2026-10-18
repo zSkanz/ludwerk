@@ -52,7 +52,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     const scene::ClassId instanceClass = classes.findId(atoms.intern("Instance"));
 
     // --- ScreenGui ---
-    static std::array<scene::PropertyDesc, 7> screenGuiProperties;
+    static std::array<scene::PropertyDesc, 10> screenGuiProperties;
     screenGuiProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Player"),
@@ -135,6 +135,43 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getScreenGuiKeepOnSceneLoad,
             .set = native::setScreenGuiKeepOnSceneLoad,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("XRDistance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "In a headset, how far in front of the player's head this interface is shown, in meters. In a headset there is no screen to draw over, so each `ScreenGui` is a flat panel in front of the player instead, pointed at with a controller. Flat, it is not used.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getScreenGuiXRDistance,
+            .set = native::setScreenGuiXRDistance,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("XRPixelsPerMetre"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "In a headset, how many of this interface's pixels make a meter of its panel. The panel is 1280 by 720 pixels, or `ReferenceHeight` tall and 16:9 wide when that is set: 1.28 meters wide at the default. A higher value makes a smaller, sharper panel.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_positive"),
+            .get = native::getScreenGuiXRPixelsPerMetre,
+            .set = native::setScreenGuiXRPixelsPerMetre,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("XRFollow"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("XRFollow"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "In a headset, how this interface's panel follows the head: always (`Head`), once the head has turned more than 30 degrees away (`Lazy`), or never (`Fixed`).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getScreenGuiXRFollow,
+            .set = native::setScreenGuiXRFollow,
         },
     }};
     scene::ClassDescriptor screenGuiDesc;

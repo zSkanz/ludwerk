@@ -669,6 +669,20 @@ struct EngineState
         // What `SimulatePose` put, the head's then each hand's, for the host
         // to hand the simulated headset at the next frame.
         std::array<std::optional<core::CFrameD>, 3> simulatedPoses{};
+        // **Each `ScreenGui` a panel in front of the player** (ADR 0246 §1),
+        // while a headset draws: the screen shows none of them then. Where
+        // each is, in the play space a script reads and in the world, and its
+        // canvas.
+        bool panelsShown = false;
+        struct Panel
+        {
+            core::InstanceId gui;
+            core::CFrameD space;
+            core::CFrameD world;
+            core::Vec2 canvas{};
+            f32 pixelsPerMetre = 1000.0f;
+        };
+        std::vector<Panel> panels;
     };
     Headset headset;
     std::vector<Suspicion> suspicions;

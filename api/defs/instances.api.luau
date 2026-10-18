@@ -5991,6 +5991,37 @@ local Classes: { Schema.Class } = {
                     .. "scene it is in. A loading screen shown before `SceneService:LoadScene` stays up while the "
                     .. "scene changes, and a script removes it on `SceneLoaded`.",
             },
+            {
+                Name = "XRDistance",
+                Type = "number",
+                Default = "1.5",
+                Presentation = true,
+                ErrorKey = "scene.err.number_positive",
+                Records = { "ADR 0246" },
+                Doc = "In a headset, how far in front of the player's head this interface is shown, in meters. "
+                    .. "In a headset there is no screen to draw over, so each `ScreenGui` is a flat panel in "
+                    .. "front of the player instead, pointed at with a controller. Flat, it is not used.",
+            },
+            {
+                Name = "XRPixelsPerMetre",
+                Type = "number",
+                Default = "1000",
+                Presentation = true,
+                ErrorKey = "scene.err.number_positive",
+                Records = { "ADR 0246" },
+                Doc = "In a headset, how many of this interface's pixels make a meter of its panel. The panel is "
+                    .. "1280 by 720 pixels, or `ReferenceHeight` tall and 16:9 wide when that is set: 1.28 meters "
+                    .. "wide at the default. A higher value makes a smaller, sharper panel.",
+            },
+            {
+                Name = "XRFollow",
+                Type = "Enum.XRFollow",
+                Default = "Enum.XRFollow.Lazy",
+                Presentation = true,
+                Records = { "ADR 0246" },
+                Doc = "In a headset, how this interface's panel follows the head: always (`Head`), once the head "
+                    .. "has turned more than 30 degrees away (`Lazy`), or never (`Fixed`).",
+            },
         } :: { Schema.Property },
     },
     {

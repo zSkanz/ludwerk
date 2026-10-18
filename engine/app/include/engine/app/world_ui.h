@@ -97,6 +97,13 @@ void fillUiCorner(const ui::DrawQuad& quad, core::f32 x, core::f32 y, core::f32 
 // frame's gradient rows, null to draw every gradient as none. Each canvas
 // hangs where its part is DRAWN this frame (`poses`, ADR 0134); null is where
 // it is, for a world drawn at its tick.
+// **Each `ScreenGui` a panel in front of the player** (ADR 0246 §1), once a
+// frame: with `shown`, every screen this machine shows is placed in the play
+// space by its `XRFollow` from the head as `XRService` reads it, and in the
+// world by `playSpace` (the camera's `CFrame`); without, there are none and
+// the screens are the screen's again -- laid out anew either way.
+void placeHeadsetPanels(scene::World& world, core::InstanceId uiService, const core::CFrameD& playSpace, bool shown);
+
 void buildWorldUi(scene::World& world, core::InstanceId workspace, core::InstanceId uiService, core::Vec2 viewport,
                   std::span<const rhi::TextureHandle> textures, ui::DrawList& scratch, render::RenderWorld& out,
                   UiGradientRows* gradients = nullptr, const render::DrawPoses* poses = nullptr);

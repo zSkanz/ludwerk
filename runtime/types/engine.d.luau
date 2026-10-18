@@ -216,6 +216,9 @@ end
 declare extern type EnumXRSpace extends EnumItem with
 end
 
+declare extern type EnumXRFollow extends EnumItem with
+end
+
 declare extern type EnumXRSessionState extends EnumItem with
 end
 
@@ -3168,6 +3171,17 @@ declare extern type ScreenGui extends Instance with
     --- it is in. A loading screen shown before `SceneService:LoadScene` stays up while the scene
     --- changes, and a script removes it on `SceneLoaded`.
     KeepOnSceneLoad: boolean
+    --- In a headset, how far in front of the player's head this interface is shown, in meters. In a
+    --- headset there is no screen to draw over, so each `ScreenGui` is a flat panel in front of the
+    --- player instead, pointed at with a controller. Flat, it is not used.
+    XRDistance: number
+    --- In a headset, how many of this interface's pixels make a meter of its panel. The panel is 1280
+    --- by 720 pixels, or `ReferenceHeight` tall and 16:9 wide when that is set: 1.28 meters wide at the
+    --- default. A higher value makes a smaller, sharper panel.
+    XRPixelsPerMetre: number
+    --- In a headset, how this interface's panel follows the head: always (`Head`), once the head has
+    --- turned more than 30 degrees away (`Lazy`), or never (`Fixed`).
+    XRFollow: EnumXRFollow
 end
 
 declare extern type BillboardGui extends Instance with
@@ -7144,6 +7158,12 @@ declare Enum: {
         Standing: EnumXRSpace,
         Seated: EnumXRSpace,
         GetEnumItems: (self: any) -> { EnumXRSpace },
+    },
+    XRFollow: {
+        Head: EnumXRFollow,
+        Lazy: EnumXRFollow,
+        Fixed: EnumXRFollow,
+        GetEnumItems: (self: any) -> { EnumXRFollow },
     },
     XRSessionState: {
         None: EnumXRSessionState,

@@ -370,6 +370,24 @@ struct Tree
         if (const std::optional<CanvasPlacement> placement = placeBillboard(gui, anchor, camera, viewport))
             trees.push_back(Tree{id, *placement, gui.brightness, gui.alwaysOnTop, part});
     });
+    // **A headset's panels** (ADR 0246 §1): each `ScreenGui`, where the host
+    // put it in front of the player, drawn over the world -- an interface
+    // inside a wall would be one nobody could use.
+    for (const scene::EngineState::Headset::Panel& panel : world.engineState().headset.panels) {
+        if (!world.alive(panel.gui) || !(panel.pixelsPerMetre > 0.0f))
+            continue;
+        const f32 step = 1.0f / panel.pixelsPerMetre;
+        const Vec3 right = core::transformDirection(panel.world, Vec3{1.0f, 0.0f, 0.0f});
+        const Vec3 up = core::transformDirection(panel.world, Vec3{0.0f, 1.0f, 0.0f});
+        const Vec3 centre = relative(panel.world.position, camera.origin);
+        CanvasPlacement placement;
+        placement.canvas = panel.canvas;
+        placement.right = right * step;
+        placement.down = up * -step;
+        placement.topLeft = centre - right * (panel.canvas.x * step * 0.5f) + up * (panel.canvas.y * step * 0.5f);
+        placement.distance = core::length(centre);
+        trees.push_back(Tree{panel.gui, placement, 1.0f, true, {}});
+    }
     world.surfaceGuis().forEach([&](core::InstanceId id, const scene::SurfaceGuiComponent& gui) {
         if (!gui.enabled || !reachable(id))
             return;
@@ -385,6 +403,61 @@ struct Tree
 }
 
 } // namespace
+
+void placeHeadsetPanels(scene::World& world, core::InstanceId uiService, const core::CFrameD& playSpace, bool shown)
+{
+    scene::EngineState::Headset& headset = world.engineState().headset;
+    if (headset.panelsShown != shown) {
+        headset.panelsShown = shown;
+        world.screenGuis().forEach(
+            [](core::InstanceId, scene::ScreenGuiComponent& screen) { screen.layoutDirty = true; });
+    }
+    std::vector<scene::EngineState::Headset::Panel> before = std::move(headset.panels);
+    headset.panels.clear();
+    if (!shown || !uiService.valid())
+        return;
+    // Ahead of the head across the floor; straight down or up, ahead of the
+    // play space.
+    Vec3 ahead = core::transformDirection(headset.head, Vec3{0.0f, 0.0f, -1.0f});
+    ahead.y = 0.0f;
+    const f32 across = core::length(ahead);
+    ahead = across > 1e-4f ? ahead * (1.0f / across) : Vec3{0.0f, 0.0f, -1.0f};
+    // How far a lazy panel may be from straight ahead before it comes back.
+    const f32 lazyCos = std::cos(30.0f * 0.017453292f);
+    for (core::InstanceId child = world.firstChild(uiService); child.valid(); child = world.nextSibling(child)) {
+        const scene::ScreenGuiComponent* screen = world.screenGuis().find(child);
+        if (screen == nullptr || !screen->enabled || !ui::screenOwned(world, *screen))
+            continue;
+        const f32 tall = screen->referenceHeight > 0.0f ? screen->referenceHeight : 720.0f;
+        const Vec2 canvas{tall * 16.0f / 9.0f, tall};
+        // In front of the head at its height, its face turned to the head.
+        core::CFrameD wanted;
+        wanted.position = core::DVec3{headset.head.position.x + static_cast<f64>(ahead.x * screen->xrDistance),
+                                      headset.head.position.y,
+                                      headset.head.position.z + static_cast<f64>(ahead.z * screen->xrDistance)};
+        wanted.rotation = core::rotationY(std::atan2(-ahead.x, -ahead.z));
+        core::CFrameD space = wanted;
+        const auto held = std::find_if(before.begin(), before.end(),
+                                       [&](const scene::EngineState::Headset::Panel& one) { return one.gui == child; });
+        if (held != before.end() && screen->xrFollow == 2) {
+            space = held->space;
+        }
+        else if (held != before.end() && screen->xrFollow == 1) {
+            const core::DVec3 toward = held->space.position - headset.head.position;
+            const f32 flat = static_cast<f32>(std::sqrt(toward.x * toward.x + toward.z * toward.z));
+            const f32 facing =
+                flat > 1e-4f ? (static_cast<f32>(toward.x) * ahead.x + static_cast<f32>(toward.z) * ahead.z) / flat
+                             : 1.0f;
+            if (facing >= lazyCos)
+                space = held->space;
+        }
+        headset.panels.push_back(scene::EngineState::Headset::Panel{.gui = child,
+                                                                    .space = space,
+                                                                    .world = playSpace * space,
+                                                                    .canvas = canvas,
+                                                                    .pixelsPerMetre = screen->xrPixelsPerMetre});
+    }
+}
 
 std::vector<PlacedCanvas> placeWorldCanvases(scene::World& world, core::InstanceId workspace,
                                              core::InstanceId uiService, Vec2 viewport,

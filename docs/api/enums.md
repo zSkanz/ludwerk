@@ -1223,6 +1223,16 @@ How the game's window uses the display.
 | `Borderless` | 1 | A window with no border that covers the whole display. Switching to other windows stays fast. |
 | `Fullscreen` | 2 | Exclusive use of the whole display. |
 
+## Enum.XRFollow
+
+How a `ScreenGui` shown as a panel in a headset follows the player's head.
+
+| Item | Value | Description |
+|---|---|---|
+| `Head` | 0 | Always in front of the head, turning and moving with it. |
+| `Lazy` | 1 | Where it appeared, until the head turns more than 30 degrees away from it; then in front of the head again. |
+| `Fixed` | 2 | Where it appeared, for as long as it is shown. |
+
 ## Enum.XRHand
 
 A hand, or the controller it holds, for `XRService`.

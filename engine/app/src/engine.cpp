@@ -8463,6 +8463,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // drawn for the eyes is gathered against.
                 std::optional<render::ViewOverride> headsetView;
                 core::CFrameD headInSpace;
+                // Where the play space is in the world this frame, for the
+                // panels the screens become (ADR 0246 §1).
+                std::optional<core::CFrameD> playSpace;
                 if (headsetBegun && headsetFrame.draw && !sequenceView.has_value() && !useEditorView) {
                     core::InstanceId seen = split.camera;
                     if (!seen.valid()) {
@@ -8486,6 +8489,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                         0.5f);
                         // From the camera, through where `Recenter` put the
                         // play space's origin, to the head.
+                        playSpace = headsetView->cframe;
                         headsetView->cframe =
                             headsetView->cframe * host->world().engineState().headset.recenter * headInSpace;
                         // Both eyes' edges, and a little more: each eye sits a few
@@ -8504,6 +8508,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         mainAspect = upDown > 0.0f ? across / upDown : 1.0f;
                     }
                 }
+                // The screens are panels while a headset draws, and the
+                // screen's again when it stops.
+                placeHeadsetPanels(host->world(), host->uiService(), playSpace.value_or(core::CFrameD{}),
+                                   playSpace.has_value());
                 const render::ViewOverride* const viewOverride = sequenceView.has_value()  ? &*sequenceView
                                                                  : useEditorView           ? &editorView
                                                                  : headsetView.has_value() ? &*headsetView

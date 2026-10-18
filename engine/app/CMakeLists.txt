@@ -680,6 +680,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # **A screen is a panel in a headset** (ADR 0246 §1): laid out against the
+    # panel's canvas and drawn into the eyes.
+    add_test(NAME xr_simulated_panel
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSCENE=${CMAKE_SOURCE_DIR}/tests/xr/xr_panel.luau
+                -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-simulated-panel
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_panel.cmake)
+    set_tests_properties(xr_simulated_panel PROPERTIES
+        PASS_REGULAR_EXPRESSION "the screen is a panel, laid out on its canvas"
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **Where the player is, to a script** (ADR 0245): `XRService` under the
     # simulated headset -- enabled, the head standing at 1.6 m -- and flat,
     # where every pose is the identity. A script then puts the head and a

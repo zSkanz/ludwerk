@@ -123,6 +123,57 @@ bool setScreenGuiKeepOnSceneLoad(scene::World& world, core::InstanceId id, const
     return true;
 }
 
+// **In a headset, a panel** (ADR 0246 §1): its distance and its pixels a
+// metre, each greater than nought, and how it follows the head.
+Value getScreenGuiXRDistance(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->xrDistance)};
+}
+
+bool setScreenGuiXRDistance(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !(*number > 0.0) || !std::isfinite(*number))
+        return false;
+    component->xrDistance = static_cast<f32>(*number);
+    return true;
+}
+
+Value getScreenGuiXRPixelsPerMetre(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->xrPixelsPerMetre)};
+}
+
+bool setScreenGuiXRPixelsPerMetre(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* number = std::get_if<f64>(&value);
+    if (component == nullptr || number == nullptr || !(*number > 0.0) || !std::isfinite(*number))
+        return false;
+    component->xrPixelsPerMetre = static_cast<f32>(*number);
+    return true;
+}
+
+Value getScreenGuiXRFollow(const scene::World& world, core::InstanceId id)
+{
+    const scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    return component == nullptr ? Value{} : Value{scene::EnumValue{generated::XRFollowEnumId, component->xrFollow}};
+}
+
+bool setScreenGuiXRFollow(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ScreenGuiComponent* component = world.screenGuis().find(id);
+    const auto* follow = std::get_if<scene::EnumValue>(&value);
+    if (component == nullptr || follow == nullptr || follow->enumId != generated::XRFollowEnumId || follow->value < 0 ||
+        follow->value > 2)
+        return false;
+    component->xrFollow = follow->value;
+    return true;
+}
+
 Value getScreenGuiPlayer(const scene::World& world, core::InstanceId id)
 {
     const scene::ScreenGuiComponent* component = world.screenGuis().find(id);

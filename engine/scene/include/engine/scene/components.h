@@ -2367,6 +2367,12 @@ struct ScreenGuiComponent
     // does not, unless it is kept; the host says so, by name, when the scene
     // takes it. Never saved, never hashed: it is about who asked.
     bool parentedByGlobal = false;
+    // **In a headset, a panel** (ADR 0246 §1): how far in front of the head,
+    // how many of its pixels make a metre, and how it follows the head
+    // (`Enum.XRFollow`).
+    f32 xrDistance = 1.5f;
+    f32 xrPixelsPerMetre = 1000.0f;
+    i32 xrFollow = 1;
     // Set by any layout-affecting write anywhere beneath this tree, cleared by
     // the layout that answers it. NOT a property: no script can read it, and a
     // script that could would be reading the engine's opinion of its own work.

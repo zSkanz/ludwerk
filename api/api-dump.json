@@ -7123,6 +7123,21 @@
           "Type": "UIObject?",
           "Default": "nil",
           "Transient": true
+        },
+        {
+          "Name": "XRDistance",
+          "Type": "number",
+          "Default": "1.5"
+        },
+        {
+          "Name": "XRFollow",
+          "Type": "Enum.XRFollow",
+          "Default": "Enum.XRFollow.Lazy"
+        },
+        {
+          "Name": "XRPixelsPerMetre",
+          "Type": "number",
+          "Default": "1000"
         }
       ],
       "Methods": [],
@@ -17208,6 +17223,23 @@
         {
           "Name": "Windowed",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "XRFollow",
+      "Items": [
+        {
+          "Name": "Fixed",
+          "Value": 2
+        },
+        {
+          "Name": "Head",
+          "Value": 0
+        },
+        {
+          "Name": "Lazy",
+          "Value": 1
         }
       ]
     },

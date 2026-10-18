@@ -11091,6 +11091,31 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     xRSpaceDesc.items = xRSpaceItems;
     enums.registerEnum(xRSpaceDesc);
 
+    // --- XRFollow ---
+    static std::array<EnumItemDesc, 3> xRFollowItems;
+    xRFollowItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Head"),
+            .value = 0,
+            .doc = "Always in front of the head, turning and moving with it.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Lazy"),
+            .value = 1,
+            .doc = "Where it appeared, until the head turns more than 30 degrees away from it; then in front of the head again.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Fixed"),
+            .value = 2,
+            .doc = "Where it appeared, for as long as it is shown.",
+        },
+    }};
+    EnumDescriptor xRFollowDesc;
+    xRFollowDesc.name = atoms.intern("XRFollow");
+    xRFollowDesc.doc = "How a `ScreenGui` shown as a panel in a headset follows the player's head.";
+    xRFollowDesc.items = xRFollowItems;
+    enums.registerEnum(xRFollowDesc);
+
     // --- XRSessionState ---
     static std::array<EnumItemDesc, 5> xRSessionStateItems;
     xRSessionStateItems = {{

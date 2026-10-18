@@ -497,6 +497,9 @@ void layout(scene::World& world, core::InstanceId uiService, core::Vec2 windowSi
 // whose player has left is nobody's: it is not laid out, drawn or pressed
 // until it is given another player, or none.
 [[nodiscard]] bool screenLive(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept;
+// Whether a screen is this machine's to show at all -- its player's, or
+// everybody's -- wherever it is shown: on the screen, or as a headset's panel.
+[[nodiscard]] bool screenOwned(const scene::World& world, const scene::ScreenGuiComponent& screen) noexcept;
 
 // **Where in the window a screen is laid out** (ADR 0205): its player's view
 // while the window is shared in rectangles, and the whole window otherwise --

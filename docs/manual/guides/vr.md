@@ -65,6 +65,22 @@ XRService.SessionStateChanged:Connect(function(state: EnumXRSessionState)
 end)
 ```
 
+## Interfaces
+
+In a headset there is no screen to draw over, so each `ScreenGui` is shown
+on a flat panel in front of the player instead -- 1.28 meters across at 1.5
+meters by default -- and nothing about the interface has to change. Three
+properties on the `ScreenGui` decide where:
+
+- `XRDistance`: how far in front of the head, in meters.
+- `XRPixelsPerMetre`: how many of its pixels make a meter. The panel is
+  1280 by 720 pixels, or `ReferenceHeight` tall at 16:9.
+- `XRFollow`: `Lazy` (the default) stays put until the head has turned 30
+  degrees away from it; `Head` always follows; `Fixed` never does.
+
+An interface somewhere precise -- a screen on a wall, a watch on a wrist --
+is a `SurfaceGui` on a part, which already lives in the world.
+
 ## Hands
 
 On a headset that tracks hands -- the Quest 3 does -- a player who puts the

@@ -1673,6 +1673,21 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "XRFollow",
+            Records = { "ADR 0246" },
+            Doc = "How a `ScreenGui` shown as a panel in a headset follows the player's head.",
+            Items = {
+                { Name = "Head", Value = 0, Doc = "Always in front of the head, turning and moving with it." },
+                {
+                    Name = "Lazy",
+                    Value = 1,
+                    Doc = "Where it appeared, until the head turns more than 30 degrees away from it; then in "
+                        .. "front of the head again.",
+                },
+                { Name = "Fixed", Value = 2, Doc = "Where it appeared, for as long as it is shown." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "XRSessionState",
             Records = { "ADR 0245" },
             Doc = "What the headset is doing with this game, for `XRService.SessionState`.",
