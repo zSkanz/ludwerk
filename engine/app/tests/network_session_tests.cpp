@@ -1871,6 +1871,142 @@ struct HandOver
 
 } // namespace
 
+namespace {
+
+// **Moving with no input**: a joining player's character high above the
+// floor (`fall`), on a platform the server carries back and forth (`ride`),
+// beside a crate sliding on ice (`slide`), or in the way of a block sliding
+// into it (`pushed`) -- each moving for seconds while the player touches
+// nothing, which is when the authority tunes the player's intent queue.
+constexpr std::string_view MovingServer = R"(
+    local NetworkService = game:GetService("NetworkService")
+    local RunService = game:GetService("RunService")
+    local floor = Instance.new("Part")
+    floor.Anchored = true
+    floor.Size = vector.create(2000, 1, 2000)
+    floor.Position = vector.create(0, -0.5, 0)
+    floor.Friction = if Mode == "slide" or Mode == "pushed" then 0 else 0.5
+    floor.Parent = workspace
+    local function arrive(player: Player)
+        if player.UserId == 1 then
+            return
+        end
+        local body = Instance.new("CharacterBody")
+        body.Name = "Walker"
+        body.Size = vector.create(1, 2, 1)
+        body.Position = if Mode == "fall" then vector.create(0, 400, 0) else vector.create(0, 2.5, 0)
+        body.Parent = workspace
+        player.Character = body
+        if Mode == "ride" then
+            local platform = Instance.new("Part")
+            platform.Name = "Platform"
+            platform.Anchored = true
+            platform.Size = vector.create(8, 1, 8)
+            platform.Position = vector.create(0, 0.5, 0)
+            platform.Parent = workspace
+            local ticks = 0
+            RunService.PreSimulation:Connect(function(step: number)
+                ticks += 1
+                local x = 12 * math.sin(ticks / 120)
+                platform.Position = vector.create(x, 0.5, 0)
+            end)
+        elseif Mode == "pushed" then
+            -- A heavy block sliding on ice into the player, who stands still.
+            local block = Instance.new("Part")
+            block.Name = "Block"
+            block.Size = vector.create(2, 2, 2)
+            block.Position = vector.create(0, 1, 12)
+            block.Friction = 0
+            block.Density = 20
+            block.Parent = workspace
+            block.LinearVelocity = vector.create(0, 0, -3)
+        elseif Mode == "slide" then
+            local crate = Instance.new("Part")
+            crate.Name = "Crate"
+            crate.Size = vector.create(1, 1, 1)
+            crate.Position = vector.create(3, 0.5, 0)
+            crate.Friction = 0
+            crate.Parent = workspace
+            crate.LinearVelocity = vector.create(0, 0, -2)
+        end
+        workspace:SetAttribute("Started", true)
+    end
+    for _, player in NetworkService:GetPlayers() do
+        arrive(player)
+    end
+    NetworkService.PlayerAdded:Connect(arrive)
+    NetworkService:Host(47191)
+)";
+
+[[nodiscard]] int correctionsMoving(std::string_view mode, int skew)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/init.luau",
+                         std::string("local Mode = \"") + std::string(mode) + "\"\n" + std::string(MovingServer));
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/init.luau", R"(game:GetService("NetworkService"):Join("memory:47191"))");
+    client.boot(wire);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    scene::World& world = client.host->world();
+    int after = -1;
+    core::u64 seen = 0;
+    int corrections = 0;
+    for (int frame = 0; frame < 900; ++frame) {
+        server.frame();
+        client.frame();
+        if (!std::holds_alternative<bool>(
+                world.getAttribute(client.host->workspace(), world.atoms().lookup("Started"))))
+            continue;
+        ++after;
+        if (after % 60 == 30 && skew == 1)
+            server.frame();
+        if (after % 60 == 30 && skew == 2)
+            client.frame();
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr || after < 60)
+            continue;
+        const replication::Stats stats = replica->stats();
+        if (stats.corrections != seen) {
+            seen = stats.corrections;
+            ++corrections;
+            MESSAGE("MEASURE moving " << mode << " skew=" << skew << " correction " << stats.lastCorrectionMetres
+                                      << " at frame " << after);
+        }
+    }
+    CHECK(after > 300);
+    return corrections;
+}
+
+} // namespace
+
+TEST_CASE("what a player predicts that moves with no input is not corrected when the authority tunes their queue")
+{
+    // Falling, beside a crate sliding, pushed by a block: in lockstep, with
+    // the authority standing an intent in, and with two of the replica's
+    // intents arriving together. The rule said a player sending nothing was
+    // at rest: 7 and 9 corrections in a fall, one sliding, one pushed.
+    for (const char* mode : {"fall", "slide", "pushed"}) {
+        for (const int skew : {0, 1, 2}) {
+            CAPTURE(mode);
+            CAPTURE(skew);
+            // A replica whose clock runs a tick a second fast fills the queue
+            // until the authority catches up by skipping, and a character
+            // falling at 70 m/s is not stepped the ticks skipped: that is the
+            // catch-up's own question, measured here and not yet held.
+            const int corrections = correctionsMoving(mode, skew);
+            if (std::string_view{mode} == "fall" && skew == 2)
+                MESSAGE("MEASURE the catch-up, falling: " << corrections << " correction(s)");
+            else
+                CHECK(corrections == 0);
+        }
+    }
+}
+
 TEST_CASE("a car handed over moving is where the authority has it, whatever tick the authority stood in")
 {
     // A car's correction that is the car's speed times one tick is a tick

@@ -3474,21 +3474,16 @@ void AuthoritySession::applyIntents(scene::World& world)
         const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
         const u64 depth = newest > peer.appliedTick ? newest - peer.appliedTick : 0;
         m_stats.intentDepth = std::max(m_stats.intentDepth, static_cast<u32>(std::min<u64>(depth, 0xFFFF)));
-        // **A driver at rest is not at rest** (ADR 0213): a car rolls on while
-        // the one driving it touches nothing, so a tick of theirs held or
-        // skipped moves the car a tick the replica never stepped -- the step
-        // the world holds then belongs to the intent before the one answered,
-        // and a car handed over rolling was corrected by exactly its speed
-        // times a tick, again whenever the queue caught up.
-        bool driving = false;
-        world.vehicleControllers().forEach([&](core::InstanceId, const scene::VehicleControllerComponent& vehicle) {
-            if (vehicle.driver == 0)
-                return;
-            driving = driving || vehicle.driver == peer.userId ||
-                      std::any_of(peer.guests.begin(), peer.guests.end(),
-                                  [&](const Peer::Guest& guest) { return guest.userId == vehicle.driver; });
-        });
-        const bool resting = idle(peer.lastIntents) && !driving;
+        // **At rest is still, not quiet**: a tick of a player's held or
+        // skipped moves nothing only if nothing they predict moves without
+        // them -- and plenty does with no input: a character falling, pushed
+        // or carried, a car rolling under its driver, a crate still sliding.
+        // Each moved a tick the replica never stepped: the step the world
+        // held then belonged to the intent before the one answered, and the
+        // replica was corrected by exactly a tick of its travel, again at
+        // every adjustment of the queue (a car handed over rolling; a guest
+        // pushed aside, whose correction moved the first player too).
+        const bool resting = idle(peer.lastIntents) && stillAround(world, peer);
         // **The delay adapts, and only while the player is idle**: holding a
         // tick or skipping one then moves nothing, so the change is never a
         // correction.
@@ -3577,6 +3572,63 @@ void AuthoritySession::applyIntents(scene::World& world)
             peer.intentTick = next;
         peer.intentQueue.erase(peer.intentQueue.begin(), peer.intentQueue.upper_bound(next));
     }
+}
+
+bool AuthoritySession::stillAround(const scene::World& world, Peer& peer)
+{
+    // Each of the machine's characters where it was at the last tick.
+    std::array<core::InstanceId, 4> players{peer.player, peer.guests[0].player, peer.guests[1].player,
+                                            peer.guests[2].player};
+    bool still = true;
+    std::vector<core::DVec3> centres;
+    for (usize seat = 0; seat < players.size(); ++seat) {
+        const scene::PlayerComponent* player = players[seat].valid() ? world.players().find(players[seat]) : nullptr;
+        const scene::PartComponent* part =
+            player != nullptr && player->character.valid() ? world.parts().find(player->character) : nullptr;
+        if (part == nullptr) {
+            peer.placed[seat] = false;
+            continue;
+        }
+        const core::DVec3 at = part->cframe.position;
+        if (peer.placed[seat]) {
+            const core::DVec3 moved = at - peer.lastPlaces[seat];
+            still = still && moved.x * moved.x + moved.y * moved.y + moved.z * moved.z < RestMetres * RestMetres;
+        }
+        peer.lastPlaces[seat] = at;
+        peer.placed[seat] = true;
+        centres.push_back(at);
+    }
+    if (!still)
+        return false;
+    // A car one of them drives.
+    bool driving = false;
+    world.vehicleControllers().forEach([&](core::InstanceId, const scene::VehicleControllerComponent& vehicle) {
+        if (vehicle.driver == 0)
+            return;
+        driving = driving || vehicle.driver == peer.userId ||
+                  std::any_of(peer.guests.begin(), peer.guests.end(),
+                              [&](const Peer::Guest& guest) { return guest.userId == vehicle.driver; });
+    });
+    if (driving)
+        return false;
+    // A loose body moving where a replica would predict it.
+    bool moving = false;
+    world.rigidBodies().forEach([&](core::InstanceId id, const scene::RigidBodyComponent& body) {
+        if (moving || body.anchored || world.characterBodies().find(id) != nullptr)
+            return;
+        const core::Vec3 v = body.linearVelocity;
+        if (v.x * v.x + v.y * v.y + v.z * v.z < RestSpeed * RestSpeed)
+            return;
+        const scene::PartComponent* part = world.parts().find(id);
+        if (part == nullptr)
+            return;
+        for (const core::DVec3& centre : centres) {
+            const core::DVec3 d = part->cframe.position - centre;
+            if (d.x * d.x + d.y * d.y + d.z * d.z <= DefaultPredictRadius * DefaultPredictRadius)
+                moving = true;
+        }
+    });
+    return !moving;
 }
 
 namespace {

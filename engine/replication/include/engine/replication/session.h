@@ -187,6 +187,11 @@ inline constexpr core::f64 VisualDecayPerTick = 0.55;
 // snapshots. `[network] predict_radius`, `predict_max_bodies` and
 // `predict_linger_ticks` set them for a project.
 inline constexpr core::f64 DefaultPredictRadius = 8.0;
+// **Still, to the intent queue**: a character that moved less than this
+// since the last tick, and a body slower than this, is at rest -- a tick of
+// its player's held or skipped then moves nothing a replica stepped.
+inline constexpr core::f64 RestMetres = 0.0005;
+inline constexpr core::f32 RestSpeed = 0.01f;
 inline constexpr u32 DefaultPredictMaxBodies = 32;
 inline constexpr u32 DefaultPredictLingerTicks = 30;
 inline constexpr core::f64 VisualSnapMetres = 2.0;
@@ -598,6 +603,11 @@ private:
             core::InstanceId player;
         };
         std::array<Guest, 3> guests{};
+        // Where each of the machine's characters was at the last tick, the
+        // first player's then each seat's: a character that moved since was
+        // not at rest, input or none.
+        std::array<core::DVec3, 4> lastPlaces{};
+        std::array<bool, 4> placed{};
         // Whether `id` is one of this machine's players.
         [[nodiscard]] bool has(u32 user) const noexcept
         {
@@ -901,6 +911,10 @@ private:
     [[nodiscard]] bool groundWholeReady(const scene::World& world);
     // One intent a peer, the next in tick order, as this tick's.
     void applyIntents(scene::World& world);
+    // Whether nothing the peer's players predict moved since the last tick:
+    // their characters, a car one of them drives, a loose body near them.
+    // Keeps each character's place for the next tick's question.
+    [[nodiscard]] bool stillAround(const scene::World& world, Peer& peer);
     // The atom a peer's intent number stands for here, or none: a number it
     // has not named, or a name nothing here has.
     static void carryPress(Peer& peer, u8 seat, core::NameAtom action);

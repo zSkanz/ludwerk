@@ -11,13 +11,14 @@ here.
 
 ### Fixed
 
-- A car handed to a player while it rolls is no longer corrected over and
-  over. While its driver touched nothing, the server held or skipped that
-  player's ticks to adjust their queue, which moves nothing for a player
-  standing still and moves a car on by a tick the player's machine never
-  stepped: the car was corrected by exactly its speed times a tick, again
-  whenever the queue was adjusted. A driver is never held or skipped now, and
-  a car a script drives with nobody in it is drawn between snapshots rather
+- What a player predicts that moves while they touch nothing is no longer
+  corrected by a tick of its own travel. The server held or skipped the
+  ticks of a player sending no input to tune their queue -- harmless for one
+  standing still, but a car rolling, a character falling, pushed or a crate
+  sliding moved on by a tick the player's machine never stepped, and was
+  corrected by exactly that, again at every adjustment. A player counts as at
+  rest now only when nothing they predict moved since the last tick. And a
+  car a script drives with nobody in it is drawn between snapshots rather
   than predicted on a machine that does not have its inputs.
 - A braked car stands still. It was woken every tick its brake was held, so
   it never slept, and at walking pace the tyres' friction let it creep -- down
