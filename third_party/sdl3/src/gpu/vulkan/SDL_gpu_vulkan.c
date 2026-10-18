@@ -13246,14 +13246,23 @@ static XrResult VULKAN_CreateXRSwapchain(
         VkImage vkImage = swapchainImages[idx].image;
 
         VulkanTexture *texture = SDL_calloc(1, sizeof(VulkanTexture));
+        /* A swapchain asked for with the depth-stencil usage is a depth target:
+         * a runtime's depth layer (XR_KHR_composition_layer_depth). */
+        const bool depthTarget = (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
 
         texture->swizzle = SwizzleForSDLFormat(format);
         texture->depth = 1;
-        texture->usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        texture->usage = depthTarget ? SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET : SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
         SDL_SetAtomicInt(&texture->referenceCount, 0);
         texture->image = vkImage;
         texture->externallyManaged = true;
         texture->aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT;
+        if (depthTarget) {
+            texture->aspectFlags = VK_IMAGE_ASPECT_DEPTH_BIT;
+            if (IsStencilFormat(format)) {
+                texture->aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
+            }
+        }
 
         texture->subresourceCount = createInfo.arraySize * createInfo.mipCount;
         texture->subresources = SDL_calloc(
@@ -13267,7 +13276,24 @@ static XrResult VULKAN_CreateXRSwapchain(
                     i,
                     createInfo.mipCount);
 
-                if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
+                if (depthTarget) {
+                    SDL_GPUTextureCreateInfo viewInfo;
+                    SDL_zero(viewInfo);
+                    viewInfo.type = SDL_GPU_TEXTURETYPE_2D;
+                    viewInfo.format = format;
+                    if (!VULKAN_INTERNAL_CreateSubresourceView(
+                            renderer,
+                            &viewInfo,
+                            texture,
+                            i,
+                            j,
+                            texture->swizzle,
+                            &texture->subresources[subresourceIndex].depthStencilView)) {
+                        VULKAN_INTERNAL_DestroyTexture(renderer, texture);
+                        SDL_SetError("Failed to create depth stencil view");
+                        return XR_ERROR_RUNTIME_FAILURE;
+                    }
+                } else if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
                     texture->subresources[subresourceIndex].renderTargetViews = SDL_malloc(sizeof(VkImageView));
 
                     if (!VULKAN_INTERNAL_CreateRenderTargetView(
@@ -13309,7 +13335,7 @@ static XrResult VULKAN_CreateXRSwapchain(
         container->header.info.layer_count_or_depth = createInfo.arraySize;
         container->header.info.num_levels = createInfo.mipCount;
         container->header.info.sample_count = SDL_GPU_SAMPLECOUNT_1;
-        container->header.info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        container->header.info.usage = texture->usage;
 
         container->externallyManaged = true;
         container->canBeCycled = false;

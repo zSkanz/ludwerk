@@ -335,6 +335,10 @@ here.
   where it points. With hand tracking, a fingertip pushed into a button
   presses it. While a headset draws, the window shows its left eye, or
   nothing with `[xr] mirror = false`.
+- A headset is given each eye's depth with its picture, where its runtime
+  takes depth, so the picture it moves to where the head has turned holds
+  steadier. `[xr] depth = false`, or `--xr-depth=off`, turns it off to
+  compare.
 - `ludwerk build --target=quest`, and the Export window's Meta Quest card,
   build a game with `[xr] enabled` as an APK that runs standalone on the
   Quest, starting in the headset. `examples/48-xr-room` is a room to try it

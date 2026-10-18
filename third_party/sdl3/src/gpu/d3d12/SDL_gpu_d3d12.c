@@ -9447,7 +9447,11 @@ static XrResult D3D12_CreateXRSwapchain(
     D3D12Renderer *renderer = (D3D12Renderer *)driverData;
 
     XrSwapchainCreateInfo createInfo = *oldCreateInfo;
-    createInfo.format = SDLToD3D12_TextureFormat[format];
+    /* A swapchain asked for with the depth-stencil usage is a depth target:
+     * a runtime's depth layer (XR_KHR_composition_layer_depth), in the depth
+     * format the runtime lists rather than its typeless twin. */
+    const bool depthTarget = (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
+    createInfo.format = depthTarget ? SDLToD3D12_DepthFormat[format] : SDLToD3D12_TextureFormat[format];
 
     result = renderer->xr->xrCreateSwapchain(session, &createInfo, swapchain);
     if (result != XR_SUCCESS) {
@@ -9506,7 +9510,32 @@ static XrResult D3D12_CreateXRSwapchain(
                 texture->subresources[subresourceIndex].uavHandle.heap = NULL;
                 texture->subresources[subresourceIndex].dsvHandle.heap = NULL;
 
-                if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
+                if (depthTarget) {
+                    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+
+                    D3D12_INTERNAL_AssignStagingDescriptorHandle(
+                        renderer,
+                        D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+                        &texture->subresources[subresourceIndex].dsvHandle);
+
+                    dsvDesc.Format = SDLToD3D12_DepthFormat[format];
+                    dsvDesc.Flags = (D3D12_DSV_FLAGS)0;
+                    if (createInfo.arraySize > 1) {
+                        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+                        dsvDesc.Texture2DArray.MipSlice = levelIndex;
+                        dsvDesc.Texture2DArray.FirstArraySlice = layerIndex;
+                        dsvDesc.Texture2DArray.ArraySize = 1;
+                    } else {
+                        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+                        dsvDesc.Texture2D.MipSlice = levelIndex;
+                    }
+
+                    ID3D12Device_CreateDepthStencilView(
+                        renderer->device,
+                        texture->resource,
+                        &dsvDesc,
+                        texture->subresources[subresourceIndex].dsvHandle.cpuHandle);
+                } else if (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT) {
                     texture->subresources[subresourceIndex].rtvHandles = (D3D12StagingDescriptor *)SDL_calloc(depth, sizeof(D3D12StagingDescriptor));
 
                     for (Uint32 depthIndex = 0; depthIndex < depth; depthIndex += 1) {
@@ -9551,7 +9580,7 @@ static XrResult D3D12_CreateXRSwapchain(
         container->header.info.layer_count_or_depth = createInfo.arraySize;
         container->header.info.num_levels = createInfo.mipCount;
         container->header.info.sample_count = SDL_GPU_SAMPLECOUNT_1;
-        container->header.info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        container->header.info.usage = depthTarget ? SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET : SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
 
         container->externallyManaged = true;
         container->canBeCycled = false;

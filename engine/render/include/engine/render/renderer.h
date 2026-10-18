@@ -265,6 +265,16 @@ public:
     // width and height: the whole of it into the headset, the middle of it
     // into a window of another shape (the mirror). Inside the frame, with no
     // render pass open.
+    // **An eye's depth into the headset's depth image** (ADR 0244 §5): the
+    // depth the view last drawn was drawn with, into `target`, a depth image
+    // (`target.colorFormat` its depth format). Inside the frame, with no
+    // render pass open.
+    virtual void presentEyeDepth(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target)
+    {
+        (void)device;
+        (void)cmd;
+        (void)target;
+    }
     virtual void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
                             const RenderTarget& target, const PictureCrop& crop)
     {

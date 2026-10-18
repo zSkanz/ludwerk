@@ -198,3 +198,26 @@ Quest build, multiplayer and the editor (ADR 0248).
   black. `[xr] required` was built with the first step.
 - **Not yet**: the depth submitted with each eye (§5), multiview (§4), the
   Android build.
+
+## As built, third step (2026-10-18)
+
+- **Each eye's depth** (§5): `XR_KHR_composition_layer_depth` is asked of
+  the runtime when its loader lists it, and each eye gets a depth swapchain
+  in a depth format the runtime lists -- read from the runtime, since SDL
+  lists colour formats only, and made a depth target by SDL patch 0008 (its
+  OpenXR swapchains had been colour targets whatever they were asked for).
+  After an eye is drawn, its depth is copied into the swapchain's image by
+  `xr_depth.hlsl`, a pass that writes depth and no colour, reading the
+  eye's depth by place so a render scale does not matter; each projection
+  view is chained with the depth image and the near and far planes it was
+  drawn with. A runtime with no depth layer, or no depth format the engine
+  makes, shows each eye without it.
+- **Behind a setting**, so a headset can be compared with and without it:
+  `[xr] depth = false` in `project.toml`, or `--xr-depth=on|off` over it.
+  The simulated headset takes depth too, so the copy runs in
+  `xr_simulated_eyes` under the GPU's debug layer.
+- **Multiview** (§4) is not built: SDL's GPU API turns on Vulkan's multiview
+  feature but offers no way to draw with it -- no view mask on a render pass
+  and no view index in a shader -- so it waits for SDL, or for a patch that
+  carries it through every pass and shader of the renderer. The eyes are
+  drawn one after the other, from one gathering of the world.

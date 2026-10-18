@@ -820,6 +820,7 @@ public:
                       const RenderTarget& target) override;
     void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture, const RenderTarget& target,
                     const PictureCrop& crop) override;
+    void presentEyeDepth(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target) override;
     [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
     void showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
                      const RenderTarget& target) override;
@@ -1621,6 +1622,9 @@ private:
     // The headset's eyes (ADR 0244): made in the swapchain's format when a
     // headset first draws.
     LookPipeline xrEye_;
+    // The eyes' depth copy (ADR 0244 §5), and the depth format it was made for.
+    LookPipeline xrDepth_;
+    rhi::TextureFormat xrDepthFormat_ = rhi::TextureFormat::Undefined;
     // The two skies, for a view seen on one side of a line.
     rhi::PipelineHandle skySidedPipeline_{};
     LookPipeline skyLookSided_;
@@ -5558,6 +5562,59 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
     const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, linearSampler_}};
     fullscreenPass(cmd, xrEye_.handle, target.color, target.width, target.height, "xr-eye", source,
                    asBytes(uniforms.data(), sizeof(uniforms)));
+}
+
+void DefaultRenderer::presentEyeDepth(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target)
+{
+    if (!depth_.valid() || !target.color.valid() || target.width == 0 || target.height == 0)
+        return;
+    // A pipeline that writes depth and no colour, made for the image's
+    // format the first time it is asked for, and again if it changes.
+    if (!xrDepth_.tried || xrDepthFormat_ != target.colorFormat) {
+        xrDepth_ = LookPipeline{};
+        xrDepth_.tried = true;
+        xrDepthFormat_ = target.colorFormat;
+        if (shaderLibrary_ != nullptr) {
+            core::EngineError error;
+            const rhi::ShaderHandle vertex =
+                shaderLibrary_->create(device, "xr_depth", rhi::ShaderStage::Vertex, &error);
+            const rhi::ShaderHandle fragment =
+                shaderLibrary_->create(device, "xr_depth", rhi::ShaderStage::Fragment, &error);
+            for (const rhi::ShaderHandle handle : {vertex, fragment}) {
+                if (handle.valid() && shaderCount_ < std::size(shaders_))
+                    shaders_[shaderCount_++] = handle;
+            }
+            if (vertex.valid() && fragment.valid()) {
+                xrDepth_.handle = device.createGraphicsPipeline({
+                    .vertexShader = vertex,
+                    .fragmentShader = fragment,
+                    .primitive = rhi::PrimitiveType::TriangleList,
+                    .rasterizer = {.cullMode = rhi::CullMode::None},
+                    .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::Always},
+                    .depthStencilFormat = target.colorFormat,
+                    .debugName = "xr_depth",
+                });
+            }
+            if (!xrDepth_.handle.valid()) {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{"xr_depth"}}};
+                core::log(core::LogLevel::Warn, ENG_TR("render.warn.pipeline_failed"), args);
+            }
+        }
+    }
+    if (!xrDepth_.handle.valid())
+        return;
+    cmd.beginRenderPass({.depthStencil = {.texture = target.color,
+                                          .loadOp = rhi::LoadOp::Clear,
+                                          .storeOp = rhi::StoreOp::Store,
+                                          .clearDepth = 1.0f},
+                         .debugName = "xr-depth"});
+    cmd.setPipeline(xrDepth_.handle);
+    cmd.setViewport({.width = static_cast<f32>(target.width), .height = static_cast<f32>(target.height)});
+    cmd.setScissor({.width = static_cast<core::i32>(target.width), .height = static_cast<core::i32>(target.height)});
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{depth_, pointSampler_}};
+    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, source);
+    cmd.draw(3, 1, 0, 0);
+    cmd.endRenderPass();
 }
 
 void DefaultRenderer::showMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target)

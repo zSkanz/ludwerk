@@ -761,6 +761,11 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrFromFlag = true;
             continue;
         }
+        if (arg == "--xr-depth=on" || arg == "--xr-depth=off") {
+            options.xrDepth = arg == "--xr-depth=on";
+            options.xrDepthFromFlag = true;
+            continue;
+        }
         if (arg == "--xr=simulated") {
             options.xr = false;
             options.xrSimulated = true;
@@ -2029,6 +2034,8 @@ static int hostMain(int argc, char** argv)
         options.xrRequired = config.xrRequired && !options.xrFromFlag;
         options.xrMirror = config.xrMirror;
         options.xrHands = config.xrHands;
+        if (!options.xrDepthFromFlag)
+            options.xrDepth = config.xrDepth;
         options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;

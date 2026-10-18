@@ -1638,7 +1638,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                    .xr = {.enabled = options.xr && !options.headless,
                                                           .application = options.xrApplication,
                                                           .applicationVersion = 0,
-                                                          .hands = options.xrHands}},
+                                                          .hands = options.xrHands,
+                                                          .depth = options.xrDepth}},
                                                   &error);
     if (device == nullptr)
         return error;
@@ -1990,7 +1991,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
     // The engine's own, when asked for (ADR 0248 §4); gone before the device.
     std::unique_ptr<SimulatedHeadset> simulatedHeadset =
-        options.xrSimulated ? std::make_unique<SimulatedHeadset>(*device, SimulatedHeadsetDesc{}) : nullptr;
+        options.xrSimulated
+            ? std::make_unique<SimulatedHeadset>(*device, SimulatedHeadsetDesc{.depth = options.xrDepth})
+            : nullptr;
     rhi::IHeadset* const headset = simulatedHeadset != nullptr ? simulatedHeadset.get() : device->headset();
     rhi::HeadsetFrame headsetFrame;
     bool headsetBegun = false;
@@ -9805,7 +9808,16 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                       .width = headsetFrame.width,
                                                                       .height = headsetFrame.height},
                                                  render::PictureCrop{});
+                            // And its depth, where the runtime takes it
+                            // (ADR 0244 §5), for its reprojection.
+                            if (headsetFrame.depth[index].valid())
+                                renderer->presentEyeDepth(*device, *cmd,
+                                                          render::RenderTarget{.color = headsetFrame.depth[index],
+                                                                               .colorFormat = headsetFrame.depthFormat,
+                                                                               .width = headsetFrame.width,
+                                                                               .height = headsetFrame.height});
                         }
+                        headset->setDepthRange(headCamera.nearPlane, headCamera.farPlane);
                         snapshot.camera = mainCamera;
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.

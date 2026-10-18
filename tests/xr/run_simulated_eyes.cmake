@@ -30,6 +30,12 @@ if(NOT result EQUAL 0)
     message(FATAL_ERROR "the host failed (${result}):\n${output}")
 endif()
 
+# **Each eye's depth too** (ADR 0244 §5): the simulated headset takes depth,
+# as a runtime with the depth layer does, so the copy into it runs here --
+# under the GPU's debug layer, where a pass it refused says so.
+if(output MATCHES "\\[error\\]|render.warn.pipeline_failed")
+    message(FATAL_ERROR "drawing the eyes, or their depth, went wrong:\n${output}")
+endif()
 foreach(eye left right)
     if(NOT EXISTS "${WORKDIR}/xr-${eye}.png")
         message(FATAL_ERROR "no picture for the ${eye} eye:\n${output}")

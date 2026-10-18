@@ -16,9 +16,13 @@ In `project.toml`:
 enabled = true     # try a headset at start; the screen when there is none
 # required = true  # a game played only in a headset: without one it says so and does not start
 # mirror = false   # the window stays black instead of showing the left eye
+# depth = false    # the headset is not given each eye's depth (see below)
 ```
 
 `--xr` and `--no-xr` on the command line override `enabled` and `required`.
+With each eye's picture the headset is given its depth, which makes the
+picture steadier when the headset moves it to where the head has turned;
+`--xr-depth=off` (or `depth = false`) runs without it, to compare.
 While a headset draws, the window shows what the left eye sees, cropped to
 the window's shape: someone watching sees what the player sees. The OpenXR loader
 ships beside the engine; nothing of it is loaded by a game that does not ask

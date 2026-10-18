@@ -26,6 +26,9 @@ struct SimulatedHeadsetDesc
     core::f32 tanInward = 0.96f;
     core::f32 tanUp = 1.0f;
     core::f32 tanDown = -1.15f;
+    // **Each eye's depth image** (ADR 0244 §5), as a runtime that takes
+    // depth gives one: what `--xr-depth` turns off.
+    bool depth = true;
 };
 
 class SimulatedHeadset final : public rhi::IHeadset
@@ -80,12 +83,24 @@ public:
     [[nodiscard]] core::f32 vibration(core::u32 hand) const noexcept { return m_vibration[hand & 1u]; }
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
+    [[nodiscard]] rhi::TextureHandle depthImage(core::u32 eye) const noexcept { return m_depthImages[eye]; }
+    void setDepthRange(core::f32 nearZ, core::f32 farZ) override
+    {
+        m_near = nearZ;
+        m_far = farZ;
+    }
+    // What the frames' depth meant, as the engine said, for a test to read.
+    [[nodiscard]] core::f32 depthNear() const noexcept { return m_near; }
+    [[nodiscard]] core::f32 depthFar() const noexcept { return m_far; }
     [[nodiscard]] core::u64 framesEnded() const noexcept { return m_frames; }
 
 private:
     rhi::IDevice& m_device;
     SimulatedHeadsetDesc m_desc;
     std::array<rhi::TextureHandle, 2> m_images{};
+    std::array<rhi::TextureHandle, 2> m_depthImages{};
+    core::f32 m_near = 0.0f;
+    core::f32 m_far = 0.0f;
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};
     std::array<core::f32, 4> m_headOrientation{0.0f, 0.0f, 0.0f, 1.0f};
     core::u64 m_frames = 0;

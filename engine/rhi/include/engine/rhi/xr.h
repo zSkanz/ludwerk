@@ -35,6 +35,9 @@ struct XrRequest
     // `[xr] hands` (ADR 0245 §4): the hands themselves, joint by joint,
     // where the runtime tracks them.
     bool hands = true;
+    // `[xr] depth` (ADR 0244 §5): each eye's depth handed to the runtime with
+    // its colour, where the runtime takes it, for its reprojection.
+    bool depth = true;
 };
 
 // One eye's view this frame: where it is and how it is turned, in the play
@@ -85,6 +88,11 @@ struct HeadsetFrame
     u32 width = 0;
     u32 height = 0;
     TextureFormat format = TextureFormat::Undefined;
+    // **Each eye's depth image**, the size of its colour, where the runtime
+    // takes depth (ADR 0244 §5); none otherwise. A frame that has them has
+    // each written before it ends, as `setDepthRange` says it is.
+    std::array<TextureHandle, 2> depth{};
+    TextureFormat depthFormat = TextureFormat::Undefined;
 };
 
 // A place and a turn in the play space, and whether the runtime knows it.
@@ -168,6 +176,13 @@ public:
         (void)hand;
         (void)amplitude;
         (void)seconds;
+    }
+    // **What the depth images hold**: depth 0 at `nearZ` metres and 1 at
+    // `farZ`, as the eyes were drawn. Before `endFrame`.
+    virtual void setDepthRange(f32 nearZ, f32 farZ)
+    {
+        (void)nearZ;
+        (void)farZ;
     }
     // **The space the poses and the eyes are in from the next frame**
     // (ADR 0245 §1). Standing until asked.

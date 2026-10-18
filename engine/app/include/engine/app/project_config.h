@@ -184,6 +184,9 @@ struct ProjectConfig
     // `[xr] hands` (ADR 0245 §4): the hands themselves where a headset
     // tracks them; false for a game played only with controllers.
     bool xrHands = true;
+    // `[xr] depth` (ADR 0244 §5): each eye's depth handed to the runtime, for
+    // its reprojection; false to compare a headset without it.
+    bool xrDepth = true;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

@@ -18,11 +18,26 @@ SimulatedHeadset::SimulatedHeadset(rhi::IDevice& device, const SimulatedHeadsetD
             .debugName = "simulated-eye",
         });
     }
+    if (desc.depth) {
+        for (rhi::TextureHandle& image : m_depthImages) {
+            image = m_device.createTexture({
+                .format = rhi::TextureFormat::D32Float,
+                .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
+                .width = m_desc.eyeWidth,
+                .height = m_desc.eyeHeight,
+                .debugName = "simulated-eye-depth",
+            });
+        }
+    }
 }
 
 SimulatedHeadset::~SimulatedHeadset()
 {
     for (const rhi::TextureHandle image : m_images) {
+        if (image.valid())
+            m_device.destroy(image);
+    }
+    for (const rhi::TextureHandle image : m_depthImages) {
         if (image.valid())
             m_device.destroy(image);
     }
@@ -101,7 +116,12 @@ bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
         eye.tanUp = m_desc.tanUp;
         eye.tanDown = m_desc.tanDown;
         frame.color[index] = m_images[index];
+        frame.depth[index] = m_depthImages[index];
     }
+    if (m_depthImages[0].valid() && m_depthImages[1].valid())
+        frame.depthFormat = rhi::TextureFormat::D32Float;
+    else
+        frame.depth = {};
     frame.draw = true;
     return true;
 }

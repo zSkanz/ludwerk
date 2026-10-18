@@ -132,7 +132,7 @@ quality = "high"
 | `[save]` | `max_slot_bytes` and `max_slots` — how much a game may save. See [Saving the game](manual:guides/saves) |
 | `[scene]` | `close_grace_seconds` — how long closing waits for a scene's handlers. See [Scenes at run time](manual:guides/scenes) |
 | `[script]` | `max_memory_mb` — the cap on the scripts' memory: 1024 on a desktop and 512 on a phone unless you say. A table that grows without end stops the scripts before it stops the machine |
-| `[xr]` | `enabled = true` — try a headset at start, through OpenXR, and draw on the screen when there is none; `required = true` — a game played only in a headset, which without one says so and does not start; `mirror = false` — the window stays black instead of showing the left eye; `hands = false` — controllers only, never the hands themselves; `--xr` and `--no-xr` on the command line override `enabled` and `required`. See [VR](manual:guides/vr) |
+| `[xr]` | `enabled = true` — try a headset at start, through OpenXR, and draw on the screen when there is none; `required = true` — a game played only in a headset, which without one says so and does not start; `mirror = false` — the window stays black instead of showing the left eye; `hands = false` — controllers only, never the hands themselves; `depth = false` — the headset is not given each eye's depth; `--xr` and `--no-xr` on the command line override `enabled` and `required`. See [VR](manual:guides/vr) |
 
 The TOML subset is deliberately small: comments, tables, strings, numbers,
 booleans and single-line arrays. A multi-line string, an inline table, an array

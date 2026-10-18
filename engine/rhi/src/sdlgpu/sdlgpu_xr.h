@@ -31,6 +31,8 @@ struct XrDeviceAsk
     // lists: an instance asked for one it does not have is not made.
     std::vector<const char*> extensions;
     bool handTracking = false;
+    // XR_KHR_composition_layer_depth, asked for and listed.
+    bool depthLayer = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

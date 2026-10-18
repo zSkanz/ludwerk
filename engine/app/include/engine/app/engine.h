@@ -451,6 +451,10 @@ struct EngineOptions
     bool xrMirror = true;
     // `[xr] hands`: the hands themselves, where the headset tracks them.
     bool xrHands = true;
+    // `[xr] depth`, or `--xr-depth=on|off` over it: each eye's depth handed to
+    // the runtime with its colour, where it takes depth (ADR 0244 §5).
+    bool xrDepth = true;
+    bool xrDepthFromFlag = false;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

@@ -38,6 +38,7 @@ struct XrCalls
     PFN_xrGetSystemProperties getSystemProperties = nullptr;
     PFN_xrEnumerateViewConfigurationViews enumerateViewConfigurationViews = nullptr;
     PFN_xrEnumerateSwapchainImages enumerateSwapchainImages = nullptr;
+    PFN_xrEnumerateSwapchainFormats enumerateSwapchainFormats = nullptr;
     PFN_xrCreateReferenceSpace createReferenceSpace = nullptr;
     PFN_xrGetReferenceSpaceBoundsRect getBoundsRect = nullptr;
     PFN_xrDestroySpace destroySpace = nullptr;
@@ -86,6 +87,7 @@ struct XrCalls
         get("xrGetSystemProperties", getSystemProperties);
         get("xrEnumerateViewConfigurationViews", enumerateViewConfigurationViews);
         get("xrEnumerateSwapchainImages", enumerateSwapchainImages);
+        get("xrEnumerateSwapchainFormats", enumerateSwapchainFormats);
         get("xrCreateReferenceSpace", createReferenceSpace);
         get("xrGetReferenceSpaceBoundsRect", getBoundsRect);
         get("xrDestroySpace", destroySpace);
@@ -226,8 +228,9 @@ struct EyeSwapchain
 class OpenXrHeadset final : public IHeadset
 {
 public:
-    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_handTracking(handTracking)
+    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_depthLayer(depthLayer),
+          m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
@@ -244,11 +247,13 @@ public:
             (void)m_calls.destroySpace(m_headSpace);
         if (m_actionSet != XR_NULL_HANDLE && m_calls.destroyActionSet != nullptr)
             (void)m_calls.destroyActionSet(m_actionSet);
-        for (EyeSwapchain& eye : m_eyes) {
-            for (const TextureHandle handle : eye.handles)
-                m_hooks.unwrap(handle);
-            if (eye.swapchain != XR_NULL_HANDLE)
-                (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
+        for (std::array<EyeSwapchain, 2>* set : {&m_eyes, &m_depthEyes}) {
+            for (EyeSwapchain& eye : *set) {
+                for (const TextureHandle handle : eye.handles)
+                    m_hooks.unwrap(handle);
+                if (eye.swapchain != XR_NULL_HANDLE)
+                    (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
+            }
         }
         for (const XrSpace space : {m_stage, m_local}) {
             if (space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
@@ -380,6 +385,12 @@ public:
             for (u32 at = 0; at < images; ++at)
                 eye.handles.push_back(m_hooks.wrap(eye.images[at], m_format, m_width, m_height));
         }
+        // **Each eye's depth** (ADR 0244 §5), where the runtime takes it: a
+        // headset whose runtime takes none is drawn to as before.
+        if (m_depthLayer && !openDepth()) {
+            m_depthLayer = false;
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_no_depth"));
+        }
         const std::array<core::I18nArg, 4> args{core::I18nArg{"runtime", std::string_view{m_runtime}},
                                                 core::I18nArg{"system", std::string_view{m_systemName}},
                                                 core::I18nArg{"width", static_cast<core::i64>(m_width)},
@@ -476,6 +487,27 @@ public:
             out.tanUp = std::tan(view.fov.angleUp);
             frame.color[at] = eye.handles[index];
         }
+        if (m_depthLayer) {
+            for (usize at = 0; at < 2; ++at) {
+                EyeSwapchain& eye = m_depthEyes[at];
+                u32 index = 0;
+                auto acquireInfo = made<XrSwapchainImageAcquireInfo>(XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
+                if (XR_FAILED(m_calls.acquireSwapchainImage(eye.swapchain, &acquireInfo, &index)) ||
+                    index >= eye.handles.size()) {
+                    releaseImages();
+                    return true;
+                }
+                eye.acquired = true;
+                auto waitImage = made<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
+                waitImage.timeout = XR_INFINITE_DURATION;
+                if (XR_FAILED(m_calls.waitSwapchainImage(eye.swapchain, &waitImage))) {
+                    releaseImages();
+                    return true;
+                }
+                frame.depth[at] = eye.handles[index];
+            }
+            frame.depthFormat = m_depthFormat;
+        }
         m_drawing = true;
         frame.draw = true;
         return true;
@@ -490,6 +522,7 @@ public:
         auto endInfo = made<XrFrameEndInfo>(XR_TYPE_FRAME_END_INFO);
         endInfo.displayTime = m_displayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        std::array<XrCompositionLayerDepthInfoKHR, 2> depths{};
         if (m_drawing) {
             for (usize at = 0; at < 2; ++at) {
                 views[at].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -497,6 +530,17 @@ public:
                 views[at].fov = m_views[at].fov;
                 views[at].subImage.swapchain = m_eyes[at].swapchain;
                 views[at].subImage.imageRect.extent = {static_cast<int32_t>(m_width), static_cast<int32_t>(m_height)};
+                if (m_depthLayer) {
+                    XrCompositionLayerDepthInfoKHR& depth = depths[at];
+                    depth.type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
+                    depth.subImage.swapchain = m_depthEyes[at].swapchain;
+                    depth.subImage.imageRect.extent = views[at].subImage.imageRect.extent;
+                    depth.minDepth = 0.0f;
+                    depth.maxDepth = 1.0f;
+                    depth.nearZ = m_near;
+                    depth.farZ = m_far;
+                    views[at].next = &depth;
+                }
             }
             layer.space = m_space;
             layer.viewCount = 2;
@@ -592,6 +636,12 @@ public:
                 }
             }
         }
+    }
+
+    void setDepthRange(f32 nearZ, f32 farZ) override
+    {
+        m_near = nearZ;
+        m_far = farZ;
     }
 
     void setSpace(HeadsetSpace space) override
@@ -713,6 +763,77 @@ private:
             (void)m_calls.releaseSwapchainImage(eye.swapchain, &releaseInfo);
             eye.acquired = false;
         }
+        for (EyeSwapchain& eye : m_depthEyes) {
+            if (!eye.acquired)
+                continue;
+            auto releaseInfo = made<XrSwapchainImageReleaseInfo>(XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
+            (void)m_calls.releaseSwapchainImage(eye.swapchain, &releaseInfo);
+            eye.acquired = false;
+        }
+    }
+
+    // **A depth swapchain for each eye**: in a depth format the runtime lists,
+    // as the backend SDL drew the session on names it -- SDL lists colour
+    // formats only.
+    [[nodiscard]] bool openDepth()
+    {
+        if (m_calls.enumerateSwapchainFormats == nullptr)
+            return false;
+        u32 count = 0;
+        if (XR_FAILED(m_calls.enumerateSwapchainFormats(m_session, 0, &count, nullptr)) || count == 0)
+            return false;
+        std::vector<int64_t> listed(count);
+        if (XR_FAILED(m_calls.enumerateSwapchainFormats(m_session, count, &count, listed.data())))
+            return false;
+        const std::string_view driver = SDL_GetGPUDeviceDriver(m_hooks.device);
+        const bool vulkan = driver == "vulkan";
+        // Vulkan's VkFormat and Direct3D's DXGI_FORMAT, the best first.
+        struct Candidate
+        {
+            int64_t native;
+            SDL_GPUTextureFormat sdl;
+            TextureFormat engine;
+        };
+        const std::array<Candidate, 3> candidates =
+            vulkan ? std::array<Candidate, 3>{Candidate{126, SDL_GPU_TEXTUREFORMAT_D32_FLOAT, TextureFormat::D32Float},
+                                              Candidate{129, SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+                                                        TextureFormat::D24UnormS8Uint},
+                                              Candidate{124, SDL_GPU_TEXTUREFORMAT_D16_UNORM, TextureFormat::D16Unorm}}
+                   : std::array<Candidate, 3>{
+                         Candidate{40, SDL_GPU_TEXTUREFORMAT_D32_FLOAT, TextureFormat::D32Float},
+                         Candidate{45, SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT, TextureFormat::D24UnormS8Uint},
+                         Candidate{55, SDL_GPU_TEXTUREFORMAT_D16_UNORM, TextureFormat::D16Unorm}};
+        const Candidate* chosen = nullptr;
+        for (const Candidate& candidate : candidates) {
+            if (std::find(listed.begin(), listed.end(), candidate.native) != listed.end()) {
+                chosen = &candidate;
+                break;
+            }
+        }
+        if (chosen == nullptr)
+            return false;
+        for (EyeSwapchain& eye : m_depthEyes) {
+            auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
+            info.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            info.sampleCount = 1;
+            info.width = m_width;
+            info.height = m_height;
+            info.faceCount = 1;
+            info.arraySize = 1;
+            info.mipCount = 1;
+            const XrResult result =
+                SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, chosen->sdl, &eye.swapchain, &eye.images);
+            if (XR_FAILED(result)) {
+                logFailure("SDL_CreateGPUXRSwapchain", result);
+                return false;
+            }
+            u32 images = 0;
+            (void)m_calls.enumerateSwapchainImages(eye.swapchain, 0, &images, nullptr);
+            for (u32 at = 0; at < images; ++at)
+                eye.handles.push_back(m_hooks.wrap(eye.images[at], chosen->engine, m_width, m_height));
+        }
+        m_depthFormat = chosen->engine;
+        return true;
     }
 
     void sessionBecame(XrSessionState state)
@@ -768,6 +889,13 @@ private:
     std::array<XrPath, 2> m_hands{};
     // Grip then aim, each left then right.
     std::array<XrSpace, 4> m_handSpaces{};
+    // **Each eye's depth swapchain**, where the runtime takes depth, its
+    // format, and what its values mean.
+    bool m_depthLayer = false;
+    std::array<EyeSwapchain, 2> m_depthEyes{};
+    TextureFormat m_depthFormat = TextureFormat::Undefined;
+    f32 m_near = 0.1f;
+    f32 m_far = 5000.0f;
     // Whether the runtime was asked for hand tracking and the headset has
     // it, and each hand's tracker.
     bool m_handTracking = false;
@@ -793,7 +921,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     // through the loader before any instance exists.
     extensions.clear();
     handTracking = false;
-    if (request.hands && SDL_OpenXR_LoadLibrary()) {
+    depthLayer = false;
+    if ((request.hands || request.depth) && SDL_OpenXR_LoadLibrary()) {
         const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
         PFN_xrVoidFunction found = nullptr;
         if (getProc != nullptr &&
@@ -806,8 +935,11 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                                                           made<XrExtensionProperties>(XR_TYPE_EXTENSION_PROPERTIES));
                 if (XR_SUCCEEDED(enumerate(nullptr, count, &count, listed.data()))) {
                     for (const XrExtensionProperties& one : listed) {
-                        if (std::string_view{one.extensionName} == XR_EXT_HAND_TRACKING_EXTENSION_NAME)
+                        const std::string_view name{one.extensionName};
+                        if (request.hands && name == XR_EXT_HAND_TRACKING_EXTENSION_NAME)
                             handTracking = true;
+                        if (request.depth && name == XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME)
+                            depthLayer = true;
                     }
                 }
             }
@@ -816,6 +948,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     }
     if (handTracking)
         extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    if (depthLayer)
+        extensions.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -839,7 +973,7 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
         return nullptr;
     auto headset =
         std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
-                                        std::move(hooks), ask.handTracking);
+                                        std::move(hooks), ask.handTracking, ask.depthLayer);
     if (!headset->open())
         return nullptr;
     return headset;
