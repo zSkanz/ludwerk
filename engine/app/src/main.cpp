@@ -773,6 +773,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrDepthFromFlag = true;
             continue;
         }
+        if (arg.starts_with("--xr-eyes-shot=")) {
+            options.xrEyesShot = std::string(arg.substr(15));
+            continue;
+        }
         if (arg.starts_with("--xr-simulated-store=")) {
             options.xrSimulatedStore = std::string(arg.substr(21));
             continue;

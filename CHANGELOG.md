@@ -11,6 +11,15 @@ here.
 
 ### Fixed
 
+- On a standalone headset, a frame of the XR room takes less of the GPU:
+  each eye is drawn in one pass with two samples a pixel, straight into the
+  image the headset shows, with no anti-aliasing or copy pass after it; the
+  depth prepass is not drawn; a frame meters its exposure once for both
+  eyes; and the eyes' depth is not given to the headset unless the project
+  asks (`[xr] depth = true`).
+- A headset's log says, once a session, where each eye sits and how far it
+  sees, and the frames its compositor dropped in each block of the timing
+  line rather than since the session began.
 - In a headset, a cube resting on a table casts its shadow from its base. The
   shadow started 4 to 7 millimeters away from it, which at arm's length
   reads as floating.

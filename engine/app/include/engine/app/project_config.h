@@ -185,8 +185,15 @@ struct ProjectConfig
     // tracks them; false for a game played only with controllers.
     bool xrHands = true;
     // `[xr] depth` (ADR 0244 §5): each eye's depth handed to the runtime, for
-    // its reprojection; false to compare a headset without it.
+    // its reprojection; false to compare a headset without it. **Off by
+    // default on a standalone headset**: measured on a Quest 3, the frame's
+    // GPU time went from 11-16 ms with it to 10-12 without, and the frame
+    // rate from 62-70 to 70-72.
+#if defined(__ANDROID__)
+    bool xrDepth = false;
+#else
     bool xrDepth = true;
+#endif
     bool xrScreenEffects = false;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;

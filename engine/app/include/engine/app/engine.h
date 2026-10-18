@@ -455,13 +455,22 @@ struct EngineOptions
     // `[xr] hands`: the hands themselves, where the headset tracks them.
     bool xrHands = true;
     // `[xr] depth`, or `--xr-depth=on|off` over it: each eye's depth handed to
-    // the runtime with its colour, where it takes depth (ADR 0244 §5).
+    // the runtime with its colour, where it takes depth (ADR 0244 §5). Off
+    // by default on a standalone headset (`ProjectConfig::xrDepth`).
+#if defined(__ANDROID__)
+    bool xrDepth = false;
+#else
     bool xrDepth = true;
+#endif
     bool xrDepthFromFlag = false;
     // `[xr] screen_effects`: occlusion, contact shadows and the screen's
     // reflections and bounce drawn in a headset's eyes, which by default
     // they are not.
     bool xrScreenEffects = false;
+    // `--xr-eyes-shot=<path>`: both eyes' pictures as drawn, before the
+    // runtime has them, written as `<name>-left` and `<name>-right` at the
+    // 600th frame a headset draws, beside the eyes' geometry in the log.
+    std::filesystem::path xrEyesShot;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

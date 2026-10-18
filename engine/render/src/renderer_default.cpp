@@ -580,6 +580,13 @@ struct ViewState
 {
     rhi::TextureHandle hdr_{};
     rhi::TextureHandle depth_{};
+    // A headset's eye drawn multisampled: the samples of its colour and its
+    // depth, made the first time and at the size and count asked.
+    rhi::TextureHandle msaaColor_{};
+    rhi::TextureHandle msaaDepth_{};
+    u32 msaaSamples_ = 0;
+    u32 msaaWidth_ = 0;
+    u32 msaaHeight_ = 0;
     // **The depth of what no decal paints** (`BasePart.ReceivesDecals`): the
     // parts with it off, drawn alone, on a frame that has both a decal and one
     // of them in view. A decal's pixel is left alone where this and the
@@ -1635,6 +1642,10 @@ private:
     LookPipeline xrEye_;
     rhi::TextureFormat xrEyeFormat_ = rhi::TextureFormat::Undefined;
     LookPipeline xrEyeMirror_;
+    // The tonemap into a headset's image, in its format where that is not
+    // the window's: an eye drawn straight into the runtime's image.
+    LookPipeline tonemapEye_;
+    LookPipeline gradedTonemapEye_;
     // The eyes' depth copy (ADR 0244 §5), and the depth format it was made for.
     LookPipeline xrDepth_;
     rhi::TextureFormat xrDepthFormat_ = rhi::TextureFormat::Undefined;
@@ -1806,7 +1817,7 @@ private:
                         bool upscale, bool sharpen);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 41> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 43> lookPipelines() noexcept
     {
         return {&probeGather_,
                 &probeFilter_,
@@ -1846,6 +1857,8 @@ private:
                 &composeViewsWindow_,
                 &xrEye_,
                 &xrEyeMirror_,
+                &tonemapEye_,
+                &gradedTonemapEye_,
                 &skyLookSided_,
                 &motionView_,
                 &motionViewWindow_};
@@ -2986,7 +2999,7 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
     };
     for (rhi::TextureHandle* texture :
          {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1]})
+          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &msaaColor_, &msaaDepth_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -8978,6 +8991,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // atlas -- over twenty metres, the first of them two metres deep.
         settings_.shadowTileResolution = std::max(settings_.shadowTileResolution, 1024u);
         settings_.shadowDistance = std::min(settings_.shadowDistance, 20.0f);
+        // **No spatial anti-aliasing pass**: a pass over each eye's three
+        // million pixels, 0.9 ms of a Quest 3's frame. The eye is drawn
+        // straight into the runtime's image by the tonemap.
+        settings_.antiAliasing = AntiAliasingMode::Off;
     }
     // Each pass's time on the CPU, recording it: what was submitted is
     // the GPU's, which `wait.*` measures.
@@ -9894,6 +9911,61 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         .clearColor = {0.0f, 0.0f, 0.0f, clearBehind ? 0.0f : 1.0f},
     }};
 
+    // **A headset's eye drawn multisampled** (`RenderWorld::headsetSamples`):
+    // the forward pass into the samples and resolved into `hdr_` on the tile,
+    // the samples and their depth never stored. Only where that pass can be
+    // the whole of the forward group -- nothing it draws reads the depth or
+    // the picture partway through, which would close and reopen it on a
+    // depth of one sample -- and nothing reads the eye's depth after it.
+    bool readsScene = false;
+    for (const DrawItem& draw : world.draws) {
+        if (draw.transparent && draw.inCameraFrustum && draw.material < materialSurface_.size() &&
+            materialSurface_[draw.material] != 0) {
+            readsScene = true;
+            break;
+        }
+    }
+    const bool forwardWhole = world.decals.empty() && !airDrawn && !spriteExactLive_ && particleCount_ == 0 &&
+                              ribbonVertexCount_ == 0 && world.gpuEmitters.empty() && !readsScene && !prepassDrawn_ &&
+                              !(world.look.depthOfField && settings_.depthOfField);
+    u32 samples = world.headsetEye && !world.headsetDepthRead && forwardWhole ? world.headsetSamples : 1u;
+    if (samples > 1 && (!msaaColor_.valid() || !msaaDepth_.valid() || msaaSamples_ != samples ||
+                        msaaWidth_ != renderWidth_ || msaaHeight_ != renderHeight_)) {
+        for (rhi::TextureHandle* texture : {&msaaColor_, &msaaDepth_}) {
+            if (texture->valid())
+                device.destroy(*texture);
+            *texture = {};
+        }
+        msaaColor_ = device.createTexture({
+            .format = kHdrFormat,
+            .usage = rhi::TextureUsage::ColorTarget,
+            .width = renderWidth_,
+            .height = renderHeight_,
+            .samples = samples,
+            .debugName = "eye-samples",
+        });
+        msaaDepth_ = device.createTexture({
+            .format = kDepthFormat,
+            .usage = rhi::TextureUsage::DepthStencilTarget,
+            .width = renderWidth_,
+            .height = renderHeight_,
+            .samples = samples,
+            .debugName = "eye-depth-samples",
+        });
+        msaaSamples_ = samples;
+        msaaWidth_ = renderWidth_;
+        msaaHeight_ = renderHeight_;
+    }
+    if (!msaaColor_.valid() || !msaaDepth_.valid())
+        samples = 1;
+    const std::array<rhi::ColorAttachment, 1> samplesAttachment{rhi::ColorAttachment{
+        .texture = msaaColor_,
+        .loadOp = rhi::LoadOp::Clear,
+        .storeOp = rhi::StoreOp::Resolve,
+        .clearColor = {0.0f, 0.0f, 0.0f, clearBehind ? 0.0f : 1.0f},
+        .resolveTexture = hdr_,
+    }};
+
     // Whether the depth of field ran inside the forward pass, before what
     // blends; the look's own passes below do not run it a second time.
     bool focusedBeforeBlended = false;
@@ -9901,17 +9973,24 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // particles leave none open when nothing is drawn after them.
     bool forwardOpen = true;
     cmd.pushDebugGroup("forward");
-    cmd.beginRenderPass({
-        .colorAttachments = hdrAttachment,
-        // LOADED, not cleared: the prepass wrote this depth and the occlusion
-        // pass has already read it -- unless a measurement left the prepass
-        // out, and this pass is the first to draw depth. Stored, because the
-        // blended pass tests against it.
-        .depthStencil = {.texture = depth_,
-                         .loadOp = prepassDrawn_ ? rhi::LoadOp::Load : rhi::LoadOp::Clear,
-                         .storeOp = rhi::StoreOp::Store},
-        .debugName = "forward",
-    });
+    if (samples > 1)
+        cmd.beginRenderPass({
+            .colorAttachments = samplesAttachment,
+            .depthStencil = {.texture = msaaDepth_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::DontCare},
+            .debugName = "forward-samples",
+        });
+    else
+        cmd.beginRenderPass({
+            .colorAttachments = hdrAttachment,
+            // LOADED, not cleared: the prepass wrote this depth and the occlusion
+            // pass has already read it -- unless a measurement left the prepass
+            // out, and this pass is the first to draw depth. Stored, because the
+            // blended pass tests against it.
+            .depthStencil = {.texture = depth_,
+                             .loadOp = prepassDrawn_ ? rhi::LoadOp::Load : rhi::LoadOp::Clear,
+                             .storeOp = rhi::StoreOp::Store},
+            .debugName = "forward",
+        });
     cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
     cmd.setScissor({.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
 
@@ -10977,6 +11056,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     tonemap.exposureBloom[0] = world.environment.exposureCompensation;
     tonemap.exposureBloom[1] = look.bloomGoverned ? kBloomIntensity * look.bloomIntensity : kBloomIntensity;
     tonemap.exposureBloom[2] = world.environment.transparentBackground ? 1.0f : 0.0f;
+    tonemap.exposureBloom[3] = 0.0f;
 
     // **Every colour correction, a stage each, in the graded twin of the
     // tonemap** -- chosen only on a frame that has one, so a world without
@@ -11009,7 +11089,13 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // when a resolve follows, the target itself otherwise -- a window's
     // swapchain, or a view's `kLdrFormat` texture.
     const bool intoWindow = !resolve && target.colorFormat != kLdrFormat;
-    LookPipeline& gradedSlot = intoWindow ? gradedTonemapWindow_ : gradedTonemap_;
+    // An sRGB target encodes on its own: a headset's runtime image.
+    if (intoWindow && (target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
+                       target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb))
+        tonemap.exposureBloom[3] = 1.0f;
+    // A target in another format than the window's: a headset's image.
+    const bool intoEye = intoWindow && target.colorFormat != colorFormat_;
+    LookPipeline& gradedSlot = intoEye ? gradedTonemapEye_ : intoWindow ? gradedTonemapWindow_ : gradedTonemap_;
     const bool graded = look.graded && ensureLookPipeline(device, gradedSlot, "tonemap_graded",
                                                           intoWindow ? target.colorFormat : kLdrFormat);
     if (graded) {
@@ -11031,7 +11117,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // drawn smaller than the window is scaled up here, and pixel art by the
     // nearest texel (ADR 0158).
     LookPipeline* exactSlot = nullptr;
-    if (spriteExactLive_) {
+    // Not into a headset's image, whose format the window's twins were not
+    // made for: sprites in their own colours are a flat game's.
+    if (spriteExactLive_ && !intoEye) {
         LookPipeline& slot = graded ? (intoWindow ? exactGradedTonemapWindow_ : exactGradedTonemap_)
                                     : (intoWindow ? exactTonemapWindow_ : exactTonemap_);
         if (ensureLookPipeline(device, slot, graded ? "tonemap_graded_exact" : "tonemap_exact",
@@ -11052,7 +11140,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // a bilinear upscale.
     cmd.pushDebugGroup("tonemap");
     const rhi::PipelineHandle plain =
-        intoWindow && tonemapWindowPipeline_.valid() ? tonemapWindowPipeline_ : tonemapPipeline_;
+        intoEye ? (ensureLookPipeline(device, tonemapEye_, "tonemap", target.colorFormat) ? tonemapEye_.handle
+                                                                                          : rhi::PipelineHandle{})
+        : intoWindow && tonemapWindowPipeline_.valid() ? tonemapWindowPipeline_
+                                                       : tonemapPipeline_;
     fullscreenPass(cmd,
                    exactSlot != nullptr ? exactSlot->handle
                    : graded             ? gradedSlot.handle

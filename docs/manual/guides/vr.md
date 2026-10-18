@@ -16,14 +16,29 @@ In `project.toml`:
 enabled = true     # try a headset at start; the screen when there is none
 # required = true  # a game played only in a headset: without one it says so and does not start
 # mirror = false   # the window stays black instead of showing the left eye
-# depth = false    # the headset is not given each eye's depth (see below)
+# depth = true     # the headset is given each eye's depth (see below); off on a Quest by default
 # screen_effects = true  # occlusion, contact shadows and the screen's reflections in the eyes (see below)
 ```
 
 `--xr` and `--no-xr` on the command line override `enabled` and `required`.
-With each eye's picture the headset is given its depth, which makes the
+With each eye's picture a PC headset is given its depth, which makes the
 picture steadier when the headset moves it to where the head has turned;
-`--xr-depth=off` (or `depth = false`) runs without it, to compare.
+`--xr-depth=off` (or `depth = false`) runs without it, to compare. A
+standalone headset is not given it unless the project says `depth = true`:
+on a Quest 3 the depth cost more GPU time than it saved in frames.
+
+**On a standalone headset each eye is drawn in one pass**, with two samples
+a pixel to smooth its edges, straight into the image the headset shows: no
+pass copies it and no anti-aliasing pass follows. A frame that needs the
+picture or the depth partway through -- decals, particles, a surface shader
+that reads the scene -- is drawn as on a PC, without the samples, and so is
+a frame whose depth the headset or the room behind the picture reads.
+
+`--xr-eyes-shot=<path>` writes both eyes' pictures as drawn, before the
+headset's runtime has them, as `<name>-left.png` and `<name>-right.png`, at
+the 600th frame the headset draws. The log says, once a session, where each
+eye sits and how far it sees, and how much one eye is higher than the other
+or turned from it: a pair of eyes that fuses has both near nought.
 While a headset draws, the window shows what the left eye sees, cropped to
 the window's shape: someone watching sees what the player sees. The OpenXR loader
 ships beside the engine; nothing of it is loaded by a game that does not ask

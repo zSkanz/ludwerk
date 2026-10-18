@@ -858,10 +858,17 @@ public:
             f32 dropped = -1.0f;
             (void)read("/perfmetrics_meta/app/gpu_frametime", taken.appGpuMs, unused);
             (void)read("/perfmetrics_meta/app/cpu_frametime", taken.appCpuMs, unused);
-            if (!read("/perfmetrics_meta/compositor/dropped_frame_count", dropped, taken.compositorDropped))
-                taken.compositorDropped = -1;
-            else if (taken.compositorDropped < 0 && dropped >= 0.0f)
-                taken.compositorDropped = static_cast<i64>(dropped);
+            // **A count since the session began**, which the runtime keeps:
+            // what a block of frames dropped is its change since the last
+            // block's.
+            i64 total = -1;
+            if (!read("/perfmetrics_meta/compositor/dropped_frame_count", dropped, total))
+                total = -1;
+            else if (total < 0 && dropped >= 0.0f)
+                total = static_cast<i64>(dropped);
+            taken.compositorDropped = total >= 0 && m_droppedBefore >= 0 ? total - m_droppedBefore : -1;
+            if (total >= 0)
+                m_droppedBefore = total;
             (void)unusedFloat;
         }
         return taken;
@@ -1481,6 +1488,8 @@ private:
     HeadsetTiming m_timing{};
     i64 m_lastWaitNs = 0;
     bool m_metrics = false;
+    // The runtime's count of dropped frames at the last block's end.
+    i64 m_droppedBefore = -1;
     // **The room seen through**: whether the runtime blends by alpha, has the
     // Quest's passthrough, and whether it is on; and the Quest's objects.
     bool m_alphaBlend = false;

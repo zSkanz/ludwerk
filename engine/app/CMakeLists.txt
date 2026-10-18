@@ -695,6 +695,22 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 180)
 
+    # **A pair of eyes fuses** (ADR 0244): three markers, seen by a head
+    # turned and tilted through eyes that see further outward and down than
+    # inward and up, land on the same row of both pictures, and further left
+    # in the right one.
+    add_test(NAME xr_stereo
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSTEREO=$<TARGET_FILE:imgstereo>
+                -DSCENE=${CMAKE_SOURCE_DIR}/tests/xr/stereo.luau
+                -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-stereo
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_stereo.cmake)
+    set_tests_properties(xr_stereo PROPERTIES
+        PASS_REGULAR_EXPRESSION "the eyes fuse"
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 180)
+
     # **A screen is a panel in a headset** (ADR 0246 §1): laid out against the
     # panel's canvas and drawn into the eyes; and a hand pointing at its
     # button with the trigger pulled presses it, and so does a fingertip

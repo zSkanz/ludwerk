@@ -42,4 +42,14 @@ float3 encodeSrgb(float3 linearColor)
     return lerp(low, high, step(float3(0.0031308f, 0.0031308f, 0.0031308f), c));
 }
 
+// The inverse, for a pass that writes an sRGB image: the hardware encodes
+// what it is given, so what was encoded here is decoded first and comes out
+// as it went in.
+float3 decodeSrgb(float3 encoded)
+{
+    const float3 low = encoded / 12.92f;
+    const float3 high = pow(max((encoded + 0.055f) / 1.055f, 0.0f), 2.4f);
+    return lerp(high, low, step(encoded, 0.04045f));
+}
+
 #endif // ENG_FULLSCREEN_HLSLI

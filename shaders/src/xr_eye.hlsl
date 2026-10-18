@@ -39,13 +39,6 @@ Interpolants VertexMain(uint vertexId : SV_VertexID)
     return output;
 }
 
-float3 decodeSrgb(float3 encoded)
-{
-    const float3 low = encoded / 12.92f;
-    const float3 high = pow(max((encoded + 0.055f) / 1.055f, 0.0f), 2.4f);
-    return lerp(high, low, step(encoded, 0.04045f));
-}
-
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
     const float2 uv = XrEyeCrop.xy + input.Uv * XrEyeCrop.zw;

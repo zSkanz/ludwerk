@@ -863,6 +863,14 @@ struct RenderWorld
     // or depth of field, two shadow cascades at most, and the sun's shadow
     // filtered by a four-tap tent (`sampleCascade`).
     bool headsetLean = false;
+    // **Samples a pixel of a headset's eye**: more than one draws the
+    // forward pass multisampled and resolves it on the tile, where the
+    // frame lets that pass be one (`DefaultRenderer::render`).
+    u32 headsetSamples = 1;
+    // Whether anything reads the eye's depth after it is drawn: the
+    // runtime's depth layer, or the room seen through where nothing is
+    // drawn. A multisampled eye keeps no depth of one sample.
+    bool headsetDepthRead = false;
     RenderEnvironment environment;
     // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a
     // world with none of them, which is the picture it always drew.

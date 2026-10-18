@@ -102,6 +102,11 @@ target_link_libraries(imgflicker PRIVATE engine::warnings engine_imgcmp_lib)
 add_executable(imgmirror src/mirror_main.cpp)
 target_link_libraries(imgmirror PRIVATE engine::warnings engine_imgcmp_lib)
 
+# `imgstereo` says whether two eyes' pictures fuse: each of three markers on
+# the same row of both, and further left in the right eye (ADR 0244).
+add_executable(imgstereo src/stereo_main.cpp)
+target_link_libraries(imgstereo PRIVATE engine::warnings engine_imgcmp_lib)
+
 if(ENG_BUILD_TESTS)
     add_executable(engine_imgcmp_tests
         tests/command_line_tests.cpp

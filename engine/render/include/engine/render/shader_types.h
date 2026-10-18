@@ -304,7 +304,8 @@ struct GpuTonemapUniforms
     // x exposure compensation in EV stops -- the artist control, on top of the
     // automatic exposure the 1x1 target carries. y how much bloom is mixed in.
     // z above one half: the output's alpha is the scene's coverage rather than
-    // one (a view with no sky behind it, ADR 0107). w unused.
+    // one (a view with no sky behind it, ADR 0107). w above one half: the
+    // target is an sRGB image, which encodes, so the output is linear.
     f32 exposureBloom[4]{0.0f, 0.04f, 0.0f, 0.0f};
 };
 

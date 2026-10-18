@@ -176,9 +176,13 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float3 exposed = max(scene * exposure, float3(0.0f, 0.0f, 0.0f));
 
 #ifdef ENG_TONEMAP_EXACT
-    return resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha),
-                        input.Uv);
+    const float4 written =
+        resolveExact(float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha), input.Uv);
 #else
-    return float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);
+    const float4 written = float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);
 #endif
+    // **Into an sRGB image** (w above a half): a headset's eye drawn straight
+    // into the runtime's image, which encodes what it is given. Decoded after
+    // the dither, so the bytes that land are the ones a copy wrote.
+    return ExposureBloom.w > 0.5f ? float4(decodeSrgb(written.rgb), written.a) : written;
 }

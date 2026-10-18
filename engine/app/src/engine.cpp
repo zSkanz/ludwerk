@@ -1996,6 +1996,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // CPU each eye's pass took, summed since the last line.
     core::f64 eyePassMs = 0.0;
     core::u32 eyePasses = 0;
+    // Frames a headset has drawn, for the eyes' geometry said once and the
+    // picture `--xr-eyes-shot` asks for.
+    core::u64 headsetFramesDrawn = 0;
     core::u32 headsetFramesSinceLog = 0;
     // **Anchors asked of the headset** (ADR 0247 §3): its ask's number, the
     // script's waiter, what was asked, where, and what a load found so far.
@@ -10047,13 +10050,30 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             snapshot.headsetScreenEffects = options.xrScreenEffects;
 #if defined(__ANDROID__)
                             snapshot.headsetLean = true;
+                            // **Two samples a pixel**: the edges a Quest's eye
+                            // showed in steps, resolved on the tile.
+                            snapshot.headsetSamples = 2;
 #endif
+                            snapshot.headsetDepthRead =
+                                eyeCopy.seeThrough || (headsetFrame.depth[0].valid() && headsetFrame.depth[1].valid());
                         }
                         bool shadowMapDrawn = false;
+                        // **Straight into the runtime's image** on a standalone
+                        // headset: no picture of the eye's own, and no pass that
+                        // copies it -- 0.7 ms of a Quest 3's frame. Not where the
+                        // room shows through, whose alpha the copy writes from the
+                        // depth; nor on the frame whose pictures `--xr-eyes-shot`
+                        // reads back.
+                        const bool eyesDirect = snapshot.headsetLean && !eyeCopy.seeThrough &&
+                                                !(!options.xrEyesShot.empty() && headsetFramesDrawn + 1 == 600);
+                        // Each eye from the head, as drawn: for the log below.
+                        std::array<core::Vec3, 2> eyeOffsets{};
+                        std::array<core::Mat3, 2> eyeTurns{};
                         for (core::u32 index = 0; index < 2; ++index) {
                             SplitPicture& picture = eyePictures[index];
-                            if (!picture.texture.valid() || picture.width != headsetFrame.width ||
-                                picture.height != headsetFrame.height || picture.format != targetFormat) {
+                            if (!eyesDirect &&
+                                (!picture.texture.valid() || picture.width != headsetFrame.width ||
+                                 picture.height != headsetFrame.height || picture.format != targetFormat)) {
                                 if (picture.texture.valid())
                                     device->destroy(picture.texture);
                                 picture.texture = device->createTexture({
@@ -10067,7 +10087,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 picture.height = headsetFrame.height;
                                 picture.format = targetFormat;
                             }
-                            if (!picture.texture.valid())
+                            if (!eyesDirect && !picture.texture.valid())
                                 continue;
                             // The eye from the head: where it is and how it is
                             // turned, in the head's own frame.
@@ -10079,16 +10099,19 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             const core::Mat3 turn =
                                 headTurnBack * core::fromQuaternion(eye.orientation[0], eye.orientation[1],
                                                                     eye.orientation[2], eye.orientation[3]);
+                            eyeOffsets[index] = headTurnBack * offset;
+                            eyeTurns[index] = turn;
                             std::array<f32, 4> turned{};
                             core::toQuaternion(turn, turned[0], turned[1], turned[2], turned[3]);
                             snapshot.camera = render::eyeCamera(headCamera, headTurnBack * offset, turned, eye.tanLeft,
                                                                 eye.tanRight, eye.tanDown, eye.tanUp);
-                            const render::RenderTarget eyeTarget{.color = picture.texture,
-                                                                 .colorFormat = targetFormat,
-                                                                 .width = picture.width,
-                                                                 .height = picture.height,
-                                                                 .view = EyeViewBase + index,
-                                                                 .window = true};
+                            const render::RenderTarget eyeTarget{
+                                .color = eyesDirect ? headsetFrame.color[index] : picture.texture,
+                                .colorFormat = eyesDirect ? headsetFrame.format : targetFormat,
+                                .width = headsetFrame.width,
+                                .height = headsetFrame.height,
+                                .view = EyeViewBase + index,
+                                .window = true};
                             // No jitter: an eye has no temporal anti-aliasing to
                             // gather it (`RenderWorld::headsetEye`).
                             const u64 eyeStarted = platform::nowNs();
@@ -10099,12 +10122,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             shadowMapDrawn = true;
                             eyePassMs += msSince(eyeStarted);
                             eyePasses += 1;
-                            renderer->presentEye(*device, *cmd, picture.texture,
-                                                 render::RenderTarget{.color = headsetFrame.color[index],
-                                                                      .colorFormat = headsetFrame.format,
-                                                                      .width = headsetFrame.width,
-                                                                      .height = headsetFrame.height},
-                                                 eyeCopy);
+                            if (!eyesDirect)
+                                renderer->presentEye(*device, *cmd, picture.texture,
+                                                     render::RenderTarget{.color = headsetFrame.color[index],
+                                                                          .colorFormat = headsetFrame.format,
+                                                                          .width = headsetFrame.width,
+                                                                          .height = headsetFrame.height},
+                                                     eyeCopy);
                             // And its depth, where the runtime takes it
                             // (ADR 0244 §5), for its reprojection.
                             if (headsetFrame.depth[index].valid())
@@ -10114,14 +10138,88 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                                .width = headsetFrame.width,
                                                                                .height = headsetFrame.height});
                         }
+                        headsetFramesDrawn += 1;
+                        // **The eyes' geometry, said once a session and with a
+                        // picture of them**: where each eye is and how far it sees,
+                        // and what a pair that fuses keeps near nought -- one eye
+                        // higher than the other, or turned from it.
+                        const bool eyesShot = !options.xrEyesShot.empty() && headsetFramesDrawn == 600;
+                        if (headsetFramesDrawn == 1 || eyesShot) {
+                            const auto degrees = [](f32 tangent) {
+                                return std::round(std::atan(static_cast<f64>(tangent)) * 572.9578) / 10.0;
+                            };
+                            const auto millimeters = [](f32 meters) {
+                                return std::round(static_cast<f64>(meters) * 10000.0) / 10.0;
+                            };
+                            const auto angleOf = [](const core::Mat3& rotation) {
+                                const f64 trace =
+                                    static_cast<f64>(rotation.m[0][0] + rotation.m[1][1] + rotation.m[2][2]);
+                                return std::round(std::acos(std::clamp((trace - 1.0) * 0.5, -1.0, 1.0)) * 5729.578) /
+                                       100.0;
+                            };
+                            for (core::u32 index = 0; index < 2; ++index) {
+                                const rhi::EyeView& eye = headsetFrame.eyes[index];
+                                const std::array<core::I18nArg, 9> eyeArgs{
+                                    core::I18nArg{"eye",
+                                                  index == 0 ? std::string_view{"left"} : std::string_view{"right"}},
+                                    core::I18nArg{"left", degrees(-eye.tanLeft)},
+                                    core::I18nArg{"right", degrees(eye.tanRight)},
+                                    core::I18nArg{"down", degrees(-eye.tanDown)},
+                                    core::I18nArg{"up", degrees(eye.tanUp)},
+                                    core::I18nArg{"x", millimeters(eyeOffsets[index].x)},
+                                    core::I18nArg{"y", millimeters(eyeOffsets[index].y)},
+                                    core::I18nArg{"z", millimeters(eyeOffsets[index].z)},
+                                    core::I18nArg{"turn", angleOf(eyeTurns[index])}};
+                                core::log(LogLevel::Info, ENG_TR("engine.info.xr_eye"), eyeArgs);
+                            }
+                            const core::Vec3 apart = eyeOffsets[1] - eyeOffsets[0];
+                            const std::array<core::I18nArg, 3> pairArgs{
+                                core::I18nArg{"apart", millimeters(core::length(apart))},
+                                core::I18nArg{"higher", millimeters(apart.y)},
+                                core::I18nArg{"turn", angleOf(core::transpose(eyeTurns[0]) * eyeTurns[1])}};
+                            core::log(LogLevel::Info, ENG_TR("engine.info.xr_eyes"), pairArgs);
+                        }
+                        // **Both eyes as drawn, before the runtime has them**
+                        // (`--xr-eyes-shot`): the headset's own capture shows each
+                        // eye through its lens and its crop, and only our two
+                        // pictures side by side say whether they fuse.
+                        if (eyesShot && eyePictures[0].texture.valid() && eyePictures[1].texture.valid()) {
+                            device->waitIdle();
+                            const bool swapped = targetFormat == rhi::TextureFormat::Bgra8Unorm ||
+                                                 targetFormat == rhi::TextureFormat::Bgra8UnormSrgb;
+                            std::array<std::string, 2> written;
+                            for (core::u32 index = 0; index < 2; ++index) {
+                                const SplitPicture& picture = eyePictures[index];
+                                std::vector<std::byte> pixels(static_cast<core::usize>(picture.width) * picture.height *
+                                                              4u);
+                                if (!device->readTexture(picture.texture, pixels))
+                                    break;
+                                if (swapped) {
+                                    for (core::usize at = 0; at + 3 < pixels.size(); at += 4)
+                                        std::swap(pixels[at], pixels[at + 2]);
+                                }
+                                std::filesystem::path shot = options.xrEyesShot;
+                                shot.replace_filename(options.xrEyesShot.stem().string() +
+                                                      (index == 0 ? "-left" : "-right") +
+                                                      options.xrEyesShot.extension().string());
+                                if (!writePng(shot, pixels, picture.width, picture.height).has_value())
+                                    written[index] = shot.string();
+                            }
+                            const std::array<core::I18nArg, 2> shotArgs{
+                                core::I18nArg{"left", std::string_view{written[0]}},
+                                core::I18nArg{"right", std::string_view{written[1]}}};
+                            core::log(LogLevel::Info, ENG_TR("engine.info.xr_eyes_shot"), shotArgs);
+                        }
                         headset->setDepthRange(headCamera.nearPlane, headCamera.farPlane);
                         snapshot.camera = mainCamera;
                         snapshot.shadowView.reset();
                         snapshot.headsetEye = false;
                         snapshot.headsetLean = false;
+                        snapshot.headsetSamples = 1;
+                        snapshot.headsetDepthRead = false;
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.
-                        if (mirroring && options.xrMirror && eyePictures[0].texture.valid()) {
+                        if (mirroring && !eyesDirect && options.xrMirror && eyePictures[0].texture.valid()) {
                             const f32 eyeAspect =
                                 static_cast<f32>(eyePictures[0].width) / static_cast<f32>(eyePictures[0].height);
                             const f32 windowAspect = static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight);
@@ -10136,7 +10234,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             }
                             renderer->presentEye(*device, *cmd, eyePictures[0].texture, windowTarget, crop);
                         }
-                        else if (mirroring) {
+                        // A standalone headset has no window anybody sees.
+                        else if (mirroring && !eyesDirect) {
                             const std::array<rhi::ColorAttachment, 1> black{rhi::ColorAttachment{
                                 .texture = target,
                                 .loadOp = rhi::LoadOp::Clear,
