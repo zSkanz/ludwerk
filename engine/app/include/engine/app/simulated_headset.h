@@ -111,7 +111,8 @@ public:
         taken.displayPeriodNs = 13'888'889;
         taken.frames = static_cast<core::u32>(m_frames - m_framesTaken);
         // From the first frame's wait to the last's, as a runtime counts it.
-        taken.spanNs = static_cast<core::i64>(taken.frames > 0 ? taken.frames - 1 : 0) * taken.displayPeriodNs;
+        taken.intervals = taken.frames > 0 ? taken.frames - 1 : 0;
+        taken.spanNs = static_cast<core::i64>(taken.intervals) * taken.displayPeriodNs;
         m_framesTaken = m_frames;
         return taken;
     }

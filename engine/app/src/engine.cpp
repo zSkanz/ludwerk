@@ -7930,6 +7930,16 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                        : now == rhi::HeadsetState::Idle   ? 1
                                                                           : 4;
                 if (state != seen.sessionState) {
+                    // Said once a change: a session left waiting is a quiet
+                    // log, not a line of empty timing every five seconds.
+                    if (seen.sessionState != 0) {
+                        const std::array<core::I18nArg, 1> said{
+                            core::I18nArg{"state", std::string_view{state == 3   ? "focused"
+                                                                    : state == 2 ? "visible"
+                                                                    : state == 1 ? "idle"
+                                                                                 : "ended"}}};
+                        core::log(core::LogLevel::Info, ENG_TR("engine.info.xr_session_state"), said);
+                    }
                     seen.sessionState = state;
                     script::fireXRSessionStateChanged(host->runtime().state(), state);
                 }
@@ -8062,8 +8072,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 headsetFramesSinceLog = 0;
                 const rhi::HeadsetTiming timing = headset->takeTiming();
                 const f64 hz = timing.displayPeriodNs > 0 ? 1e9 / static_cast<f64>(timing.displayPeriodNs) : 0.0;
-                const f64 frameMs = timing.frames > 1
-                                        ? static_cast<f64>(timing.spanNs) / 1e6 / static_cast<f64>(timing.frames - 1)
+                const f64 frameMs = timing.intervals > 0
+                                        ? static_cast<f64>(timing.spanNs) / 1e6 / static_cast<f64>(timing.intervals)
                                         : 0.0;
                 const std::array<core::I18nArg, 11> args{
                     core::I18nArg{"hz", std::round(hz * 10.0) / 10.0},
@@ -8077,7 +8087,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     core::I18nArg{"dropped", timing.compositorDropped},
                     core::I18nArg{"width", static_cast<core::i64>(headset->eyeWidth())},
                     core::I18nArg{"height", static_cast<core::i64>(headset->eyeHeight())}};
-                core::log(core::LogLevel::Info, ENG_TR("engine.info.xr_timing"), args);
+                // Nothing to say of a block in which the session drew
+                // nothing: its state is said when it changes.
+                if (timing.frames > 0)
+                    core::log(core::LogLevel::Info, ENG_TR("engine.info.xr_timing"), args);
                 eyePassMs = 0.0;
                 eyePasses = 0;
             }

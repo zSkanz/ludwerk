@@ -103,10 +103,14 @@ struct HeadsetTiming
 {
     // The display's period, as the runtime predicts it.
     i64 displayPeriodNs = 0;
-    // Frames begun, the time from the first to the last, frames the runtime
-    // said not to draw, and frames that came more than half a period late.
+    // Frames begun; the time between them, over `intervals` of those
+    // betweens -- a gap of more than a second is the session waiting (the
+    // headset off the head, the link paused), not a frame, and is in neither;
+    // frames the runtime said not to draw; and frames that came more than
+    // half a period late.
     u32 frames = 0;
     i64 spanNs = 0;
+    u32 intervals = 0;
     u32 notDrawn = 0;
     u32 late = 0;
     // The runtime's measurements of the game's frames (`XR_META_performance_

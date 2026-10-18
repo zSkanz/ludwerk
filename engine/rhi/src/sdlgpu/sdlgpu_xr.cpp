@@ -600,9 +600,14 @@ public:
         {
             const i64 now = static_cast<i64>(SDL_GetTicksNS());
             m_timing.displayPeriodNs = timing.predictedDisplayPeriod;
-            if (m_lastWaitNs != 0) {
+            // A second and more since the last is the session waiting, not
+            // a frame: the first block after the headset was put back on
+            // averaged the wait in, and read as three frames a second.
+            constexpr i64 WaitingNs = 1'000'000'000;
+            if (m_lastWaitNs != 0 && now - m_lastWaitNs < WaitingNs) {
                 const i64 between = now - m_lastWaitNs;
                 m_timing.spanNs += between;
+                m_timing.intervals += 1;
                 if (timing.predictedDisplayPeriod > 0 && between > timing.predictedDisplayPeriod * 3 / 2)
                     m_timing.late += 1;
             }
