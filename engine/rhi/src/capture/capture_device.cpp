@@ -389,6 +389,8 @@ std::string_view name(StoreOp value)
         return "Store";
     case StoreOp::DontCare:
         return "DontCare";
+    case StoreOp::Resolve:
+        return "Resolve";
     }
     return "?";
 }
@@ -537,6 +539,8 @@ public:
             // one was before a layer could be named, records what it always did.
             if (color.layer != 0)
                 line.num("layer", static_cast<u64>(color.layer));
+            if (color.resolveTexture.valid())
+                line.num("resolve", static_cast<u64>(color.resolveTexture.id));
             stream_ += line.finish();
         }
 
@@ -880,16 +884,17 @@ public:
     {
         const TextureHandle handle{nextTexture_++};
         kinds_.recordTexture(handle.id, desc.format);
-        stream_ += Line("createTexture")
-                       .num("texture", static_cast<u64>(handle.id))
-                       .str("format", name(desc.format))
-                       .num("usage", static_cast<u64>(desc.usage))
-                       .num("width", static_cast<u64>(desc.width))
-                       .num("height", static_cast<u64>(desc.height))
-                       .num("layers", static_cast<u64>(desc.layers))
-                       .num("mips", static_cast<u64>(desc.mipLevels))
-                       .str("name", desc.debugName)
-                       .finish();
+        Line line("createTexture");
+        line.num("texture", static_cast<u64>(handle.id))
+            .str("format", name(desc.format))
+            .num("usage", static_cast<u64>(desc.usage))
+            .num("width", static_cast<u64>(desc.width))
+            .num("height", static_cast<u64>(desc.height))
+            .num("layers", static_cast<u64>(desc.layers))
+            .num("mips", static_cast<u64>(desc.mipLevels));
+        if (desc.samples > 1)
+            line.num("samples", static_cast<u64>(desc.samples));
+        stream_ += line.str("name", desc.debugName).finish();
         return handle;
     }
 

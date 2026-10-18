@@ -211,6 +211,8 @@ namespace engine::rhi::sdlgpu {
         return SDL_GPU_STOREOP_STORE;
     case StoreOp::DontCare:
         return SDL_GPU_STOREOP_DONT_CARE;
+    case StoreOp::Resolve:
+        return SDL_GPU_STOREOP_RESOLVE;
     }
     return SDL_GPU_STOREOP_STORE;
 }

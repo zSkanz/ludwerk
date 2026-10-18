@@ -31,6 +31,10 @@ struct TextureDesc
     // More than one makes an ARRAY texture, sampled as `Texture2DArray`.
     u32 layers = 1;
     u32 mipLevels = 1;
+    // **Samples a pixel**: 1, 2, 4 or 8. More than one is a multisampled
+    // target, drawn into and resolved (`StoreOp::Resolve`), never sampled.
+    // A pipeline bound in a pass of such targets is drawn at their count.
+    u32 samples = 1;
     std::string_view debugName{};
 };
 
@@ -199,6 +203,9 @@ struct ColorAttachment
     // terrain's layer arrays are drawn one layer at a time from their
     // materials' maps, each read at the mip that fits. Mip 0 always.
     u32 layer = 0;
+    // The single-sampled texture a multisampled attachment is resolved into,
+    // with `StoreOp::Resolve`.
+    TextureHandle resolveTexture{};
 };
 
 struct DepthStencilAttachment

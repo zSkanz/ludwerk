@@ -299,6 +299,10 @@ enum class StoreOp : u8
 {
     Store,
     DontCare,
+    // A multisampled attachment's samples averaged into its
+    // `resolveTexture`, and the samples themselves not kept: on a tiled GPU,
+    // done on the tile, and the samples never leave it.
+    Resolve,
 };
 
 // Vertex attribute types, named by what the shader sees.

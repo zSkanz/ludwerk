@@ -88,6 +88,35 @@ template <class T>
     return static_cast<u32>(table.size());
 }
 
+// 1, 2, 4 or 8 samples a pixel; anything else is the nearest below.
+[[nodiscard]] SDL_GPUSampleCount sampleCountOf(u32 samples) noexcept
+{
+    if (samples >= 8)
+        return SDL_GPU_SAMPLECOUNT_8;
+    if (samples >= 4)
+        return SDL_GPU_SAMPLECOUNT_4;
+    if (samples >= 2)
+        return SDL_GPU_SAMPLECOUNT_2;
+    return SDL_GPU_SAMPLECOUNT_1;
+}
+
+// **What a graphics pipeline was made from**, for its twins at another
+// sample count: made the first time a pass of that many samples binds it,
+// and kept until the pipeline goes. SDL_GPU fixes a pipeline's sample count
+// when it is made, and the renderer asks for one pipeline whatever it draws
+// into.
+struct PipelineRecipe
+{
+    std::vector<SDL_GPUVertexBufferDescription> vertexBuffers;
+    std::vector<SDL_GPUVertexAttribute> attributes;
+    std::vector<SDL_GPUColorTargetDescription> colorTargets;
+    SDL_GPUGraphicsPipelineCreateInfo info{};
+    std::string name;
+    // At 2, 4 and 8 samples, and whether each was tried.
+    std::array<SDL_GPUGraphicsPipeline*, 3> twins{};
+    std::array<bool, 3> tried{};
+};
+
 template <class T>
 [[nodiscard]] T* slot(std::vector<T>& table, u32 id) noexcept
 {
@@ -125,6 +154,9 @@ struct TextureEntry
     u32 width = 0;
     u32 height = 0;
     u32 layers = 1;
+    // Its samples a pixel: a pass of multisampled targets draws its pipelines
+    // at their count.
+    u32 samples = 1;
     // What it was counted as in `DeviceMemory`, to be taken back when it goes.
     core::u64 bytes = 0;
     // Swapchain textures belong to SDL and must not be released. Their slot is
@@ -292,6 +324,8 @@ private:
     SDL_GPUBuffer* boundIndex_ = nullptr;
     IndexType boundIndexType_ = IndexType::U16;
     SDL_GPUGraphicsPipeline* boundPipeline_ = nullptr;
+    // The open pass's samples a pixel, from its attachments.
+    u32 passSamples_ = 1;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -337,6 +371,10 @@ public:
         for (SDL_GPUGraphicsPipeline* pipeline : pipelines_)
             if (pipeline != nullptr)
                 SDL_ReleaseGPUGraphicsPipeline(device_, pipeline);
+        for (const PipelineRecipe& recipe : recipes_)
+            for (SDL_GPUGraphicsPipeline* twin : recipe.twins)
+                if (twin != nullptr)
+                    SDL_ReleaseGPUGraphicsPipeline(device_, twin);
         for (SDL_GPUComputePipeline* pipeline : computePipelines_)
             if (pipeline != nullptr)
                 SDL_ReleaseGPUComputePipeline(device_, pipeline);
@@ -679,7 +717,7 @@ public:
             .height = desc.height,
             .layer_count_or_depth = desc.layers,
             .num_levels = desc.mipLevels,
-            .sample_count = SDL_GPU_SAMPLECOUNT_1,
+            .sample_count = sampleCountOf(desc.samples),
             .props = 0,
         };
         SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &info);
@@ -697,6 +735,7 @@ public:
         for (u32 level = 0; level < std::max(desc.mipLevels, 1u); ++level)
             bytes += SDL_CalculateGPUTextureFormatSize(info.format, std::max(desc.width >> level, 1u),
                                                        std::max(desc.height >> level, 1u), std::max(desc.layers, 1u));
+        bytes *= std::max(desc.samples, 1u);
         memory_.textureBytes += bytes;
         ++memory_.textures;
 
@@ -706,6 +745,7 @@ public:
                                        .width = desc.width,
                                        .height = desc.height,
                                        .layers = desc.layers,
+                                       .samples = std::max(desc.samples, 1u),
                                        .bytes = bytes,
                                        .owned = true,
                                    })};
@@ -850,6 +890,12 @@ public:
         if (SDL_GPUGraphicsPipeline** entry = slot(pipelines_, handle.id); entry != nullptr && *entry != nullptr) {
             SDL_ReleaseGPUGraphicsPipeline(device_, *entry);
             *entry = nullptr;
+        }
+        if (PipelineRecipe* recipe = slot(recipes_, handle.id); recipe != nullptr) {
+            for (SDL_GPUGraphicsPipeline* twin : recipe->twins)
+                if (twin != nullptr)
+                    SDL_ReleaseGPUGraphicsPipeline(device_, twin);
+            *recipe = PipelineRecipe{};
         }
     }
 
@@ -1077,6 +1123,32 @@ public:
         SDL_GPUShader** entry = slot(shaders_, handle.id);
         return entry != nullptr ? *entry : nullptr;
     }
+    // The pipeline at a pass's sample count: itself at one, a twin made from
+    // its recipe at more.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* pipelineAt(PipelineHandle handle, u32 samples) noexcept
+    {
+        if (samples <= 1)
+            return pipeline(handle);
+        PipelineRecipe* recipe = slot(recipes_, handle.id);
+        if (recipe == nullptr || pipeline(handle) == nullptr)
+            return nullptr;
+        const usize at = samples >= 8 ? 2 : samples >= 4 ? 1 : 0;
+        if (!recipe->tried[at]) {
+            recipe->tried[at] = true;
+            SDL_GPUGraphicsPipelineCreateInfo info = recipe->info;
+            info.vertex_input_state.vertex_buffer_descriptions = recipe->vertexBuffers.data();
+            info.vertex_input_state.vertex_attributes = recipe->attributes.data();
+            info.target_info.color_target_descriptions = recipe->colorTargets.data();
+            info.multisample_state.sample_count = sampleCountOf(samples);
+            recipe->twins[at] = SDL_CreateGPUGraphicsPipeline(device_, &info);
+            if (recipe->twins[at] == nullptr) {
+                const core::I18nArg args[] = {{"name", std::string_view{recipe->name}},
+                                              {"detail", std::string_view{SDL_GetError()}}};
+                core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
+            }
+        }
+        return recipe->twins[at];
+    }
     [[nodiscard]] SDL_GPUGraphicsPipeline* pipeline(PipelineHandle handle) noexcept
     {
         SDL_GPUGraphicsPipeline** entry = slot(pipelines_, handle.id);
@@ -1142,6 +1214,8 @@ private:
     bool staleBindingSaid_ = false;
     std::vector<SDL_GPUShader*> shaders_;
     std::vector<SDL_GPUGraphicsPipeline*> pipelines_;
+    // Beside `pipelines_`, slot for slot.
+    std::vector<PipelineRecipe> recipes_;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
     std::unique_ptr<IHeadset> headset_;
@@ -1247,7 +1321,17 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
         core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
         noteFailure();
     }
-    return pipeline != nullptr ? PipelineHandle{addSlot(pipelines_, pipeline)} : PipelineHandle{};
+    if (pipeline == nullptr)
+        return {};
+    // Kept for a twin at another sample count (`pipelineAt`).
+    recipes_.push_back(PipelineRecipe{.vertexBuffers = std::move(vertexBuffers),
+                                      .attributes = std::move(attributes),
+                                      .colorTargets = std::move(colorTargets),
+                                      .info = info,
+                                      .name = std::string(desc.debugName),
+                                      .twins = {},
+                                      .tried = {}});
+    return PipelineHandle{addSlot(pipelines_, pipeline)};
 }
 
 Swapchain SdlGpuDevice::acquireSwapchain(platform::Window& window)
@@ -1855,6 +1939,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
 
     BindList<SDL_GPUColorTargetInfo> colors(desc.colorAttachments.size());
     usize colorCount = 0;
+    passSamples_ = 1;
     for (const ColorAttachment& attachment : desc.colorAttachments) {
         TextureEntry* entry = device_.texture(attachment.texture);
         if (entry == nullptr || entry->texture == nullptr)
@@ -1867,6 +1952,15 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
         info.load_op = toSdl(attachment.loadOp);
         info.store_op = toSdl(attachment.storeOp);
         info.layer_or_depth_plane = attachment.layer;
+        if (attachment.storeOp == StoreOp::Resolve) {
+            const TextureEntry* resolve = device_.texture(attachment.resolveTexture);
+            info.resolve_texture = resolve != nullptr ? resolve->texture : nullptr;
+            // Nothing to resolve into is the samples kept.
+            if (info.resolve_texture == nullptr)
+                info.store_op = SDL_GPU_STOREOP_STORE;
+        }
+        if (colorCount == 0)
+            passSamples_ = entry->samples;
         colors[colorCount++] = info;
     }
     colors.shrink(colorCount);
@@ -1875,6 +1969,8 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
     const TextureEntry* depthEntry = device_.texture(desc.depthStencil.texture);
     const bool hasDepth = depthEntry != nullptr && depthEntry->texture != nullptr;
     if (hasDepth) {
+        if (colorCount == 0)
+            passSamples_ = depthEntry->samples;
         depth.texture = depthEntry->texture;
         depth.clear_depth = desc.depthStencil.clearDepth;
         depth.load_op = toSdl(desc.depthStencil.loadOp);
@@ -1899,7 +1995,8 @@ void SdlGpuCmdList::setPipeline(PipelineHandle pipeline)
 {
     if (renderPass_ == nullptr)
         return;
-    if (SDL_GPUGraphicsPipeline* native = device_.pipeline(pipeline); native != nullptr && native != boundPipeline_) {
+    if (SDL_GPUGraphicsPipeline* native = device_.pipelineAt(pipeline, passSamples_);
+        native != nullptr && native != boundPipeline_) {
         SDL_BindGPUGraphicsPipeline(renderPass_, native);
         boundPipeline_ = native;
     }
