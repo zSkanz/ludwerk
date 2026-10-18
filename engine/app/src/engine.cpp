@@ -7829,6 +7829,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 }
             }
             headset->setSpace(seen.space == 1 ? rhi::HeadsetSpace::Seated : rhi::HeadsetSpace::Standing);
+            // **The room seen through** (ADR 0247 §1), where the headset can.
+            seen.passthroughSupported = headset->supportsPassthrough();
+            headset->setPassthrough(seen.passthrough);
             // **The poses a script put** (`XRService:SimulatePose`), in the
             // play space it reads -- the recentred one -- handed to the
             // simulated headset in the space the headset gives.
@@ -9761,6 +9764,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         ENG_PROFILE_SCOPE("render.headset");
                         const render::RenderCamera mainCamera = snapshot.camera;
                         const core::Mat3 headTurnBack = core::transpose(headInSpace.rotation);
+                        // **The room behind the picture** (ADR 0247 §1): where
+                        // nothing is drawn, and as much as `Lighting` says
+                        // where something is.
+                        render::PictureCrop eyeCopy;
+                        {
+                            const scene::EngineState::Headset& xr = host->world().engineState().headset;
+                            eyeCopy.seeThrough = xr.passthrough && xr.passthroughSupported;
+                            if (const scene::LightingComponent* light = host->world().lighting().find(host->lighting());
+                                light != nullptr)
+                                eyeCopy.roomOpacity = light->xrPassthroughOpacity;
+                        }
                         for (core::u32 index = 0; index < 2; ++index) {
                             SplitPicture& picture = eyePictures[index];
                             if (!picture.texture.valid() || picture.width != headsetFrame.width ||
@@ -9807,7 +9821,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                       .colorFormat = headsetFrame.format,
                                                                       .width = headsetFrame.width,
                                                                       .height = headsetFrame.height},
-                                                 render::PictureCrop{});
+                                                 eyeCopy);
                             // And its depth, where the runtime takes it
                             // (ADR 0244 §5), for its reprojection.
                             if (headsetFrame.depth[index].valid())

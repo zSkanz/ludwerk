@@ -622,8 +622,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 370: `XRService`'s `Recenter`, `GetPlayAreaBounds`, `SimulatePose` and
     // `GetHandJoints` (ADR 0245).
     // 372: `XRService`'s `SimulateInput` and `GetPointerRay` (ADR 0246).
-    CHECK(coverage.declared == 372);
-    CHECK(coverage.bound == 372);
+    // 373: `XRService:SupportsPassthrough` (ADR 0247).
+    CHECK(coverage.declared == 373);
+    CHECK(coverage.bound == 373);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

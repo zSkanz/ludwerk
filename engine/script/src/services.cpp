@@ -2849,6 +2849,14 @@ int xrServiceGetPointerRay(lua_State* L)
     return 2;
 }
 
+int xrServiceSupportsPassthrough(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    lua_pushboolean(L, headset.enabled && headset.passthroughSupported);
+    return 1;
+}
+
 int xrServiceRecenter(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -3937,6 +3945,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "IsHandTracked", xrServiceIsHandTracked},
     {"XRService", "GetHandJoints", xrServiceGetHandJoints},
     {"XRService", "Recenter", xrServiceRecenter},
+    {"XRService", "SupportsPassthrough", xrServiceSupportsPassthrough},
     {"XRService", "SimulateInput", xrServiceSimulateInput},
     {"XRService", "GetPointerRay", xrServiceGetPointerRay},
     {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},

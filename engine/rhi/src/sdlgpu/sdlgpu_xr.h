@@ -33,6 +33,8 @@ struct XrDeviceAsk
     bool handTracking = false;
     // XR_KHR_composition_layer_depth, asked for and listed.
     bool depthLayer = false;
+    // XR_FB_passthrough, listed: the Quest's way to show the room.
+    bool fbPassthrough = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

@@ -3946,7 +3946,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(foliageMeshDesc);
 
     // --- Lighting ---
-    static std::array<scene::PropertyDesc, 17> lightingProperties;
+    static std::array<scene::PropertyDesc, 18> lightingProperties;
     lightingProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("ClockTime"),
@@ -4123,6 +4123,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getLightingAutoExposure,
             .set = native::setLightingAutoExposure,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("XRPassthroughOpacity"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "In a headset showing the player's room (`XRService.Passthrough`), how much the room shows through what the game draws, from 0 to 1. At 0 the game's world is solid and the room is seen only where nothing is drawn; at 1 only the room is seen. Tween it for a portal or a fade between the room and the game.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getLightingXRPassthroughOpacity,
+            .set = native::setLightingXRPassthroughOpacity,
         },
         scene::PropertyDesc{
             .name = atoms.intern("SunDirection"),

@@ -4,6 +4,8 @@
   "panel.reset": "Put everything back",
   "panel.turn.snap": "Turning: in steps",
   "panel.turn.smooth": "Turning: smooth",
-  "panel.passthrough": "Passthrough: coming soon",
+  "panel.passthrough.on": "Passthrough: on",
+  "panel.passthrough.off": "Passthrough: off",
+  "panel.passthrough.none": "Passthrough: not on this headset",
   "flat.hint": "This room is made for a headset. Start it with --xr, with your headset connected."
 }

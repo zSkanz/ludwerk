@@ -335,6 +335,9 @@ here.
   where it points. With hand tracking, a fingertip pushed into a button
   presses it. While a headset draws, the window shows its left eye, or
   nothing with `[xr] mirror = false`.
+- A headset with cameras shows the player's real room behind the game:
+  `XRService.Passthrough`, where `SupportsPassthrough` says it can, with
+  `Lighting.XRPassthroughOpacity` to fade between the two.
 - A headset is given each eye's depth with its picture, where its runtime
   takes depth, so the picture it moves to where the head has turned holds
   steadier. `[xr] depth = false`, or `--xr-depth=off`, turns it off to

@@ -177,6 +177,11 @@ public:
         (void)amplitude;
         (void)seconds;
     }
+    // **The room seen through** (ADR 0247 §1): whether the headset can show
+    // the player's room behind the picture, and, from the next frame,
+    // whether it does -- where a pixel's alpha is below one, the room shows.
+    [[nodiscard]] virtual bool supportsPassthrough() const noexcept { return false; }
+    virtual void setPassthrough(bool on) { (void)on; }
     // **What the depth images hold**: depth 0 at `nearZ` metres and 1 at
     // `farZ`, as the eyes were drawn. Before `endFrame`.
     virtual void setDepthRange(f32 nearZ, f32 farZ)

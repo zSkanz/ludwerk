@@ -20,6 +20,7 @@ listed on the page of the class that declares them.
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `Enabled` | `boolean` | — | read-only | Whether a headset is drawing this game. False on the screen, on a server and in a headless run without `--xr=simulated`. |
+| `Passthrough` | `boolean` | `false` | read/write | Whether the player's real room is seen through the headset behind what the game draws. The room shows wherever the game draws nothing, and the sky is not drawn. `Lighting.XRPassthroughOpacity` fades the game's world over it. Nothing on a headset whose runtime has no passthrough (`SupportsPassthrough`). |
 | `PointerHand` | `Enum.XRHand` | `Enum.XRHand.Right` | read/write | Which hand points at interfaces in a headset. Its ray finds the panels the screens become and every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a click where the ray meets one. |
 | `PointerLength` | `number` | `5` | read/write | How far the pointing hand reaches, in meters, and how long its beam is when it meets nothing. |
 | `PointerVisible` | `boolean` | `true` | read/write | Whether the pointing hand's ray is drawn: a short beam ending in a dot where it meets an interface. It points, and clicks, either way. |
@@ -63,6 +64,10 @@ Holds one of the simulated headset's controls at `value` from the next frame: 1 
 ### `SimulatePose(pose: Enum.XRPose, cframe: CFrame)`
 
 Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. An index fingertip puts that hand down as a hand tracked with no controller, its finger pointing along `cframe`'s look vector. Only with `--xr=simulated`; anywhere else it raises an error.
+
+### `SupportsPassthrough(): boolean`
+
+Returns whether this headset can show the player's room behind the game (`Passthrough`). False with no headset.
 
 ## Events
 

@@ -182,6 +182,25 @@ controller was used.
 HapticService:SetMotor(Enum.UserInputType.XRRight, Enum.VibrationMotor.Large, 0.6)
 ```
 
+## The room around the player
+
+On a headset with cameras -- the Quest 3 sees in color -- a game can show
+the player's real room behind what it draws:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+if XRService:SupportsPassthrough() then
+    XRService.Passthrough = true
+end
+```
+
+The room shows wherever the game draws nothing; the sky is not drawn. A game
+for augmented reality builds only what stands in the room -- a creature on
+the floor, a board on the table. `Lighting.XRPassthroughOpacity`, from 0 to
+1, fades the game's world over the room, for a portal or a transition.
+
 ## On the Quest, standalone
 
 The Quest runs the game on its own, from an APK:

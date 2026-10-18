@@ -1197,6 +1197,9 @@ struct LightingComponent
     f32 environmentDiffuseScale = 1.0f;
     f32 environmentSpecularScale = 1.0f;
     f32 shadowSoftness = 0.2f;
+    // **In a headset showing the room** (ADR 0247): how much the room shows
+    // through what the game draws, 0 to 1. Presentation only.
+    f32 xrPassthroughOpacity = 0.0f;
     bool globalShadows = true;
     bool autoExposure = true;
 };

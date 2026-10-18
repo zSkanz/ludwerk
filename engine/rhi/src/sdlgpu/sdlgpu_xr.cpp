@@ -39,6 +39,7 @@ struct XrCalls
     PFN_xrEnumerateViewConfigurationViews enumerateViewConfigurationViews = nullptr;
     PFN_xrEnumerateSwapchainImages enumerateSwapchainImages = nullptr;
     PFN_xrEnumerateSwapchainFormats enumerateSwapchainFormats = nullptr;
+    PFN_xrEnumerateEnvironmentBlendModes enumerateBlendModes = nullptr;
     PFN_xrCreateReferenceSpace createReferenceSpace = nullptr;
     PFN_xrGetReferenceSpaceBoundsRect getBoundsRect = nullptr;
     PFN_xrDestroySpace destroySpace = nullptr;
@@ -70,6 +71,34 @@ struct XrCalls
     PFN_xrCreateHandTrackerEXT createHandTracker = nullptr;
     PFN_xrDestroyHandTrackerEXT destroyHandTracker = nullptr;
     PFN_xrLocateHandJointsEXT locateHandJoints = nullptr;
+    // XR_FB_passthrough's, where it was asked for and given.
+    PFN_xrCreatePassthroughFB createPassthrough = nullptr;
+    PFN_xrDestroyPassthroughFB destroyPassthrough = nullptr;
+    PFN_xrPassthroughStartFB startPassthrough = nullptr;
+    PFN_xrCreatePassthroughLayerFB createPassthroughLayer = nullptr;
+    PFN_xrDestroyPassthroughLayerFB destroyPassthroughLayer = nullptr;
+    PFN_xrPassthroughLayerPauseFB pausePassthroughLayer = nullptr;
+    PFN_xrPassthroughLayerResumeFB resumePassthroughLayer = nullptr;
+
+    void loadPassthrough(XrInstance instance)
+    {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        if (getProc == nullptr)
+            return;
+        const auto get = [&](const char* name, auto& out) {
+            PFN_xrVoidFunction found = nullptr;
+            if (XR_FAILED(getProc(instance, name, &found)))
+                found = nullptr;
+            out = reinterpret_cast<std::remove_reference_t<decltype(out)>>(found);
+        };
+        get("xrCreatePassthroughFB", createPassthrough);
+        get("xrDestroyPassthroughFB", destroyPassthrough);
+        get("xrPassthroughStartFB", startPassthrough);
+        get("xrCreatePassthroughLayerFB", createPassthroughLayer);
+        get("xrDestroyPassthroughLayerFB", destroyPassthroughLayer);
+        get("xrPassthroughLayerPauseFB", pausePassthroughLayer);
+        get("xrPassthroughLayerResumeFB", resumePassthroughLayer);
+    }
 
     [[nodiscard]] bool load(XrInstance instance)
     {
@@ -88,6 +117,7 @@ struct XrCalls
         get("xrEnumerateViewConfigurationViews", enumerateViewConfigurationViews);
         get("xrEnumerateSwapchainImages", enumerateSwapchainImages);
         get("xrEnumerateSwapchainFormats", enumerateSwapchainFormats);
+        get("xrEnumerateEnvironmentBlendModes", enumerateBlendModes);
         get("xrCreateReferenceSpace", createReferenceSpace);
         get("xrGetReferenceSpaceBoundsRect", getBoundsRect);
         get("xrDestroySpace", destroySpace);
@@ -228,13 +258,18 @@ struct EyeSwapchain
 class OpenXrHeadset final : public IHeadset
 {
 public:
-    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_depthLayer(depthLayer),
-          m_handTracking(handTracking)
+    OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
+                  bool fbPassthrough)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_fbPassthrough(fbPassthrough),
+          m_depthLayer(depthLayer), m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
     {
+        if (m_passthroughLayer != XR_NULL_HANDLE && m_calls.destroyPassthroughLayer != nullptr)
+            (void)m_calls.destroyPassthroughLayer(m_passthroughLayer);
+        if (m_passthrough != XR_NULL_HANDLE && m_calls.destroyPassthrough != nullptr)
+            (void)m_calls.destroyPassthrough(m_passthrough);
         for (const XrHandTrackerEXT tracker : m_handTrackers) {
             if (tracker != XR_NULL_HANDLE && m_calls.destroyHandTracker != nullptr)
                 (void)m_calls.destroyHandTracker(tracker);
@@ -385,6 +420,24 @@ public:
             for (u32 at = 0; at < images; ++at)
                 eye.handles.push_back(m_hooks.wrap(eye.images[at], m_format, m_width, m_height));
         }
+        // **The room seen through** (ADR 0247 §1): the alpha blend where the
+        // runtime offers it, the Quest's own passthrough where it does not.
+        if (m_calls.enumerateBlendModes != nullptr) {
+            u32 modes = 0;
+            if (XR_SUCCEEDED(m_calls.enumerateBlendModes(
+                    m_instance, m_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &modes, nullptr)) &&
+                modes > 0) {
+                std::vector<XrEnvironmentBlendMode> listed(modes);
+                if (XR_SUCCEEDED(m_calls.enumerateBlendModes(
+                        m_instance, m_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, modes, &modes, listed.data())))
+                    m_alphaBlend =
+                        std::find(listed.begin(), listed.end(), XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND) != listed.end();
+            }
+        }
+        if (m_fbPassthrough)
+            m_calls.loadPassthrough(m_instance);
+        m_fbPassthrough = m_fbPassthrough && m_calls.createPassthrough != nullptr &&
+                          m_calls.createPassthroughLayer != nullptr && m_calls.startPassthrough != nullptr;
         // **Each eye's depth** (ADR 0244 §5), where the runtime takes it: a
         // headset whose runtime takes none is drawn to as before.
         if (m_depthLayer && !openDepth()) {
@@ -523,6 +576,8 @@ public:
         endInfo.displayTime = m_displayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         std::array<XrCompositionLayerDepthInfoKHR, 2> depths{};
+        auto passthroughLayer = made<XrCompositionLayerPassthroughFB>(XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB);
+        std::array<const XrCompositionLayerBaseHeader*, 2> twoLayers{};
         if (m_drawing) {
             for (usize at = 0; at < 2; ++at) {
                 views[at].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -547,6 +602,24 @@ public:
             layer.views = views.data();
             endInfo.layerCount = 1;
             endInfo.layers = layers;
+            // **The room behind the picture** (ADR 0247 §1): where a pixel's
+            // alpha is below one, through the alpha blend or under the
+            // Quest's passthrough layer.
+            if (m_passthroughOn) {
+                layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                                   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+                if (m_alphaBlend) {
+                    endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
+                }
+                else if (m_passthroughLayer != XR_NULL_HANDLE) {
+                    passthroughLayer.layerHandle = m_passthroughLayer;
+                    passthroughLayer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                    twoLayers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughLayer);
+                    twoLayers[1] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer);
+                    endInfo.layerCount = 2;
+                    endInfo.layers = twoLayers.data();
+                }
+            }
         }
         const XrResult result = m_calls.endFrame(m_session, &endInfo);
         if (XR_FAILED(result))
@@ -636,6 +709,44 @@ public:
                 }
             }
         }
+    }
+
+    [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
+
+    void setPassthrough(bool on) override
+    {
+        on = on && supportsPassthrough();
+        if (on == m_passthroughOn)
+            return;
+        m_passthroughOn = on;
+        if (m_alphaBlend)
+            return;
+        // The Quest's: made the first time it is asked for, then paused and
+        // resumed -- a layer under the picture, the cameras' view.
+        if (on && m_passthrough == XR_NULL_HANDLE) {
+            auto info = made<XrPassthroughCreateInfoFB>(XR_TYPE_PASSTHROUGH_CREATE_INFO_FB);
+            info.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+            if (XR_FAILED(m_calls.createPassthrough(m_session, &info, &m_passthrough))) {
+                m_passthrough = XR_NULL_HANDLE;
+                m_passthroughOn = false;
+                return;
+            }
+            auto layerInfo = made<XrPassthroughLayerCreateInfoFB>(XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB);
+            layerInfo.passthrough = m_passthrough;
+            layerInfo.flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
+            layerInfo.purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB;
+            if (XR_FAILED(m_calls.createPassthroughLayer(m_session, &layerInfo, &m_passthroughLayer))) {
+                m_passthroughLayer = XR_NULL_HANDLE;
+                m_passthroughOn = false;
+            }
+            return;
+        }
+        if (m_passthroughLayer == XR_NULL_HANDLE)
+            return;
+        if (on && m_calls.resumePassthroughLayer != nullptr)
+            (void)m_calls.resumePassthroughLayer(m_passthroughLayer);
+        else if (!on && m_calls.pausePassthroughLayer != nullptr)
+            (void)m_calls.pausePassthroughLayer(m_passthroughLayer);
     }
 
     void setDepthRange(f32 nearZ, f32 farZ) override
@@ -889,6 +1000,13 @@ private:
     std::array<XrPath, 2> m_hands{};
     // Grip then aim, each left then right.
     std::array<XrSpace, 4> m_handSpaces{};
+    // **The room seen through**: whether the runtime blends by alpha, has the
+    // Quest's passthrough, and whether it is on; and the Quest's objects.
+    bool m_alphaBlend = false;
+    bool m_fbPassthrough = false;
+    bool m_passthroughOn = false;
+    XrPassthroughFB m_passthrough = XR_NULL_HANDLE;
+    XrPassthroughLayerFB m_passthroughLayer = XR_NULL_HANDLE;
     // **Each eye's depth swapchain**, where the runtime takes depth, its
     // format, and what its values mean.
     bool m_depthLayer = false;
@@ -922,7 +1040,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     extensions.clear();
     handTracking = false;
     depthLayer = false;
-    if ((request.hands || request.depth) && SDL_OpenXR_LoadLibrary()) {
+    fbPassthrough = false;
+    if (SDL_OpenXR_LoadLibrary()) {
         const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
         PFN_xrVoidFunction found = nullptr;
         if (getProc != nullptr &&
@@ -940,6 +1059,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             handTracking = true;
                         if (request.depth && name == XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME)
                             depthLayer = true;
+                        if (name == XR_FB_PASSTHROUGH_EXTENSION_NAME)
+                            fbPassthrough = true;
                     }
                 }
             }
@@ -950,6 +1071,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
         extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
     if (depthLayer)
         extensions.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
+    if (fbPassthrough)
+        extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -973,7 +1096,7 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
         return nullptr;
     auto headset =
         std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
-                                        std::move(hooks), ask.handTracking, ask.depthLayer);
+                                        std::move(hooks), ask.handTracking, ask.depthLayer, ask.fbPassthrough);
     if (!headset->open())
         return nullptr;
     return headset;

@@ -695,6 +695,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
 
+    # **The room seen through** (ADR 0247 §1): the eyes are clear where
+    # nothing is drawn and solid where the floor is.
+    add_test(NAME xr_simulated_passthrough
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DPROBE=$<TARGET_FILE:imgprobe>
+                -DSCENE=${CMAKE_SOURCE_DIR}/tests/xr/xr_passthrough.luau
+                -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-simulated-passthrough
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_passthrough.cmake)
+    set_tests_properties(xr_simulated_passthrough PROPERTIES
+        PASS_REGULAR_EXPRESSION "the room shows where nothing is drawn"
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 120)
+
     # **Where the player is, to a script** (ADR 0245): `XRService` under the
     # simulated headset -- enabled, the head standing at 1.6 m -- and flat,
     # where every pose is the identity. A script then puts the head and a

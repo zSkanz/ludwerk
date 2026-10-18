@@ -840,6 +840,8 @@ scene::Value getLightingGlobalShadows(const scene::World& world, core::InstanceI
 bool setLightingGlobalShadows(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingAutoExposure(const scene::World& world, core::InstanceId id);
 bool setLightingAutoExposure(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLightingXRPassthroughOpacity(const scene::World& world, core::InstanceId id);
+bool setLightingXRPassthroughOpacity(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingSunDirection(const scene::World& world, core::InstanceId id);
 void attachLightingComponents(scene::World& world, core::InstanceId id);
 void detachLightingComponents(scene::World& world, core::InstanceId id);

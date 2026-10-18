@@ -675,6 +675,10 @@ struct EngineState
         // each is, in the play space a script reads and in the world, and its
         // canvas.
         bool panelsShown = false;
+        // **The room seen through** (ADR 0247 §1): what `XRService.Passthrough`
+        // asks for, and whether the headset can.
+        bool passthrough = false;
+        bool passthroughSupported = false;
         // **The pointer** (ADR 0246 §2): where each hand points, in the play
         // space a script reads; where the play space is in the world this
         // frame (the camera's `CFrame`); `XRService.PointerHand`,

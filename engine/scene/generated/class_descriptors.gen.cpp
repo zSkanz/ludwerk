@@ -6484,7 +6484,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 6> xRServiceProperties;
+    static std::array<PropertyDesc, 7> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6498,6 +6498,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getXRServiceEnabled,
             .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Passthrough"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the player's real room is seen through the headset behind what the game draws. The room shows wherever the game draws nothing, and the sky is not drawn. `Lighting.XRPassthroughOpacity` fades the game's world over it. Nothing on a headset whose runtime has no passthrough (`SupportsPassthrough`).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRServicePassthrough,
+            .set = native::setXRServicePassthrough,
         },
         PropertyDesc{
             .name = atoms.intern("PointerHand"),
@@ -6568,7 +6581,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 9> xRServiceMethods;
+    static std::array<MethodDesc, 10> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6587,6 +6600,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SupportsPassthrough"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns whether this headset can show the player's room behind the game (`Passthrough`). False with no headset.",
         },
         MethodDesc{
             .name = atoms.intern("GetHandJoints"),

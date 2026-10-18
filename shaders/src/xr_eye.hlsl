@@ -10,6 +10,9 @@
 cbuffer GpuXrEyeUniforms : register(b0, space3)
 {
     // x above a half: the target is an sRGB image, so the picture is decoded.
+    // y above a half: the room is seen through (ADR 0247), and a pixel's
+    // alpha says how much of the game is over it -- none where nothing was
+    // drawn, by the eye's depth, and 1 less z where something was.
     float4 XrEye;
     // The part of the picture copied: its corner, then its width and height,
     // in parts of the picture's -- the whole of it into a headset, the middle
@@ -19,6 +22,9 @@ cbuffer GpuXrEyeUniforms : register(b0, space3)
 
 Texture2D EyeTexture : register(t0, space2);
 SamplerState EyeSampler : register(s0, space2);
+// The eye's depth, read only when the room is seen through.
+Texture2D EyeDepth : register(t1, space2);
+SamplerState EyeDepthSampler : register(s1, space2);
 
 struct Interpolants
 {
@@ -42,8 +48,14 @@ float3 decodeSrgb(float3 encoded)
 
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
-    const float4 picture = EyeTexture.SampleLevel(EyeSampler, XrEyeCrop.xy + input.Uv * XrEyeCrop.zw, 0.0f);
+    const float2 uv = XrEyeCrop.xy + input.Uv * XrEyeCrop.zw;
+    const float4 picture = EyeTexture.SampleLevel(EyeSampler, uv, 0.0f);
+    float alpha = 1.0f;
+    if (XrEye.y > 0.5f) {
+        const float depth = EyeDepth.SampleLevel(EyeDepthSampler, uv, 0.0f).r;
+        alpha = depth < 0.999999f ? 1.0f - XrEye.z : 0.0f;
+    }
     if (XrEye.x > 0.5f)
-        return float4(decodeSrgb(picture.rgb), 1.0f);
-    return float4(picture.rgb, 1.0f);
+        return float4(decodeSrgb(picture.rgb), alpha);
+    return float4(picture.rgb, alpha);
 }

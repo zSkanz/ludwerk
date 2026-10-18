@@ -2848,6 +2848,16 @@ bool setLightingShadowSoftness(scene::World& world, core::InstanceId id, const V
     return writeNumber(world.lighting(), id, value, &scene::LightingComponent::shadowSoftness, 0.0f, 1.0f);
 }
 
+Value getLightingXRPassthroughOpacity(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.lighting(), id, &scene::LightingComponent::xrPassthroughOpacity);
+}
+
+bool setLightingXRPassthroughOpacity(scene::World& world, core::InstanceId id, const Value& value)
+{
+    return writeNumber(world.lighting(), id, value, &scene::LightingComponent::xrPassthroughOpacity, 0.0f, 1.0f);
+}
+
 Value getLightingGlobalShadows(const scene::World& world, core::InstanceId id)
 {
     return readValue(world.lighting(), id, &scene::LightingComponent::globalShadows);

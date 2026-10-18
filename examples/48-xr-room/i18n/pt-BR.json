@@ -4,6 +4,8 @@
   "panel.reset": "Recolocar tudo no lugar",
   "panel.turn.snap": "Virar: em passos",
   "panel.turn.smooth": "Virar: contínuo",
-  "panel.passthrough": "Passthrough: em breve",
+  "panel.passthrough.on": "Passthrough: ligado",
+  "panel.passthrough.off": "Passthrough: desligado",
+  "panel.passthrough.none": "Passthrough: este headset não tem",
   "flat.hint": "Esta sala é feita para um headset. Abra com --xr, com o headset conectado."
 }

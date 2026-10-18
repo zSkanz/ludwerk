@@ -7,7 +7,9 @@
 // the claim, which a golden does not.
 //
 // Each probe is `x,y=r,g,b` with `x` and `y` fractions of the image (so a
-// probe holds at any resolution) and the channels 0-255; `--tolerance=N` is
+// probe holds at any resolution) and the channels 0-255 -- `x,y=r,g,b,a` names
+// the alpha too, for a picture whose transparency is the claim, and -1 is any
+// value in a channel (`x,y=-1,-1,-1,0`: clear, whatever its colour); `--tolerance=N` is
 // the per-channel slack, 24 by default -- a rasteriser's rounding and a
 // gradient's sampling, not a different colour. `x,y!=r,g,b` asserts the
 // opposite: that the colour is NOT within the tolerance there.
@@ -60,7 +62,9 @@ struct Probe
 {
     double x = 0.0;
     double y = 0.0;
-    int rgb[3]{};
+    // Three channels, or four when the probe names an alpha too.
+    int rgb[4]{};
+    int channels = 3;
     bool negate = false;
     std::string text;
 };
@@ -211,12 +215,18 @@ struct Region
         where.remove_suffix(1);
     }
     double position[2]{};
-    double colour[3]{};
-    if (!readNumbers(std::string(where), position, 2) || !readNumbers(std::string(text.substr(split + 1)), colour, 3))
+    double colour[4]{};
+    if (!readNumbers(std::string(where), position, 2))
+        return false;
+    // `r,g,b`, or `r,g,b,a` for a picture whose alpha is the claim.
+    const std::string value(text.substr(split + 1));
+    if (readNumbers(value, colour, 4))
+        out.channels = 4;
+    else if (!readNumbers(value, colour, 3))
         return false;
     out.x = position[0];
     out.y = position[1];
-    for (int channel = 0; channel < 3; ++channel)
+    for (int channel = 0; channel < out.channels; ++channel)
         out.rgb[channel] = static_cast<int>(colour[channel]);
     return out.x >= 0.0 && out.x <= 1.0 && out.y >= 0.0 && out.y <= 1.0;
 }
@@ -289,13 +299,14 @@ int main(int argc, char** argv)
             image.rgba.data() +
             (static_cast<std::size_t>(py) * static_cast<std::size_t>(image.width) + static_cast<std::size_t>(px)) * 4u;
         bool within = true;
-        for (int channel = 0; channel < 3; ++channel) {
-            if (std::abs(static_cast<int>(pixel[channel]) - probe.rgb[channel]) > tolerance)
+        for (int channel = 0; channel < probe.channels; ++channel) {
+            // -1: any value in this channel.
+            if (probe.rgb[channel] >= 0 && std::abs(static_cast<int>(pixel[channel]) - probe.rgb[channel]) > tolerance)
                 within = false;
         }
         const bool ok = probe.negate ? !within : within;
-        std::printf("%s %s: (%d, %d) is %d,%d,%d\n", ok ? "ok  " : "FAIL", probe.text.c_str(), px, py, pixel[0],
-                    pixel[1], pixel[2]);
+        std::printf("%s %s: (%d, %d) is %d,%d,%d,%d\n", ok ? "ok  " : "FAIL", probe.text.c_str(), px, py, pixel[0],
+                    pixel[1], pixel[2], pixel[3]);
         if (!ok)
             ++failed;
     }

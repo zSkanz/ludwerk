@@ -5,8 +5,9 @@
     the same name in AndroidManifest.xml; a phone's build leaves those marks
     empty. Not a manifest: nothing reads this file but the export.
 
-    - xr-manifest: the head tracking the app needs, the hand tracking it may
-      use, OpenXR's permissions, and the queries that find the runtime.
+    - xr-manifest: the head tracking the app needs, the hand tracking and
+      the passthrough it may use, OpenXR's permissions, and the queries that
+      find the runtime.
     - xr-categories: what starts the game in the headset. Without the Oculus
       category the Quest shows an app in a flat window, the most common
       mistake there is, and the export refuses a headset's build without it.
@@ -16,6 +17,7 @@
     <!-- engine:xr-manifest -->
     <uses-feature android:name="android.hardware.vr.headtracking" android:required="true" android:version="1" />
     <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="false" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />

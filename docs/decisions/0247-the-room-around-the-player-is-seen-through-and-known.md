@@ -94,3 +94,23 @@ here.
 Sharing anchors between players in one room, phone AR, and lighting the
 game's objects from the room's real light (the runtime offers no estimate
 on the Quest today).
+
+## As built, first step (2026-10-18)
+
+- **Passthrough** (§1): `XRService.Passthrough`, `SupportsPassthrough` and
+  `Lighting.XRPassthroughOpacity`. The frame is submitted with
+  `XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND` where the runtime lists it, and
+  otherwise over a `XR_FB_passthrough` layer -- the Quest's -- made the first
+  time it is asked for and paused and resumed after; the picture's layer
+  blends by its alpha, unpremultiplied. The Quest's manifest says the app may
+  use passthrough.
+- **The alpha is the eye's depth**, not the renderer's: the copy of an eye
+  into the runtime's image reads the depth the eye was drawn with, so where
+  nothing was drawn (the sky, never cleared nearer) the picture is clear, and
+  where something was its alpha is one less the opacity. Nothing else of the
+  renderer carries alpha, and nothing else had to change: the sky is drawn
+  and hidden, which costs its pixels and nothing more.
+- Proved under the simulated headset with a GPU (`xr_simulated_passthrough`):
+  the left eye's picture is clear over the horizon and solid on the floor,
+  read by `imgprobe`, which now reads alpha.
+- **Not yet**: the room's planes and mesh (§2), and anchors (§3).

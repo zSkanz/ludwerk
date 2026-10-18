@@ -5558,8 +5558,13 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
         return;
     const bool srgb = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
                       target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
-    const std::array<f32, 8> uniforms{srgb ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f, crop.x, crop.y, crop.width, crop.height};
-    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, linearSampler_}};
+    const bool seeThrough = crop.seeThrough && depth_.valid();
+    const std::array<f32, 8> uniforms{
+        srgb ? 1.0f : 0.0f, seeThrough ? 1.0f : 0.0f, crop.roomOpacity, 0.0f, crop.x, crop.y, crop.width, crop.height};
+    // The depth beside the picture; the picture again where it is not read.
+    const std::array<rhi::TextureBinding, 2> source{
+        rhi::TextureBinding{picture, linearSampler_},
+        rhi::TextureBinding{seeThrough ? depth_ : picture, seeThrough ? pointSampler_ : linearSampler_}};
     fullscreenPass(cmd, xrEye_.handle, target.color, target.width, target.height, "xr-eye", source,
                    asBytes(uniforms.data(), sizeof(uniforms)));
 }

@@ -84,6 +84,11 @@ public:
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
     [[nodiscard]] rhi::TextureHandle depthImage(core::u32 eye) const noexcept { return m_depthImages[eye]; }
+    // The room seen through: always offered, as a runtime with the alpha
+    // blend does; whether it is on, for a test to read.
+    [[nodiscard]] bool supportsPassthrough() const noexcept override { return true; }
+    void setPassthrough(bool on) override { m_passthrough = on; }
+    [[nodiscard]] bool passthrough() const noexcept { return m_passthrough; }
     void setDepthRange(core::f32 nearZ, core::f32 farZ) override
     {
         m_near = nearZ;
@@ -99,6 +104,7 @@ private:
     SimulatedHeadsetDesc m_desc;
     std::array<rhi::TextureHandle, 2> m_images{};
     std::array<rhi::TextureHandle, 2> m_depthImages{};
+    bool m_passthrough = false;
     core::f32 m_near = 0.0f;
     core::f32 m_far = 0.0f;
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};

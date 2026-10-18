@@ -164,6 +164,11 @@ struct PictureCrop
     core::f32 y = 0.0f;
     core::f32 width = 1.0f;
     core::f32 height = 1.0f;
+    // **The room seen through** (ADR 0247): the copy's alpha from the depth
+    // the view was drawn with -- none where nothing was drawn, and 1 less
+    // `roomOpacity` where something was. Off, every pixel is opaque.
+    bool seeThrough = false;
+    core::f32 roomOpacity = 0.0f;
 };
 
 class IRenderer

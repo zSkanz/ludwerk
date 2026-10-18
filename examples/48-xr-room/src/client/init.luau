@@ -11,6 +11,8 @@
 	- **An interface**: a `ScreenGui` is a panel in front of the player in a
 	  headset, pointed at with the right controller's beam and clicked with
 	  its trigger, or pressed with a fingertip.
+	- **The room seen through**: on a headset with cameras, a button shows
+	  the player's real room behind this one.
 
 	With no headset the room is drawn on the screen, and says how to start
 	it in one. `--scene-data={"autopilot":true}` with `--xr=simulated` picks
@@ -119,7 +121,6 @@ local help = text("Help", "TextLabel", 0.18, 80, 20)
 local reset = text("Reset", "TextButton", 0.45, 52, 24) :: any
 local turning = text("Turning", "TextButton", 0.62, 52, 24) :: any
 local passthrough = text("Passthrough", "TextButton", 0.79, 52, 24) :: any
-passthrough.BackgroundColor = Color3.fromRGB(70, 70, 76)
 
 local function say()
     title.Text = LocalizationService:Translate("panel.title")
@@ -128,7 +129,10 @@ local function say()
         else LocalizationService:Translate("flat.hint")
     reset.Text = LocalizationService:Translate("panel.reset")
     turning.Text = LocalizationService:Translate(if smoothTurn then "panel.turn.smooth" else "panel.turn.snap")
-    passthrough.Text = LocalizationService:Translate("panel.passthrough")
+    passthrough.Text = if not XRService:SupportsPassthrough()
+        then LocalizationService:Translate("panel.passthrough.none")
+        elseif XRService.Passthrough then LocalizationService:Translate("panel.passthrough.on")
+        else LocalizationService:Translate("panel.passthrough.off")
 end
 say()
 LocalizationService.LocaleChanged:Connect(say)
@@ -151,6 +155,14 @@ reset.Activated:Connect(function()
         one.part.Anchored = false
         one.part.CFrame = one.home
         one.part.LinearVelocity = vector.zero
+    end
+end)
+-- The room seen through, where the headset has cameras for it: the walls of
+-- this one stand in the player's real room.
+passthrough.Activated:Connect(function()
+    if XRService:SupportsPassthrough() then
+        XRService.Passthrough = not XRService.Passthrough
+        say()
     end
 end)
 turning.Activated:Connect(function()

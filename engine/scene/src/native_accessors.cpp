@@ -2229,6 +2229,20 @@ bool setXRServiceSpace(World& world, core::InstanceId, const Value& value)
     return true;
 }
 
+Value getXRServicePassthrough(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().headset.passthrough};
+}
+
+bool setXRServicePassthrough(World& world, core::InstanceId, const Value& value)
+{
+    const bool* on = std::get_if<bool>(&value);
+    if (on == nullptr)
+        return false;
+    world.engineState().headset.passthrough = *on;
+    return true;
+}
+
 Value getXRServicePointerHand(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::XRHandEnumId, world.engineState().headset.pointerHand}};

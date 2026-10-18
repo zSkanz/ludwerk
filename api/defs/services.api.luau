@@ -926,6 +926,18 @@ local Classes: { Schema.Class } = {
                     .. "graphics settings turn automatic exposure off ignores this property.",
             },
             {
+                Name = "XRPassthroughOpacity",
+                Type = "number",
+                Default = "0",
+                Presentation = true,
+                ErrorKey = "scene.err.number_zero_to_one",
+                Records = { "ADR 0247" },
+                Doc = "In a headset showing the player's room (`XRService.Passthrough`), how much the room shows "
+                    .. "through what the game draws, from 0 to 1. At 0 the game's world is solid and the room is "
+                    .. "seen only where nothing is drawn; at 1 only the room is seen. Tween it for a portal or a "
+                    .. "fade between the room and the game.",
+            },
+            {
                 Name = "SunDirection",
                 Type = "vector",
                 ReadOnly = true,
@@ -1788,6 +1800,18 @@ local Classes: { Schema.Class } = {
                     .. "headless run without `--xr=simulated`.",
             },
             {
+                Name = "Passthrough",
+                Type = "boolean",
+                Default = "false",
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0247" },
+                Doc = "Whether the player's real room is seen through the headset behind what the game draws. "
+                    .. "The room shows wherever the game draws nothing, and the sky is not drawn. "
+                    .. "`Lighting.XRPassthroughOpacity` fades the game's world over it. Nothing on a headset whose "
+                    .. "runtime has no passthrough (`SupportsPassthrough`).",
+            },
+            {
                 Name = "PointerHand",
                 Type = "Enum.XRHand",
                 Default = "Enum.XRHand.Right",
@@ -1865,6 +1889,15 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Whether the headset knows where this hand is now: false when its controller is put "
                     .. "down out of sight, or asleep.",
+            },
+            {
+                Name = "SupportsPassthrough",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0247" },
+                Doc = "Returns whether this headset can show the player's room behind the game (`Passthrough`). "
+                    .. "False with no headset.",
             },
             {
                 Name = "GetHandJoints",

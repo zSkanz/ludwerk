@@ -4884,6 +4884,11 @@ declare extern type Lighting extends Instance with
     --- darker. `ExposureCompensation` applies in both cases. A machine whose graphics settings turn
     --- automatic exposure off ignores this property.
     AutoExposure: boolean
+    --- In a headset showing the player's room (`XRService.Passthrough`), how much the room shows
+    --- through what the game draws, from 0 to 1. At 0 the game's world is solid and the room is seen
+    --- only where nothing is drawn; at 1 only the room is seen. Tween it for a portal or a fade between
+    --- the room and the game.
+    XRPassthroughOpacity: number
     --- The unit vector that points from the world toward the sun. It is computed only from `ClockTime`
     --- and `GeographicLatitude`, so the same values always give the same direction.
     read SunDirection: vector
@@ -5169,6 +5174,11 @@ declare extern type XRService extends Instance with
     --- Whether a headset is drawing this game. False on the screen, on a server and in a headless run
     --- without `--xr=simulated`.
     read Enabled: boolean
+    --- Whether the player's real room is seen through the headset behind what the game draws. The room
+    --- shows wherever the game draws nothing, and the sky is not drawn. `Lighting.XRPassthroughOpacity`
+    --- fades the game's world over it. Nothing on a headset whose runtime has no passthrough
+    --- (`SupportsPassthrough`).
+    Passthrough: boolean
     --- Which hand points at interfaces in a headset. Its ray finds the panels the screens become and
     --- every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a click
     --- where the ray meets one.
@@ -5201,6 +5211,9 @@ declare extern type XRService extends Instance with
     --- Whether the headset knows where this hand is now: false when its controller is put down out of
     --- sight, or asleep.
     function IsHandTracked(self, hand: EnumXRHand): boolean
+    --- Returns whether this headset can show the player's room behind the game (`Passthrough`). False
+    --- with no headset.
+    function SupportsPassthrough(self): boolean
     --- Returns the 26 joints of a hand tracked as a hand, with no controller in it, in the play space,
     --- or nil. The order is OpenXR's: the palm, the wrist, then each finger from the thumb out, from
     --- its root to its tip. A hand tracked this way is also held at its palm (`GetHandCFrame`), and a

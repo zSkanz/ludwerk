@@ -4580,6 +4580,11 @@
           "Type": "vector",
           "ReadOnly": true,
           "ThreadSafety": "ReadParallel"
+        },
+        {
+          "Name": "XRPassthroughOpacity",
+          "Type": "number",
+          "Default": "0"
         }
       ],
       "Methods": [],
@@ -11503,6 +11508,12 @@
           "Transient": true
         },
         {
+          "Name": "Passthrough",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
           "Name": "PointerHand",
           "Type": "Enum.XRHand",
           "Default": "Enum.XRHand.Right",
@@ -11624,6 +11635,12 @@
             }
           ],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SupportsPassthrough",
+          "Parameters": [],
+          "Returns": ["boolean"],
           "ThreadSafety": "Unsafe"
         }
       ],

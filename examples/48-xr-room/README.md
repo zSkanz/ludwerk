@@ -26,8 +26,8 @@ start it in one.
 - **The panel**: point the right controller at a button and pull the
   trigger, or, with your hands tracked, press it with a fingertip.
   *Put everything back* returns what was thrown; *Turning* switches between
-  turning in steps and smoothly. *Passthrough* waits for the passthrough
-  work.
+  turning in steps and smoothly; *Passthrough* shows your real room behind
+  this one, on a headset with cameras.
 
 ## What to read
 
