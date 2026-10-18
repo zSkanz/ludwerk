@@ -240,6 +240,15 @@ public:
     // And the remotes already warned about for reaching the bound.
     std::vector<scene::RemoteMessage> heldRemoteCalls;
     std::vector<core::InstanceId> heldRemoteWarned;
+    // **Each player's calls of each remote, as a bucket of tokens** (ADR
+    // 0241 §1): refilled by the simulation's clock, so a limit is the same on
+    // every run. Keyed by the remote and the player, both packed.
+    struct RemoteBucket
+    {
+        f64 tokens = 0.0;
+        core::u64 tick = 0;
+    };
+    std::map<std::pair<core::u64, core::u64>, RemoteBucket> remoteBuckets;
     struct InvokeWaiter
     {
         core::u32 call = 0;

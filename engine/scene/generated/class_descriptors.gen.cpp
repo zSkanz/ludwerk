@@ -7164,8 +7164,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(networkServiceDesc);
 
     // --- RemoteEvent ---
-    static std::array<MethodDesc, 4> remoteEventMethods;
+    static std::array<MethodDesc, 5> remoteEventMethods;
     remoteEventMethods = {{
+        MethodDesc{
+            .name = atoms.intern("SetRateLimit"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sets how often each client may call this remote on the authority, in calls a second. Up to `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit, for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same numbers.",
+        },
         MethodDesc{
             .name = atoms.intern("FireServerFor"),
             .yields = false,
@@ -7220,8 +7226,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteEventDesc);
 
     // --- UnreliableRemoteEvent ---
-    static std::array<MethodDesc, 4> unreliableRemoteEventMethods;
+    static std::array<MethodDesc, 5> unreliableRemoteEventMethods;
     unreliableRemoteEventMethods = {{
+        MethodDesc{
+            .name = atoms.intern("SetRateLimit"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sets how often each client may call this remote on the authority, in calls a second. Up to `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit, for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same numbers.",
+        },
         MethodDesc{
             .name = atoms.intern("FireServerFor"),
             .yields = false,
@@ -7276,8 +7288,14 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(unreliableRemoteEventDesc);
 
     // --- RemoteFunction ---
-    static std::array<MethodDesc, 1> remoteFunctionMethods;
+    static std::array<MethodDesc, 2> remoteFunctionMethods;
     remoteFunctionMethods = {{
+        MethodDesc{
+            .name = atoms.intern("SetRateLimit"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Sets how often each client may call this remote on the authority, in calls a second. Up to `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit, for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same numbers.",
+        },
         MethodDesc{
             .name = atoms.intern("InvokeServerAsync"),
             .yields = true,

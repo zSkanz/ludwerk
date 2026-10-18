@@ -552,6 +552,7 @@
   "net.err.unreliable_too_large": "An UnreliableRemoteEvent message is limited to {limit} bytes, and this one is larger. A message of that size is sent in several packets and is lost entirely if any of them is. Send less, or send it in separate messages.",
   "net.err.remote_too_many": "A RemoteEvent carries at most {limit} values, not {count}.",
   "net.err.remote_no_player": "A message to the server is sent as this machine's player, and a dedicated server has no player.",
+  "net.err.remote_rate": "SetRateLimit takes a number of calls a second and a burst, each nought or more; nought lifts the limit.",
   "net.err.remote_handler": "OnServerInvoke takes a function, or nil to remove it.",
   "net.err.remote_no_handler": "The server has no OnServerInvoke for {name}, so the request was not answered.",
   "net.warn.client_write": "The client script {script} changed {instance} through {class}.{property}, which replicates to every machine. On a hosting machine, that change reaches everyone. For something only one machine should see, create it on the client, or use a property that does not replicate (BasePart.Fade).",

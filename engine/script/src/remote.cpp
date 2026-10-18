@@ -853,6 +853,23 @@ void finishRunningInvokes(lua_State* L)
     }
 }
 
+// `remote:SetRateLimit(perSecond, burst)` (ADR 0241 §1): the attributes a
+// remote's limits are read from, set; nought lifts the limit.
+int remoteSetRateLimit(lua_State* L)
+{
+    World& w = world(L);
+    const core::InstanceId self = checkInstance(L, 1);
+    const f64 rate = luaL_checknumber(L, 2);
+    // The default burst of `withinRemoteLimits`, or twice the rate.
+    constexpr f64 LeastBurst = 480.0;
+    const f64 burst = lua_isnoneornil(L, 3) ? std::max(LeastBurst, 2.0 * rate) : luaL_checknumber(L, 3);
+    if (!(rate >= 0.0) || !(burst >= 0.0))
+        raise(L, ENG_TR("net.err.remote_rate"));
+    (void)w.setAttribute(self, w.atoms().intern("RateLimit"), scene::Value{rate});
+    (void)w.setAttribute(self, w.atoms().intern("Burst"), scene::Value{burst});
+    return 0;
+}
+
 constexpr InstanceMethodBinding RemoteMethods[] = {
     {"RemoteEvent", "FireServer", remoteFireServer},
     {"RemoteEvent", "FireServerFor", remoteFireServerFor},
@@ -863,6 +880,9 @@ constexpr InstanceMethodBinding RemoteMethods[] = {
     {"UnreliableRemoteEvent", "FireClient", unreliableFireClient},
     {"UnreliableRemoteEvent", "FireAllClients", unreliableFireAllClients},
     {"RemoteFunction", "InvokeServerAsync", remoteInvokeServer},
+    {"RemoteEvent", "SetRateLimit", remoteSetRateLimit},
+    {"UnreliableRemoteEvent", "SetRateLimit", remoteSetRateLimit},
+    {"RemoteFunction", "SetRateLimit", remoteSetRateLimit},
 };
 
 } // namespace
@@ -940,6 +960,70 @@ int decodeRemoteArguments(lua_State* L, std::span<const u8> payload, std::span<c
 // every tick at nobody reaches this in four seconds and is told.
 constexpr usize MaxHeldRemoteCalls = 256;
 
+// **The limits a client's calls of one remote are held to** (ADR 0241 §1):
+// calls a second and a burst, and the size of one call -- the remote's own
+// attributes, or the defaults. From what games send: once a tick at most
+// (60 a second), once a frame at most (240 on a 240 Hz display); nothing
+// else a client sends comes near.
+constexpr f64 DefaultRemoteRate = 240.0;
+constexpr f64 DefaultRemoteBurst = 480.0;
+constexpr f64 DefaultRemoteMaxBytes = 16.0 * 1024.0;
+
+[[nodiscard]] f64 remoteLimit(const World& w, core::InstanceId remote, std::string_view name, f64 fallback)
+{
+    const scene::Value value = w.getAttribute(remote, w.atoms().lookup(name));
+    if (const f64* number = std::get_if<f64>(&value); number != nullptr && *number >= 0.0)
+        return *number;
+    return fallback;
+}
+
+void suspect(World& w, core::InstanceId player, std::string_view kind, std::string detail)
+{
+    constexpr usize Kept = 1024;
+    auto& list = w.engineState().suspicions;
+    list.push_back(scene::EngineState::Suspicion{player, std::string(kind), std::move(detail), w.engineState().tick});
+    if (list.size() > Kept)
+        list.erase(list.begin(), list.begin() + static_cast<std::ptrdiff_t>(list.size() - Kept));
+    w.engineState().suspicionsTotal += 1;
+}
+
+// Whether a call a client sent is within its remote's limits; one that is
+// not is dropped before any script sees it, and is a suspicion.
+[[nodiscard]] bool withinRemoteLimits(World& w, ServiceState& state, const scene::RemoteMessage& message)
+{
+    const f64 maxBytes = remoteLimit(w, message.remote, "MaxBytes", DefaultRemoteMaxBytes);
+    const std::string remoteName(w.atoms().text(w.name(message.remote)));
+    if (maxBytes > 0.0 && static_cast<f64>(message.payload.size()) > maxBytes) {
+        suspect(w, message.player, "remote_too_large",
+                remoteName + " " + std::to_string(message.payload.size()) + " bytes");
+        return false;
+    }
+    const f64 rate = remoteLimit(w, message.remote, "RateLimit", DefaultRemoteRate);
+    if (rate <= 0.0)
+        return true;
+    const f64 burst = std::max(1.0, remoteLimit(w, message.remote, "Burst", std::max(DefaultRemoteBurst, rate)));
+    const auto pack = [](core::InstanceId id) {
+        return static_cast<core::u64>(id.index) | (static_cast<core::u64>(id.generation) << 32);
+    };
+    const core::u64 now = w.engineState().tick;
+    auto [at, made] = state.remoteBuckets.try_emplace({pack(message.remote), pack(message.player)});
+    ServiceState::RemoteBucket& bucket = at->second;
+    if (made) {
+        bucket.tokens = burst;
+    }
+    else {
+        const f64 seconds = static_cast<f64>(now - std::min(now, bucket.tick)) * w.engineState().fixedTimestep;
+        bucket.tokens = std::min(burst, bucket.tokens + seconds * rate);
+    }
+    bucket.tick = now;
+    if (bucket.tokens < 1.0) {
+        suspect(w, message.player, "remote_over_rate", remoteName);
+        return false;
+    }
+    bucket.tokens -= 1.0;
+    return true;
+}
+
 void fireRemoteMessages(lua_State* L)
 {
     World& w = world(L);
@@ -950,9 +1034,25 @@ void fireRemoteMessages(lua_State* L)
     // one list, in the order the calls were made.
     std::vector<scene::RemoteMessage> inbox;
     inbox.swap(state.heldRemoteCalls);
-    for (scene::RemoteMessage& arrived : w.engineState().remoteInbox)
+    for (scene::RemoteMessage& arrived : w.engineState().remoteInbox) {
+        // **Limited where it arrives, once** (ADR 0241 §1): a call held for a
+        // listener is not counted again when it is handed on.
+        if (arrived.toServer && !arrived.reply && w.alive(arrived.remote) && arrived.player.valid() &&
+            !withinRemoteLimits(w, state, arrived))
+            continue;
         inbox.push_back(std::move(arrived));
+    }
     w.engineState().remoteInbox.clear();
+    // The buckets of remotes and players that are gone, now and then.
+    if (state.remoteBuckets.size() > 4096) {
+        std::erase_if(state.remoteBuckets, [&w](const auto& entry) {
+            const auto unpack = [](core::u64 packed) {
+                return core::InstanceId{static_cast<core::u32>(packed & 0xFFFFFFFFu),
+                                        static_cast<core::u32>(packed >> 32)};
+            };
+            return !w.alive(unpack(entry.first.first)) || !w.alive(unpack(entry.first.second));
+        });
+    }
     std::erase_if(state.heldRemoteWarned, [&w](core::InstanceId remote) { return !w.alive(remote); });
     if (inbox.empty())
         return;

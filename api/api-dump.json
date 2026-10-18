@@ -6409,6 +6409,21 @@
           ],
           "Returns": [],
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetRateLimit",
+          "Parameters": [
+            {
+              "Name": "perSecond",
+              "Type": "number"
+            },
+            {
+              "Name": "burst",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
         }
       ],
       "Events": [
@@ -6465,6 +6480,21 @@
           ],
           "Returns": ["...any"],
           "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetRateLimit",
+          "Parameters": [
+            {
+              "Name": "perSecond",
+              "Type": "number"
+            },
+            {
+              "Name": "burst",
+              "Type": "number?"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         }
       ],
@@ -10389,6 +10419,21 @@
             {
               "Name": "arguments",
               "Type": "...any"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetRateLimit",
+          "Parameters": [
+            {
+              "Name": "perSecond",
+              "Type": "number"
+            },
+            {
+              "Name": "burst",
+              "Type": "number?"
             }
           ],
           "Returns": [],

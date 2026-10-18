@@ -618,6 +618,18 @@ struct EngineState
     // fires them. Transport, not world state, so neither reaches the hash.
     std::vector<RemoteMessage> remoteOutbox;
     std::vector<RemoteMessage> remoteInbox;
+    // **What a player did past a limit, or what a game found suspicious**
+    // (ADR 0241 §3), newest last and bounded: the console and `/metrics`
+    // read it. Never acted on by itself.
+    struct Suspicion
+    {
+        core::InstanceId player;
+        std::string kind;
+        std::string detail;
+        u64 tick = 0;
+    };
+    std::vector<Suspicion> suspicions;
+    u64 suspicionsTotal = 0;
 
     // **`SceneService`** (ADR 0106). The scene the world came from,
     // content-relative, and what the last `LoadScene` handed the new one,

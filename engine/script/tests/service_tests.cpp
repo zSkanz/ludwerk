@@ -1806,3 +1806,67 @@ TEST_CASE("ADR 0195: FireAllClients arrives once at a machine with a guest, and 
         assert(game:GetAttribute("PrimaryAnswered") == true)
     )") == "");
 }
+
+TEST_CASE("ADR 0241: a client's calls of one remote are held to its rate and its size, and what is past is a suspicion")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    const auto sender = scene::createPlayer(*fixture.world, service, 9, false);
+    REQUIRE(sender.valid());
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Shout"
+        remote.Parent = workspace
+        workspace:SetAttribute("Heard", 0)
+        remote.ServerReceived:Connect(function()
+            workspace:SetAttribute("Heard", (workspace:GetAttribute("Heard") :: number) + 1)
+        end)
+    )") == "");
+    lua_State* L = fixture.runtime->state();
+    // The remote's id, from a message the authority sends with it.
+    REQUIRE(fixture.failure(R"(workspace:FindFirstChild("Shout"):FireAllClients())") == "");
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    const core::InstanceId remote = fixture.world->engineState().remoteOutbox[0].remote;
+    fixture.world->engineState().remoteOutbox.clear();
+    REQUIRE(remote.valid());
+    const auto flood = [&](int count, std::size_t bytes) {
+        std::vector<scene::RemoteMessage>& inbox = fixture.world->engineState().remoteInbox;
+        for (int at = 0; at < count; ++at) {
+            scene::RemoteMessage message;
+            message.remote = remote;
+            message.toServer = true;
+            message.player = sender;
+            lua_pushstring(L, std::string(bytes, 'x').c_str());
+            engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, message.payload, message.refs);
+            lua_pop(L, 1);
+            inbox.push_back(std::move(message));
+        }
+        engine::script::fireRemoteMessages(L);
+        fixture.tick();
+    };
+    const auto heard = [&](int expected) {
+        return fixture.failure("assert(workspace:GetAttribute('Heard') == " + std::to_string(expected) +
+                               ", tostring(workspace:GetAttribute('Heard')))");
+    };
+
+    // Two thousand in one tick: the burst, 480, and no more.
+    flood(2000, 8);
+    CHECK(heard(480) == "");
+    const core::u64 suspectedAfterFlood = fixture.world->engineState().suspicionsTotal;
+    CHECK(suspectedAfterFlood == 1520);
+    CHECK(fixture.world->engineState().suspicions.back().kind == "remote_over_rate");
+    CHECK(fixture.world->engineState().suspicions.back().player == sender);
+
+    // Larger than a call may be: refused whole, and said.
+    flood(1, 20 * 1024);
+    CHECK(heard(480) == "");
+    CHECK(fixture.world->engineState().suspicions.back().kind == "remote_too_large");
+
+    // A game's own heavy channel lifts it.
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Shout"):SetRateLimit(0))") == "");
+    flood(2000, 8);
+    CHECK(heard(2480) == "");
+}
