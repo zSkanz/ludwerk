@@ -136,7 +136,7 @@ local function makeVignette(): (BasePart, Frame)
     local surface = Instance.new("SurfaceGui")
     surface.Face = Enum.Face.Back
     surface.AlwaysOnTop = true
-    surface.PixelsPerMetre = 400
+    surface.PixelsPerMeter = 400
     surface.Parent = plate
     local shade = Instance.new("Frame")
     shade.Size = UDim2.fromScale(1, 1)

@@ -2019,6 +2019,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     rhi::HeadsetFrame headsetFrame;
     bool headsetBegun = false;
     bool headsetSynced = true;
+    bool headsetUnsyncDue = false;
     // The editor's icons, built once from `content/icons` on the first frame
     // that has a command list -- uploading a texture is one, so this cannot be
     // done before the loop.
@@ -7796,6 +7797,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
 #endif
             }
         }
+        // **The window stops waiting for its display once the headset draws**
+        // (ADR 0244): the headset's own wait paces the loop. Made here, before
+        // the frame takes a picture from the window -- made after it, the
+        // swapchain was destroyed under that picture and could not be made
+        // again while it was held, and the present at the end of the frame
+        // read the swapchain SDL had left null (the first frame on a real
+        // headset, on Direct3D 12 and Vulkan alike).
+        if (headsetUnsyncDue && headsetSynced && window != nullptr) {
+            applyVSync(*device, *window, false);
+            headsetSynced = false;
+            headsetUnsyncDue = false;
+        }
         // **The drawn frame that waited** (ADR 0165), shown now: half a frame
         // after the made one it follows, with the interface as that frame had
         // it -- this frame's has not been built yet.
@@ -7884,10 +7897,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 ENG_PROFILE_SCOPE("wait.headset");
                 headsetBegun = headset->beginFrame(headsetFrame);
             }
-            if (headsetBegun && headsetFrame.draw && headsetSynced && window) {
-                applyVSync(*device, *window, false);
-                headsetSynced = false;
-            }
+            // Asked for here and made at the start of the next frame: this
+            // one has already taken its picture from the window.
+            if (headsetBegun && headsetFrame.draw && headsetSynced && window)
+                headsetUnsyncDue = true;
             // **What the player does** (ADR 0245): the controllers into the
             // input system as their `XR` key codes, the head and the hands
             // into the engine's state for `XRService`, for the next tick --
