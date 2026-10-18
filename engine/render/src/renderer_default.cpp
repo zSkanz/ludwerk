@@ -9705,8 +9705,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // of three million texels stored, an eye. The forward pass clears and
     // writes the depth itself, which is the depth the runtime is given.
     const bool leanEye = world.headsetEye && world.headsetLean;
-    prepassDrawn_ =
-        depthRead || sided || (!leanEye && (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u);
+    prepassDrawn_ = depthRead || sided || (!leanEye && (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u);
     if (prepassDrawn_) {
         cmd.pushDebugGroup("depth-prepass");
         cmd.beginRenderPass({
