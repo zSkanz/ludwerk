@@ -254,6 +254,12 @@ local function copyHost(buildDirectory: string, target: string, what: string)
         return
     end
     copyRequiredTree(joined(buildDirectory, "content"), joined(target, "content"), `{what} content`)
+    -- **The OpenXR loader beside it** (ADR 0244), where a build made one:
+    -- what a game that asks for a headset loads, and nothing else reads.
+    local loader = if platform.win32 then "openxr_loader.dll" else "libopenxr_loader.so.1"
+    if fs.exists(joined(buildDirectory, loader)) then
+        copyFile(joined(buildDirectory, loader), joined(target, loader), `{what}'s OpenXR loader`)
+    end
 end
 
 --- A player for another platform, from a directory holding `binary` and the

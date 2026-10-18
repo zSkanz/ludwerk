@@ -17,6 +17,7 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 |---|---|---|---|---|---|
 | luau | 0.742 | `8387cfb461b3` | MIT | https://github.com/luau-lang/luau | `third_party/luau/` |
 | sdl3 | 3.4.18 | `829a65d769d9` | zlib | https://github.com/libsdl-org/SDL | `third_party/sdl3/` |
+| openxr_sdk | 1.1.63 | `f2448a8797c8` | Apache-2.0 OR MIT | https://github.com/KhronosGroup/OpenXR-SDK | `third_party/openxr_sdk/` |
 | sdl_shadercross | main-2026-06-26 | `e55cf5e31ced` | zlib | https://github.com/libsdl-org/SDL_shadercross | `third_party/sdl_shadercross/` |
 | spirv_cross | sdl-shadercross-pin | `1a6169566c73` | Apache-2.0 | https://github.com/KhronosGroup/SPIRV-Cross | `third_party/spirv_cross/` |
 | jolt | 5.6.0 | `e77f175595e6` | MIT | https://github.com/jrouwe/JoltPhysics | `third_party/jolt/` |

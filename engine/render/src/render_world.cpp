@@ -756,6 +756,33 @@ bool spritesOnly(const RenderWorld& world) noexcept
     return !world.sprites.empty() && world.draws.empty() && world.terrains.empty() && world.foliageRuns.empty();
 }
 
+RenderCamera eyeCamera(const RenderCamera& camera, core::Vec3 position, const std::array<f32, 4>& orientation,
+                       f32 tanLeft, f32 tanRight, f32 tanDown, f32 tanUp) noexcept
+{
+    RenderCamera eye = camera;
+    if (!camera.valid)
+        return eye;
+    // The eye in the camera's frame, and the world seen from it: the eye's
+    // inverse after the camera's view.
+    const core::Mat3 turn = core::fromQuaternion(orientation[0], orientation[1], orientation[2], orientation[3]);
+    Mat4 pose;
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row)
+            pose.m[column][row] = turn.m[column][row];
+    }
+    pose.m[3][0] = position.x;
+    pose.m[3][1] = position.y;
+    pose.m[3][2] = position.z;
+    eye.view = core::inverse(pose) * camera.view;
+    eye.projection = core::perspectiveOffAxis(tanLeft, tanRight, tanDown, tanUp, camera.nearPlane, camera.farPlane);
+    eye.viewProjection = eye.projection * eye.view;
+    eye.skyViewProjection = eye.viewProjection;
+    eye.unjitteredViewProjection = eye.viewProjection;
+    eye.jitter = core::Vec2{};
+    eye.frustum = core::frustumFromViewProjection(eye.viewProjection);
+    return eye;
+}
+
 void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept
 {
     if (!camera.valid || (jitter.x == 0.0f && jitter.y == 0.0f))

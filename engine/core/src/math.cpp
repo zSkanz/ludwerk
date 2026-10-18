@@ -237,6 +237,26 @@ Mat4 perspective(f32 fovYRadians, f32 aspect, f32 nearZ, f32 farZ) noexcept
     return result;
 }
 
+Mat4 perspectiveOffAxis(f32 tanLeft, f32 tanRight, f32 tanDown, f32 tanUp, f32 nearZ, f32 farZ) noexcept
+{
+    // `perspective` with the middle of the view moved off the axis: x / -z at
+    // `tanRight` is +1 in NDC and at `tanLeft` -1, the same for y.
+    const f32 width = tanRight - tanLeft;
+    const f32 height = tanUp - tanDown;
+    Mat4 result;
+    if (!(width > 0.0f) || !(height > 0.0f))
+        return perspective(1.5707964f, 1.0f, nearZ, farZ);
+    result.m[0][0] = 2.0f / width;
+    result.m[1][1] = 2.0f / height;
+    result.m[2][0] = (tanRight + tanLeft) / width;
+    result.m[2][1] = (tanUp + tanDown) / height;
+    result.m[2][2] = farZ / (nearZ - farZ);
+    result.m[2][3] = -1.0f;
+    result.m[3][2] = (nearZ * farZ) / (nearZ - farZ);
+    result.m[3][3] = 0.0f;
+    return result;
+}
+
 Mat4 orthographic(f32 halfHeight, f32 aspect, f32 nearZ, f32 farZ) noexcept
 {
     // Depth to [0, 1] with the near plane at 0, the same way round as

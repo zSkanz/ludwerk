@@ -818,6 +818,8 @@ public:
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, const RenderTarget& target) const override;
     void composeViews(rhi::IDevice& device, rhi::ICmdList& cmd, const ViewComposite& views,
                       const RenderTarget& target) override;
+    void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                    const RenderTarget& target) override;
     [[nodiscard]] bool generatesFrames(const RenderWorld& world) const noexcept override;
     void showPicture(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
                      const RenderTarget& target) override;
@@ -1616,6 +1618,9 @@ private:
     // Several views into one target, and into the window.
     LookPipeline composeViews_;
     LookPipeline composeViewsWindow_;
+    // The headset's eyes (ADR 0244): made in the swapchain's format when a
+    // headset first draws.
+    LookPipeline xrEye_;
     // The two skies, for a view seen on one side of a line.
     rhi::PipelineHandle skySidedPipeline_{};
     LookPipeline skyLookSided_;
@@ -1784,7 +1789,7 @@ private:
                         bool upscale, bool sharpen);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 39> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 40> lookPipelines() noexcept
     {
         return {&probeGather_,
                 &probeFilter_,
@@ -1822,6 +1827,7 @@ private:
                 &showPictureWindow_,
                 &composeViews_,
                 &composeViewsWindow_,
+                &xrEye_,
                 &skyLookSided_,
                 &motionView_,
                 &motionViewWindow_};
@@ -5537,6 +5543,21 @@ void DefaultRenderer::composeViews(rhi::IDevice& device, rhi::ICmdList& cmd, con
     uniforms.lineColor[3] = 1.0f;
     fullscreenPass(cmd, slot.handle, target.color, target.width, target.height, "views", pictures,
                    asBytes(&uniforms, sizeof(uniforms)));
+}
+
+void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                                 const RenderTarget& target)
+{
+    if (!picture.valid() || !target.color.valid() || target.width == 0 || target.height == 0)
+        return;
+    if (!ensureLookPipeline(device, xrEye_, "xr_eye", target.colorFormat))
+        return;
+    const bool srgb = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
+                      target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
+    const std::array<f32, 4> uniforms{srgb ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, linearSampler_}};
+    fullscreenPass(cmd, xrEye_.handle, target.color, target.width, target.height, "xr-eye", source,
+                   asBytes(uniforms.data(), sizeof(uniforms)));
 }
 
 void DefaultRenderer::showMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target)

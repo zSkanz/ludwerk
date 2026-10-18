@@ -756,6 +756,17 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuLeast = true;
             continue;
         }
+        if (arg == "--xr" || arg == "--no-xr") {
+            options.xr = arg == "--xr";
+            options.xrFromFlag = true;
+            continue;
+        }
+        if (arg == "--xr=simulated") {
+            options.xr = false;
+            options.xrSimulated = true;
+            options.xrFromFlag = true;
+            continue;
+        }
         if (arg == "--no-astc") {
             options.astcTextures = false;
             continue;
@@ -2012,6 +2023,11 @@ static int hostMain(int argc, char** argv)
         options.kickOverLimit = config.networkKickOverLimit;
         // The run's own word, or the project's.
         options.timeDilation = options.timeDilation || config.serverTimeDilation;
+        // The run's own word, or the project's.
+        if (!options.xrFromFlag)
+            options.xr = config.xrEnabled || config.xrRequired;
+        options.xrRequired = config.xrRequired && !options.xrFromFlag;
+        options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;
 

@@ -107,6 +107,14 @@ if(ENG_RHI_SDLGPU)
     if(WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
         target_link_libraries(engine_rhi_sdlgpu PRIVATE d3d12 dxgi)
     endif()
+    # **A headset** (ADR 0244), wherever the OpenXR loader is built: SDL's
+    # integration underneath, and the Khronos headers for the calls the
+    # session makes itself.
+    if(TARGET engine_openxr_headers)
+        target_sources(engine_rhi_sdlgpu PRIVATE src/sdlgpu/sdlgpu_xr.cpp)
+        target_link_libraries(engine_rhi_sdlgpu PRIVATE engine::openxr_headers)
+        target_compile_definitions(engine_rhi_sdlgpu PRIVATE ENG_SDLGPU_XR=1)
+    endif()
     list(APPEND engine_rhi_test_modules rhi_sdlgpu)
 endif()
 

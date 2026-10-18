@@ -249,6 +249,18 @@ public:
         (void)target;
         return {};
     }
+    // **An eye's picture into the headset's image** (ADR 0244): a view drawn
+    // for the eye, copied into the runtime's swapchain image `target` --
+    // decoded first where that image is sRGB, since a runtime reads one as
+    // linear light. Inside the frame, with no render pass open.
+    virtual void presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::TextureHandle picture,
+                            const RenderTarget& target)
+    {
+        (void)device;
+        (void)cmd;
+        (void)picture;
+        (void)target;
+    }
     // **Several players' views made into one window** (ADR 0205): each
     // picture to its rectangle, or two across a line, with the line drawn.
     virtual void composeViews(rhi::IDevice& device, rhi::ICmdList& cmd, const ViewComposite& views,

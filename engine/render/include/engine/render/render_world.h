@@ -119,6 +119,16 @@ struct RenderCamera
 // that asked the renderer where this frame's sample lies.
 void jitterCamera(RenderCamera& camera, core::Vec2 jitter) noexcept;
 
+// **One eye of a headset** (ADR 0244): the camera's view moved to where the
+// eye is in the play space -- which the camera's CFrame places in the world --
+// and turned as it is, with the eye's own asymmetric projection. `position`
+// in metres and `orientation` a unit quaternion (x, y, z, w), both in the play
+// space; the tangents as `perspectiveOffAxis` takes them. The near and far
+// planes and the origin are the camera's.
+[[nodiscard]] RenderCamera eyeCamera(const RenderCamera& camera, core::Vec3 position,
+                                     const std::array<f32, 4>& orientation, f32 tanLeft, f32 tanRight, f32 tanDown,
+                                     f32 tanUp) noexcept;
+
 enum class LightKind : core::u8
 {
     Point,

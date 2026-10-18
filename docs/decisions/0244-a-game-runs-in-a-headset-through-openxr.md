@@ -163,3 +163,27 @@ may be an image of a runtime's swapchain (`TextureHandle` from
 How the head and hands reach a game (ADR 0245), UI in a headset (ADR 0246),
 passthrough and the world around the player (ADR 0247), the standalone
 Quest build, multiplayer and the editor (ADR 0248).
+
+## As built, first step (2026-10-17)
+
+- **The device for a headset** (§2, §7): `DeviceDesc::xr` asks SDL for the
+  device on the runtime's adapter; where that fails -- no runtime, no
+  headset -- the device is made as before and `IDevice::headset()` is null.
+  `rhi::IHeadset` is the frame (`beginFrame`, `endFrame`), the eyes' views
+  (position, orientation, four tangents) and the eyes' images as
+  `TextureHandle`s; no OpenXR type crosses it (R17).
+- **Each eye is a part of the window** (ADR 0205's view): drawn into a
+  picture of the eye's size with its own history, from the head's view moved
+  to the eye (`render::eyeCamera`, an off-axis projection,
+  `core::perspectiveOffAxis`), then copied into the runtime's image by
+  `xr_eye.hlsl`, which decodes the picture first when the image is sRGB --
+  the runtime reads one as linear light. The frame is gathered from the
+  head, as wide as both eyes and a tenth more; the window shows the head's
+  view.
+- **The simulated headset** (ADR 0248 §4) came first, because it is what
+  tests: `--xr=simulated`, headless or not, and with `--screenshot` each
+  eye's picture beside the window's (`xr_simulated_eyes`).
+- **Not yet**: the depth submitted with each eye (§5), the window showing
+  the left eye and `[xr] mirror` / `required`, multiview (§4), the Android
+  build. A minimised window draws no eyes. The first session on a real
+  runtime is the maintainer's: a test never starts the machine's own.

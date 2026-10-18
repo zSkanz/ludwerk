@@ -844,6 +844,85 @@ endif()
 add_library(enet::enet ALIAS engine_enet)
 
 # ---------------------------------------------------------------------------
+# The OpenXR loader (ADR 0244): the library SDL loads at run time, when a game
+# asks for a headset, to reach whichever runtime is installed -- SteamVR, the
+# Quest's through Link, Meta's on the Quest itself. Nothing links it: a game
+# without XR never touches it, and one with XR finds it beside the host.
+#
+# Its sources directly, as ENet's are: upstream's project builds API layers,
+# tests and a version resource besides, and searches for Python to generate
+# what the release already carries. The headers are the engine's OpenXR
+# headers too (`engine::openxr_headers`). No macOS (no runtime there), no UWP
+# (the Xbox has no headset), no web (WebXR is another API).
+# ---------------------------------------------------------------------------
+set(ENG_OPENXR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/openxr_sdk")
+if(NOT APPLE AND NOT ENG_PLATFORM_UWP AND NOT EMSCRIPTEN AND EXISTS "${ENG_OPENXR_ROOT}/src/loader/loader_core.cpp")
+    add_library(engine_openxr_headers INTERFACE)
+    target_include_directories(engine_openxr_headers SYSTEM INTERFACE "${ENG_OPENXR_ROOT}/include")
+    add_library(engine::openxr_headers ALIAS engine_openxr_headers)
+
+    add_library(engine_openxr_loader SHARED
+        "${ENG_OPENXR_ROOT}/src/loader/api_layer_interface.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_core.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_init_data.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_instance.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_logger.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_logger_recorders.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/loader_properties.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/manifest_file.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/runtime_interface.cpp"
+        "${ENG_OPENXR_ROOT}/src/loader/xr_generated_loader.cpp"
+        "${ENG_OPENXR_ROOT}/src/xr_generated_dispatch_table_core.c"
+        "${ENG_OPENXR_ROOT}/src/common/filesystem_utils.cpp"
+        "${ENG_OPENXR_ROOT}/src/common/object_info.cpp"
+        "${ENG_OPENXR_ROOT}/src/external/jsoncpp/src/lib_json/json_reader.cpp"
+        "${ENG_OPENXR_ROOT}/src/external/jsoncpp/src/lib_json/json_value.cpp"
+        "${ENG_OPENXR_ROOT}/src/external/jsoncpp/src/lib_json/json_writer.cpp")
+    set_target_properties(engine_openxr_loader PROPERTIES OUTPUT_NAME openxr_loader CXX_STANDARD 17)
+    target_include_directories(engine_openxr_loader
+        PUBLIC "${ENG_OPENXR_ROOT}/include"
+        PRIVATE
+            "${ENG_OPENXR_ROOT}/src"
+            "${ENG_OPENXR_ROOT}/src/common"
+            "${ENG_OPENXR_ROOT}/src/loader"
+            "${ENG_OPENXR_ROOT}/src/external/jsoncpp/include")
+    target_compile_definitions(engine_openxr_loader PRIVATE XRAPI_DLL_EXPORT XRLOADER_DISABLE_EXCEPTION_HANDLING)
+    if(WIN32)
+        target_sources(engine_openxr_loader PRIVATE "${ENG_OPENXR_ROOT}/src/loader/openxr-loader.def")
+        target_compile_definitions(engine_openxr_loader PRIVATE XR_OS_WINDOWS XR_USE_PLATFORM_WIN32 NOMINMAX)
+        target_link_libraries(engine_openxr_loader PRIVATE advapi32)
+    elseif(ANDROID)
+        file(GLOB ENG_OPENXR_ANDROID_WRAP CONFIGURE_DEPENDS
+            "${ENG_OPENXR_ROOT}/src/external/android-jni-wrappers/wrap/*.cpp")
+        target_sources(engine_openxr_loader PRIVATE
+            "${ENG_OPENXR_ROOT}/src/loader/android_utilities.cpp"
+            "${ENG_OPENXR_ROOT}/src/external/jnipp/jnipp.cpp"
+            ${ENG_OPENXR_ANDROID_WRAP})
+        target_include_directories(engine_openxr_loader PRIVATE
+            "${ENG_OPENXR_ROOT}/src/external/jnipp"
+            "${ENG_OPENXR_ROOT}/src/external/android-jni-wrappers")
+        target_compile_definitions(engine_openxr_loader PRIVATE XR_OS_ANDROID XR_USE_PLATFORM_ANDROID XR_USE_TIMESPEC)
+        target_link_libraries(engine_openxr_loader PRIVATE log android)
+        target_link_options(engine_openxr_loader PRIVATE "-Wl,-z,max-page-size=16384")
+    else()
+        target_compile_definitions(engine_openxr_loader PRIVATE
+            XR_OS_LINUX XR_USE_TIMESPEC HAVE_SECURE_GETENV
+            FALLBACK_CONFIG_DIRS="/etc/xdg"
+            FALLBACK_DATA_DIRS="/usr/local/share:/usr/share"
+            SYSCONFDIR="/etc")
+        find_package(Threads REQUIRED)
+        target_link_libraries(engine_openxr_loader PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+        set_target_properties(engine_openxr_loader PROPERTIES SOVERSION 1)
+    endif()
+    # Upstream's warnings are upstream's (R13: never edited in place).
+    if(MSVC)
+        target_compile_options(engine_openxr_loader PRIVATE /w)
+    else()
+        target_compile_options(engine_openxr_loader PRIVATE -w)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Recast/Detour (ADR 0022, integrated by ADR 0089): the navmesh builder, its
 # query library and -- since ADR 0098's crowds call it -- DetourCrowd, all from
 # the one pinned tree. DetourTileCache stays unbuilt until something calls it.

@@ -32,6 +32,9 @@
 #include "engine/rhi/backends.h"
 #include "engine/rhi/sdlgpu_interop.h"
 #include "sdlgpu_enums.h"
+#if ENG_SDLGPU_XR
+#include "sdlgpu_xr.h"
+#endif
 
 #if defined(_WIN32) && !defined(SDL_PLATFORM_WINRT)
 // For `removeDevice` alone: the Direct3D 12 device under SDL, reached the way
@@ -318,12 +321,18 @@ public:
         // A lost device is left as it is: releasing into it is exactly the
         // kind of call that crashed inside the backend. The process is about
         // to end, and the operating system takes it all back.
-        if (device_ == nullptr || lost_)
+        if (device_ == nullptr || lost_) {
+            // Its session too: ending it would reach the driver.
+            (void)headset_.release();
             return;
+        }
 
         SDL_WaitForGPUIdle(device_);
         releaseInFlight();
         cmdList_.releaseStaging();
+        // The headset's swapchains and session go before the device they
+        // were made on.
+        headset_.reset();
 
         for (SDL_GPUGraphicsPipeline* pipeline : pipelines_)
             if (pipeline != nullptr)
@@ -383,6 +392,28 @@ public:
     }
 
     [[nodiscard]] bool lost() const noexcept override { return lost_; }
+
+    [[nodiscard]] IHeadset* headset() noexcept override { return headset_.get(); }
+
+#if ENG_SDLGPU_XR
+    // **The headset the device was made for** (ADR 0244): its swapchain
+    // images named as this device's textures, never released by it.
+    void attachHeadset(const sdlgpu::XrDeviceAsk& ask)
+    {
+        sdlgpu::XrDeviceHooks hooks;
+        hooks.device = device_;
+        hooks.wrap = [this](SDL_GPUTexture* texture, TextureFormat format, u32 width, u32 height) {
+            return TextureHandle{addSlot(
+                textures_,
+                TextureEntry{.texture = texture, .format = format, .width = width, .height = height, .owned = false})};
+        };
+        hooks.unwrap = [this](TextureHandle handle) {
+            if (TextureEntry* entry = slot(textures_, handle.id); entry != nullptr)
+                *entry = TextureEntry{};
+        };
+        headset_ = sdlgpu::createOpenXrHeadset(ask, std::move(hooks));
+    }
+#endif
     [[nodiscard]] std::string_view lostReason() const noexcept override { return lostReason_; }
     void simulateLoss() noexcept override { markLost("simulated"); }
 
@@ -1113,6 +1144,7 @@ private:
     std::vector<SDL_GPUGraphicsPipeline*> pipelines_;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
+    std::unique_ptr<IHeadset> headset_;
 };
 
 PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& desc)
@@ -2438,6 +2470,14 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
                    return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
                });
     };
+#if ENG_SDLGPU_XR
+    // **For a headset, first** (ADR 0244): the device on the adapter its
+    // runtime asks for. Where there is none -- no runtime, no headset on --
+    // the device is made as it always was, and the game is drawn on the
+    // screen.
+    sdlgpu::XrDeviceAsk xrAskMade;
+    sdlgpu::XrDeviceAsk* xrAsk = nullptr;
+#endif
     const auto create = [&](bool depthClamp, const std::string& driver) {
         const SDL_PropertiesID props = SDL_CreateProperties();
         if (!driver.empty())
@@ -2453,6 +2493,10 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, depthClamp);
+#if ENG_SDLGPU_XR
+        if (xrAsk != nullptr)
+            xrAsk->apply(props, desc.xr);
+#endif
         SDL_GPUDevice* made = SDL_CreateGPUDeviceWithProperties(props);
         SDL_DestroyProperties(props);
         return made;
@@ -2460,7 +2504,26 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
 
     bool depthClamp = !desc.leastFeatures;
     std::string driver = desc.driver;
-    SDL_GPUDevice* device = create(depthClamp, driver);
+    SDL_GPUDevice* device = nullptr;
+#if ENG_SDLGPU_XR
+    if (desc.xr.enabled) {
+        xrAsk = &xrAskMade;
+        device = create(depthClamp, driver);
+        if (device == nullptr || !xrAskMade.ready()) {
+            const core::I18nArg args[] = {{"detail", std::string_view{SDL_GetError()}}};
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_unavailable"), args);
+            if (device != nullptr)
+                SDL_DestroyGPUDevice(device);
+            device = nullptr;
+            xrAsk = nullptr;
+            xrAskMade = sdlgpu::XrDeviceAsk{};
+        }
+    }
+    if (device == nullptr)
+        device = create(depthClamp, driver);
+#else
+    device = create(depthClamp, driver);
+#endif
     std::string first;
     if (device == nullptr && depthClamp) {
         // What the first try said is kept: if the second fails too, both are
@@ -2483,7 +2546,12 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
             device = create(false, driver);
         }
     }
-    if (device != nullptr && !driver.empty() && desc.driverIfSameCard) {
+    // A device made for a headset is on the card its runtime chose.
+    bool forHeadset = false;
+#if ENG_SDLGPU_XR
+    forHeadset = xrAsk != nullptr;
+#endif
+    if (device != nullptr && !driver.empty() && desc.driverIfSameCard && !forHeadset) {
         // A default that would cost the machine its stronger card is not
         // taken: the library's own choice instead, which is on it.
         const std::string strongest = platform::strongestGraphicsCard();
@@ -2516,7 +2584,13 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     if (!depthClamp)
         core::log(core::LogLevel::Info, ENG_TR("rhi.info.no_depth_clamp"));
 
-    return std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);
+    auto made =
+        std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);
+#if ENG_SDLGPU_XR
+    if (forHeadset)
+        made->attachHeadset(xrAskMade);
+#endif
+    return made;
 }
 
 } // namespace engine::rhi

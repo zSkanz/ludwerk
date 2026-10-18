@@ -432,6 +432,20 @@ struct EngineOptions
     // -- no depth clamping -- on a GPU that has more: how a desk draws
     // as such a phone does.
     bool gpuLeast = false;
+    // **A headset, when there is one** (ADR 0244 §6): `[xr] enabled`, or
+    // `--xr`; `--no-xr` turns it off whatever the project says. Without a
+    // headset the game is drawn on the screen as it always is.
+    bool xr = false;
+    // Set by `--xr` or `--no-xr`, so the project's word does not replace it.
+    bool xrFromFlag = false;
+    // **`--xr=simulated`** (ADR 0248 §4): the engine's own headset, with no
+    // runtime and no window -- headless too. With `--screenshot`, each eye's
+    // picture is written beside it (`-left`, `-right`).
+    bool xrSimulated = false;
+    // The name the headset's runtime lists the game under.
+    std::string xrApplication{};
+    // `[xr] required`: no headset, no game -- said, and the run ends.
+    bool xrRequired = false;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

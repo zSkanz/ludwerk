@@ -275,6 +275,12 @@ here.
   under `suspicion_total`. Nothing is done to a player by it, except that
   `[network] kick_over_limit = N` removes one whose calls go past the
   remotes' limits N times in a second.
+- A game can be drawn in a headset on a PC, through OpenXR: `[xr] enabled =
+  true` in `project.toml`, or `--xr`, tries a headset at start and draws each
+  eye; with none -- no runtime, nothing plugged in -- the game is drawn on the
+  screen as before. `--xr=simulated` draws into a headset that is the
+  engine's own, for tests, and `--screenshot` then writes each eye's
+  picture. The head and hands reach scripts in a later release.
 - The server console's `mute <player|key> [minutes] [reason]` and `unmute`
   keep a list in `mutes.json` beside the bans, read by every world of the
   game; `NetworkService:IsMuted(player)` answers it, and what a mute stops is

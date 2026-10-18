@@ -1,5 +1,6 @@
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
@@ -176,6 +177,38 @@ TEST_CASE("a real device reports itself and a usable shader format")
     // worth doing.
     CHECK(gpu.device->caps().rendersPixels);
     CHECK(gpu.device->caps().shaderFormat != ShaderFormat::Unknown);
+}
+
+TEST_CASE("a device asked for a headset where no runtime answers is made for the screen (ADR 0244)")
+{
+    // The loader pointed at a runtime that is not there -- never at the
+    // machine's own, which a test has no business starting.
+    const auto setRuntime = [](const char* value) {
+#if defined(_WIN32)
+        (void)_putenv_s("XR_RUNTIME_JSON", value);
+#else
+        if (std::string_view{value}.empty())
+            (void)unsetenv("XR_RUNTIME_JSON");
+        else
+            (void)setenv("XR_RUNTIME_JSON", value, 1);
+#endif
+    };
+    setRuntime("no-such-runtime.json");
+    const auto initError = engine::platform::init({.headless = true});
+    REQUIRE_MESSAGE(!initError.has_value(), (initError ? initError->detail : std::string{}));
+    engine::core::EngineError error;
+    DeviceResult device = createSdlGpuDevice(
+        {.backend = BackendId::SdlGpu, .debug = true, .xr = {.enabled = true, .application = "rhi-tests"}}, &error);
+    setRuntime("");
+    if (device == nullptr) {
+        MESSAGE("ENG_TEST_SKIP: no GPU device on this machine: " << error.detail);
+    }
+    else {
+        CHECK(device->headset() == nullptr);
+        CHECK(device->caps().rendersPixels);
+    }
+    device.reset();
+    engine::platform::shutdown();
 }
 
 TEST_CASE("first light: a cleared target reads back as the colour it was cleared to")

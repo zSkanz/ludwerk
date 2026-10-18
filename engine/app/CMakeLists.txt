@@ -11,6 +11,7 @@ engine_add_module(app
         src/project_watch.cpp
         src/external_changes.cpp
         src/managed_world.cpp
+        src/simulated_headset.cpp
         src/manager_link.cpp
         src/manager_main.cpp
         src/admin_channel.cpp
@@ -316,6 +317,15 @@ add_custom_target(engine_host_runtime ALL
         "${CMAKE_CURRENT_BINARY_DIR}/content/runtime/std"
     COMMENT "Staging the engine's Luau modules")
 add_dependencies(engine_host engine_host_runtime)
+
+# **The OpenXR loader beside the host** (ADR 0244), where SDL looks for it
+# when a game asks for a headset. Not linked: a game without XR never loads it.
+if(TARGET engine_openxr_loader)
+    add_dependencies(engine_host engine_openxr_loader)
+    add_custom_command(TARGET engine_host POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:engine_openxr_loader>" "$<TARGET_FILE_DIR:engine_host>")
+endif()
 
 add_custom_command(TARGET engine_host POST_BUILD
     # The default typeface (a deliberate choice of 2026-08-20). Content
@@ -653,6 +663,20 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION "rhi.info.no_depth_clamp.*Ran 8 frames"
         SKIP_REGULAR_EXPRESSION "rhi.err.device_create_failed"
         TIMEOUT 120)
+
+    # **Two eyes, drawn and different** (ADR 0244), under the engine's own
+    # headset (ADR 0248 §4): no runtime and no window, so it runs where the
+    # GPU tests run, and skips where there is no device.
+    add_test(NAME xr_simulated_eyes
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSCENE=${CMAKE_SOURCE_DIR}/examples/06-scene
+                -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-simulated-eyes
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_eyes.cmake)
+    set_tests_properties(xr_simulated_eyes PROPERTIES
+        PASS_REGULAR_EXPRESSION "two eyes drawn, and they differ"
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 180)
 
     # **The render half of the frame runs headless**: a Render-rate
     # context reads an injected stick and a bound render step runs.

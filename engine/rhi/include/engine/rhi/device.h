@@ -19,6 +19,7 @@
 #include "engine/core/error.h"
 #include "engine/rhi/descs.h"
 #include "engine/rhi/types.h"
+#include "engine/rhi/xr.h"
 
 namespace engine::platform {
 class Window;
@@ -50,6 +51,9 @@ struct DeviceDesc
     // moved onto its weaker one for a default's sake, and draw at a fraction
     // of the rate with nothing wrong in the picture to say why.
     bool driverIfSameCard = false;
+    // **A headset, when there is one** (ADR 0244): the device is made on the
+    // adapter its runtime asks for, and `IDevice::headset` answers it.
+    XrRequest xr = {};
 };
 
 // **What the device holds, in bytes**: every texture and every buffer made
@@ -259,6 +263,10 @@ public:
     // what tells a slow frame on a GPU from a frame drawn by the CPU. Empty
     // where the backend does not say.
     [[nodiscard]] virtual std::string_view adapterName() const noexcept { return {}; }
+    // **The headset the device was made for** (ADR 0244), or null: none was
+    // asked for, none was found, or the backend has none. The device's, and
+    // gone with it.
+    [[nodiscard]] virtual IHeadset* headset() noexcept { return nullptr; }
 
     [[nodiscard]] virtual BufferHandle createBuffer(const BufferDesc& desc) = 0;
     [[nodiscard]] virtual TextureHandle createTexture(const TextureDesc& desc) = 0;

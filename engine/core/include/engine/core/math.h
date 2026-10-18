@@ -137,6 +137,13 @@ static_assert(sizeof(Mat4) == 16 * sizeof(f32), "Mat4 must upload as 16 tightly 
 // field of view.
 [[nodiscard]] Mat4 perspective(f32 fovYRadians, f32 aspect, f32 nearZ, f32 farZ) noexcept;
 
+// **An eye's projection** (ADR 0244): right-handed, looking down -Z, depth in
+// [0, 1], as `perspective` is, but with each edge where it is -- a headset's
+// eye sees further to the outside than to the nose, so its frustum is not
+// symmetric. The edges are tangents of their angles from straight ahead, left
+// and down negative.
+[[nodiscard]] Mat4 perspectiveOffAxis(f32 tanLeft, f32 tanRight, f32 tanDown, f32 tanUp, f32 nearZ, f32 farZ) noexcept;
+
 // Right-handed, looking down -Z, depth in [0, 1], as `perspective` is.
 // `halfHeight` metres above and below the middle of the view at every depth
 // (the 2D layer's camera).

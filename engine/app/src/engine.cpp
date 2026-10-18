@@ -10,6 +10,7 @@
 #include "engine/app/network_session.h"
 #include "engine/app/script_editor.h"
 #include "engine/app/server_console.h"
+#include "engine/app/simulated_headset.h"
 #include "engine/core/base64.h"
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
@@ -1625,10 +1626,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                    .shaderFormat = rhi::ShaderFormat::Unknown,
                                                    .leastFeatures = options.gpuLeast,
                                                    .driver = gpuDriver.name,
-                                                   .driverIfSameCard = gpuDriver.byDefault},
+                                                   .driverIfSameCard = gpuDriver.byDefault,
+                                                   .xr = {.enabled = options.xr && !options.headless,
+                                                          .application = options.xrApplication,
+                                                          .applicationVersion = 0}},
                                                   &error);
     if (device == nullptr)
         return error;
+    // **A game that is only VR, with no headset** (ADR 0244 §6): said, and
+    // not started. `--xr` and `--no-xr` are the run's own word and lift it.
+    if (options.xrRequired && device->headset() == nullptr && !options.headless)
+        return core::makeError(ENG_TR("engine.err.xr_required"));
     // Asked as this scope is left, by whichever `return` leaves it.
     const DeviceWatch deviceWatch{device.get(), &deviceAtTheEnd};
     // **What the GPU samples, said before the first texture is read** (ADR
@@ -1965,6 +1973,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     std::array<SplitPicture, 5> splitPictures;
     // The renderer's views for them, apart from every `CameraTexture`'s.
     constexpr core::u32 SplitViewBase = 0xFFFFFE00u;
+    // **The headset's two eyes** (ADR 0244): each drawn as a part of the
+    // window is -- its own picture, its own history -- and then copied into
+    // the runtime's image. Their views beside the split screen's.
+    std::array<SplitPicture, 2> eyePictures;
+    constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
+    // The engine's own, when asked for (ADR 0248 §4); gone before the device.
+    std::unique_ptr<SimulatedHeadset> simulatedHeadset =
+        options.xrSimulated ? std::make_unique<SimulatedHeadset>(*device, SimulatedHeadsetDesc{}) : nullptr;
+    rhi::IHeadset* const headset = simulatedHeadset != nullptr ? simulatedHeadset.get() : device->headset();
+    rhi::HeadsetFrame headsetFrame;
+    bool headsetBegun = false;
+    bool headsetSynced = true;
     // The editor's icons, built once from `content/icons` on the first frame
     // that has a command list -- uploading a texture is one, so this cannot be
     // done before the loop.
@@ -7758,6 +7778,24 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             targetHeight = swapchain.height;
         }
 
+        // **The headset's frame** (ADR 0244), begun before anything is drawn:
+        // the runtime's wait paces the loop at the headset's rate, so the
+        // window stops waiting for its own display the first time the headset
+        // draws. A frame some path left unended is ended first.
+        if (headset != nullptr) {
+            if (headsetBegun)
+                headset->endFrame();
+            headset->poll();
+            {
+                ENG_PROFILE_SCOPE("wait.headset");
+                headsetBegun = headset->beginFrame(headsetFrame);
+            }
+            if (headsetBegun && headsetFrame.draw && headsetSynced && window) {
+                applyVSync(*device, *window, false);
+                headsetSynced = false;
+            }
+        }
+
         // In the editor the world is not drawn to the screen: it is drawn into
         // the viewport panel's own texture, and the shell is drawn to the
         // screen on top. Everything between here and the overlay's pass
@@ -8312,13 +8350,57 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     mainHeight = heightOf(split.views[0].rect);
                     mainCorner = split.views[0].rect.min;
                 }
-                const f32 mainAspect =
-                    mainHeight == 0 ? 1.0f : static_cast<f32>(mainWidth) / static_cast<f32>(mainHeight);
+                f32 mainAspect = mainHeight == 0 ? 1.0f : static_cast<f32>(mainWidth) / static_cast<f32>(mainHeight);
                 const core::Vec2 mainViewport{static_cast<f32>(mainWidth), static_cast<f32>(mainHeight)};
-                const render::ViewOverride* const viewOverride = sequenceView.has_value() ? &*sequenceView
-                                                                 : useEditorView          ? &editorView
-                                                                 : playerView.has_value() ? &*playerView
-                                                                                          : nullptr;
+                // **The head, in a headset** (ADR 0244): the frame is seen from
+                // where it is in the play space the camera places, wide enough
+                // for both eyes -- what the window shows, and what everything
+                // drawn for the eyes is gathered against.
+                std::optional<render::ViewOverride> headsetView;
+                core::CFrameD headInSpace;
+                if (headsetBegun && headsetFrame.draw && !sequenceView.has_value() && !useEditorView) {
+                    core::InstanceId seen = split.camera;
+                    if (!seen.valid()) {
+                        if (const scene::WorkspaceComponent* space = host->world().workspaces().find(host->workspace());
+                            space != nullptr)
+                            seen = space->currentCamera;
+                    }
+                    headsetView = lensOf(seen);
+                    if (headsetView.has_value()) {
+                        const rhi::EyeView& left = headsetFrame.eyes[0];
+                        const rhi::EyeView& right = headsetFrame.eyes[1];
+                        headInSpace.position =
+                            core::DVec3{static_cast<f64>(left.position[0] + right.position[0]) * 0.5,
+                                        static_cast<f64>(left.position[1] + right.position[1]) * 0.5,
+                                        static_cast<f64>(left.position[2] + right.position[2]) * 0.5};
+                        headInSpace.rotation =
+                            core::slerp(core::fromQuaternion(left.orientation[0], left.orientation[1],
+                                                             left.orientation[2], left.orientation[3]),
+                                        core::fromQuaternion(right.orientation[0], right.orientation[1],
+                                                             right.orientation[2], right.orientation[3]),
+                                        0.5f);
+                        headsetView->cframe = headsetView->cframe * headInSpace;
+                        // Both eyes' edges, and a little more: each eye sits a few
+                        // centimetres off the head's middle.
+                        f32 across = 0.0f;
+                        f32 upDown = 0.0f;
+                        for (const rhi::EyeView& eye : headsetFrame.eyes) {
+                            across = std::max({across, std::abs(eye.tanLeft), std::abs(eye.tanRight)});
+                            upDown = std::max({upDown, std::abs(eye.tanDown), std::abs(eye.tanUp)});
+                        }
+                        across *= 1.1f;
+                        upDown *= 1.1f;
+                        headsetView->fieldOfView = 2.0f * std::atan(upDown) * 57.29578f;
+                        headsetView->projection = 0;
+                        headsetView->clipPlaneOn = false;
+                        mainAspect = upDown > 0.0f ? across / upDown : 1.0f;
+                    }
+                }
+                const render::ViewOverride* const viewOverride = sequenceView.has_value()  ? &*sequenceView
+                                                                 : useEditorView           ? &editorView
+                                                                 : headsetView.has_value() ? &*headsetView
+                                                                 : playerView.has_value()  ? &*playerView
+                                                                                           : nullptr;
                 // **The stage, when one is open.** A prefab is looked at on its
                 // own; drawing it inside the game's scene is what a person saw and
                 // called wrong, and it was.
@@ -9470,8 +9552,66 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         mainTarget = viewTarget(0);
                         mainTarget.stepsFrame = true;
                     }
+                    const render::RenderCamera headCamera = snapshot.camera;
                     render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
                     renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
+
+                    // **Each eye** (ADR 0244): the head's view moved to the eye
+                    // and given its own edges, drawn as a part of the window is,
+                    // then into the runtime's image.
+                    if (headsetView.has_value() && headsetBegun && headsetFrame.draw) {
+                        ENG_PROFILE_SCOPE("render.headset");
+                        const render::RenderCamera mainCamera = snapshot.camera;
+                        const core::Mat3 headTurnBack = core::transpose(headInSpace.rotation);
+                        for (core::u32 index = 0; index < 2; ++index) {
+                            SplitPicture& picture = eyePictures[index];
+                            if (!picture.texture.valid() || picture.width != headsetFrame.width ||
+                                picture.height != headsetFrame.height || picture.format != targetFormat) {
+                                if (picture.texture.valid())
+                                    device->destroy(picture.texture);
+                                picture.texture = device->createTexture({
+                                    .format = targetFormat,
+                                    .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                                    .width = headsetFrame.width,
+                                    .height = headsetFrame.height,
+                                    .debugName = "headset-eye",
+                                });
+                                picture.width = headsetFrame.width;
+                                picture.height = headsetFrame.height;
+                                picture.format = targetFormat;
+                            }
+                            if (!picture.texture.valid())
+                                continue;
+                            // The eye from the head: where it is and how it is
+                            // turned, in the head's own frame.
+                            const rhi::EyeView& eye = headsetFrame.eyes[index];
+                            const core::Vec3 offset{
+                                static_cast<f32>(static_cast<f64>(eye.position[0]) - headInSpace.position.x),
+                                static_cast<f32>(static_cast<f64>(eye.position[1]) - headInSpace.position.y),
+                                static_cast<f32>(static_cast<f64>(eye.position[2]) - headInSpace.position.z)};
+                            const core::Mat3 turn =
+                                headTurnBack * core::fromQuaternion(eye.orientation[0], eye.orientation[1],
+                                                                    eye.orientation[2], eye.orientation[3]);
+                            std::array<f32, 4> turned{};
+                            core::toQuaternion(turn, turned[0], turned[1], turned[2], turned[3]);
+                            snapshot.camera = render::eyeCamera(headCamera, headTurnBack * offset, turned, eye.tanLeft,
+                                                                eye.tanRight, eye.tanDown, eye.tanUp);
+                            const render::RenderTarget eyeTarget{.color = picture.texture,
+                                                                 .colorFormat = targetFormat,
+                                                                 .width = picture.width,
+                                                                 .height = picture.height,
+                                                                 .view = EyeViewBase + index,
+                                                                 .window = true};
+                            render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, eyeTarget));
+                            renderer->render(*device, *cmd, eyeTarget, snapshot, meshCache);
+                            renderer->presentEye(*device, *cmd, picture.texture,
+                                                 render::RenderTarget{.color = headsetFrame.color[index],
+                                                                      .colorFormat = headsetFrame.format,
+                                                                      .width = headsetFrame.width,
+                                                                      .height = headsetFrame.height});
+                        }
+                        snapshot.camera = mainCamera;
+                    }
 
                     if (splitDrawn) {
                         // **Every other view**: its own extraction, culled to its
@@ -9753,6 +9893,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         {
             ENG_PROFILE_SCOPE("wait.present");
             device->submitAndPresent();
+            // The eyes' images back to the runtime, after the list that drew
+            // them was submitted.
+            if (headsetBegun) {
+                headset->endFrame();
+                headsetBegun = false;
+            }
             // `--gpu-frame-times`: the frame is not over until the GPU has
             // drawn it.
             if (options.gpuFrameTimes)
@@ -9988,6 +10134,22 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
 
         const std::array<I18nArg, 1> shotArgs{I18nArg{"path", options.screenshotPath.string()}};
         core::log(LogLevel::Info, ENG_TR("engine.screenshot.info.written"), shotArgs);
+
+        // **And each eye**, under the simulated headset (ADR 0248 §4).
+        if (simulatedHeadset != nullptr && simulatedHeadset->framesEnded() > 0) {
+            const core::u32 eyeWidth = simulatedHeadset->eyeWidth();
+            const core::u32 eyeHeight = simulatedHeadset->eyeHeight();
+            std::vector<std::byte> eyePixels(static_cast<core::usize>(eyeWidth) * eyeHeight * 4u);
+            for (core::u32 index = 0; index < 2; ++index) {
+                if (!device->readTexture(simulatedHeadset->image(index), eyePixels))
+                    return core::makeError(ENG_TR("engine.screenshot.err.readback_failed"));
+                std::filesystem::path eyeShot = options.screenshotPath;
+                eyeShot.replace_filename(options.screenshotPath.stem().string() + (index == 0 ? "-left" : "-right") +
+                                         options.screenshotPath.extension().string());
+                if (auto writeError = writePng(eyeShot, eyePixels, eyeWidth, eyeHeight); writeError.has_value())
+                    return writeError;
+            }
+        }
     }
 
     if (!options.capturePath.empty()) {

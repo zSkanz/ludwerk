@@ -1,0 +1,109 @@
+// A headset, as the RHI hands it to the renderer (ADR 0244 §7).
+//
+// **The RHI's interface was frozen (ADR 0037); this adds to it and changes
+// nothing there.** A device may be made for a headset (`DeviceDesc::xr`), and
+// then `IDevice::headset()` answers one: each frame it says whether to draw,
+// for when, from where each eye looks, and which texture each eye draws into
+// -- an image of the runtime's own swapchain, as a `TextureHandle` like any.
+// The renderer records into them in the frame's command list, the frame is
+// submitted, and `endFrame` hands the images back and shows them.
+//
+// No OpenXR type crosses this line (R17): a pose is a position and a
+// quaternion, a field of view four tangents, an instant nanoseconds.
+#pragma once
+
+#include <array>
+#include <string>
+#include <string_view>
+
+#include "engine/core/types.h"
+#include "engine/rhi/types.h"
+
+namespace engine::rhi {
+
+// **What asks for a headset when the device is made.** Nothing is asked when
+// `enabled` is false, and a device made with it true where there is no
+// headset is still a device -- `headset()` answers null and the game draws on
+// the screen (ADR 0244 §6).
+struct XrRequest
+{
+    bool enabled = false;
+    // The application's name and version, as the runtime lists it.
+    std::string application = {};
+    u32 applicationVersion = 0;
+};
+
+// One eye's view this frame: where it is and how it is turned, in the play
+// space's metres (y up, the runtime's floor at 0 where it knows one), and the
+// edges of what it sees as tangents of their angles from straight ahead --
+// left and down negative. An eye's frustum is not symmetric.
+struct EyeView
+{
+    std::array<f32, 3> position{0.0f, 0.0f, 0.0f};
+    // x, y, z, w.
+    std::array<f32, 4> orientation{0.0f, 0.0f, 0.0f, 1.0f};
+    f32 tanLeft = -1.0f;
+    f32 tanRight = 1.0f;
+    f32 tanDown = -1.0f;
+    f32 tanUp = 1.0f;
+};
+
+// Where the headset's session stands: `Running` is the only state frames are
+// drawn in; `Ended` is for good, and the game goes on on the screen.
+enum class HeadsetState : u8
+{
+    Idle,
+    Running,
+    Paused,
+    Ended,
+};
+
+// **One frame of the headset.** `draw` false is a frame the runtime does not
+// want drawn -- the headset is off the head, the system menu is up -- and it
+// is still ended, with nothing in it.
+struct HeadsetFrame
+{
+    bool draw = false;
+    // When the runtime will show it, in nanoseconds of the runtime's clock.
+    i64 displayTimeNs = 0;
+    std::array<EyeView, 2> eyes{};
+    std::array<TextureHandle, 2> color{};
+    u32 width = 0;
+    u32 height = 0;
+    TextureFormat format = TextureFormat::Undefined;
+};
+
+class IHeadset
+{
+public:
+    virtual ~IHeadset() = default;
+    IHeadset() = default;
+    IHeadset(const IHeadset&) = delete;
+    IHeadset& operator=(const IHeadset&) = delete;
+
+    // The runtime's name ("Oculus", "SteamVR/OpenXR", "simulated") and the
+    // headset's, for the log and the profiler.
+    [[nodiscard]] virtual std::string_view runtimeName() const noexcept = 0;
+    [[nodiscard]] virtual std::string_view systemName() const noexcept = 0;
+    // The size each eye is drawn at, as the runtime recommends it.
+    [[nodiscard]] virtual u32 eyeWidth() const noexcept = 0;
+    [[nodiscard]] virtual u32 eyeHeight() const noexcept = 0;
+
+    // Reads what the runtime said since the last call -- a session ready to
+    // begin, asked to stop, lost -- and acts on it. Once a frame, before
+    // `beginFrame`.
+    virtual void poll() = 0;
+    [[nodiscard]] virtual HeadsetState state() const noexcept = 0;
+
+    // **Waits for the runtime's moment to draw**, at the headset's rate, and
+    // begins the frame: the eyes' views for when it will be shown, and the
+    // eyes' images to draw into. False when no frame was begun (not running,
+    // or the runtime refused); `endFrame` is then not called. After
+    // `IDevice::beginFrame`, since the images are recorded into its list.
+    [[nodiscard]] virtual bool beginFrame(HeadsetFrame& frame) = 0;
+    // **Hands the images back and shows them**, after the frame's command
+    // list was submitted. Every begun frame is ended, drawn or not.
+    virtual void endFrame() = 0;
+};
+
+} // namespace engine::rhi

@@ -1,0 +1,62 @@
+// **A headset that is the engine's own** (ADR 0248 §4, `--xr=simulated`): two
+// eyes at a set separation and field of view, its "swapchains" ordinary
+// textures, a head that stands where it is put. It needs no OpenXR runtime and
+// no window, so every XR test runs where the other tests do -- headless, in
+// the container on lavapipe. Not a stand-in for the device: the rate held on a
+// real headset and what its lenses show are the maintainer's to see.
+#pragma once
+
+#include <array>
+#include <memory>
+
+#include "engine/rhi/device.h"
+#include "engine/rhi/xr.h"
+
+namespace engine::app {
+
+struct SimulatedHeadsetDesc
+{
+    core::u32 eyeWidth = 1024;
+    core::u32 eyeHeight = 1024;
+    // Between the eyes, in metres: an adult's average.
+    core::f32 eyeSeparation = 0.063f;
+    // Each eye's edges as tangents, an eye seeing further outward than toward
+    // the nose, as a headset's lenses do.
+    core::f32 tanOutward = 1.19f;
+    core::f32 tanInward = 0.96f;
+    core::f32 tanUp = 1.0f;
+    core::f32 tanDown = -1.15f;
+};
+
+class SimulatedHeadset final : public rhi::IHeadset
+{
+public:
+    SimulatedHeadset(rhi::IDevice& device, const SimulatedHeadsetDesc& desc);
+    ~SimulatedHeadset() override;
+
+    [[nodiscard]] std::string_view runtimeName() const noexcept override { return "simulated"; }
+    [[nodiscard]] std::string_view systemName() const noexcept override { return "simulated"; }
+    [[nodiscard]] core::u32 eyeWidth() const noexcept override { return m_desc.eyeWidth; }
+    [[nodiscard]] core::u32 eyeHeight() const noexcept override { return m_desc.eyeHeight; }
+    void poll() override {}
+    [[nodiscard]] rhi::HeadsetState state() const noexcept override { return rhi::HeadsetState::Running; }
+    [[nodiscard]] bool beginFrame(rhi::HeadsetFrame& frame) override;
+    void endFrame() override { m_frames += 1; }
+
+    // **Where the head is**, in the play space: a position in metres and a
+    // unit quaternion (x, y, z, w). Standing at 1.6 m, looking ahead, until set.
+    void setHead(const std::array<core::f32, 3>& position, const std::array<core::f32, 4>& orientation) noexcept;
+    // The eyes' images as the last frame left them, for a test to read back.
+    [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
+    [[nodiscard]] core::u64 framesEnded() const noexcept { return m_frames; }
+
+private:
+    rhi::IDevice& m_device;
+    SimulatedHeadsetDesc m_desc;
+    std::array<rhi::TextureHandle, 2> m_images{};
+    std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};
+    std::array<core::f32, 4> m_headOrientation{0.0f, 0.0f, 0.0f, 1.0f};
+    core::u64 m_frames = 0;
+};
+
+} // namespace engine::app
