@@ -691,6 +691,40 @@ struct EngineState
         bool roomAsked = false;
         bool roomKnown = false;
         std::vector<RoomPlane> room;
+        // **Anchors** (ADR 0247 §3): each `XRAnchor` with the headset's handle
+        // for it, its id, and where it is now in the play space a script
+        // reads -- one whose instance is gone is let go of by the host; what
+        // scripts asked of the headset (to make one, 0, at `cframe`; to save
+        // one, 1, by its handle; to load them, 2), for the host to hand over;
+        // and its answers, for the scripts: whether it did, and each anchor
+        // made or found, by handle and id.
+        struct Anchor
+        {
+            core::InstanceId instance;
+            u64 handle = 0;
+            std::string id;
+            core::CFrameD cframe;
+            bool tracked = false;
+        };
+        std::vector<Anchor> anchors;
+        struct AnchorAsk
+        {
+            u32 waiter = 0;
+            u8 what = 0;
+            core::CFrameD cframe;
+            u64 handle = 0;
+        };
+        std::vector<AnchorAsk> anchorAsks;
+        struct AnchorAnswer
+        {
+            u32 waiter = 0;
+            u8 what = 0;
+            bool ok = false;
+            core::CFrameD cframe;
+            std::vector<std::pair<u64, std::string>> found;
+        };
+        std::vector<AnchorAnswer> anchorAnswers;
+        u32 nextAnchorWaiter = 1;
         // **The pointer** (ADR 0246 §2): where each hand points, in the play
         // space a script reads; where the play space is in the world this
         // frame (the camera's `CFrame`); `XRService.PointerHand`,

@@ -4040,6 +4040,12 @@ local Classes: { Schema.Class } = {
 --- deliberately left out look identical in a schema.
 local Excluded: { Schema.Excluded } = {
     {
+        Name = "XRAnchor",
+        Quiet = true,
+        Reason = "A place in one player's room, which only that player's headset knows (ADR 0247 §3): "
+            .. "it is made on that machine and is that machine's alone.",
+    },
+    {
         Name = "FoliageLayer",
         Quiet = true,
         Reason = "Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the "

@@ -9872,6 +9872,57 @@ local Classes: { Schema.Class } = {
             },
         } :: { Schema.Property },
     },
+    {
+        Name = "XRAnchor",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "NotCreatable" } :: { Schema.ClassTag },
+        Records = { "ADR 0247" },
+        Doc = "A place pinned in the player's room by the headset, from `XRService:CreateAnchorAsync` or "
+            .. "`XRService:LoadAnchorsAsync`. The headset keeps it where it was in the room as it learns the room "
+            .. "better, and `SaveAsync` keeps it on the headset for the next session in the same room. It is "
+            .. "this machine's alone, and the headset lets it go when it is destroyed.",
+        Properties = {
+            {
+                Name = "CFrame",
+                Type = "CFrame",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Where the anchor is now, in the play space. It follows the room as the headset refines "
+                    .. "it, and it moves in the play space when `XRService:Recenter` moves the play space.",
+            },
+            {
+                Name = "Tracked",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether the headset knows where the anchor is now. False while the headset has not found "
+                    .. "it in the room, such as a loaded anchor in its first frames or one in another room.",
+            },
+            {
+                Name = "Id",
+                Type = "string",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Doc = "The anchor's id, 32 hexadecimal digits, the same in every session. A game that saves "
+                    .. "several anchors keeps their ids to tell them apart when they are loaded.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "SaveAsync",
+                Parameters = {},
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Keeps the anchor on the headset, so `XRService:LoadAnchorsAsync` finds it in the next "
+                    .. "session. Returns whether the headset saved it. It waits for the headset.",
+            },
+        },
+    },
 }
 
 local Definition: Schema.Definition = {

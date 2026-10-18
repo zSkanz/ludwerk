@@ -4535,6 +4535,21 @@ declare extern type WaterPoint extends Instance with
     Sharp: boolean
 end
 
+declare extern type XRAnchor extends Instance with
+    --- Where the anchor is now, in the play space. It follows the room as the headset refines it, and
+    --- it moves in the play space when `XRService:Recenter` moves the play space.
+    read CFrame: CFrame
+    --- Whether the headset knows where the anchor is now. False while the headset has not found it in
+    --- the room, such as a loaded anchor in its first frames or one in another room.
+    read Tracked: boolean
+    --- The anchor's id, 32 hexadecimal digits, the same in every session. A game that saves several
+    --- anchors keeps their ids to tell them apart when they are loaded.
+    read Id: string
+    --- Keeps the anchor on the headset, so `XRService:LoadAnchorsAsync` finds it in the next session.
+    --- Returns whether the headset saved it. It waits for the headset.
+    function SaveAsync(self): boolean
+end
+
 declare extern type SocialService extends Instance with
     --- Returns whether the active provider supports friend queries.
     function IsAvailable(self): boolean
@@ -5223,6 +5238,13 @@ declare extern type XRService extends Instance with
     --- the headset, which may first ask the player to let the game see the room. Nil with no headset,
     --- where the headset knows no room, or when the player says no.
     function GetRoomAsync(self): { Planes: { { Kind: EnumXRPlaneKind, CFrame: CFrame, Size: vector } } }?
+    --- Pins a place in the player's room, given in the play space, and returns its anchor. It waits for
+    --- the headset. Nil with no headset, or where the headset has no anchors.
+    function CreateAnchorAsync(self, cframe: CFrame): XRAnchor?
+    --- Returns every anchor this game saved on the headset with `XRAnchor:SaveAsync`. An anchor saved
+    --- in another room is returned too, and is not `Tracked` until the player is back in it. It waits
+    --- for the headset. Empty with no headset.
+    function LoadAnchorsAsync(self): { XRAnchor }
     --- Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` it
     --- puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting no
     --- shadow. Physics, raycasts and navigation then use the real room. Each part is a slab behind its

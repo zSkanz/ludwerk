@@ -1913,6 +1913,27 @@ local Classes: { Schema.Class } = {
                     .. "the room. Nil with no headset, where the headset knows no room, or when the player says no.",
             },
             {
+                Name = "CreateAnchorAsync",
+                Parameters = { { Name = "cframe", Type = "CFrame" } },
+                Returns = { "XRAnchor?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0247" },
+                Doc = "Pins a place in the player's room, given in the play space, and returns its anchor. It "
+                    .. "waits for the headset. Nil with no headset, or where the headset has no anchors.",
+            },
+            {
+                Name = "LoadAnchorsAsync",
+                Parameters = {},
+                Returns = { "{ XRAnchor }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0247" },
+                Doc = "Returns every anchor this game saved on the headset with `XRAnchor:SaveAsync`. An anchor "
+                    .. "saved in another room is returned too, and is not `Tracked` until the player is back in "
+                    .. "it. It waits for the headset. Empty with no headset.",
+            },
+            {
                 Name = "CreateRoomParts",
                 Parameters = {},
                 Returns = { "Folder?" },

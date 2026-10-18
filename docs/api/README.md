@@ -188,3 +188,4 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`Weld`](weld.md) | [`Instance`](instance.md) | Holds one part at a fixed offset from another. |
 | [`WeldConstraint`](weldconstraint.md) | [`Instance`](instance.md) | Holds one part at the offset from another that the two have when the weld is enabled. |
 | [`WeldConstraint2D`](weldconstraint2d.md) | [`Constraint2D`](constraint2d.md) | Holds two parts rigidly together, at the relative position they had when the weld was created. |
+| [`XRAnchor`](xranchor.md) | [`Instance`](instance.md) | A place pinned in the player's room by the headset, from `XRService:CreateAnchorAsync` or `XRService:LoadAnchorsAsync`. |

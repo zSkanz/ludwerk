@@ -146,6 +146,26 @@ struct HeadsetRoom
     std::vector<HeadsetPlane> planes;
 };
 
+// **What the headset answered about anchors** (ADR 0247 §3), each for the
+// ask the call that made it returned: an anchor `Created`, or not; one
+// `Saved`, or not; a `Found` for each anchor a load found, then its `Done`.
+// `uuid` is the anchor's id, the same in every session, as 32 hex digits.
+struct HeadsetAnchorEvent
+{
+    enum class Kind : u8
+    {
+        Created,
+        Saved,
+        Found,
+        Done,
+    };
+    Kind kind = Kind::Done;
+    u32 ask = 0;
+    u64 anchor = 0;
+    std::string uuid;
+    bool ok = false;
+};
+
 // **The number of controller values a frame reads** (ADR 0245): one for each
 // `Enum.KeyCode` whose name begins with `XR`, in the enum's order -- A, B, X,
 // Y, the menu, the two triggers, the two grips, the four stick axes, the two
@@ -228,6 +248,28 @@ public:
         (void)out;
         return false;
     }
+    // **Anchors** (ADR 0247 §3): places pinned in the room, each by the
+    // runtime's handle, its pose in the space the headset gives. Each ask
+    // returns its number -- 0 where the headset has no anchors -- and is
+    // answered at a later frame through `takeAnchorEvents`.
+    [[nodiscard]] virtual u32 createAnchor(const HeadsetPose& pose)
+    {
+        (void)pose;
+        return 0;
+    }
+    [[nodiscard]] virtual u32 saveAnchor(u64 anchor)
+    {
+        (void)anchor;
+        return 0;
+    }
+    [[nodiscard]] virtual u32 loadAnchors() { return 0; }
+    virtual void destroyAnchor(u64 anchor) { (void)anchor; }
+    [[nodiscard]] virtual HeadsetPose locateAnchor(u64 anchor)
+    {
+        (void)anchor;
+        return {};
+    }
+    virtual void takeAnchorEvents(std::vector<HeadsetAnchorEvent>& out) { (void)out; }
     // **How the frames have gone since this was last called**, and starts
     // counting again.
     [[nodiscard]] virtual HeadsetTiming takeTiming() { return {}; }

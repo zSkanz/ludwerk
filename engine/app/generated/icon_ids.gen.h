@@ -297,6 +297,7 @@ inline constexpr std::string_view ClassWeld = "class.Weld";
 inline constexpr std::string_view ClassWeldConstraint = "class.WeldConstraint";
 inline constexpr std::string_view ClassWeldConstraint2D = "class.WeldConstraint2D";
 inline constexpr std::string_view ClassWorkspace = "class.Workspace";
+inline constexpr std::string_view ClassXRAnchor = "class.XRAnchor";
 inline constexpr std::string_view ClassXRService = "class.XRService";
 inline constexpr std::string_view ClassXboxService = "class.XboxService";
 

@@ -2897,6 +2897,56 @@ void pushRoom(lua_State* L, const scene::EngineState::Headset& headset)
     lua_setfield(L, -2, "Planes");
 }
 
+// An anchor's question for the host, and the script waiting for its answer.
+int askAnchor(lua_State* L, scene::EngineState::Headset::AnchorAsk ask)
+{
+    scene::EngineState::Headset& headset = world(L).engineState().headset;
+    ask.waiter = headset.nextAnchorWaiter++;
+    headset.anchorAsks.push_back(ask);
+    lua_pushthread(L);
+    services(L).anchorWaiters.push_back(ServiceState::InstanceWaiter{ask.waiter, lua_ref(L, -1)});
+    lua_pop(L, 1);
+    return lua_yield(L, 0);
+}
+
+int xrServiceCreateAnchorAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::CFrameD cframe = checkCFrame(L, 2);
+    requireYieldable(L, "CreateAnchorAsync");
+    if (!world(L).engineState().headset.enabled) {
+        lua_pushnil(L);
+        return 1;
+    }
+    return askAnchor(L, {0, 0, cframe, 0});
+}
+
+int xrServiceLoadAnchorsAsync(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    requireYieldable(L, "LoadAnchorsAsync");
+    if (!world(L).engineState().headset.enabled) {
+        lua_createtable(L, 0, 0);
+        return 1;
+    }
+    return askAnchor(L, {0, 2, {}, 0});
+}
+
+int xrAnchorSaveAsync(lua_State* L)
+{
+    const core::InstanceId id = checkInstance(L, 1);
+    requireYieldable(L, "SaveAsync");
+    const scene::EngineState::Headset& headset = world(L).engineState().headset;
+    const auto anchor =
+        std::find_if(headset.anchors.begin(), headset.anchors.end(),
+                     [&](const scene::EngineState::Headset::Anchor& one) { return one.instance == id; });
+    if (!headset.enabled || anchor == headset.anchors.end()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    return askAnchor(L, {0, 1, {}, anchor->handle});
+}
+
 // **The room made solid**: a slab behind each plane, so the face toward the
 // room is the plane, in the world where the play space is now.
 int xrServiceCreateRoomParts(lua_State* L)
@@ -4039,6 +4089,9 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "SupportsPassthrough", xrServiceSupportsPassthrough},
     {"XRService", "GetRoomAsync", xrServiceGetRoomAsync},
     {"XRService", "CreateRoomParts", xrServiceCreateRoomParts},
+    {"XRService", "CreateAnchorAsync", xrServiceCreateAnchorAsync},
+    {"XRService", "LoadAnchorsAsync", xrServiceLoadAnchorsAsync},
+    {"XRAnchor", "SaveAsync", xrAnchorSaveAsync},
     {"XRService", "SimulateInput", xrServiceSimulateInput},
     {"XRService", "GetPointerRay", xrServiceGetPointerRay},
     {"XRService", "GetPlayAreaBounds", xrServiceGetPlayAreaBounds},
@@ -4435,6 +4488,77 @@ void resumeXRRoomWaiters(lua_State* L)
         lua_getref(L, threadRef);
         if (lua_State* co = lua_tothread(L, -1); co != nullptr) {
             pushRoom(co, headset);
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, threadRef);
+    }
+}
+
+// **An `XRAnchor` for a handle**: the one already made for its id, where a
+// load finds an anchor a script holds -- the new handle then let go of --
+// or a new instance, this machine's alone.
+core::InstanceId anchorInstance(lua_State* L, u64 handle, const std::string& id, const core::CFrameD& cframe)
+{
+    World& w = world(L);
+    scene::EngineState::Headset& headset = w.engineState().headset;
+    for (const scene::EngineState::Headset::Anchor& held : headset.anchors) {
+        if (held.id == id && w.alive(held.instance)) {
+            // Copied before the list grows: `held` is a reference into it.
+            const core::InstanceId same = held.instance;
+            headset.anchors.push_back({core::InstanceId{}, handle, id, {}, false});
+            return same;
+        }
+    }
+    const ClassId anchorClass = w.classes().findId(w.atoms().intern("XRAnchor"));
+    if (anchorClass == scene::InvalidClass)
+        return {};
+    const core::InstanceId made = w.create(anchorClass);
+    w.setLocal(made);
+    headset.anchors.push_back({made, handle, id, cframe, false});
+    return made;
+}
+
+void resumeXRAnchorWaiters(lua_State* L)
+{
+    std::vector<scene::EngineState::Headset::AnchorAnswer> answers;
+    answers.swap(world(L).engineState().headset.anchorAnswers);
+    ServiceState& kept = services(L);
+    for (const scene::EngineState::Headset::AnchorAnswer& answer : answers) {
+        const auto waiter =
+            std::find_if(kept.anchorWaiters.begin(), kept.anchorWaiters.end(),
+                         [&](const ServiceState::InstanceWaiter& waiting) { return waiting.id == answer.waiter; });
+        if (waiter == kept.anchorWaiters.end())
+            continue;
+        const int threadRef = waiter->threadRef;
+        kept.anchorWaiters.erase(waiter);
+        lua_getref(L, threadRef);
+        if (lua_State* co = lua_tothread(L, -1); co != nullptr) {
+            if (answer.what == 1) {
+                lua_pushboolean(co, answer.ok ? 1 : 0);
+            }
+            else if (answer.what == 2) {
+                lua_createtable(co, static_cast<int>(answer.found.size()), 0);
+                int at = 0;
+                for (const auto& [handle, id] : answer.found) {
+                    const core::InstanceId anchor = anchorInstance(L, handle, id, {});
+                    if (!anchor.valid())
+                        continue;
+                    pushInstance(co, anchor);
+                    lua_rawseti(co, -2, ++at);
+                }
+            }
+            else if (answer.ok && answer.found.size() == 1) {
+                const core::InstanceId anchor =
+                    anchorInstance(L, answer.found[0].first, answer.found[0].second, answer.cframe);
+                if (anchor.valid())
+                    pushInstance(co, anchor);
+                else
+                    lua_pushnil(co);
+            }
+            else {
+                lua_pushnil(co);
+            }
             (void)resumeScheduled(L, co, 1);
         }
         lua_pop(L, 1);

@@ -29,6 +29,12 @@ listed on the page of the class that declares them.
 
 ## Methods
 
+### `CreateAnchorAsync(cframe: CFrame): XRAnchor?`
+
+This method yields: the calling thread waits until it completes.
+
+Pins a place in the player's room, given in the play space, and returns its anchor. It waits for the headset. Nil with no headset, or where the headset has no anchors.
+
 ### `CreateRoomParts(): Folder?`
 
 Makes the room `GetRoomAsync` last returned solid, and returns the `Folder` named `XRRoom` it puts in the `Workspace`. It holds an anchored part for each plane, not drawn and casting no shadow. Physics, raycasts and navigation then use the real room. Each part is a slab behind its plane, so its face toward the room is where the plane is. The parts are placed where the play space is in the world now, the current camera's `CFrame`. A folder made before is replaced. Nil before a room was returned.
@@ -62,6 +68,12 @@ Returns the player's room as the headset knows it: its floor, ceiling, walls, ta
 ### `IsHandTracked(hand: Enum.XRHand): boolean`
 
 Whether the headset knows where this hand is now: false when its controller is put down out of sight, or asleep.
+
+### `LoadAnchorsAsync(): { XRAnchor }`
+
+This method yields: the calling thread waits until it completes.
+
+Returns every anchor this game saved on the headset with `XRAnchor:SaveAsync`. An anchor saved in another room is returned too, and is not `Tracked` until the player is back in it. It waits for the headset. Empty with no headset.
 
 ### `Recenter()`
 

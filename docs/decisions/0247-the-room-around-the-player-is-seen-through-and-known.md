@@ -139,3 +139,24 @@ on the Quest today).
   table rests on its top.
 - **Not yet**: the room's mesh (`room.Mesh`, `XR_META_spatial_entity_mesh`),
   and anchors (§3).
+
+## As built, anchors (2026-10-18)
+
+- `XRService:CreateAnchorAsync(cframe)` returns an `XRAnchor`: `CFrame`,
+  where it is now in the play space; `Tracked`, whether the headset knows;
+  `Id`, the same in every session; `SaveAsync`; and `Destroy`, which lets
+  the headset's anchor go. `XRService:LoadAnchorsAsync()` returns every
+  anchor the game saved. An anchor is this machine's alone, and the wire
+  excludes the class by name.
+- On the Quest it is `XR_FB_spatial_entity`'s anchor, made storable as soon
+  as it is made, so that saving it is one step; saved in the headset's own
+  storage with `XR_FB_spatial_entity_storage`; and loaded by a query of that
+  storage for every locatable space, each made locatable as it is found.
+  The manifest lists `com.oculus.permission.USE_ANCHOR_API`.
+- Loading an anchor a script already holds returns the same `XRAnchor`, and
+  the headset's second handle for it is let go of.
+- The simulated headset keeps saved anchors in the file
+  `--xr-simulated-store` names. `xr_anchors` runs it twice: the first run
+  pins an anchor and saves it, and the second loads it at the same place
+  with the same id.
+- **Not yet**: the room's mesh, and sharing an anchor between players.

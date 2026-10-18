@@ -323,6 +323,9 @@ public:
     // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
     // headset's answer, each its thread's reference.
     std::vector<int> roomWaiters;
+    // `CreateAnchorAsync`, `LoadAnchorsAsync` and `XRAnchor:SaveAsync`, by
+    // the ask each waits on.
+    std::vector<InstanceWaiter> anchorWaiters;
 
     // `CrossWorldService` (ADR 0223): each callback by its topic, and how
     // many this world published in the second it is in.
@@ -591,6 +594,8 @@ void fireXRSessionStateChanged(lua_State* L, core::u8 state);
 // Wakes every `XRService:GetRoomAsync` with the room the host put in the
 // engine's state (ADR 0247 §2).
 void resumeXRRoomWaiters(lua_State* L);
+// Wakes each anchor's waiter the headset answered (ADR 0247 §3).
+void resumeXRAnchorWaiters(lua_State* L);
 
 // Wakes every `GraphicsService:SaveAsync` (or, with `load`, `LoadAsync`) with
 // whether the host did it (ADR 0147).

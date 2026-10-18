@@ -7,8 +7,8 @@
 
     - xr-manifest: the head tracking the app needs, the hand tracking and
       the passthrough it may use, OpenXR's permissions, the room's (asked of
-      the player only when a script asks for the room), and the queries that
-      find the runtime.
+      the player only when a script asks for the room) and the anchors', and
+      the queries that find the runtime.
     - xr-categories: what starts the game in the headset. Without the Oculus
       category the Quest shows an app in a flat window, the most common
       mistake there is, and the export refuses a headset's build without it.
@@ -23,6 +23,7 @@
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
     <uses-permission android:name="com.oculus.permission.USE_SCENE" />
+    <uses-permission android:name="com.oculus.permission.USE_ANCHOR_API" />
     <queries>
         <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
         <intent><action android:name="org.khronos.openxr.OpenXRRuntimeService" /></intent>

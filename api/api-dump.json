@@ -11497,6 +11497,41 @@
       "Events": []
     },
     {
+      "Name": "XRAnchor",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable"],
+      "Properties": [
+        {
+          "Name": "CFrame",
+          "Type": "CFrame",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "Id",
+          "Type": "string",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "Tracked",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "SaveAsync",
+          "Parameters": [],
+          "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "XRService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -11545,6 +11580,18 @@
         }
       ],
       "Methods": [
+        {
+          "Name": "CreateAnchorAsync",
+          "Parameters": [
+            {
+              "Name": "cframe",
+              "Type": "CFrame"
+            }
+          ],
+          "Returns": ["XRAnchor?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
         {
           "Name": "CreateRoomParts",
           "Parameters": [],
@@ -11612,6 +11659,13 @@
             }
           ],
           "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LoadAnchorsAsync",
+          "Parameters": [],
+          "Returns": ["{ XRAnchor }"],
+          "Yields": true,
           "ThreadSafety": "Unsafe"
         },
         {

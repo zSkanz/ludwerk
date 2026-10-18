@@ -2229,6 +2229,36 @@ bool setXRServiceSpace(World& world, core::InstanceId, const Value& value)
     return true;
 }
 
+namespace {
+
+const EngineState::Headset::Anchor* anchorOf(const World& world, core::InstanceId id)
+{
+    const std::vector<EngineState::Headset::Anchor>& anchors = world.engineState().headset.anchors;
+    const auto found = std::find_if(anchors.begin(), anchors.end(),
+                                    [&](const EngineState::Headset::Anchor& anchor) { return anchor.instance == id; });
+    return found != anchors.end() ? &*found : nullptr;
+}
+
+} // namespace
+
+Value getXRAnchorCFrame(const World& world, core::InstanceId id)
+{
+    const EngineState::Headset::Anchor* anchor = anchorOf(world, id);
+    return Value{anchor != nullptr ? anchor->cframe : core::CFrameD{}};
+}
+
+Value getXRAnchorTracked(const World& world, core::InstanceId id)
+{
+    const EngineState::Headset::Anchor* anchor = anchorOf(world, id);
+    return Value{anchor != nullptr && anchor->tracked};
+}
+
+Value getXRAnchorId(const World& world, core::InstanceId id)
+{
+    const EngineState::Headset::Anchor* anchor = anchorOf(world, id);
+    return Value{anchor != nullptr ? anchor->id : std::string{}};
+}
+
 Value getXRServicePassthrough(const World& world, core::InstanceId)
 {
     return Value{world.engineState().headset.passthrough};

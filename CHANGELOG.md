@@ -343,6 +343,9 @@ here.
   rectangle of an `Enum.XRPlaneKind`. `XRService:CreateRoomParts` makes them
   solid, invisible parts. On the Quest it is the scene the player captured,
   and the player is asked first.
+- `XRService:CreateAnchorAsync` pins a place in the player's room, an
+  `XRAnchor` the headset keeps in place; `XRAnchor:SaveAsync` keeps it on the
+  headset, and `XRService:LoadAnchorsAsync` finds it in the next session.
 - A headset is given each eye's depth with its picture, where its runtime
   takes depth, so the picture it moves to where the head has turned holds
   steadier. `[xr] depth = false`, or `--xr-depth=off`, turns it off to

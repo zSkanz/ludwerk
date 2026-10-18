@@ -225,6 +225,27 @@ bounces on the real table and a raycast finds the real wall. The simulated
 headset has a room of its own for a test: a floor, a ceiling, four walls and
 a table.
 
+An anchor pins a place in the room, and the headset keeps it there as it
+learns the room better. Saved, it is found again in the next session, in the
+same room -- a board left on the real wall is on it tomorrow:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+local saved = XRService:LoadAnchorsAsync()
+if #saved == 0 then
+    local anchor = XRService:CreateAnchorAsync(CFrame.new(0, 1.5, -1))
+    if anchor then
+        anchor:SaveAsync()
+    end
+end
+```
+
+`anchor.CFrame` is where it is now, in the play space, and `anchor.Id` tells
+saved anchors apart. Destroying an `XRAnchor` lets the headset's anchor go;
+what was saved stays saved.
+
 ## On the Quest, standalone
 
 The Quest runs the game on its own, from an APK:
@@ -256,3 +277,5 @@ XRService:SimulatePose(Enum.XRPose.RightHand, CFrame.new(0.25, 1.2, -0.3))
 ```
 
 `SimulatePose` raises an error anywhere but under the simulated headset.
+`--xr-simulated-store=<file>` keeps the anchors a test saves in a file, for
+a second run to load.

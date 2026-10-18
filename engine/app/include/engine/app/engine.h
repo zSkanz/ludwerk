@@ -442,6 +442,9 @@ struct EngineOptions
     // runtime and no window -- headless too. With `--screenshot`, each eye's
     // picture is written beside it (`-left`, `-right`).
     bool xrSimulated = false;
+    // `--xr-simulated-store=<file>`: where the simulated headset keeps the
+    // anchors a script saves, for a second run to load (ADR 0247 §3).
+    std::string xrSimulatedStore;
     // The name the headset's runtime lists the game under.
     std::string xrApplication{};
     // `[xr] required`: no headset, no game -- said, and the run ends.

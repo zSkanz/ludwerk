@@ -1827,6 +1827,7 @@ Every other concrete class is deliberately off the wire, and this is why.
 
 | Class | Reason |
 |---|---|
+| XRAnchor | A place in one player's room, which only that player's headset knows (ADR 0247 §3): it is made on that machine and is that machine's alone. |
 | FoliageLayer | Foliage is drawn and never simulated (ADR 0116): placement is a pure function of the terrain, the layer and its seed, so every machine grows the same field from the scene it already has, and the wire carries none of it. |
 | FoliageMesh | Part of a `FoliageLayer`, and excluded for its reason. |
 | Terrain | Its bulk is not a property and a field is megabytes. A world's ground arrives with the world -- from the scene, or later from a streamed cell -- and a sculpt is rare, authored, and not a per-tick fact. ADR 0069 decides this by name so the next person does not have to work out whether it was considered. |

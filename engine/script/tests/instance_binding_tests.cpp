@@ -623,9 +623,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `GetHandJoints` (ADR 0245).
     // 372: `XRService`'s `SimulateInput` and `GetPointerRay` (ADR 0246).
     // 373: `XRService:SupportsPassthrough` (ADR 0247); 375: `GetRoomAsync`
-    // and `CreateRoomParts`.
-    CHECK(coverage.declared == 375);
-    CHECK(coverage.bound == 375);
+    // and `CreateRoomParts`; 378: `CreateAnchorAsync`, `LoadAnchorsAsync`
+    // and `XRAnchor:SaveAsync`.
+    CHECK(coverage.declared == 378);
+    CHECK(coverage.bound == 378);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

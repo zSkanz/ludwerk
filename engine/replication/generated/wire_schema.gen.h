@@ -894,6 +894,7 @@ inline constexpr ClassDesc Classes[] = {
 // replicated ancestor too**: a `Bone` is an `Attachment`, and a lookup that
 // walked up past its own name would describe it by its ancestor's schema.
 inline constexpr std::string_view ExcludedClasses[] = {
+    "XRAnchor",
     "FoliageLayer",
     "FoliageMesh",
     "Terrain",
@@ -957,6 +958,7 @@ inline constexpr std::string_view ExcludedClasses[] = {
 // schema). A dev run warns about an instance of any other excluded class under
 // something the authority sends, and not about these.
 inline constexpr std::string_view QuietClasses[] = {
+    "XRAnchor",
     "FoliageLayer",
     "FoliageMesh",
     "Terrain",

@@ -5013,6 +5013,68 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     waterPointDesc.detachComponents = native::detachWaterPointComponents;
     classes.registerClass(waterPointDesc);
 
+    // --- XRAnchor ---
+    static std::array<PropertyDesc, 3> xRAnchorProperties;
+    xRAnchorProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("CFrame"),
+            .type = ValueType::CFrame,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Where the anchor is now, in the play space. It follows the room as the headset refines it, and it moves in the play space when `XRService:Recenter` moves the play space.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getXRAnchorCFrame,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Tracked"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the headset knows where the anchor is now. False while the headset has not found it in the room, such as a loaded anchor in its first frames or one in another room.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRAnchorTracked,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Id"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The anchor's id, 32 hexadecimal digits, the same in every session. A game that saves several anchors keeps their ids to tell them apart when they are loaded.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getXRAnchorId,
+            .set = nullptr,
+        },
+    }};
+    static std::array<MethodDesc, 1> xRAnchorMethods;
+    xRAnchorMethods = {{
+        MethodDesc{
+            .name = atoms.intern("SaveAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Keeps the anchor on the headset, so `XRService:LoadAnchorsAsync` finds it in the next session. Returns whether the headset saved it. It waits for the headset.",
+        },
+    }};
+    ClassDescriptor xRAnchorDesc;
+    xRAnchorDesc.name = atoms.intern("XRAnchor");
+    xRAnchorDesc.super = instanceClass;
+    xRAnchorDesc.flags = ClassFlags::NotCreatable;
+    xRAnchorDesc.defaultName = atoms.intern("XRAnchor");
+    xRAnchorDesc.doc = "A place pinned in the player's room by the headset, from `XRService:CreateAnchorAsync` or `XRService:LoadAnchorsAsync`. The headset keeps it where it was in the room as it learns the room better, and `SaveAsync` keeps it on the headset for the next session in the same room. It is this machine's alone, and the headset lets it go when it is destroyed.";
+    xRAnchorDesc.properties = xRAnchorProperties;
+    xRAnchorDesc.methods = xRAnchorMethods;
+    classes.registerClass(xRAnchorDesc);
+
     // --- SocialService ---
     static std::array<MethodDesc, 6> socialServiceMethods;
     socialServiceMethods = {{
@@ -6581,7 +6643,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 12> xRServiceMethods;
+    static std::array<MethodDesc, 14> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6612,6 +6674,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the player's room as the headset knows it: its floor, ceiling, walls, tables and the rest, each a rectangle in the play space. A plane's `CFrame` is its middle, the rectangle across its x and y and facing along its z, into the room; `Size` is its width and height. It waits for the headset, which may first ask the player to let the game see the room. Nil with no headset, where the headset knows no room, or when the player says no.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CreateAnchorAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Pins a place in the player's room, given in the play space, and returns its anchor. It waits for the headset. Nil with no headset, or where the headset has no anchors.",
+        },
+        MethodDesc{
+            .name = atoms.intern("LoadAnchorsAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns every anchor this game saved on the headset with `XRAnchor:SaveAsync`. An anchor saved in another room is returned too, and is not `Tracked` until the player is back in it. It waits for the headset. Empty with no headset.",
         },
         MethodDesc{
             .name = atoms.intern("CreateRoomParts"),

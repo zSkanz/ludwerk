@@ -934,6 +934,11 @@ bool setWaterPointSharp(World& world, core::InstanceId id, const Value& value);
 void attachWaterPointComponents(World& world, core::InstanceId id);
 void detachWaterPointComponents(World& world, core::InstanceId id);
 
+// XRAnchor
+Value getXRAnchorCFrame(const World& world, core::InstanceId id);
+Value getXRAnchorTracked(const World& world, core::InstanceId id);
+Value getXRAnchorId(const World& world, core::InstanceId id);
+
 // DataModel
 Value getDataModelEngineVersion(const World& world, core::InstanceId id);
 Value getDataModelLuauVersion(const World& world, core::InstanceId id);

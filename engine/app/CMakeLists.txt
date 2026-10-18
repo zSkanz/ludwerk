@@ -742,6 +742,19 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "\\[room\\] planes=7 floor=1 ceiling=1 walls=4 tables=1 table=0\\.75 1\\.20x0\\.70 facing=1\\.00 parts=7 ball=0\\.85"
         TIMEOUT 60)
+    # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
+    # saves an anchor, a second run of the simulated headset loads it at the
+    # same place.
+    add_test(NAME xr_anchors
+        COMMAND ${CMAKE_COMMAND}
+                -DHOST=$<TARGET_FILE:engine_host>
+                -DSAVE=${CMAKE_SOURCE_DIR}/tests/xr/xr_anchor_save.luau
+                -DLOAD=${CMAKE_SOURCE_DIR}/tests/xr/xr_anchor_load.luau
+                -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/xr-anchors
+                -P ${CMAKE_SOURCE_DIR}/tests/xr/run_simulated_anchors.cmake)
+    set_tests_properties(xr_anchors PROPERTIES
+        PASS_REGULAR_EXPRESSION "the anchor is where it was, in the next session"
+        TIMEOUT 120)
     # **The headset's timing in the log** (what the first test on a device
     # sends back): every five seconds of frames, the display's rate and the
     # frames' own, the late and the undrawn, the eyes' passes.

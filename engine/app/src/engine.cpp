@@ -1993,11 +1993,24 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     core::f64 eyePassMs = 0.0;
     core::u32 eyePasses = 0;
     core::u32 headsetFramesSinceLog = 0;
+    // **Anchors asked of the headset** (ADR 0247 §3): its ask's number, the
+    // script's waiter, what was asked, where, and what a load found so far.
+    struct AnchorAsked
+    {
+        core::u32 ask = 0;
+        core::u32 waiter = 0;
+        core::u8 what = 0;
+        core::CFrameD cframe;
+        std::vector<std::pair<core::u64, std::string>> found;
+    };
+    std::vector<AnchorAsked> anchorsAsked;
+    std::vector<rhi::HeadsetAnchorEvent> anchorEvents;
     constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
     // The engine's own, when asked for (ADR 0248 §4); gone before the device.
     std::unique_ptr<SimulatedHeadset> simulatedHeadset =
         options.xrSimulated
-            ? std::make_unique<SimulatedHeadset>(*device, SimulatedHeadsetDesc{.depth = options.xrDepth})
+            ? std::make_unique<SimulatedHeadset>(
+                  *device, SimulatedHeadsetDesc{.depth = options.xrDepth, .store = options.xrSimulatedStore})
             : nullptr;
     rhi::IHeadset* const headset = simulatedHeadset != nullptr ? simulatedHeadset.get() : device->headset();
     rhi::HeadsetFrame headsetFrame;
@@ -7856,6 +7869,77 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         {plane.kind, seen.recenter * given, core::Vec3{plane.width, plane.height, 0.0f}});
                 }
                 script::resumeXRRoomWaiters(host->runtime().state());
+            }
+            // **Anchors** (ADR 0247 §3): what scripts asked, handed to the
+            // headset; its answers, back to them; each anchor located in the
+            // play space a script reads; and those whose `XRAnchor` is gone,
+            // let go of.
+            {
+                const auto frameOf = [](const rhi::HeadsetPose& pose) {
+                    return core::CFrameD{core::DVec3{static_cast<f64>(pose.position[0]),
+                                                     static_cast<f64>(pose.position[1]),
+                                                     static_cast<f64>(pose.position[2])},
+                                         core::fromQuaternion(pose.orientation[0], pose.orientation[1],
+                                                              pose.orientation[2], pose.orientation[3])};
+                };
+                for (const scene::EngineState::Headset::AnchorAsk& ask : seen.anchorAsks) {
+                    core::u32 asked = 0;
+                    if (ask.what == 0) {
+                        const core::CFrameD given = core::inverse(seen.recenter) * ask.cframe;
+                        rhi::HeadsetPose pose;
+                        pose.valid = true;
+                        pose.position = {static_cast<core::f32>(given.position.x),
+                                         static_cast<core::f32>(given.position.y),
+                                         static_cast<core::f32>(given.position.z)};
+                        core::toQuaternion(given.rotation, pose.orientation[0], pose.orientation[1],
+                                           pose.orientation[2], pose.orientation[3]);
+                        asked = headset->createAnchor(pose);
+                    }
+                    else if (ask.what == 1) {
+                        asked = headset->saveAnchor(ask.handle);
+                    }
+                    else {
+                        asked = headset->loadAnchors();
+                    }
+                    if (asked == 0)
+                        seen.anchorAnswers.push_back({ask.waiter, ask.what, false, ask.cframe, {}});
+                    else
+                        anchorsAsked.push_back({asked, ask.waiter, ask.what, ask.cframe, {}});
+                }
+                seen.anchorAsks.clear();
+                anchorEvents.clear();
+                headset->takeAnchorEvents(anchorEvents);
+                for (rhi::HeadsetAnchorEvent& event : anchorEvents) {
+                    const auto pending = std::find_if(anchorsAsked.begin(), anchorsAsked.end(),
+                                                      [&](const AnchorAsked& one) { return one.ask == event.ask; });
+                    if (pending == anchorsAsked.end()) {
+                        if (event.anchor != 0)
+                            headset->destroyAnchor(event.anchor);
+                        continue;
+                    }
+                    if (event.anchor != 0)
+                        pending->found.emplace_back(event.anchor, std::move(event.uuid));
+                    if (event.kind == rhi::HeadsetAnchorEvent::Kind::Found)
+                        continue;
+                    seen.anchorAnswers.push_back(
+                        {pending->waiter, pending->what, event.ok, pending->cframe, std::move(pending->found)});
+                    anchorsAsked.erase(pending);
+                }
+                for (scene::EngineState::Headset::Anchor& anchor : seen.anchors) {
+                    if (!host->world().alive(anchor.instance)) {
+                        headset->destroyAnchor(anchor.handle);
+                        anchor.handle = 0;
+                        continue;
+                    }
+                    const rhi::HeadsetPose pose = headset->locateAnchor(anchor.handle);
+                    anchor.tracked = pose.valid;
+                    if (pose.valid)
+                        anchor.cframe = seen.recenter * frameOf(pose);
+                }
+                std::erase_if(seen.anchors,
+                              [](const scene::EngineState::Headset::Anchor& anchor) { return anchor.handle == 0; });
+                if (!seen.anchorAnswers.empty())
+                    script::resumeXRAnchorWaiters(host->runtime().state());
             }
             // **The poses a script put** (`XRService:SimulatePose`), in the
             // play space it reads -- the recentred one -- handed to the

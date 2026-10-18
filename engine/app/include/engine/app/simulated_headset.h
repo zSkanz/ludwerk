@@ -8,6 +8,8 @@
 
 #include <array>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "engine/rhi/device.h"
 #include "engine/rhi/xr.h"
@@ -29,6 +31,9 @@ struct SimulatedHeadsetDesc
     // **Each eye's depth image** (ADR 0244 §5), as a runtime that takes
     // depth gives one: what `--xr-depth` turns off.
     bool depth = true;
+    // **Where saved anchors are kept** (`--xr-simulated-store`): a file a
+    // second session reads them back from. Empty keeps them for this session.
+    std::string store;
 };
 
 class SimulatedHeadset final : public rhi::IHeadset
@@ -88,6 +93,15 @@ public:
     // floor three metres by three, the ceiling at 2.5, four walls, and a table
     // whose top is 0.75 up -- answered at the frame after it is asked for.
     void requestRoom() override { m_roomAsked = true; }
+    // **Anchors** (ADR 0247 §3), as a runtime keeps them: each a pose in the
+    // space the headset gives, answered at the next frame; those saved are
+    // written to the store.
+    [[nodiscard]] core::u32 createAnchor(const rhi::HeadsetPose& pose) override;
+    [[nodiscard]] core::u32 saveAnchor(core::u64 anchor) override;
+    [[nodiscard]] core::u32 loadAnchors() override;
+    void destroyAnchor(core::u64 anchor) override;
+    [[nodiscard]] rhi::HeadsetPose locateAnchor(core::u64 anchor) override;
+    void takeAnchorEvents(std::vector<rhi::HeadsetAnchorEvent>& out) override;
     [[nodiscard]] bool takeRoom(rhi::HeadsetRoom& out) override;
     // Its frames at 72 Hz, each on time: the shape of the numbers a runtime's
     // timing has, for the log a test reads.
@@ -124,6 +138,18 @@ private:
     bool m_passthrough = false;
     core::u64 m_framesTaken = 0;
     bool m_roomAsked = false;
+    struct Anchor
+    {
+        core::u64 handle = 0;
+        std::string uuid;
+        rhi::HeadsetPose pose;
+    };
+    std::vector<Anchor> m_anchors;
+    // Saved, where no store is named.
+    std::vector<Anchor> m_saved;
+    std::vector<rhi::HeadsetAnchorEvent> m_anchorEvents;
+    core::u32 m_nextAnchorAsk = 1;
+    core::u64 m_nextAnchor = 1;
     core::f32 m_near = 0.0f;
     core::f32 m_far = 0.0f;
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};

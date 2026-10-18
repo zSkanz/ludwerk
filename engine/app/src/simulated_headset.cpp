@@ -1,5 +1,11 @@
 #include "engine/app/simulated_headset.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <random>
+#include <utility>
+
 #include "engine/core/math.h"
 
 namespace engine::app {
@@ -177,6 +183,104 @@ bool SimulatedHeadset::takeRoom(rhi::HeadsetRoom& out)
     // The table's top, facing up.
     plane(3, {0.0f, 0.75f, -0.8f}, core::fromAxisAngle({1.0f, 0.0f, 0.0f}, -HalfPi), 1.2f, 0.7f);
     return true;
+}
+
+namespace {
+
+// The store's anchors, one a line: the id, then the position and the turn.
+[[nodiscard]] std::vector<std::pair<std::string, rhi::HeadsetPose>> readStore(const std::string& path)
+{
+    std::vector<std::pair<std::string, rhi::HeadsetPose>> kept;
+    std::ifstream in(path);
+    std::string uuid;
+    rhi::HeadsetPose pose;
+    while (in >> uuid >> pose.position[0] >> pose.position[1] >> pose.position[2] >> pose.orientation[0] >>
+           pose.orientation[1] >> pose.orientation[2] >> pose.orientation[3]) {
+        pose.valid = true;
+        kept.emplace_back(uuid, pose);
+    }
+    return kept;
+}
+
+} // namespace
+
+core::u32 SimulatedHeadset::createAnchor(const rhi::HeadsetPose& pose)
+{
+    // An id as a runtime gives one: random, and the same in every session.
+    std::random_device random;
+    char uuid[33]{};
+    (void)std::snprintf(uuid, sizeof(uuid), "%08x%08x%08x%08x", random(), random(), random(), random());
+    const core::u64 handle = m_nextAnchor++;
+    rhi::HeadsetPose kept = pose;
+    kept.valid = true;
+    m_anchors.push_back({handle, uuid, kept});
+    const core::u32 ask = m_nextAnchorAsk++;
+    m_anchorEvents.push_back({rhi::HeadsetAnchorEvent::Kind::Created, ask, handle, uuid, true});
+    return ask;
+}
+
+core::u32 SimulatedHeadset::saveAnchor(core::u64 anchor)
+{
+    const core::u32 ask = m_nextAnchorAsk++;
+    const auto found =
+        std::find_if(m_anchors.begin(), m_anchors.end(), [&](const Anchor& one) { return one.handle == anchor; });
+    bool saved = found != m_anchors.end();
+    if (saved && m_desc.store.empty()) {
+        std::erase_if(m_saved, [&](const Anchor& one) { return one.uuid == found->uuid; });
+        m_saved.push_back(*found);
+    }
+    else if (saved) {
+        auto kept = readStore(m_desc.store);
+        std::erase_if(kept, [&](const auto& one) { return one.first == found->uuid; });
+        kept.emplace_back(found->uuid, found->pose);
+        std::ofstream out(m_desc.store, std::ios::trunc);
+        for (const auto& [uuid, pose] : kept)
+            out << uuid << ' ' << pose.position[0] << ' ' << pose.position[1] << ' ' << pose.position[2] << ' '
+                << pose.orientation[0] << ' ' << pose.orientation[1] << ' ' << pose.orientation[2] << ' '
+                << pose.orientation[3] << '\n';
+        saved = static_cast<bool>(out);
+    }
+    m_anchorEvents.push_back({rhi::HeadsetAnchorEvent::Kind::Saved, ask, 0, {}, saved});
+    return ask;
+}
+
+core::u32 SimulatedHeadset::loadAnchors()
+{
+    const core::u32 ask = m_nextAnchorAsk++;
+    std::vector<std::pair<std::string, rhi::HeadsetPose>> kept;
+    if (m_desc.store.empty()) {
+        for (const Anchor& one : m_saved)
+            kept.emplace_back(one.uuid, one.pose);
+    }
+    else {
+        kept = readStore(m_desc.store);
+    }
+    for (const auto& [uuid, pose] : kept) {
+        const core::u64 handle = m_nextAnchor++;
+        m_anchors.push_back({handle, uuid, pose});
+        m_anchorEvents.push_back({rhi::HeadsetAnchorEvent::Kind::Found, ask, handle, uuid, true});
+    }
+    m_anchorEvents.push_back({rhi::HeadsetAnchorEvent::Kind::Done, ask, 0, {}, true});
+    return ask;
+}
+
+void SimulatedHeadset::destroyAnchor(core::u64 anchor)
+{
+    std::erase_if(m_anchors, [&](const Anchor& one) { return one.handle == anchor; });
+}
+
+rhi::HeadsetPose SimulatedHeadset::locateAnchor(core::u64 anchor)
+{
+    const auto found =
+        std::find_if(m_anchors.begin(), m_anchors.end(), [&](const Anchor& one) { return one.handle == anchor; });
+    return found != m_anchors.end() ? found->pose : rhi::HeadsetPose{};
+}
+
+void SimulatedHeadset::takeAnchorEvents(std::vector<rhi::HeadsetAnchorEvent>& out)
+{
+    for (rhi::HeadsetAnchorEvent& one : m_anchorEvents)
+        out.push_back(std::move(one));
+    m_anchorEvents.clear();
 }
 
 void SimulatedHeadset::vibrate(core::u32 hand, core::f32 amplitude, core::f32 seconds)

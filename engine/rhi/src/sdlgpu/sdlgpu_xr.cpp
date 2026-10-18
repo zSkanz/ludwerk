@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -92,6 +93,10 @@ struct XrCalls
     PFN_xrGetSpaceComponentStatusFB componentStatus = nullptr;
     PFN_xrGetSpaceBoundingBox2DFB boundingBox2D = nullptr;
     PFN_xrGetSpaceSemanticLabelsFB semanticLabels = nullptr;
+    // XR_FB_spatial_entity's anchors, and XR_FB_spatial_entity_storage's.
+    PFN_xrCreateSpatialAnchorFB createAnchor = nullptr;
+    PFN_xrSetSpaceComponentStatusFB setComponentStatus = nullptr;
+    PFN_xrSaveSpaceFB saveSpace = nullptr;
 
     void loadScene(XrInstance instance)
     {
@@ -109,6 +114,9 @@ struct XrCalls
         get("xrGetSpaceComponentStatusFB", componentStatus);
         get("xrGetSpaceBoundingBox2DFB", boundingBox2D);
         get("xrGetSpaceSemanticLabelsFB", semanticLabels);
+        get("xrCreateSpatialAnchorFB", createAnchor);
+        get("xrSetSpaceComponentStatusFB", setComponentStatus);
+        get("xrSaveSpaceFB", saveSpace);
     }
 
     void loadPassthrough(XrInstance instance)
@@ -305,9 +313,9 @@ class OpenXrHeadset final : public IHeadset
 {
 public:
     OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
-                  bool fbPassthrough, bool metrics, bool scene)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_scene(scene), m_metrics(metrics),
-          m_fbPassthrough(fbPassthrough), m_depthLayer(depthLayer), m_handTracking(handTracking)
+                  bool fbPassthrough, bool metrics, bool scene, bool anchors)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_scene(scene), m_anchors(anchors),
+          m_metrics(metrics), m_fbPassthrough(fbPassthrough), m_depthLayer(depthLayer), m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
@@ -482,11 +490,12 @@ public:
         }
         if (m_fbPassthrough)
             m_calls.loadPassthrough(m_instance);
-        if (m_scene) {
+        if (m_scene || m_anchors)
             m_calls.loadScene(m_instance);
-            m_scene = m_calls.querySpaces != nullptr && m_calls.retrieveSpaces != nullptr &&
-                      m_calls.componentStatus != nullptr && m_calls.boundingBox2D != nullptr;
-        }
+        m_scene = m_scene && m_calls.querySpaces != nullptr && m_calls.retrieveSpaces != nullptr &&
+                  m_calls.componentStatus != nullptr && m_calls.boundingBox2D != nullptr;
+        m_anchors = m_anchors && m_calls.createAnchor != nullptr && m_calls.setComponentStatus != nullptr &&
+                    m_calls.saveSpace != nullptr && m_calls.querySpaces != nullptr && m_calls.retrieveSpaces != nullptr;
         // **The runtime's measurements** of the game's frames, where it
         // offers them: turned on once, read when the timing is taken.
         if (m_metrics) {
@@ -533,6 +542,8 @@ public:
                 const auto& available = reinterpret_cast<const XrEventDataSpaceQueryResultsAvailableFB&>(event);
                 if (available.requestId == m_roomQuery)
                     collectRoom();
+                else
+                    collectAnchors(available.requestId);
             }
             else if (event.type == XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB) {
                 const auto& complete = reinterpret_cast<const XrEventDataSpaceQueryCompleteFB&>(event);
@@ -540,6 +551,25 @@ public:
                     m_roomAsked = false;
                     m_roomReady = true;
                 }
+                else if (const std::optional<AnchorWait> wait = anchorWait(complete.requestId); wait.has_value()) {
+                    m_anchorEvents.push_back({HeadsetAnchorEvent::Kind::Done, wait->ask, 0, {}, true});
+                }
+            }
+            else if (event.type == XR_TYPE_EVENT_DATA_SPATIAL_ANCHOR_CREATE_COMPLETE_FB) {
+                const auto& done = reinterpret_cast<const XrEventDataSpatialAnchorCreateCompleteFB&>(event);
+                anchorCreated(done.requestId, done.result, done.space, done.uuid);
+            }
+            else if (event.type == XR_TYPE_EVENT_DATA_SPACE_SET_STATUS_COMPLETE_FB) {
+                const auto& done = reinterpret_cast<const XrEventDataSpaceSetStatusCompleteFB&>(event);
+                if (const std::optional<AnchorWait> wait = anchorWait(done.requestId); wait.has_value())
+                    m_anchorEvents.push_back(
+                        {HeadsetAnchorEvent::Kind::Created, wait->ask, handleOf(wait->space), wait->uuid, true});
+            }
+            else if (event.type == XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB) {
+                const auto& done = reinterpret_cast<const XrEventDataSpaceSaveCompleteFB&>(event);
+                if (const std::optional<AnchorWait> wait = anchorWait(done.requestId); wait.has_value())
+                    m_anchorEvents.push_back(
+                        {HeadsetAnchorEvent::Kind::Saved, wait->ask, 0, {}, XR_SUCCEEDED(done.result)});
             }
             event = made<XrEventDataBuffer>(XR_TYPE_EVENT_DATA_BUFFER);
         }
@@ -894,6 +924,81 @@ public:
         return true;
     }
 
+    [[nodiscard]] u32 createAnchor(const HeadsetPose& pose) override
+    {
+        if (!m_anchors || m_session == XR_NULL_HANDLE || m_displayTime == 0)
+            return 0;
+        auto info = made<XrSpatialAnchorCreateInfoFB>(XR_TYPE_SPATIAL_ANCHOR_CREATE_INFO_FB);
+        info.space = m_space;
+        info.poseInSpace.position = {pose.position[0], pose.position[1], pose.position[2]};
+        info.poseInSpace.orientation = {pose.orientation[0], pose.orientation[1], pose.orientation[2],
+                                        pose.orientation[3]};
+        info.time = m_displayTime;
+        XrAsyncRequestIdFB request = 0;
+        if (XR_FAILED(m_calls.createAnchor(m_session, &info, &request)))
+            return 0;
+        return awaitAnchor(request);
+    }
+
+    [[nodiscard]] u32 saveAnchor(u64 anchor) override
+    {
+        if (!m_anchors || m_session == XR_NULL_HANDLE || anchor == 0)
+            return 0;
+        auto info = made<XrSpaceSaveInfoFB>(XR_TYPE_SPACE_SAVE_INFO_FB);
+        info.space = spaceOf(anchor);
+        info.location = XR_SPACE_STORAGE_LOCATION_LOCAL_FB;
+        info.persistenceMode = XR_SPACE_PERSISTENCE_MODE_INDEFINITE_FB;
+        XrAsyncRequestIdFB request = 0;
+        if (XR_FAILED(m_calls.saveSpace(m_session, &info, &request)))
+            return 0;
+        return awaitAnchor(request);
+    }
+
+    // **Every anchor this app saved on the headset**: those that can be
+    // located, kept in its own storage.
+    [[nodiscard]] u32 loadAnchors() override
+    {
+        if (!m_anchors || m_session == XR_NULL_HANDLE)
+            return 0;
+        auto storage = made<XrSpaceStorageLocationFilterInfoFB>(XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB);
+        storage.location = XR_SPACE_STORAGE_LOCATION_LOCAL_FB;
+        auto filter = made<XrSpaceComponentFilterInfoFB>(XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB);
+        filter.next = &storage;
+        filter.componentType = XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB;
+        auto info = made<XrSpaceQueryInfoFB>(XR_TYPE_SPACE_QUERY_INFO_FB);
+        info.queryAction = XR_SPACE_QUERY_ACTION_LOAD_FB;
+        info.maxResultCount = 64;
+        info.timeout = XR_INFINITE_DURATION;
+        info.filter = reinterpret_cast<const XrSpaceFilterInfoBaseHeaderFB*>(&filter);
+        XrAsyncRequestIdFB request = 0;
+        if (XR_FAILED(
+                m_calls.querySpaces(m_session, reinterpret_cast<const XrSpaceQueryInfoBaseHeaderFB*>(&info), &request)))
+            return 0;
+        return awaitAnchor(request);
+    }
+
+    void destroyAnchor(u64 anchor) override
+    {
+        if (anchor != 0 && m_calls.destroySpace != nullptr)
+            (void)m_calls.destroySpace(spaceOf(anchor));
+    }
+
+    [[nodiscard]] HeadsetPose locateAnchor(u64 anchor) override
+    {
+        auto location = made<XrSpaceLocation>(XR_TYPE_SPACE_LOCATION);
+        if (anchor == 0 || m_displayTime == 0 ||
+            XR_FAILED(m_calls.locateSpace(spaceOf(anchor), m_space, m_displayTime, &location)))
+            return {};
+        return poseOf(location);
+    }
+
+    void takeAnchorEvents(std::vector<HeadsetAnchorEvent>& out) override
+    {
+        for (HeadsetAnchorEvent& one : m_anchorEvents)
+            out.push_back(std::move(one));
+        m_anchorEvents.clear();
+    }
+
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
 
     void setPassthrough(bool on) override
@@ -1184,6 +1289,99 @@ private:
         }
     }
 
+    // A runtime request an anchor's ask waits on -- a new anchor's own,
+    // while it is made storable.
+    struct AnchorWait
+    {
+        XrAsyncRequestIdFB request = 0;
+        u32 ask = 0;
+        XrSpace space = XR_NULL_HANDLE;
+        std::string uuid;
+    };
+
+    [[nodiscard]] static u64 handleOf(XrSpace space) noexcept { return reinterpret_cast<u64>(space); }
+    [[nodiscard]] static XrSpace spaceOf(u64 anchor) noexcept { return reinterpret_cast<XrSpace>(anchor); }
+
+    [[nodiscard]] static std::string uuidText(const XrUuidEXT& uuid)
+    {
+        static constexpr char Digits[] = "0123456789abcdef";
+        std::string text;
+        text.reserve(32);
+        for (const u8 byte : uuid.data) {
+            text.push_back(Digits[byte >> 4]);
+            text.push_back(Digits[byte & 15]);
+        }
+        return text;
+    }
+
+    [[nodiscard]] u32 awaitAnchor(XrAsyncRequestIdFB request)
+    {
+        const u32 ask = m_nextAnchorAsk++;
+        m_anchorWaits.push_back({request, ask, XR_NULL_HANDLE, {}});
+        return ask;
+    }
+
+    // Takes the wait a runtime request answers, where it is an anchor's.
+    [[nodiscard]] std::optional<AnchorWait> anchorWait(XrAsyncRequestIdFB request)
+    {
+        const auto found = std::find_if(m_anchorWaits.begin(), m_anchorWaits.end(),
+                                        [&](const AnchorWait& wait) { return wait.request == request; });
+        if (found == m_anchorWaits.end())
+            return std::nullopt;
+        AnchorWait wait = std::move(*found);
+        m_anchorWaits.erase(found);
+        return wait;
+    }
+
+    // **A new anchor**, made storable before it is handed over, so that
+    // saving it is one step.
+    void anchorCreated(XrAsyncRequestIdFB request, XrResult result, XrSpace space, const XrUuidEXT& uuid)
+    {
+        const std::optional<AnchorWait> wait = anchorWait(request);
+        if (!wait.has_value())
+            return;
+        if (XR_FAILED(result) || space == XR_NULL_HANDLE) {
+            m_anchorEvents.push_back({HeadsetAnchorEvent::Kind::Created, wait->ask, 0, {}, false});
+            return;
+        }
+        auto info = made<XrSpaceComponentStatusSetInfoFB>(XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB);
+        info.componentType = XR_SPACE_COMPONENT_TYPE_STORABLE_FB;
+        info.enabled = XR_TRUE;
+        XrAsyncRequestIdFB next = 0;
+        if (XR_SUCCEEDED(m_calls.setComponentStatus(space, &info, &next))) {
+            m_anchorWaits.push_back({next, wait->ask, space, uuidText(uuid)});
+            return;
+        }
+        m_anchorEvents.push_back({HeadsetAnchorEvent::Kind::Created, wait->ask, handleOf(space), uuidText(uuid), true});
+    }
+
+    // **What a load found**: each saved anchor, made locatable -- a loaded
+    // space is not until it is asked to be.
+    void collectAnchors(XrAsyncRequestIdFB request)
+    {
+        const auto wait = std::find_if(m_anchorWaits.begin(), m_anchorWaits.end(),
+                                       [&](const AnchorWait& one) { return one.request == request; });
+        if (wait == m_anchorWaits.end())
+            return;
+        auto results = made<XrSpaceQueryResultsFB>(XR_TYPE_SPACE_QUERY_RESULTS_FB);
+        if (XR_FAILED(m_calls.retrieveSpaces(m_session, request, &results)) || results.resultCountOutput == 0)
+            return;
+        std::vector<XrSpaceQueryResultFB> found(results.resultCountOutput);
+        results.resultCapacityInput = static_cast<u32>(found.size());
+        results.results = found.data();
+        if (XR_FAILED(m_calls.retrieveSpaces(m_session, request, &results)))
+            return;
+        for (const XrSpaceQueryResultFB& one : found) {
+            auto info = made<XrSpaceComponentStatusSetInfoFB>(XR_TYPE_SPACE_COMPONENT_STATUS_SET_INFO_FB);
+            info.componentType = XR_SPACE_COMPONENT_TYPE_LOCATABLE_FB;
+            info.enabled = XR_TRUE;
+            XrAsyncRequestIdFB ignored = 0;
+            (void)m_calls.setComponentStatus(one.space, &info, &ignored);
+            m_anchorEvents.push_back(
+                {HeadsetAnchorEvent::Kind::Found, wait->ask, handleOf(one.space), uuidText(one.uuid), true});
+        }
+    }
+
     // `Enum.XRPlaneKind` from the scene's first label.
     [[nodiscard]] static u8 kindOf(std::string_view labels) noexcept
     {
@@ -1262,6 +1460,12 @@ private:
     // for, the player's answer (0 none yet, 1 yes, 2 no), the query, and the
     // planes found so far.
     bool m_scene = false;
+    // **Anchors**: whether the runtime has them, the runtime's requests in
+    // flight, the next ask's number, and the answers for the host.
+    bool m_anchors = false;
+    std::vector<AnchorWait> m_anchorWaits;
+    u32 m_nextAnchorAsk = 1;
+    std::vector<HeadsetAnchorEvent> m_anchorEvents;
     bool m_roomAsked = false;
     bool m_roomReady = false;
     std::atomic<int> m_permission{0};
@@ -1315,6 +1519,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     fbPassthrough = false;
     metrics = false;
     scene = false;
+    anchors = false;
+    bool storage = false;
     bool entity = false;
     bool query = false;
     bool sceneListed = false;
@@ -1346,6 +1552,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             query = true;
                         if (name == XR_FB_SCENE_EXTENSION_NAME)
                             sceneListed = true;
+                        if (name == XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME)
+                            storage = true;
                     }
                 }
             }
@@ -1361,11 +1569,15 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     if (metrics)
         extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
     scene = entity && query && sceneListed;
-    if (scene) {
+    anchors = entity && query && storage;
+    if (scene || anchors) {
         extensions.push_back(XR_FB_SPATIAL_ENTITY_EXTENSION_NAME);
         extensions.push_back(XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME);
-        extensions.push_back(XR_FB_SCENE_EXTENSION_NAME);
     }
+    if (scene)
+        extensions.push_back(XR_FB_SCENE_EXTENSION_NAME);
+    if (anchors)
+        extensions.push_back(XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME);
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -1389,7 +1601,7 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
         return nullptr;
     auto headset = std::make_unique<OpenXrHeadset>(
         reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system), std::move(hooks),
-        ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics, ask.scene);
+        ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics, ask.scene, ask.anchors);
     if (!headset->open())
         return nullptr;
     return headset;
