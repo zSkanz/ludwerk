@@ -3265,7 +3265,8 @@ TEST_CASE("an action's name crosses once, an intent that overtakes it waits for 
     CHECK(match.authority->stats().messagesDropped == droppedBefore + 2);
 }
 
-TEST_CASE("a replica names each action once a connection, and leaves a button not held out")
+TEST_CASE(
+    "a replica names each action once a connection, the first tick it is written, and leaves a button not held out")
 {
     PlayedMatch match(nullptr, nullptr, true);
     match.run(10);
@@ -3281,17 +3282,19 @@ TEST_CASE("a replica names each action once a connection, and leaves a button no
         return std::count(match.held->sentTypes.begin(), match.held->sentTypes.end(), core::u8{24});
     };
     match.run(4);
-    // `Move` was named once, with the first tick that held it; `Jump`, never
-    // held, never.
+    // Both named at once, with the first tick that wrote them -- `Jump`
+    // while it is still let go, so its name is there before it is pressed:
+    // named only when first pressed, a name lost with its packet made the
+    // press land a round trip late.
     CHECK(namesSent() == 1);
     mine->intents[0].pressed = true;
     match.run(4);
-    CHECK(namesSent() == 2);
+    CHECK(namesSent() == 1);
     mine->intents[0].pressed = false;
     match.run(6);
     const scene::PlayerComponent* seen = match.server.world.players().find(match.remote());
     REQUIRE(seen != nullptr);
-    CHECK(namesSent() == 2);
+    CHECK(namesSent() == 1);
     // The button let go was not sent: it reads as one not sent, false.
     REQUIRE(seen->intents.size() == 1);
     CHECK(match.server.atoms.text(seen->intents[0].action) == "Move");

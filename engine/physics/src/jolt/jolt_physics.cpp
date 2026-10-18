@@ -3472,6 +3472,97 @@ public:
         applyVehicleInput(*record);
     }
 
+    // **A vehicle's saved state, field by field, in Jolt's own order**
+    // (`VehicleConstraint::SaveState`, Jolt 5.6): what is portable between two
+    // machines is read and written; what is this machine's own -- the body a
+    // wheel touches, where and along which normal, the roll axis, the step
+    // count -- is carried through as it was. A Jolt whose order differs reads
+    // past the end or stops short of it, and both fail here loudly
+    // (`vehicle_tests`, "a vehicle's state round-trips through its saved
+    // form").
+    struct VehicleStream
+    {
+        const VehicleState* put = nullptr;
+        VehicleState* read = nullptr;
+    };
+    static bool copyVehicleStream(JPH::StateRecorder& from, JPH::StateRecorder* to, usize wheels,
+                                  const VehicleStream& stream)
+    {
+        const auto pass = [&](auto& value, const auto* replacement) {
+            from.Read(value);
+            if (replacement != nullptr)
+                value = *replacement;
+            if (to != nullptr)
+                to->Write(value);
+        };
+        const VehicleState* put = stream.put;
+        VehicleState* read = stream.read;
+        bool enabled = false;
+        pass(enabled, static_cast<const bool*>(nullptr));
+        float input = 0.0f;
+        for (int at = 0; at < 4; ++at)
+            pass(input, static_cast<const float*>(nullptr));
+        float previous = 0.0f;
+        pass(previous, put != nullptr ? &put->previousDeltaTime : nullptr);
+        if (read != nullptr)
+            read->previousDeltaTime = previous;
+        float rpm = 0.0f;
+        pass(rpm, put != nullptr ? &put->rpm : nullptr);
+        int gear = 0;
+        const int putGear = put != nullptr ? put->gear : 0;
+        pass(gear, put != nullptr ? &putGear : nullptr);
+        float clutch = 0.0f;
+        pass(clutch, put != nullptr ? &put->clutch : nullptr);
+        float clock = 0.0f;
+        pass(clock, put != nullptr ? &put->gearSwitchTimeLeft : nullptr);
+        pass(clock, put != nullptr ? &put->clutchReleaseTimeLeft : nullptr);
+        pass(clock, put != nullptr ? &put->gearSwitchLatencyTimeLeft : nullptr);
+        for (usize index = 0; index < wheels; ++index) {
+            const VehicleWheelState* given =
+                put != nullptr && index < put->wheels.size() ? &put->wheels[index] : nullptr;
+            VehicleWheelState* out = read != nullptr && index < read->wheels.size() ? &read->wheels[index] : nullptr;
+            float angular = 0.0f;
+            pass(angular, given != nullptr ? &given->angularVelocity : nullptr);
+            float angle = 0.0f;
+            pass(angle, given != nullptr ? &given->rotation : nullptr);
+            JPH::BodyID contactBody;
+            pass(contactBody, static_cast<const JPH::BodyID*>(nullptr));
+            JPH::RVec3 contactPosition;
+            pass(contactPosition, static_cast<const JPH::RVec3*>(nullptr));
+            JPH::Vec3 direction;
+            pass(direction, static_cast<const JPH::Vec3*>(nullptr));
+            pass(direction, static_cast<const JPH::Vec3*>(nullptr));
+            float length = 0.0f;
+            pass(length, given != nullptr ? &given->suspensionLength : nullptr);
+            float lambda = 0.0f;
+            pass(lambda, given != nullptr ? &given->suspensionLambda : nullptr);
+            if (out != nullptr)
+                out->suspensionLambda = lambda;
+            pass(lambda, given != nullptr ? &given->suspensionMaxUpLambda : nullptr);
+            if (out != nullptr)
+                out->suspensionMaxUpLambda = lambda;
+            pass(lambda, given != nullptr ? &given->longitudinalLambda : nullptr);
+            if (out != nullptr)
+                out->longitudinalLambda = lambda;
+            pass(lambda, given != nullptr ? &given->lateralLambda : nullptr);
+            if (out != nullptr)
+                out->lateralLambda = lambda;
+        }
+        JPH::Vec3 axis;
+        pass(axis, static_cast<const JPH::Vec3*>(nullptr));
+        float pitchRoll = 0.0f;
+        pass(pitchRoll, static_cast<const float*>(nullptr));
+        JPH::uint32 step = 0;
+        pass(step, static_cast<const JPH::uint32*>(nullptr));
+        JPH::StreamIn& reading = from;
+        if (reading.IsFailed())
+            return false;
+        // Nothing left over: a field Jolt added would be.
+        JPH::uint8 extra = 0;
+        from.Read(extra);
+        return reading.IsFailed() || reading.IsEOF();
+    }
+
     [[nodiscard]] VehicleState vehicleState(VehicleHandle handle) const
     {
         VehicleState state;
@@ -3514,7 +3605,22 @@ public:
             out.longitudinalSlip = tire.mLongitudinalSlip;
             out.lateralSlip = tire.mLateralSlip;
         }
+        // And the warm starts and the step's length, as the vehicle saves
+        // them.
+        JPH::StateRecorderImpl saved;
+        vehicle.SaveState(saved);
+        saved.Rewind();
+        if (!copyVehicleStream(saved, nullptr, state.wheels.size(), VehicleStream{.read = &state}))
+            reportVehicleLayout();
         return state;
+    }
+
+    // Said once a process: the saved form is not the one this file reads.
+    static void reportVehicleLayout()
+    {
+        static std::atomic<bool> said{false};
+        if (!said.exchange(true))
+            core::log(core::LogLevel::Error, ENG_TR("physics.jolt.err.vehicle_layout"));
     }
 
     void setVehicleState(VehicleHandle handle, const VehicleState& state)
@@ -3523,30 +3629,25 @@ public:
         if (record == nullptr)
             return;
         JPH::VehicleConstraint& vehicle = *record->constraint;
-        auto& controller = static_cast<JPH::WheeledVehicleController&>(*vehicle.GetController());
-        controller.GetEngine().SetCurrentRPM(state.rpm);
-        // The gear, the clutch and the gearbox's clocks together, as it
-        // restores itself.
-        {
-            JPH::StateRecorderImpl put;
-            const int gear = state.gear;
-            const float clutch = state.clutch;
-            put.Write(gear);
-            put.Write(clutch);
-            put.Write(state.gearSwitchTimeLeft);
-            put.Write(state.clutchReleaseTimeLeft);
-            put.Write(state.gearSwitchLatencyTimeLeft);
-            put.Rewind();
-            controller.GetTransmission().RestoreState(put);
+        // **Everything portable at once, as the vehicle restores itself**:
+        // the engine's turns, the gear, the clutch, the gearbox's clocks, the
+        // step's length, and each wheel's spin, angle, suspension and warm
+        // starts. What is this machine's own -- the body each wheel touches,
+        // where -- stays as this machine found it.
+        const usize wheels = vehicle.GetWheels().size();
+        JPH::StateRecorderImpl saved;
+        vehicle.SaveState(saved);
+        saved.Rewind();
+        JPH::StateRecorderImpl put;
+        if (!copyVehicleStream(saved, &put, wheels, VehicleStream{.put = &state})) {
+            reportVehicleLayout();
+            return;
         }
-        const u32 wheels =
-            std::min(static_cast<u32>(vehicle.GetWheels().size()), static_cast<u32>(state.wheels.size()));
-        for (u32 index = 0; index < wheels; ++index) {
-            JPH::Wheel& wheel = *vehicle.GetWheel(index);
-            wheel.SetAngularVelocity(state.wheels[index].angularVelocity);
-            wheel.SetRotationAngle(state.wheels[index].rotation);
-            wheel.SetSteerAngle(state.wheels[index].steerAngle);
-        }
+        put.Rewind();
+        vehicle.RestoreState(put);
+        const u32 steered = std::min(static_cast<u32>(wheels), static_cast<u32>(state.wheels.size()));
+        for (u32 index = 0; index < steered; ++index)
+            vehicle.GetWheel(index)->SetSteerAngle(state.wheels[index].steerAngle);
     }
 
     // --- Soft bodies (ADR 0214) ------------------------------------------------

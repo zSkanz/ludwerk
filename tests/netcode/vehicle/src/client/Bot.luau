@@ -102,7 +102,7 @@ task.spawn(function()
     local controller = car:WaitForChild("VehicleController") :: VehicleController
     -- Whether this machine knows it drives: what puts the car in its island.
     local driven = false
-    for _ = 1, 120 do
+    for _ = 1, if Condition.Mode == "late" then 600 else 120 do
         if controller.Driver == me then
             driven = true
             break

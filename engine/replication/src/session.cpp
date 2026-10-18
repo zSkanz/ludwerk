@@ -6988,9 +6988,14 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
         for (const scene::PlayerIntent& each : seats[seat]->intents) {
             if (count == MaxIntentEntries)
                 break;
-            // A button not held is what an action nobody sent reads as.
-            if (each.type == 0 && !each.pressed)
-                continue;
+            // **Named the first tick it is written, held or not**: a name
+            // crosses reliably, and a button named only when first pressed
+            // was a press whose name was lost with its packet -- the
+            // authority did not know the action until the name came again, a
+            // round trip and more later, and a car's brake landed twelve
+            // ticks after the driver's (2 % loss at 150 ms: a few drives in
+            // a hundred). Named while it is still let go, the name is there
+            // long before anybody presses it.
             auto id = m_intentIds.find(each.action.id);
             if (id == m_intentIds.end()) {
                 const std::string_view name = world.atoms().text(each.action);
@@ -7001,6 +7006,9 @@ void ReplicaSession::sendIntent(const scene::World& world, u64 tick)
                 names.text(name);
                 named += 1;
             }
+            // A button not held is what an action nobody sent reads as.
+            if (each.type == 0 && !each.pressed)
+                continue;
             entries.u16v(id->second);
             u8 bits = static_cast<u8>(static_cast<u8>(each.type) & IntentTypeMask);
             if (each.pressed)
@@ -8017,7 +8025,23 @@ void ReplicaSession::reconcileSeats(scene::World& world, std::span<Answer> answe
         m_stats.predictedDriftMetres = drift;
         m_stats.predictedDriftPart = driftPart;
     }
-    if (agreed && m_lastBodyCorrection < ResyncMetres && !pulled)
+    // **A vehicle this machine has just begun to predict is stepped again
+    // from the authority's state**, agreeing or not: its constraint was made
+    // here, at a join or a seat, and its suspension and its solver's warm
+    // starts are this machine's until an answer puts the authority's there --
+    // and an answer that agrees puts nothing. A wheel resting on one machine
+    // and in the air on the other at the car's birth was seen in the vehicle
+    // gate's logs.
+    bool seeding = false;
+    std::vector<u64> answeredVehicles;
+    for (const scene::CharacterReplayStart::Vehicle& vehicle : work.front().answer->start.vehicles) {
+        const u64 key =
+            static_cast<u64>(vehicle.controller.index) | (static_cast<u64>(vehicle.controller.generation) << 32);
+        answeredVehicles.push_back(key);
+        seeding = seeding || std::find(m_seededVehicles.begin(), m_seededVehicles.end(), key) == m_seededVehicles.end();
+    }
+    m_seededVehicles = std::move(answeredVehicles);
+    if (agreed && m_lastBodyCorrection < ResyncMetres && !pulled && !seeding)
         return;
     // **Under a centimetre, stepped again without a word** (ADR 0133). From
     // the same state the two machines step the island to the bit, but a
@@ -8748,6 +8772,8 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                     vehicle.clutchReleaseTimeLeft = asF32(held->fields[at]);
                 else if (field->name == "GearSwitchLatencyTimeLeft")
                     vehicle.gearSwitchLatencyTimeLeft = asF32(held->fields[at]);
+                else if (field->name == "PreviousDeltaTime")
+                    vehicle.previousDeltaTime = asF32(held->fields[at]);
             }
             for (core::InstanceId child = world.firstChild(id); child.valid(); child = world.nextSibling(child)) {
                 const EntityState* wheelHeld = world.vehicleWheels().find(child) != nullptr ? heldOf(child) : nullptr;
@@ -8766,11 +8792,81 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                         wheel.rotation = asF32(wheelHeld->fields[at]);
                     else if (field->name == "SteerAngle")
                         wheel.steerAngle = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "Grounded")
+                        wheel.grounded = asBool(wheelHeld->fields[at]);
+                    else if (field->name == "Compression")
+                        wheel.compression = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "SuspensionLength")
+                        wheel.suspensionLength = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "SuspensionLambda")
+                        wheel.suspensionLambda = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "SuspensionMaxUpLambda")
+                        wheel.suspensionMaxUpLambda = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "LongitudinalLambda")
+                        wheel.longitudinalLambda = asF32(wheelHeld->fields[at]);
+                    else if (field->name == "LateralLambda")
+                        wheel.lateralLambda = asF32(wheelHeld->fields[at]);
                 }
                 vehicle.wheels.push_back(wheel);
             }
             all.front().start.vehicles.push_back(std::move(vehicle));
         });
+    }
+    // **And a vehicle's engine, gearbox and wheels beside where it was**:
+    // a car corrected again and again at the same distance is one whose
+    // hidden state this machine had otherwise, and the log says which.
+    if (m_logCorrections && m_replay != nullptr) {
+        for (const scene::CharacterReplayStart::Vehicle& theirs : all.front().start.vehicles) {
+            const std::optional<scene::CharacterReplayStart::Vehicle> mine =
+                m_replay->rememberedVehicle(m_ackedIntent, theirs.controller);
+            if (!mine.has_value())
+                continue;
+            // The wheel furthest from the authority's, by its speed.
+            f64 wheelsOff = 0.0;
+            const scene::CharacterReplayStart::Vehicle::Wheel* worst = nullptr;
+            const scene::CharacterReplayStart::Vehicle::Wheel* worstMine = nullptr;
+            for (usize index = 0; index < theirs.wheels.size(); ++index) {
+                for (const auto& own : mine->wheels) {
+                    if (own.id != theirs.wheels[index].id)
+                        continue;
+                    const f64 off =
+                        static_cast<f64>(std::abs(own.angularVelocity - theirs.wheels[index].angularVelocity));
+                    const bool touchDiffers = own.grounded != theirs.wheels[index].grounded;
+                    if (off > wheelsOff || worst == nullptr || touchDiffers) {
+                        wheelsOff = std::max(wheelsOff, off);
+                        worst = &theirs.wheels[index];
+                        worstMine = &own;
+                        if (touchDiffers)
+                            break;
+                    }
+                }
+            }
+            // Said only where it differs: an answer agrees with most ticks.
+            const bool differs =
+                mine->gear != theirs.gear || std::abs(mine->rpm - theirs.rpm) > 1.0f ||
+                std::abs(mine->clutch - theirs.clutch) > 1.0e-4f ||
+                std::abs(mine->gearSwitchTimeLeft - theirs.gearSwitchTimeLeft) > 1.0e-4f ||
+                std::abs(mine->gearSwitchLatencyTimeLeft - theirs.gearSwitchLatencyTimeLeft) > 1.0e-4f ||
+                wheelsOff > 0.01 || (worst != nullptr && worst->grounded != worstMine->grounded);
+            if (!differs || worst == nullptr)
+                continue;
+            const std::array<core::I18nArg, 14> args{
+                core::I18nArg{"tick", static_cast<core::i64>(world.engineState().tick)},
+                core::I18nArg{"gear", static_cast<core::i64>(mine->gear)},
+                core::I18nArg{"theirGear", static_cast<core::i64>(theirs.gear)},
+                core::I18nArg{"rpm", static_cast<f64>(mine->rpm)},
+                core::I18nArg{"theirRpm", static_cast<f64>(theirs.rpm)},
+                core::I18nArg{"clutch", static_cast<f64>(mine->clutch - theirs.clutch)},
+                core::I18nArg{"switching", static_cast<f64>(mine->gearSwitchTimeLeft - theirs.gearSwitchTimeLeft)},
+                core::I18nArg{"wheel", static_cast<core::i64>(worst->id.index)},
+                core::I18nArg{"speed", static_cast<f64>(worstMine->angularVelocity)},
+                core::I18nArg{"theirSpeed", static_cast<f64>(worst->angularVelocity)},
+                core::I18nArg{"touching", std::string_view(worstMine->grounded ? "yes" : "no")},
+                core::I18nArg{"theirTouching", std::string_view(worst->grounded ? "yes" : "no")},
+                core::I18nArg{"compression", static_cast<f64>(worstMine->compression)},
+                core::I18nArg{"theirCompression", static_cast<f64>(worst->compression)}};
+            core::log(core::LogLevel::Info, ENG_TR("net.info.correction_vehicle"), args);
+        }
     }
     // **Corrected at once, drawn sliding**:
     // what the correction moved is kept as an offset the drawing decays over a

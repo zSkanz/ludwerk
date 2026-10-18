@@ -48,6 +48,11 @@
 # that went past the quarter second, or that followed a heavy frame and was
 # refused, says so.
 #
+# **Taken over moving** (`late`, 150 ms): the car drives itself for three
+# seconds before it is handed to the player, so the player's machine makes
+# its vehicle while it rolls and begins to predict it mid-drive -- and
+# corrects it not once.
+#
 # **Two drivers** (`duel`, 150 ms): two clients, their cars facing each other,
 # each driving at the other with a wheel that wanders from a seed of its own.
 # Neither machine knows where the other's wheel goes next, so corrections are
@@ -74,6 +79,7 @@ set(conditions
     "nudge|25|20|2|nudge|1"
     "stall|75|20|2|stall|1"
     "stalllong|75|20|2|stalllong|1"
+    "late|75|20|2|late|1"
     "duel|75|20|2|duel|2")
 
 file(REMOVE_RECURSE "${STAGE}")
@@ -202,6 +208,15 @@ foreach(entry IN LISTS conditions)
             elseif(driven GREATER 0)
                 string(APPEND failures "  ${name}: a stall of 120 ms took ${driven} corrections (its frame ${stallFrame} "
                        "ms, ${stallTicks} ticks caught up)\n")
+            endif()
+        elseif(mode STREQUAL "late")
+            # **Taken over moving**: a car born on this machine while it
+            # drove itself, predicted from the tick it was handed over, is
+            # stepped from the authority's whole state -- its suspension and
+            # its solver's warm starts too -- and is not corrected.
+            math(EXPR driven "${straight} + ${corner} + ${outside}")
+            if(driven GREATER 0)
+                string(APPEND failures "  ${name}: a car taken over moving took ${driven} corrections\n")
             endif()
         elseif(mode STREQUAL "stalllong")
             # **Past the quarter second, dropped and told**: the burst is

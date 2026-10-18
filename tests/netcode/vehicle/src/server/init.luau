@@ -71,10 +71,21 @@ local function arrive(player: Player)
         facing = vector.create(0, 0, 1)
     end
     local chassis, controller = Car.build(`Car{player.UserId}`, at, Workspace, facing)
-    controller.Driver = player
     controller.DriveIntent = "Drive"
     controller.BrakeIntent = "Brake"
     cars[player] = chassis
+    if Condition.Mode == "late" then
+        -- **Taken over moving** (`late`): the car drives itself for three
+        -- seconds -- the player's machine sees it as anybody's, born on it
+        -- mid-drive -- and is handed to the player still rolling.
+        controller.Throttle = 0.6
+        task.delay(3, function()
+            controller.Throttle = 0
+            controller.Driver = player
+        end)
+    else
+        controller.Driver = player
+    end
 end
 
 for _, player in NetworkService:GetPlayers() do

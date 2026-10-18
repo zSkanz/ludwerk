@@ -254,6 +254,7 @@ void PhysicsSync::readVehicles()
         controller->gearSwitchTimeLeft = state.gearSwitchTimeLeft;
         controller->clutchReleaseTimeLeft = state.clutchReleaseTimeLeft;
         controller->gearSwitchLatencyTimeLeft = state.gearSwitchLatencyTimeLeft;
+        controller->previousDeltaTime = state.previousDeltaTime;
         for (usize at = 0; at < record.wheels.size() && at < state.wheels.size(); ++at) {
             VehicleWheelComponent* wheel = m_scene.vehicleWheels().find(record.wheels[at]);
             if (wheel == nullptr)
@@ -268,6 +269,11 @@ void PhysicsSync::readVehicles()
             wheel->angularVelocity = done.angularVelocity;
             wheel->rotation = done.rotation;
             wheel->steerAngle = done.steerAngle;
+            wheel->suspensionLength = done.suspensionLength;
+            wheel->suspensionLambda = done.suspensionLambda;
+            wheel->suspensionMaxUpLambda = done.suspensionMaxUpLambda;
+            wheel->longitudinalLambda = done.longitudinalLambda;
+            wheel->lateralLambda = done.lateralLambda;
             // Written as the writeback writes a body's part: quietly, into
             // the component.
             if (PartComponent* drawn = m_scene.parts().find(wheel->wheelPart); drawn != nullptr)
@@ -283,16 +289,20 @@ void PhysicsSync::putVehicle(const CharacterReplayStart::Vehicle& vehicle)
     const VehicleRecord& record = m_vehicles[vehicle.controller.index];
     if (!record.handle.valid() || record.generation != vehicle.controller.generation)
         return;
-    physics::VehicleState state;
+    // **Over what the island had**, and nothing of it left that the
+    // authority said: a wheel the answer did not carry keeps what the island
+    // had.
+    const physics::VehicleState had = m_backend.vehicleState(m_world, record.handle);
+    physics::VehicleState state = had;
     state.rpm = vehicle.rpm;
     state.gear = vehicle.gear;
     state.clutch = vehicle.clutch;
     state.gearSwitchTimeLeft = vehicle.gearSwitchTimeLeft;
     state.clutchReleaseTimeLeft = vehicle.clutchReleaseTimeLeft;
     state.gearSwitchLatencyTimeLeft = vehicle.gearSwitchLatencyTimeLeft;
-    // In the order the vehicle was built with; a wheel the answer did not
-    // carry keeps what the island had.
-    const physics::VehicleState had = m_backend.vehicleState(m_world, record.handle);
+    state.previousDeltaTime = vehicle.previousDeltaTime;
+    // In the order the vehicle was built with.
+    state.wheels.clear();
     for (usize at = 0; at < record.wheels.size(); ++at) {
         physics::VehicleWheelState put = at < had.wheels.size() ? had.wheels[at] : physics::VehicleWheelState{};
         for (const CharacterReplayStart::Vehicle::Wheel& wheel : vehicle.wheels) {
@@ -300,6 +310,11 @@ void PhysicsSync::putVehicle(const CharacterReplayStart::Vehicle& vehicle)
                 put.angularVelocity = wheel.angularVelocity;
                 put.rotation = wheel.rotation;
                 put.steerAngle = wheel.steerAngle;
+                put.suspensionLength = wheel.suspensionLength;
+                put.suspensionLambda = wheel.suspensionLambda;
+                put.suspensionMaxUpLambda = wheel.suspensionMaxUpLambda;
+                put.longitudinalLambda = wheel.longitudinalLambda;
+                put.lateralLambda = wheel.lateralLambda;
             }
         }
         state.wheels.push_back(put);

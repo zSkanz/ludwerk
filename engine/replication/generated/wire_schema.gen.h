@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 55;
+inline constexpr u32 ProtocolVersion = 56;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -601,6 +601,7 @@ inline constexpr FieldDesc VehicleControllerFields[] = {
     {"GearSwitchTimeLeft", 22, Encoding::F32, Source::Component, "vehicleControllers"},
     {"ClutchReleaseTimeLeft", 23, Encoding::F32, Source::Component, "vehicleControllers"},
     {"GearSwitchLatencyTimeLeft", 24, Encoding::F32, Source::Component, "vehicleControllers"},
+    {"PreviousDeltaTime", 25, Encoding::F32, Source::Component, "vehicleControllers"},
 };
 
 inline constexpr FieldDesc VehicleWheelFields[] = {
@@ -623,6 +624,11 @@ inline constexpr FieldDesc VehicleWheelFields[] = {
     {"AngularVelocity", 17, Encoding::F32, Source::Component, "vehicleWheels"},
     {"Rotation", 18, Encoding::F32, Source::Component, "vehicleWheels"},
     {"SteerAngle", 19, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionLength", 20, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionLambda", 21, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"SuspensionMaxUpLambda", 22, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"LongitudinalLambda", 23, Encoding::F32, Source::Component, "vehicleWheels"},
+    {"LateralLambda", 24, Encoding::F32, Source::Component, "vehicleWheels"},
 };
 
 inline constexpr FieldDesc SpringBoneFields[] = {

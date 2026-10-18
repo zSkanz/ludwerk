@@ -11,6 +11,19 @@ here.
 
 ### Fixed
 
+- A button's first press in a match no longer reaches the server late now
+  and then. An action was named to the server the first time it was pressed,
+  and a lost packet held the name -- and the press -- back a round trip and
+  more: on a link losing 2 % of its packets, a few drives in a hundred braked
+  twelve ticks late on the server, and the driver's car was corrected three
+  times by about 19 cm. Every action is named the first tick a script writes
+  it, held or not.
+- A car a machine begins to predict starts from the server's car whole: its
+  wheels' suspension and the impulses their tires ended each step with now
+  travel with it (protocol 56). A car born on a player's machine while it was
+  still settling kept, before, a wheel resting where the server's was in the
+  air. With `--net-log-corrections`, a correction of a car says which wheel
+  was otherwise, and how.
 - The editor tells you of a file changed outside it in the first half second
   after it began watching the project. Before, that change was taken for how
   the project began, and its tab kept the old text.

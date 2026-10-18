@@ -1434,6 +1434,9 @@ private:
     std::map<u32, u32> m_predictedParts;
     // How far the last comparison found a predicted part from the authority's.
     core::f64 m_lastBodyCorrection = 0.0;
+    // The vehicles the last answer carried, by controller: one not among them is
+    // newly predicted, and is stepped again from the authority's whole state.
+    std::vector<core::u64> m_seededVehicles;
     bool m_logCorrections = false;
     core::f64 m_predictRadius = DefaultPredictRadius;
     u32 m_predictMax = DefaultPredictMaxBodies;

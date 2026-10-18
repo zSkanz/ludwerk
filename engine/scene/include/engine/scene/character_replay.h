@@ -96,12 +96,23 @@ struct CharacterReplayStart
         core::f32 gearSwitchTimeLeft = 0.0f;
         core::f32 clutchReleaseTimeLeft = 0.0f;
         core::f32 gearSwitchLatencyTimeLeft = 0.0f;
+        core::f32 previousDeltaTime = 0.0f;
         struct Wheel
         {
             core::InstanceId id{};
             core::f32 angularVelocity = 0.0f;
             core::f32 rotation = 0.0f;
             core::f32 steerAngle = 0.0f;
+            // Whether it touched, and how far in its suspension was (0 to
+            // 1): what a correction's log compares, never put back.
+            bool grounded = false;
+            core::f32 compression = 0.0f;
+            // Put back: the suspension's length and its solver's warm starts.
+            core::f32 suspensionLength = 0.0f;
+            core::f32 suspensionLambda = 0.0f;
+            core::f32 suspensionMaxUpLambda = 0.0f;
+            core::f32 longitudinalLambda = 0.0f;
+            core::f32 lateralLambda = 0.0f;
         };
         std::vector<Wheel> wheels;
     };
@@ -212,6 +223,15 @@ public:
     {
         (void)tick;
         (void)id;
+        return std::nullopt;
+    }
+    // A vehicle's engine, gearbox and wheels after the step of `tick`, as
+    // remembered -- what a correction's log compares with the authority's.
+    [[nodiscard]] virtual std::optional<CharacterReplayStart::Vehicle>
+    rememberedVehicle(core::u64 tick, core::InstanceId controller) const
+    {
+        (void)tick;
+        (void)controller;
         return std::nullopt;
     }
     // Its predicted attributes after the step of `tick`, as

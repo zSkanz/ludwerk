@@ -518,6 +518,16 @@ struct VehicleWheelState
     // How much the tire slips, along it and across it.
     f32 longitudinalSlip = 0.0f;
     f32 lateralSlip = 0.0f;
+    // **Where its solver starts the next step**: the impulses the
+    // suspension, its stop, the tire along and the tire across ended the last
+    // step with, which the next begins from. Put back with the suspension's
+    // length, a replica's wheel is stepped as the authority's was; left as
+    // this machine had them, a wheel that touched down a tick apart at a
+    // replica's birth was stepped otherwise for the rest of the drive.
+    f32 suspensionLambda = 0.0f;
+    f32 suspensionMaxUpLambda = 0.0f;
+    f32 longitudinalLambda = 0.0f;
+    f32 lateralLambda = 0.0f;
 };
 
 struct VehicleState
@@ -536,6 +546,9 @@ struct VehicleState
     f32 gearSwitchTimeLeft = 0.0f;
     f32 clutchReleaseTimeLeft = 0.0f;
     f32 gearSwitchLatencyTimeLeft = 0.0f;
+    // The step before's length, in seconds, which the next step's warm start
+    // is scaled by.
+    f32 previousDeltaTime = 0.0f;
     std::vector<VehicleWheelState> wheels;
 };
 

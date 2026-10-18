@@ -95,6 +95,8 @@ public:
     // with the live step, so the prediction redone is the prediction made.
     void remember(u64 tick) override;
     [[nodiscard]] std::optional<core::CFrameD> remembered(u64 tick, core::InstanceId id) const override;
+    [[nodiscard]] std::optional<CharacterReplayStart::Vehicle>
+    rememberedVehicle(u64 tick, core::InstanceId controller) const override;
     [[nodiscard]] std::optional<PredictedAttributes> rememberedAttributes(u64 tick, core::InstanceId id) const override;
     // **Who runs the predicted steps**: the script runtime, handed in by
     // `app`. Null: nothing runs in the step.
@@ -765,6 +767,8 @@ private:
     {
         std::vector<u8> solver;
         std::vector<IslandEntity> entities;
+        // Each vehicle's engine, gearbox and wheels, as this machine had them.
+        std::vector<CharacterReplayStart::Vehicle> vehicles;
     };
     // By tick, the newest `IslandMemory` of them.
     static constexpr usize IslandMemory = 128;

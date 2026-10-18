@@ -422,6 +422,9 @@ struct VehicleControllerComponent
     f32 gearSwitchTimeLeft = 0.0f;
     f32 clutchReleaseTimeLeft = 0.0f;
     f32 gearSwitchLatencyTimeLeft = 0.0f;
+    // And the step before's length, which the next step's warm start is
+    // scaled by.
+    f32 previousDeltaTime = 0.0f;
 };
 
 // One wheel of a vehicle (ADR 0213), at an attachment of the chassis.
@@ -453,6 +456,15 @@ struct VehicleWheelComponent
     f32 angularVelocity = 0.0f;
     f32 rotation = 0.0f;
     f32 steerAngle = 0.0f;
+    // **Where the wheel's solver starts the next step** (`physics::
+    // VehicleWheelState`): the suspension's exact length and the impulses its
+    // four constraint parts ended the last step with -- what a replica puts
+    // back so its wheel is stepped as the authority's was.
+    f32 suspensionLength = 0.0f;
+    f32 suspensionLambda = 0.0f;
+    f32 suspensionMaxUpLambda = 0.0f;
+    f32 longitudinalLambda = 0.0f;
+    f32 lateralLambda = 0.0f;
 };
 
 struct ConstraintComponent

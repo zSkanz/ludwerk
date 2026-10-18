@@ -258,3 +258,92 @@ TEST_CASE("ADR 0213: a vehicle put back with its gearbox's clocks shifts on the 
         differed = differed || without[at].gear != lived[at].gear || without[at].rpm != lived[at].rpm;
     CHECK(differed);
 }
+
+TEST_CASE("a vehicle's state round-trips through its saved form")
+{
+    // **What is read is what Jolt saved, field by field**: a Jolt that saved
+    // its vehicle in another order would read the warm starts from the wrong
+    // places, or none, and this is where that shows.
+    Road road;
+    road.drive(VehicleInput{.forward = 1.0f}, 90);
+    const VehicleState read = road.physics->vehicleState(road.world, road.vehicle);
+    REQUIRE(!read.wheels.empty());
+    CHECK(read.previousDeltaTime > 0.0f);
+    bool anyLambda = false;
+    for (const VehicleWheelState& wheel : read.wheels)
+        anyLambda = anyLambda || wheel.suspensionLambda != 0.0f || wheel.longitudinalLambda != 0.0f;
+    CHECK(anyLambda);
+
+    road.physics->setVehicleState(road.world, road.vehicle, read);
+    const VehicleState again = road.physics->vehicleState(road.world, road.vehicle);
+    REQUIRE(again.wheels.size() == read.wheels.size());
+    CHECK(again.previousDeltaTime == read.previousDeltaTime);
+    for (core::usize at = 0; at < read.wheels.size(); ++at) {
+        CHECK(again.wheels[at].suspensionLength == read.wheels[at].suspensionLength);
+        CHECK(again.wheels[at].suspensionLambda == read.wheels[at].suspensionLambda);
+        CHECK(again.wheels[at].suspensionMaxUpLambda == read.wheels[at].suspensionMaxUpLambda);
+        CHECK(again.wheels[at].longitudinalLambda == read.wheels[at].longitudinalLambda);
+        CHECK(again.wheels[at].lateralLambda == read.wheels[at].lateralLambda);
+        CHECK(again.wheels[at].angularVelocity == read.wheels[at].angularVelocity);
+    }
+}
+
+TEST_CASE("a vehicle put back with its suspension and its warm starts brakes as it braked")
+{
+    // A replica's vehicle is born on its own machine, its suspension and its
+    // solver's warm starts its own; what an answer put back was the engine,
+    // the gearbox and the wheels' spin. A car whose wheel touched down a tick
+    // apart at its birth -- seen in the vehicle gate's logs, a wheel resting
+    // on one machine and in the air on the other -- kept that difference in
+    // its solver for as long as nothing said otherwise.
+    Road road;
+    road.drive(VehicleInput{.forward = 1.0f}, 150);
+    std::vector<u8> world;
+    REQUIRE(road.physics->saveState(road.world, world));
+    const VehicleState authority = road.physics->vehicleState(road.world, road.vehicle);
+    const auto brake = [&]() {
+        std::vector<core::DVec3> at;
+        for (int tick = 0; tick < 60; ++tick) {
+            road.drive(VehicleInput{.brake = 1.0f}, 1);
+            at.push_back(road.body().transform.position);
+        }
+        return at;
+    };
+    const std::vector<core::DVec3> lived = brake();
+
+    // The replica's own: the same car, its warm starts and its suspension
+    // otherwise, and the step before of another length.
+    const auto putBack = [&](bool whole) {
+        REQUIRE(road.physics->restoreState(road.world, world));
+        VehicleState own = authority;
+        own.previousDeltaTime = authority.previousDeltaTime * 0.5f;
+        for (VehicleWheelState& wheel : own.wheels) {
+            wheel.suspensionLength *= 0.9f;
+            wheel.suspensionLambda = 0.0f;
+            wheel.suspensionMaxUpLambda = 0.0f;
+            wheel.longitudinalLambda = 0.0f;
+            wheel.lateralLambda = 0.0f;
+        }
+        road.physics->setVehicleState(road.world, road.vehicle, own);
+        VehicleState put = whole ? authority : own;
+        put.rpm = authority.rpm;
+        put.gear = authority.gear;
+        for (core::usize at = 0; at < put.wheels.size(); ++at)
+            put.wheels[at].angularVelocity = authority.wheels[at].angularVelocity;
+        road.physics->setVehicleState(road.world, road.vehicle, put);
+        return brake();
+    };
+    const std::vector<core::DVec3> whole = putBack(true);
+    REQUIRE(whole.size() == lived.size());
+    for (core::usize at = 0; at < lived.size(); ++at) {
+        CHECK(whole[at].x == lived[at].x);
+        CHECK(whole[at].z == lived[at].z);
+    }
+    // Put back as before -- the engine, the gearbox and the spin only -- it
+    // brakes otherwise.
+    const std::vector<core::DVec3> part = putBack(false);
+    bool differed = false;
+    for (core::usize at = 0; at < lived.size(); ++at)
+        differed = differed || part[at].x != lived[at].x || part[at].z != lived[at].z;
+    CHECK(differed);
+}

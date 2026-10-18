@@ -475,11 +475,17 @@ u64 World::worldHash() const
                 hasher.number(vehicle->clutchReleaseTimeLeft);
                 hasher.number(vehicle->gearSwitchLatencyTimeLeft);
             }
+            hasher.number(vehicle->previousDeltaTime);
         }
         if (const VehicleWheelComponent* wheel = m_vehicleWheels.find(id); wheel != nullptr) {
             hasher.number(wheel->angularVelocity);
             hasher.number(wheel->rotation);
             hasher.number(wheel->steerAngle);
+            hasher.number(wheel->suspensionLength);
+            hasher.number(wheel->suspensionLambda);
+            hasher.number(wheel->suspensionMaxUpLambda);
+            hasher.number(wheel->longitudinalLambda);
+            hasher.number(wheel->lateralLambda);
         }
         // How far into its frame an animator is, which decides the tick it turns
         // the page on, and whether it ran out -- neither is a property.

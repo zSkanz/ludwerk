@@ -2973,6 +2973,13 @@ local VehicleControllerFields: { Schema.Field } = {
         "F32",
         "The seconds left before an automatic gearbox may shift again (protocol 55)."
     ),
+    vehicleController(
+        "PreviousDeltaTime",
+        25,
+        "F32",
+        "**Not a property: what a replica puts back** (protocol 56): the length of the step before, which "
+            .. "the next step's warm start is scaled by."
+    ),
 }
 
 local VehicleWheelFields: { Schema.Field } = {
@@ -3129,6 +3136,49 @@ local VehicleWheelFields: { Schema.Field } = {
         Source = "Component",
         Component = "vehicleWheels",
         Doc = "And how far it is steered.",
+    },
+    {
+        Name = "SuspensionLength",
+        Id = 20,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "**Not a property: what a replica puts back** (protocol 56): the suspension's exact length. "
+            .. "With the four warm starts after it, where the wheel's solver starts the next step: left as a "
+            .. "replica made them, a car born on it while settling kept a wheel resting where the "
+            .. "authority's was in the air, or the other way round.",
+    },
+    {
+        Name = "SuspensionLambda",
+        Id = 21,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The impulse the suspension ended the last step with (protocol 56).",
+    },
+    {
+        Name = "SuspensionMaxUpLambda",
+        Id = 22,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The impulse the suspension's upper stop ended the last step with (protocol 56).",
+    },
+    {
+        Name = "LongitudinalLambda",
+        Id = 23,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The impulse the tire ended the last step with along it: drive and brake (protocol 56).",
+    },
+    {
+        Name = "LateralLambda",
+        Id = 24,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "vehicleWheels",
+        Doc = "The impulse the tire ended the last step with across it (protocol 56).",
     },
 }
 

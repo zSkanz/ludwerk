@@ -1348,6 +1348,40 @@ void PhysicsSync::remember(u64 tick)
     }
     for (IslandEntity& entity : island.entities)
         entity.pending = pendingOf(entity.id);
+    for (usize slot = 0; slot < m_vehicles.size(); ++slot) {
+        const VehicleRecord& record = m_vehicles[slot];
+        if (!record.handle.valid())
+            continue;
+        const physics::VehicleState state = m_backend.vehicleState(m_world, record.handle);
+        CharacterReplayStart::Vehicle held;
+        held.controller = core::InstanceId{static_cast<u32>(slot), record.generation};
+        held.rpm = state.rpm;
+        held.gear = state.gear;
+        held.clutch = state.clutch;
+        held.gearSwitchTimeLeft = state.gearSwitchTimeLeft;
+        held.clutchReleaseTimeLeft = state.clutchReleaseTimeLeft;
+        held.gearSwitchLatencyTimeLeft = state.gearSwitchLatencyTimeLeft;
+        held.previousDeltaTime = state.previousDeltaTime;
+        for (usize at = 0; at < record.wheels.size() && at < state.wheels.size(); ++at) {
+            CharacterReplayStart::Vehicle::Wheel wheel{record.wheels[at], state.wheels[at].angularVelocity,
+                                                       state.wheels[at].rotation, state.wheels[at].steerAngle};
+            wheel.grounded = state.wheels[at].grounded;
+            wheel.suspensionLength = state.wheels[at].suspensionLength;
+            wheel.suspensionLambda = state.wheels[at].suspensionLambda;
+            wheel.suspensionMaxUpLambda = state.wheels[at].suspensionMaxUpLambda;
+            wheel.longitudinalLambda = state.wheels[at].longitudinalLambda;
+            wheel.lateralLambda = state.wheels[at].lateralLambda;
+            if (const VehicleWheelComponent* part = m_scene.vehicleWheels().find(record.wheels[at]); part != nullptr) {
+                const f32 travel = part->suspensionMaxLength - part->suspensionMinLength;
+                wheel.compression =
+                    travel > 0.0f ? std::clamp((part->suspensionMaxLength - state.wheels[at].suspensionLength) / travel,
+                                               0.0f, 1.0f)
+                                  : 0.0f;
+            }
+            held.wheels.push_back(wheel);
+        }
+        island.vehicles.push_back(std::move(held));
+    }
     if (!m_backend.saveIsland(m_world, bodies, characters, island.solver))
         return;
     m_islands.insert_or_assign(tick, std::move(island));
@@ -1363,6 +1397,18 @@ std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId 
     for (const IslandEntity& entity : island->second.entities) {
         if (entity.id == id)
             return entity.cframe;
+    }
+    return std::nullopt;
+}
+
+std::optional<CharacterReplayStart::Vehicle> PhysicsSync::rememberedVehicle(u64 tick, core::InstanceId controller) const
+{
+    const auto island = m_islands.find(tick);
+    if (island == m_islands.end())
+        return std::nullopt;
+    for (const CharacterReplayStart::Vehicle& vehicle : island->second.vehicles) {
+        if (vehicle.controller == controller)
+            return vehicle;
     }
     return std::nullopt;
 }

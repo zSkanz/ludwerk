@@ -214,3 +214,27 @@ chassis. Then the instances: a conformance spec, an example and a drawn gate.
   correction (81 mm at 300 ms, measured). Every row may draw beyond the
   authority's own car a quarter of the simulated jump and a centimetre, never
   less than two centimetres: what a fifth-a-tick glide shows of it.
+
+## Amendment, 2026-10-17: what a replica puts back, and when a press arrives
+
+- **A car a machine begins to predict starts from the authority's car
+  whole.** What an answer put back was the engine's turns, the gear, the
+  clutch, the gearbox's clocks and each wheel's spin, angle and steering. The
+  wheels' suspension and the impulses their tires and suspension ended each
+  step with -- where the solver starts the next step -- were the replica's
+  own, made when the car was born there, and the vehicle gate's logs showed
+  one born while settling with a wheel resting where the authority's was in
+  the air. They travel with the car now (`SuspensionLength` and the four
+  lambdas of `VehicleWheel`, `PreviousDeltaTime` of `VehicleController`,
+  protocol 56), written through the vehicle's own saved form field by field
+  -- what is portable between two machines, never the body a wheel touches or
+  where -- and a vehicle a machine begins to predict is stepped again from the
+  authority's state at the first answer, agreeing or not.
+- **A brake now and then landed twelve ticks late** on the authority, and the
+  driver's car was corrected three times by about 19 cm, a few drives in a
+  hundred on a link losing 2 % of its packets. The cause was not the car: an
+  action was named to the authority the first time it was pressed, the name
+  went reliably, and when its packet was lost the press waited for the name.
+  Every action is now named the first tick a script writes it, held or not
+  (`session_tests`). Measured with the vehicle gate's stall row, eight at a
+  time: 3 drives of 208 corrected before, none of 104 after.

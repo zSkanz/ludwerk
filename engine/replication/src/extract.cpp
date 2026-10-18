@@ -397,6 +397,7 @@ constexpr Carried<VehicleController> VehicleControllerCarried[] = {
     {"GearSwitchTimeLeft", &VehicleController::gearSwitchTimeLeft},
     {"ClutchReleaseTimeLeft", &VehicleController::clutchReleaseTimeLeft},
     {"GearSwitchLatencyTimeLeft", &VehicleController::gearSwitchLatencyTimeLeft},
+    {"PreviousDeltaTime", &VehicleController::previousDeltaTime},
 };
 
 using VehicleWheel = scene::VehicleWheelComponent;
@@ -420,6 +421,11 @@ constexpr Carried<VehicleWheel> VehicleWheelCarried[] = {
     {"AngularVelocity", &VehicleWheel::angularVelocity},
     {"Rotation", &VehicleWheel::rotation},
     {"SteerAngle", &VehicleWheel::steerAngle},
+    {"SuspensionLength", &VehicleWheel::suspensionLength},
+    {"SuspensionLambda", &VehicleWheel::suspensionLambda},
+    {"SuspensionMaxUpLambda", &VehicleWheel::suspensionMaxUpLambda},
+    {"LongitudinalLambda", &VehicleWheel::longitudinalLambda},
+    {"LateralLambda", &VehicleWheel::lateralLambda},
 };
 
 using SpringBone = scene::SpringBoneComponent;
