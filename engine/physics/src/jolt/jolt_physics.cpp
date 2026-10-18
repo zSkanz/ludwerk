@@ -868,14 +868,17 @@ struct CharacterPair
     case ShapeType::Box: {
         // Jolt's box carries a convex radius that must fit inside the box; the
         // default 0.05 makes a part thinner than 10 cm fail to build.
-        // **Rounded no more than a twenty-fifth of its smallest half**: a
-        // box collides as a rounded one, its edges and corners curved by the
-        // convex radius, and Jolt's default of five centimetres on a fifteen
-        // centimetre crate rounded away two thirds of its half -- a ball
-        // rolled at its corner sank into the drawn box, which a player in a
-        // headset sees from half a metre. A box of a metre and a quarter and
-        // more keeps the default.
-        const f32 convexRadius = std::min(JPH::cDefaultConvexRadius, 0.04f * std::min({hx, hy, hz}));
+        // **A small box's corners are its own**: a box collides as a
+        // rounded one, its edges and corners curved by the convex radius, and
+        // Jolt's default of five centimetres on a fifteen-centimetre crate
+        // rounded away two thirds of its half -- a ball rolled at its corner
+        // sank into the drawn box, which a player in a headset sees from half
+        // a metre. The radius grows with the square of the smallest half: 3.4
+        // mm on that crate, and the default from 29 cm up, so a car's body and
+        // the ground keep theirs -- rounded less, a parked car on flat ground
+        // never slept.
+        const f32 smallest = std::min({hx, hy, hz});
+        const f32 convexRadius = std::min(JPH::cDefaultConvexRadius, 0.6f * smallest * smallest);
         return JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(hx, hy, hz), convexRadius));
     }
     case ShapeType::Sphere:
