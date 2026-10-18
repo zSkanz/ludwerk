@@ -32,10 +32,17 @@ try {
     $dev = Join-Path $root 'win-msvc-dev'
     $player = Join-Path $root 'android-arm64-player'
 
+    # **The desktop player tree too, where there is one**: `ludwerk build`
+    # takes an Android game's SPIR-V from this machine's player, and a
+    # player tree left behind gave a Quest the engine of one commit with the
+    # shaders of another -- its new code asked a shader for a filter the old
+    # shader read as another.
     $script = @"
 chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1
 cmake --build "$dev" --target engine_host assetc engine_luauembed || exit /b 1
+set ENG_BUILD_ROOT=$root
+if exist "$root\win-msvc-player\build.ninja" cmake --build --preset win-msvc-player --target engine_host || exit /b 1
 set ANDROID_SDK_ROOT=$sdk
 set ANDROID_HOME=$sdk
 cmake -S . -B "$player" -G Ninja -DCMAKE_TOOLCHAIN_FILE="%CD%/cmake/toolchains/android.cmake" -DCMAKE_BUILD_TYPE=Release -DENG_PROFILE=player -DENG_ENABLE_REPLICATION=ON -DENG_BUILD_TESTS=OFF -DENG_HOST_LUAUEMBED="$dev/engine/script/engine_luauembed.exe" >nul || exit /b 1

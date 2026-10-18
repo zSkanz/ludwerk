@@ -63,7 +63,7 @@ using core::LogLevel;
 // only a bot process runs one, by the module itself.
 constexpr std::string_view RuntimeModules[] = {"announcements", "bot",         "camera",    "npclod",    "ragdoll",
                                                "settings",      "splitscreen", "stamppool", "subtitles", "testing",
-                                               "travelscreen",  "views",       "xrcomfort"};
+                                               "travelscreen",  "views",       "xrcomfort", "xrgrab"};
 
 // The conformance runner, as an ordinary entry script.
 //

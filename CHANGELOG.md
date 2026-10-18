@@ -9,6 +9,13 @@ here.
 
 ## [Unreleased]
 
+### Added
+
+- `@engine/xrgrab` holds a part in a headset with a force of its own, so a
+  block pushed into another or into a table stops there, and a part let go
+  flies at the hand's speed. The XR room holds its crates and its ball with
+  it.
+
 ### Fixed
 
 - On a standalone headset, a frame of the XR room takes less of the GPU:

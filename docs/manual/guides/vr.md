@@ -181,6 +181,29 @@ pinch beside it. `GetHandJoints` returns the hand's 26 joints for a game
 that draws or reads the fingers. A game played only with controllers says
 `hands = false` under `[xr]`.
 
+## Holding things
+
+`@engine/xrgrab` holds a part the way a hand would. It pulls the part to the
+hand with a few times its weight, through an `AlignPosition` and an
+`AlignOrientation`, and does not move it there outright. What the part meets
+stops it: a block set on another and pushed down leaves the one under it on
+the table, while the hand goes on through. Let go, the part keeps the
+velocity it was moving at, which is the hand's, so a swing throws it.
+
+```luau
+local xrgrab = require("@engine/xrgrab")
+
+local hold = xrgrab.hold(part, handCFrame) -- the grip closes
+hold:Move(handCFrame)                       -- each tick it is held
+hold:Release()                              -- the grip opens
+```
+
+`Strength` in the options, or a `GrabStrength` attribute on the part, is the
+pull as a multiple of the part's weight: 4 by default. In an online game the
+holder's machine must simulate the part for it to move at once in their
+hand, so the server gives it to them with `SetNetworkOwner` when they reach
+for it.
+
 ## The controllers are input
 
 Each controller's buttons, triggers, grips and sticks are `Enum.KeyCode`

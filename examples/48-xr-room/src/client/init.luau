@@ -4,8 +4,9 @@
 	its hands, in one script:
 
 	- **Picking up and throwing**: a controller's grip held near a crate or a
-	  ball picks it up; it follows the hand, and let go it flies on at the
-	  speed the hand was moving -- the last few ticks' travel.
+	  ball picks it up; `@engine/xrgrab` pulls it to the hand with a few
+	  times its weight, so what it meets stops it, and let go it flies on at
+	  the speed it was moving.
 	- **Moving**: `@engine/xrcomfort` -- the left stick forward throws an arc
 	  and teleports there, the right stick turns in steps.
 	- **An interface**: a `ScreenGui` is a panel in front of the player in a
@@ -27,14 +28,13 @@ local SceneService = game:GetService("SceneService")
 local UIService = game:GetService("UIService")
 local XRService = game:GetService("XRService")
 local xrcomfort = require("@engine/xrcomfort")
+local xrgrab = require("@engine/xrgrab")
 
 type Demo = { autopilot: boolean? }
 local Demo = (SceneService:GetLoadData() or {}) :: Demo
 
 -- How near a hand must be to what it picks up, in metres.
 local GrabReach = 0.2
--- How many ticks of a hand's travel its throw is measured over.
-local ThrowTicks = 4
 
 -- An afternoon sun: at noon it stands over the table and what is on it
 -- hides its own shadow, and a crate seen up close in a headset looks set
@@ -217,7 +217,7 @@ local function grip(name: string, key: EnumKeyCode): InputAction
 end
 local Grips = { grip("GripLeft", Enum.KeyCode.XRGripLeft), grip("GripRight", Enum.KeyCode.XRGripRight) }
 
-type Hold = { thing: Throwable, offset: CFrame, trail: { vector } }
+type Hold = { thing: Throwable, hold: xrgrab.Hold }
 local Holds: { [number]: Hold? } = {}
 
 local function handInWorld(hand: EnumXRHand): CFrame?
@@ -245,7 +245,7 @@ local function nearest(at: vector): Throwable?
 end
 
 -- Once a tick: what each hand picks up, carries and lets go of.
-RunService.PreSimulation:Connect(function(dt: number)
+RunService.PreSimulation:Connect(function()
     for index, action in Grips do
         local at = handInWorld(Hands[index])
         local held = Holds[index]
@@ -253,25 +253,14 @@ RunService.PreSimulation:Connect(function(dt: number)
         if at and down and not held then
             local thing = nearest(at.Position)
             if thing then
-                thing.part.Anchored = true
-                Holds[index] = { thing = thing, offset = at:Inverse() * thing.part.CFrame, trail = {} }
+                Holds[index] = { thing = thing, hold = xrgrab.hold(thing.part, at) }
             end
         elseif held and (not down or not at) then
-            -- Let go: on at the speed the hand was moving.
+            -- Let go: on at the speed it was moving, which is the hand's.
             Holds[index] = nil
-            local part = held.thing.part
-            part.Anchored = false
-            local trail = held.trail
-            if #trail >= 2 then
-                part.LinearVelocity = (trail[#trail] - trail[1]) / ((#trail - 1) * dt)
-            end
+            held.hold:Release()
         elseif held and at then
-            local part = held.thing.part
-            part.CFrame = at * held.offset
-            table.insert(held.trail, part.Position)
-            if #held.trail > ThrowTicks then
-                table.remove(held.trail, 1)
-            end
+            held.hold:Move(at)
         end
     end
 end)

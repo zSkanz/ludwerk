@@ -787,6 +787,15 @@ if(ENG_BUILD_TESTS)
     # **The player's room** (ADR 0247 §2): the simulated headset's recorded
     # room, from `GetRoomAsync`, made solid by `CreateRoomParts` -- a ball
     # dropped on the table rests on its top.
+    # **A held thing meets what it is pushed into** (`@engine/xrgrab`): a
+    # block set on another and pushed ten centimetres down leaves the lower
+    # one on the table, a block pushed into the table stops at its top, and
+    # one let go flies at the hand's speed.
+    add_test(NAME xr_grab
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_grab.luau" --headless --frames=160 --exit --rhi=null)
+    set_tests_properties(xr_grab PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[grab\\] ok=true"
+        TIMEOUT 60)
     add_test(NAME xr_room
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_room.luau" --headless --frames=150 --exit
                 --rhi=null --xr=simulated)
