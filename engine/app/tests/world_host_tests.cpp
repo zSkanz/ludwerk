@@ -951,6 +951,103 @@ TEST_CASE("a stopped car two centimetres off the authority's is settled onto it 
     CHECK(after < 0.001);
 }
 
+TEST_CASE("a braked car comes to rest and stays there, and rolls when let off on a slope (D677)")
+{
+    // Driven, then braked: two seconds after slowing to a walk it is asleep
+    // and stays still -- on a 10 degree slope too, where a car woken by its
+    // brake every tick crept down at a centimetre or two a second for good.
+    // The two seconds are its springs' rocking and the half second a body is
+    // still before it sleeps. And asleep on the slope, its brake let off, it
+    // rolls at once.
+    for (const int slope : {0, 10}) {
+        CAPTURE(slope);
+        Captured log;
+        Project project;
+        project.write("src/client/init.luau", std::string(R"(
+            local RunService = game:GetService("RunService")
+            local slope = math.rad()") + std::to_string(slope) + R"()
+            local floor = Instance.new("Part")
+            floor.Anchored = true
+            floor.Size = vector.create(400, 1, 400)
+            floor.CFrame = CFrame.fromEuler(slope, 0, 0)
+            floor.Parent = workspace
+            local car = Instance.new("Part")
+            car.Name = "Car"
+            car.Size = vector.create(2, 0.6, 4)
+            car.CFrame = CFrame.fromEuler(slope, 0, 0) * CFrame.new(0, 1.2, 0)
+            car.Parent = workspace
+            local controller = Instance.new("VehicleController")
+            controller.Parent = car
+            for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+                local hub = Instance.new("Attachment")
+                hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+                hub.Parent = car
+                local wheel = Instance.new("VehicleWheel")
+                wheel.Attachment = hub
+                wheel.MaxSteerAngle = if corner[2] < 0 then 30 else 0
+                wheel.Driven = corner[2] > 0
+                wheel.Parent = controller
+            end
+            local ticks = 0
+            RunService.PreSimulation:Connect(function()
+                ticks += 1
+                -- A second braked, two driven, then braked until let off.
+                local driving = ticks > 60 and ticks <= 180
+                controller.Throttle = if driving then 1 else 0
+                controller.Brake = if driving or workspace:GetAttribute("LetOff") then 0 else 1
+            end)
+        )");
+        app::WorldHost host;
+        REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+        scene::World& world = host.world();
+        core::InstanceId car;
+        const auto speedOf = [&]() {
+            const core::Vec3 v = world.rigidBodies().find(car)->linearVelocity;
+            return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        };
+        // Driven and braked to below a walk.
+        int slow = -1;
+        for (int tick = 0; tick < 600 && slow < 0; ++tick) {
+            host.tick();
+            if (!car.valid())
+                car = world.findFirstChild(host.workspace(), world.atoms().lookup("Car"));
+            if (tick > 180 && car.valid() && speedOf() < 0.05f)
+                slow = tick;
+        }
+        CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+        REQUIRE(slow >= 0);
+        // Two seconds to settle on its springs and sleep, then three of
+        // standing still.
+        for (int tick = 0; tick < 120; ++tick)
+            host.tick();
+        const core::DVec3 settled = world.parts().find(car)->cframe.position;
+        core::f32 fastest = 0.0f;
+        for (int tick = 0; tick < 180; ++tick) {
+            host.tick();
+            fastest = std::max(fastest, speedOf());
+        }
+        const core::DVec3 moved = world.parts().find(car)->cframe.position - settled;
+        const core::f64 crept = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
+        MESSAGE("slope ", slope, ": fastest ", fastest * 1000.0f, " mm/s, crept ", crept * 1000.0, " mm in 3 s");
+        CHECK(fastest < 0.001f);
+        CHECK(crept < 0.0005);
+
+        // Let off: on the slope it rolls within a few ticks.
+        if (slope != 0) {
+            REQUIRE(world.setAttribute(host.workspace(), world.atoms().intern("LetOff"), scene::Value{true}));
+            int rolling = -1;
+            for (int tick = 0; tick < 30 && rolling < 0; ++tick) {
+                host.tick();
+                if (speedOf() > 0.02f)
+                    rolling = tick;
+            }
+            MESSAGE("let off, rolling after ", rolling, " ticks");
+            CHECK(rolling >= 0);
+            CHECK(rolling <= 10);
+        }
+    }
+}
+
 TEST_CASE("a replay from the tick a predicted touch launched or moved the character is the live step again")
 {
     // A pad's predicted touch runs after the step solves, and what it writes --

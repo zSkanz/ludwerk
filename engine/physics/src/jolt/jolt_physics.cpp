@@ -4631,14 +4631,27 @@ private:
     {
         auto& controller = static_cast<JPH::WheeledVehicleController&>(*record.constraint->GetController());
         const VehicleInput& input = record.input;
-        controller.SetDriverInput(std::clamp(input.forward, -1.0f, 1.0f), std::clamp(input.right, -1.0f, 1.0f),
-                                  std::clamp(input.brake, 0.0f, 1.0f), std::clamp(input.handBrake, 0.0f, 1.0f));
+        const f32 forward = std::clamp(input.forward, -1.0f, 1.0f);
+        const f32 right = std::clamp(input.right, -1.0f, 1.0f);
+        const f32 brake = std::clamp(input.brake, 0.0f, 1.0f);
+        const f32 handBrake = std::clamp(input.handBrake, 0.0f, 1.0f);
+        // A chassis at rest is asleep, and a sleeping body is not stepped:
+        // the throttle or the wheel wakes it, and so does any input that
+        // changes -- a brake let off on a hill rolls the car away. **A brake
+        // held does not** (D677): a car asleep and braked has nothing to do,
+        // and one woken every tick it was braked never slept -- the solver's
+        // friction at walking pace let it creep down a 10 degree slope at one
+        // to two centimetres a second for as long as it stood. Compared with
+        // the inputs the controller holds, which a replay restores with the
+        // vehicle, so a predicting machine wakes it on the same tick.
+        bool changed = controller.GetForwardInput() != forward || controller.GetRightInput() != right ||
+                       controller.GetBrakeInput() != brake || controller.GetHandBrakeInput() != handBrake;
+        if (record.desc.manual)
+            changed = changed || controller.GetTransmission().GetCurrentGear() != input.gear;
+        controller.SetDriverInput(forward, right, brake, handBrake);
         if (record.desc.manual)
             controller.GetTransmission().Set(input.gear, 1.0f);
-        // A chassis at rest is asleep, and a sleeping body is not stepped:
-        // somebody pressing the throttle wakes it.
-        const bool asked =
-            input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f;
+        const bool asked = forward != 0.0f || right != 0.0f || changed;
         if (const BodyRecord* chassis = resolve(record.desc.chassis); asked && chassis != nullptr)
             m_system.GetBodyInterface().ActivateBody(chassis->id);
     }

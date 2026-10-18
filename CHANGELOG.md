@@ -11,6 +11,11 @@ here.
 
 ### Fixed
 
+- A braked car stands still. It was woken every tick its brake was held, so
+  it never slept, and at walking pace the tyres' friction let it creep -- down
+  a 10 degree slope at a centimetre or two a second for as long as it stood.
+  A held brake no longer wakes it; the throttle, the wheel and any input that
+  changes still do, so a car let off its brake on a hill rolls away.
 - A button's first press in a match no longer reaches the server late now
   and then. An action was named to the server the first time it was pressed,
   and a lost packet held the name -- and the press -- back a round trip and
