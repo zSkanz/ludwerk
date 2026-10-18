@@ -128,4 +128,13 @@ HUD): a game draws those on a `SurfaceGui` parented to the camera.
 - Proved under the simulated headset with a GPU (`xr_simulated_panel`): a
   hand held low and to the right points at a button on the panel and pulls
   the trigger, and the button's `Activated` fires once.
-- **Not yet**: the poke, and `@engine/xrcomfort` (§3).
+- **The poke**: each tracked hand's index fingertip casts a ray along the
+  finger from two centimetres behind the tip to two past it, the same pick
+  as the laser's; what it meets is pressed, and when the finger leaves it is
+  released there -- so a button pushed through and drawn back is activated.
+  A poke takes the press from the laser while a finger touches.
+  `SimulatePose` puts a simulated fingertip (`Enum.XRPose.LeftIndexTip`,
+  `RightIndexTip`), which puts that hand's controller down; in
+  `xr_simulated_panel` a finger pushed a centimetre through the button and
+  out again activates it once more.
+- **Not yet**: `@engine/xrcomfort` (§3).

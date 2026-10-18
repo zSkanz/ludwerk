@@ -7830,7 +7830,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // play space it reads -- the recentred one -- handed to the
             // simulated headset in the space the headset gives.
             if (simulatedHeadset != nullptr) {
-                for (core::u32 which = 0; which < 3; ++which) {
+                for (core::u32 which = 0; which < seen.simulatedPoses.size(); ++which) {
                     std::optional<core::CFrameD>& put = seen.simulatedPoses[which];
                     if (!put.has_value())
                         continue;
@@ -8994,6 +8994,33 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 interaction.worldOver = pointed->element;
                                 xr.pointerHit = pointed->distance;
                             }
+                        }
+                        // **A poke** (ADR 0246 §2): an index fingertip within
+                        // two centimetres of an interface's face, either side,
+                        // presses what is under it -- found by a ray along the
+                        // finger from two behind the tip to two past it -- and
+                        // leaving it releases there.
+                        constexpr f32 PokeReach = 0.02f;
+                        core::InstanceId touched;
+                        for (core::usize finger = 0; finger < 2 && !touched.valid(); ++finger) {
+                            if (!xr.jointsTracked[finger])
+                                continue;
+                            const core::CFrameD tip = xr.playSpaceWorld * xr.joints[finger][rhi::HandJointIndexTip];
+                            const core::Vec3 along = core::transformDirection(tip, core::Vec3{0.0f, 0.0f, -1.0f});
+                            const core::Vec3 from = core::Vec3{static_cast<f32>(tip.position.x - cameraOrigin.x),
+                                                               static_cast<f32>(tip.position.y - cameraOrigin.y),
+                                                               static_cast<f32>(tip.position.z - cameraOrigin.z)} -
+                                                    along * PokeReach;
+                            if (const std::optional<app::WorldUiPick> poked = app::pickWorldUiRay(
+                                    host->world(), host->workspace(), host->uiService(), mainViewport, snapshot.camera,
+                                    from, along, 2.0f * PokeReach, solidAlong, &framePoses))
+                                touched = poked->element;
+                        }
+                        if (touched.valid() || xr.poked.valid()) {
+                            interaction.worldOver = touched.valid() ? touched : xr.poked;
+                            interaction.pressed = touched.valid() && !xr.poked.valid();
+                            interaction.released = !touched.valid() && xr.poked.valid();
+                            xr.poked = touched;
                         }
                     }
                 }

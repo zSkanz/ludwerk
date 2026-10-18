@@ -6610,7 +6610,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("SimulatePose"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. Only with `--xr=simulated`; anywhere else it raises an error.",
+            .doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. An index fingertip puts that hand down as a hand tracked with no controller, its finger pointing along `cframe`'s look vector. Only with `--xr=simulated`; anywhere else it raises an error.",
         },
         MethodDesc{
             .name = atoms.intern("SimulateInput"),
@@ -11099,7 +11099,7 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     enums.registerEnum(xRHandDesc);
 
     // --- XRPose ---
-    static std::array<EnumItemDesc, 3> xRPoseItems;
+    static std::array<EnumItemDesc, 5> xRPoseItems;
     xRPoseItems = {{
         EnumItemDesc{
             .name = atoms.intern("Head"),
@@ -11115,6 +11115,16 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
             .name = atoms.intern("RightHand"),
             .value = 2,
             .doc = "The right hand, where it holds its controller.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("LeftIndexTip"),
+            .value = 3,
+            .doc = "The tip of the left index finger, on a hand tracked with no controller in it.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RightIndexTip"),
+            .value = 4,
+            .doc = "The tip of the right index finger, on a hand tracked with no controller in it.",
         },
     }};
     EnumDescriptor xRPoseDesc;

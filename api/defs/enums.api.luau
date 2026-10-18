@@ -1652,6 +1652,16 @@ local Definition: Schema.Definition = {
                 { Name = "Head", Value = 0, Doc = "The head, between the eyes." },
                 { Name = "LeftHand", Value = 1, Doc = "The left hand, where it holds its controller." },
                 { Name = "RightHand", Value = 2, Doc = "The right hand, where it holds its controller." },
+                {
+                    Name = "LeftIndexTip",
+                    Value = 3,
+                    Doc = "The tip of the left index finger, on a hand tracked with no controller in it.",
+                },
+                {
+                    Name = "RightIndexTip",
+                    Value = 4,
+                    Doc = "The tip of the right index finger, on a hand tracked with no controller in it.",
+                },
             } :: { Schema.EnumItem },
         },
         {

@@ -17312,8 +17312,16 @@
           "Value": 1
         },
         {
+          "Name": "LeftIndexTip",
+          "Value": 3
+        },
+        {
           "Name": "RightHand",
           "Value": 2
+        },
+        {
+          "Name": "RightIndexTip",
+          "Value": 4
         }
       ]
     },

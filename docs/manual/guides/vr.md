@@ -85,7 +85,8 @@ The player points at interfaces with a hand -- the right one, or
 `XRService.PointerHand` -- and its trigger, or a pinch, is a click: on the
 panels, and on every `SurfaceGui` and `BillboardGui`, as a mouse's click is.
 A beam is drawn from the hand to where it points (`PointerVisible`,
-`PointerLength`). A game that points at things of its own -- a gun, a
+`PointerLength`). With hand tracking, a button in reach is also pressed by
+pushing a fingertip into it, and released by drawing the finger back. A game that points at things of its own -- a gun, a
 grabbed object -- casts the same ray:
 
 ```luau

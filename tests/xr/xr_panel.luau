@@ -1,7 +1,8 @@
 --!strict
 -- A `ScreenGui` in a headset is a panel in front of the player (ADR 0246 §1):
 -- laid out against the panel's canvas, not the window's, and drawn in each
--- eye; and the right hand points at its button and pulls the trigger (§2).
+-- eye; and the right hand points at its button and pulls the trigger, then
+-- puts the controller down and pokes the button with a fingertip (§2).
 -- Run under the simulated headset with a GPU and `--screenshot`.
 local RunService = game:GetService("RunService")
 local UIService = game:GetService("UIService")
@@ -60,5 +61,16 @@ RunService.PostSimulation:Connect(function()
         XRService:SimulateInput(Enum.KeyCode.XRTriggerRight, 0)
     elseif ticks == 26 then
         print(`[panel] activated={activated}`)
+        -- The controller put down, the right index finger five centimetres
+        -- short of the button's face, pointing at it.
+        XRService:SimulatePose(Enum.XRPose.RightIndexTip, CFrame.new(0, 1.6, -1.45))
+    elseif ticks == 32 then
+        -- Through the face by a centimetre: a press.
+        XRService:SimulatePose(Enum.XRPose.RightIndexTip, CFrame.new(0, 1.6, -1.51))
+    elseif ticks == 38 then
+        -- And out again: the release, and the button activated.
+        XRService:SimulatePose(Enum.XRPose.RightIndexTip, CFrame.new(0, 1.6, -1.45))
+    elseif ticks == 44 then
+        print(`[panel] poked={activated}`)
     end
 end)

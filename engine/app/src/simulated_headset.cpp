@@ -50,6 +50,23 @@ void SimulatedHeadset::setPose(core::u32 which, const std::array<core::f32, 3>& 
         setHead(standing, orientation);
         return;
     }
+    if (which >= 3) {
+        // The hand behind the fingertip, the controller put down: every joint
+        // at the tip but the thumb's, a hand's width away so it never pinches.
+        const core::u32 tracked = which == 3 ? 0u : 1u;
+        m_input.grip[tracked].valid = false;
+        m_input.aim[tracked].valid = false;
+        for (rhi::HeadsetPose& joint : m_input.joints[tracked]) {
+            joint.valid = true;
+            joint.position = standing;
+            joint.orientation = orientation;
+        }
+        const core::Mat3 turn = core::fromQuaternion(orientation[0], orientation[1], orientation[2], orientation[3]);
+        const core::Vec3 aside = turn * core::Vec3{tracked == 0 ? 0.08f : -0.08f, -0.03f, 0.05f};
+        rhi::HeadsetPose& thumb = m_input.joints[tracked][rhi::HandJointThumbTip];
+        thumb.position = {standing[0] + aside.x, standing[1] + aside.y, standing[2] + aside.z};
+        return;
+    }
     const core::u32 hand = which == 1 ? 0u : 1u;
     for (rhi::HeadsetPose* pose : {&m_input.grip[hand], &m_input.aim[hand]}) {
         pose->valid = true;
@@ -101,6 +118,10 @@ void SimulatedHeadset::readInput(rhi::HeadsetInput& input)
             pose.position[1] -= SeatedHeight;
         for (rhi::HeadsetPose& pose : input.aim)
             pose.position[1] -= SeatedHeight;
+        for (std::array<rhi::HeadsetPose, rhi::HandJointCount>& hand : input.joints) {
+            for (rhi::HeadsetPose& pose : hand)
+                pose.position[1] -= SeatedHeight;
+        }
     }
 }
 

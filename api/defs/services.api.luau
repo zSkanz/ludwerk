@@ -1905,7 +1905,9 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Doc = "Puts the simulated headset's head or a hand where `cframe` says, from the next frame. "
                     .. "The pose is in the play space. A test uses it to move the player's head and hands from a "
-                    .. "script. Only with `--xr=simulated`; anywhere else it raises an error.",
+                    .. "script. An index fingertip puts that hand down as a hand tracked with no controller, its "
+                    .. "finger pointing along `cframe`'s look vector. Only with `--xr=simulated`; anywhere else "
+                    .. "it raises an error.",
             },
             {
                 Name = "SimulateInput",

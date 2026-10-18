@@ -666,9 +666,10 @@ struct EngineState
         bool recenterAsked = false;
         // The floor's rectangle, width and depth, where the headset knows one.
         std::optional<std::array<f32, 2>> playArea;
-        // What `SimulatePose` put, the head's then each hand's, for the host
-        // to hand the simulated headset at the next frame.
-        std::array<std::optional<core::CFrameD>, 3> simulatedPoses{};
+        // What `SimulatePose` put -- the head's, each hand's, then each index
+        // fingertip's -- for the host to hand the simulated headset at the
+        // next frame.
+        std::array<std::optional<core::CFrameD>, 5> simulatedPoses{};
         // **Each `ScreenGui` a panel in front of the player** (ADR 0246 §1),
         // while a headset draws: the screen shows none of them then. Where
         // each is, in the play space a script reads and in the world, and its
@@ -690,6 +691,8 @@ struct EngineState
         bool pointerDown = false;
         bool pointerPressed = false;
         bool pointerReleased = false;
+        // **The poke**: what a fingertip is pressing, if one is.
+        core::InstanceId poked;
         // What `SimulateInput` holds the simulated headset's controls at, by
         // their place among the `XR` key codes.
         std::array<std::optional<f32>, 19> simulatedKeys{};

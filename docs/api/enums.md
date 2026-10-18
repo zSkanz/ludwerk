@@ -1251,6 +1251,8 @@ One of the poses `XRService` tracks: the head, or a hand.
 | `Head` | 0 | The head, between the eyes. |
 | `LeftHand` | 1 | The left hand, where it holds its controller. |
 | `RightHand` | 2 | The right hand, where it holds its controller. |
+| `LeftIndexTip` | 3 | The tip of the left index finger, on a hand tracked with no controller in it. |
+| `RightIndexTip` | 4 | The tip of the right index finger, on a hand tracked with no controller in it. |
 
 ## Enum.XRSessionState
 

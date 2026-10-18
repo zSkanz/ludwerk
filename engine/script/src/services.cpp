@@ -2874,7 +2874,7 @@ int xrServiceSimulatePose(lua_State* L)
 {
     (void)checkInstance(L, 1);
     const scene::EnumValue pose = checkEnumItem(L, 2);
-    if (pose.enumId != scene::generated::XRPoseEnumId || pose.value < 0 || pose.value > 2)
+    if (pose.enumId != scene::generated::XRPoseEnumId || pose.value < 0 || pose.value > 4)
         luaL_argerror(L, 2, "Enum.XRPose");
     const core::CFrameD cframe = checkCFrame(L, 3);
     scene::EngineState::Headset& headset = world(L).engineState().headset;

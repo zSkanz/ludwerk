@@ -64,7 +64,9 @@ public:
     }
     // **A pose put in the space chosen now** (`XRService:SimulatePose`):
     // 0 the head, 1 the left hand, 2 the right -- a hand's grip and aim both,
-    // and tracked from then on.
+    // and tracked from then on -- 3 and 4 the left and right index
+    // fingertips, which put that hand's controller down and track the hand:
+    // an open hand, its finger along the pose's look vector.
     void setPose(core::u32 which, const std::array<core::f32, 3>& position,
                  const std::array<core::f32, 4>& orientation) noexcept;
     // **A control held at a value** (`XRService:SimulateInput`), by its

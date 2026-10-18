@@ -62,7 +62,7 @@ Holds one of the simulated headset's controls at `value` from the next frame: 1 
 
 ### `SimulatePose(pose: Enum.XRPose, cframe: CFrame)`
 
-Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. Only with `--xr=simulated`; anywhere else it raises an error.
+Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose is in the play space. A test uses it to move the player's head and hands from a script. An index fingertip puts that hand down as a hand tracked with no controller, its finger pointing along `cframe`'s look vector. Only with `--xr=simulated`; anywhere else it raises an error.
 
 ## Events
 

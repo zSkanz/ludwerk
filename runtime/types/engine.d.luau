@@ -5215,8 +5215,9 @@ declare extern type XRService extends Instance with
     --- none. The width is x and the depth is z, in meters, centered on the standing space's origin.
     function GetPlayAreaBounds(self): vector?
     --- Puts the simulated headset's head or a hand where `cframe` says, from the next frame. The pose
-    --- is in the play space. A test uses it to move the player's head and hands from a script. Only
-    --- with `--xr=simulated`; anywhere else it raises an error.
+    --- is in the play space. A test uses it to move the player's head and hands from a script. An index
+    --- fingertip puts that hand down as a hand tracked with no controller, its finger pointing along
+    --- `cframe`'s look vector. Only with `--xr=simulated`; anywhere else it raises an error.
     function SimulatePose(self, pose: EnumXRPose, cframe: CFrame): ()
     --- Holds one of the simulated headset's controls at `value` from the next frame: 1 for a button
     --- down and 0 up, a trigger from 0 to 1, a stick's axis from -1 to 1. The key code is one whose
@@ -7169,6 +7170,8 @@ declare Enum: {
         Head: EnumXRPose,
         LeftHand: EnumXRPose,
         RightHand: EnumXRPose,
+        LeftIndexTip: EnumXRPose,
+        RightIndexTip: EnumXRPose,
         GetEnumItems: (self: any) -> { EnumXRPose },
     },
     XRSpace: {
