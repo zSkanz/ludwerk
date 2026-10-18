@@ -355,6 +355,11 @@ struct EngineState
     // at full speed; less while an overloaded authority is slowed, which its
     // replicas run at too. How often ticks run, never what one does.
     f64 timeDilation = 1.0;
+    // **How fast a replica's own clock runs against that rate**: 1, or a few
+    // percent less while its authority holds more of its intents than it
+    // means to -- a clock that runs ahead is slowed, never its intents
+    // dropped. Not a rate scripts are told of.
+    f64 clockPace = 1.0;
     // **The phases this world has named** (ADR 0231), each a bit: its place
     // here. At most `MostPhases`.
     std::vector<core::NameAtom> phaseNames;

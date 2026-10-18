@@ -1953,12 +1953,22 @@ constexpr std::string_view MovingServer = R"(
     client.network->setCharacterReplay(&replay);
 
     scene::World& world = client.host->world();
+    // The replica's clock, as the frame scheduler runs it: a tick owed for
+    // each of its frames at the pace its authority asks for.
+    core::f64 owed = 0.0;
+    const auto clientFrame = [&]() {
+        owed += world.engineState().clockPace;
+        if (owed < 1.0)
+            return;
+        owed -= 1.0;
+        client.frame();
+    };
     int after = -1;
     core::u64 seen = 0;
     int corrections = 0;
     for (int frame = 0; frame < 900; ++frame) {
         server.frame();
-        client.frame();
+        clientFrame();
         if (!std::holds_alternative<bool>(
                 world.getAttribute(client.host->workspace(), world.atoms().lookup("Started"))))
             continue;
@@ -1966,7 +1976,7 @@ constexpr std::string_view MovingServer = R"(
         if (after % 60 == 30 && skew == 1)
             server.frame();
         if (after % 60 == 30 && skew == 2)
-            client.frame();
+            clientFrame();
         const replication::IReplication* replica = client.network->replication();
         if (replica == nullptr || after < 60)
             continue;
@@ -1979,6 +1989,10 @@ constexpr std::string_view MovingServer = R"(
         }
     }
     CHECK(after > 300);
+    // A clock that ran ahead was slowed, and no intent dropped.
+    const replication::IReplication* authority = server.network->replication();
+    REQUIRE(authority != nullptr);
+    CHECK(authority->stats().intentsSkipped == 0);
     return corrections;
 }
 
@@ -1994,15 +2008,11 @@ TEST_CASE("what a player predicts that moves with no input is not corrected when
         for (const int skew : {0, 1, 2}) {
             CAPTURE(mode);
             CAPTURE(skew);
-            // A replica whose clock runs a tick a second fast fills the queue
-            // until the authority catches up by skipping, and a character
-            // falling at 70 m/s is not stepped the ticks skipped: that is the
-            // catch-up's own question, measured here and not yet held.
-            const int corrections = correctionsMoving(mode, skew);
-            if (std::string_view{mode} == "fall" && skew == 2)
-                MESSAGE("MEASURE the catch-up, falling: " << corrections << " correction(s)");
-            else
-                CHECK(corrections == 0);
+            // A replica whose clock runs a tick a second fast filled the
+            // queue until the authority caught up by skipping, and a
+            // character falling at 70 m/s was not stepped the ticks skipped:
+            // a 10 m correction. Its clock is slowed instead.
+            CHECK(correctionsMoving(mode, skew) == 0);
         }
     }
 }

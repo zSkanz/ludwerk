@@ -231,6 +231,9 @@ struct Status
     u8 joinFailure = 0;
     // On a replica, the rate its authority's world runs at (ADR 0233).
     core::f64 timeDilation = 1.0;
+    // On a replica, how fast its own clock runs against that rate: under 1
+    // while its intents queue up at the authority.
+    core::f64 clockPace = 1.0;
     // On a replica, its place in a front door's line, 0 in none (ADR 0232).
     u32 queuePosition = 0;
 };
@@ -341,6 +344,10 @@ struct Stats
     // ran dry, summed; on a replica, its own, as the authority's snapshots say.
     u32 intentDepth = 0;
     u64 intentStarvations = 0;
+    // On an authority, the intents a queue's ceiling dropped while their
+    // player moved: each a correction at that replica. Nought unless a
+    // replica stalled, or floods.
+    u64 intentsSkipped = 0;
     // How many times a peer's intent stream was anchored again because the
     // peer's clock had moved against this one's.
     u64 intentReanchors = 0;

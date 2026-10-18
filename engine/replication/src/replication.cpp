@@ -247,6 +247,7 @@ public:
             status.path = static_cast<u8>(m_replica->path());
             status.joinFailure = static_cast<u8>(m_replica->joinFailure());
             status.timeDilation = m_replica->timeDilation();
+            status.clockPace = m_replica->clockPace();
             status.queuePosition = m_replica->queuePosition();
             status.redirects = m_replica->redirects();
             status.redirectAddress = m_replica->redirectAddress();

@@ -542,6 +542,7 @@
   "net.info.match_key_in_use": "Another copy of this game on this machine holds its player key, so this copy plays as another player for this run.",
   "net.warn.bad_server_key": "server_key under [network] in project.toml is not a key: it should be the 64 hexadecimal digits a server prints at start. The game's server is taken on trust the first time instead.",
   "net.warn.join_request_failed": "NetworkService.OnJoinRequest raised an error, so the joiner was not let in: {message}",
+  "net.warn.intents_skipped": "Player {user}'s input queued past its ceiling, and {ticks} ticks of it were dropped: their machine stalled and caught up at once, or sends more input than its clock should.",
   "net.warn.join_request_timed_out": "NetworkService.OnJoinRequest did not answer within 10 seconds, so the joiner was not let in.",
   "net.warn.bad_ticket_key": "ticket_public_key under [network] in project.toml is not an Ed25519 public key: it should be 32 bytes in base64, as ludwerk ticket keygen prints it. VerifyTicket refuses every ticket until it is.",
   "net.warn.travel_failed": "Players could not be sent to {target}: {why}",

@@ -166,7 +166,15 @@ inline constexpr u32 MaxIntentDelay = 6;
 inline constexpr u32 IntentDelayRelaxTicks = 600;
 // Queued past the delay by more than this, the queue is caught up at once: a
 // replica that stalled and then sent a burst is not replayed a second late.
+// It is the ceiling, and nothing else drains a queue: a replica whose clock runs
+// ahead of this one's is told how far past the delay its queue stands, and
+// slows its own clock by `ClockNudge` from `PaceAbove` ticks over until it is
+// back within `PaceBelow` -- a skipped intent is a tick of the player's travel
+// the replica stepped and the authority did not, and a correction by it.
 inline constexpr u32 IntentCatchUp = 8;
+inline constexpr u32 PaceAbove = 2;
+inline constexpr u32 PaceBelow = 1;
+inline constexpr core::f64 ClockNudge = 0.04;
 inline constexpr usize MaxQueuedIntents = 64;
 // **How long the last intent stands in while the peer says nothing**:
 // half a second of ticks in which no intent message came at all. Counted by
@@ -1235,6 +1243,10 @@ public:
     // The rate the authority's world runs at, as its last snapshot said
     // (ADR 0233): 1 at full speed.
     [[nodiscard]] core::f64 timeDilation() const noexcept { return m_timeDilation; }
+    // **How fast its own clock should run against its authority's
+    // rate**: 1, or a few percent less while its intents queue up over there
+    // faster than they are applied -- a clock that runs ahead.
+    [[nodiscard]] core::f64 clockPace() const noexcept { return m_slowing ? 1.0 - ClockNudge : 1.0; }
     // Its place in a front door's line, 0 when it is in none (ADR 0232).
     [[nodiscard]] u32 queuePosition() const noexcept { return m_queuePosition; }
     // The loose parts this replica predicts (ADR 0133), and how far, how many
@@ -1442,6 +1454,7 @@ private:
     std::deque<std::shared_ptr<const WorldState>> m_states;
     u64 m_checksumFailures = 0;
     core::f64 m_timeDilation = 1.0;
+    bool m_slowing = false;
     u32 m_queuePosition = 0;
     Stats m_stats;
     // Every player's character by user id, as the last roster named it.

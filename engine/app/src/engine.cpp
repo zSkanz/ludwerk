@@ -6838,7 +6838,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             timeDilation.note(platform::nowNs(), phaseSimMs, simTicks);
             if (clock.networkTopology != scene::NetworkTopology::Replica)
                 clock.timeDilation = timeDilation.rate();
-            scheduler.setTimeScale(clock.timeDilation);
+            scheduler.setTimeScale(clock.timeDilation * clock.clockPace);
             if (clock.timeDilation != toldDilation) {
                 toldDilation = clock.timeDilation;
                 script::fireTimeDilationChanged(host->runtime().state());

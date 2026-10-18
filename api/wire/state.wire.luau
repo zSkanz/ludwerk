@@ -4507,6 +4507,19 @@ local Messages: { Schema.Message } = {
                     .. "(protocol 22), for its network overlay.",
             },
             {
+                Name = "dilation",
+                Type = "u16",
+                Doc = "The rate the authority's world runs at (protocol 55, ADR 0233), in ten thousandths: "
+                    .. "10000 at full speed. The replica's clock runs at it too.",
+            },
+            {
+                Name = "intentSurplus",
+                Type = "u8",
+                Doc = "How many more of this replica's intents the authority holds than its delay means it to "
+                    .. "(protocol 57). From 2 the replica runs its own clock 4% slow, until it is 1 or less: a "
+                    .. "clock that runs ahead is slowed, never its intents dropped.",
+            },
+            {
                 Name = "predictedCount",
                 Type = "u16",
                 Doc = "At most 64; 0 for a replica with no character, or one whose predicted steps write "

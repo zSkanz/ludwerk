@@ -3517,6 +3517,16 @@ void AuthoritySession::applyIntents(scene::World& world)
             // Too far behind the newest: caught up, what is skipped dropped --
             // but not a button pressed in it.
             next = newest - peer.intentDelay;
+            // **Past the ceiling, and moving**: the replica's slowed clock
+            // did not drain it, so it stalled and sent a burst, or it floods.
+            // Every tick dropped is one it stepped and this world did not.
+            if (!resting && next > peer.appliedTick + 1) {
+                const u64 dropped = next - peer.appliedTick - 1;
+                m_stats.intentsSkipped += dropped;
+                const std::array<core::I18nArg, 2> args{core::I18nArg{"user", static_cast<core::i64>(peer.userId)},
+                                                        core::I18nArg{"ticks", static_cast<core::i64>(dropped)}};
+                core::log(core::LogLevel::Warn, ENG_TR("net.warn.intents_skipped"), args);
+            }
         }
         std::vector<scene::PlayerIntent>* found = nullptr;
         if (const auto at = peer.intentQueue.find(next); at != peer.intentQueue.end())
@@ -4924,6 +4934,13 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
     // **The rate the world runs at** (ADR 0233, protocol 55), in ten
     // thousandths: the replica's clock runs at it too.
     snapshot.u16v(static_cast<u16>(std::lround(std::clamp(m_world->engineState().timeDilation, 0.0, 1.0) * 10000.0)));
+    // **How far past its delay this peer's queue stands** (protocol 57): a
+    // replica told it runs ahead slows its own clock until it does not.
+    {
+        const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
+        const u64 depth = newest > peer.appliedTick ? newest - peer.appliedTick : 0;
+        snapshot.u8v(static_cast<u8>(std::min<u64>(depth > peer.intentDelay ? depth - peer.intentDelay : 0, 255)));
+    }
     // **Its own character's predicted attributes** (protocol 37): what
     // the steps of this peer's ticks wrote, as they stand after the one this
     // state answers -- the replica's prediction of them is checked against
@@ -7403,6 +7420,7 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     const u8 intentDepth = reader.u8v();
     const u32 intentStarvations = reader.u32v();
     const u16 dilation = reader.u16v();
+    const u8 intentSurplus = reader.u8v();
     // Its own characters' predicted attributes, a seat at a time: the
     // first player's always, then each guest's that has any (protocol 51).
     std::array<scene::PredictedAttributes, 4> predicted;
@@ -7457,6 +7475,13 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     m_stats.intentStarvations = intentStarvations;
     if (dilation > 0 && dilation <= 10000)
         m_timeDilation = static_cast<f64>(dilation) / 10000.0;
+    // Slowed from `PaceAbove` over to within `PaceBelow`: what the answer
+    // says is a round trip old, and the band keeps the queue from being
+    // drained past its delay by a clock still slowed on old news.
+    if (intentSurplus >= PaceAbove)
+        m_slowing = true;
+    else if (intentSurplus <= PaceBelow)
+        m_slowing = false;
 
     const WorldState* base = baseTick != 0 ? stateAt(baseTick) : nullptr;
     if (baseTick != 0 && base == nullptr)

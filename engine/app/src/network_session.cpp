@@ -565,6 +565,7 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     world.engineState().networkPeerCount = 0;
     // Its own clock again, at full speed (ADR 0233).
     world.engineState().timeDilation = 1.0;
+    world.engineState().clockPace = 1.0;
     world.engineState().networkPort = 0;
     // The world is this machine's own again: its scene's client code runs.
     world.engineState().sceneClientHeld = false;
@@ -788,8 +789,10 @@ void NetworkSession::update()
     state.networkServerClock = status.serverClock;
     // **A replica runs at its authority's rate** (ADR 0233): its prediction
     // steps as often as the authority's ticks do.
-    if (state.networkTopology == scene::NetworkTopology::Replica)
+    if (state.networkTopology == scene::NetworkTopology::Replica) {
         state.timeDilation = status.timeDilation;
+        state.clockPace = status.clockPace;
+    }
     state.networkPeerCount = status.peerCount;
     state.networkPort = m_port;
     noteRelay(status.relayState, status.joinCode);
