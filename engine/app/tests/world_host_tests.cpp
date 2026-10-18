@@ -965,7 +965,8 @@ TEST_CASE("a braked car comes to rest and stays there, and rolls when let off on
         Project project;
         project.write("src/client/init.luau", std::string(R"(
             local RunService = game:GetService("RunService")
-            local slope = math.rad()") + std::to_string(slope) + R"()
+            local slope = math.rad()") + std::to_string(slope) +
+                                                  R"()
             local floor = Instance.new("Part")
             floor.Anchored = true
             floor.Size = vector.create(400, 1, 400)
