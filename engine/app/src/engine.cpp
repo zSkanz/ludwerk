@@ -2999,6 +2999,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .dormantRadius = options.dormantRadius,
         .physicsThreads = options.physicsThreads,
         .rewindCapMs = options.rewindCapMs,
+        .kickOverLimit = options.kickOverLimit,
         .managedWorld = options.managedWorld,
         .saveDirectory = options.saveDirectory,
         .enabledIntegrations = options.enabledIntegrations,
@@ -6571,6 +6572,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 metrics.field("wire_bytes_received", state.networkStats.wireBytesReceived);
                 metrics.field("deferred_per_second", static_cast<core::u64>(state.networkStats.deferredPerSecond));
                 metrics.field("time_dilation", state.timeDilation);
+                // **`suspicion_total{kind}`** (ADR 0241 §3).
+                metrics.key("suspicion_total");
+                metrics.beginObject();
+                for (const auto& [kind, count] : state.suspicionsByKind)
+                    metrics.field(kind, count);
+                metrics.endObject();
                 metrics.endObject();
                 healthServer.publish(!now.stopping, metrics.text());
             }

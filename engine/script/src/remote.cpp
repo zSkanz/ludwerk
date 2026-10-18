@@ -977,15 +977,36 @@ constexpr f64 DefaultRemoteMaxBytes = 16.0 * 1024.0;
     return fallback;
 }
 
-void suspect(World& w, core::InstanceId player, std::string_view kind, std::string detail)
+namespace {
+
+// **Removed past the limits** (ADR 0241 §1, `[network] kick_over_limit`):
+// a player whose calls went past the remotes' limits that many times in the
+// last second, all remotes together. Once: a removal already asked is not
+// asked again.
+void suspectRemote(World& w, core::InstanceId player, std::string_view kind, std::string detail)
 {
-    constexpr usize Kept = 1024;
-    auto& list = w.engineState().suspicions;
-    list.push_back(scene::EngineState::Suspicion{player, std::string(kind), std::move(detail), w.engineState().tick});
-    if (list.size() > Kept)
-        list.erase(list.begin(), list.begin() + static_cast<std::ptrdiff_t>(list.size() - Kept));
-    w.engineState().suspicionsTotal += 1;
+    scene::suspect(w, player, kind, std::move(detail));
+    scene::EngineState& state = w.engineState();
+    if (state.kickOverLimit == 0)
+        return;
+    const core::u64 second = static_cast<core::u64>(1.0 / std::max(state.fixedTimestep, 1.0e-3));
+    const core::u64 since = state.tick > second ? state.tick - second : 0;
+    core::u32 times = 0;
+    for (auto each = state.suspicions.rbegin(); each != state.suspicions.rend() && each->tick >= since; ++each) {
+        if (each->player == player && each->kind.starts_with("remote_"))
+            times += 1;
+    }
+    const scene::PlayerComponent* found = w.players().find(player);
+    if (times < state.kickOverLimit || found == nullptr || found->userId == 0)
+        return;
+    for (const auto& [userId, reason] : state.pendingRemovals) {
+        if (userId == found->userId)
+            return;
+    }
+    state.pendingRemovals.emplace_back(found->userId, core::engineCatalog().format(ENG_TR("net.kick_over_limit")));
 }
+
+} // namespace
 
 // Whether a call a client sent is within its remote's limits; one that is
 // not is dropped before any script sees it, and is a suspicion.
@@ -994,8 +1015,8 @@ void suspect(World& w, core::InstanceId player, std::string_view kind, std::stri
     const f64 maxBytes = remoteLimit(w, message.remote, "MaxBytes", DefaultRemoteMaxBytes);
     const std::string remoteName(w.atoms().text(w.name(message.remote)));
     if (maxBytes > 0.0 && static_cast<f64>(message.payload.size()) > maxBytes) {
-        suspect(w, message.player, "remote_too_large",
-                remoteName + " " + std::to_string(message.payload.size()) + " bytes");
+        suspectRemote(w, message.player, "remote_too_large",
+                      remoteName + " " + std::to_string(message.payload.size()) + " bytes");
         return false;
     }
     const f64 rate = remoteLimit(w, message.remote, "RateLimit", DefaultRemoteRate);
@@ -1017,10 +1038,27 @@ void suspect(World& w, core::InstanceId player, std::string_view kind, std::stri
     }
     bucket.tick = now;
     if (bucket.tokens < 1.0) {
-        suspect(w, message.player, "remote_over_rate", remoteName);
+        suspectRemote(w, message.player, "remote_over_rate", remoteName);
         return false;
     }
     bucket.tokens -= 1.0;
+    return true;
+}
+
+bool takeToken(World& w, f64& tokens, core::u64& tick, bool made, f64 perSecond, f64 burst)
+{
+    const core::u64 now = w.engineState().tick;
+    if (made) {
+        tokens = burst;
+    }
+    else {
+        const f64 seconds = static_cast<f64>(now - std::min(now, tick)) * w.engineState().fixedTimestep;
+        tokens = std::min(burst, tokens + seconds * perSecond);
+    }
+    tick = now;
+    if (tokens < 1.0)
+        return false;
+    tokens -= 1.0;
     return true;
 }
 

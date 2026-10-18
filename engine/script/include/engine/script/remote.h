@@ -50,6 +50,11 @@ void encodeRemoteArguments(lua_State* L, int first, int count, std::vector<core:
 // the input events.
 void fireRemoteMessages(lua_State* L);
 
+// A bucket of `perSecond` refilled by the simulation's clock, `burst` deep:
+// whether one more fits, taking it when it does.
+[[nodiscard]] bool takeToken(scene::World& world, core::f64& tokens, core::u64& tick, bool made, core::f64 perSecond,
+                             core::f64 burst);
+
 // **`RemoteFunction.OnServerInvoke`** (ADR 0079), the one callback: a member
 // a script assigns a function to. Answers false when `key` is not a callback of
 // `id`'s class, so the caller goes on to its other lookups. `Get` pushes the

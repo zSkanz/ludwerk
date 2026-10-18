@@ -1,6 +1,7 @@
 #include "engine/scene/players.h"
 
 #include <algorithm>
+#include <iterator>
 #include <string>
 
 #include "engine/scene/class_registry.h"
@@ -174,6 +175,30 @@ void restLocalCharacters(World& world)
             body->jumpRequested = false;
         }
     });
+}
+
+void suspect(World& world, core::InstanceId player, std::string_view kind, std::string detail, std::string who)
+{
+    constexpr std::size_t Kept = 1024;
+    EngineState& state = world.engineState();
+    if (who.empty() && player.valid()) {
+        if (const PlayerComponent* found = world.players().find(player); found != nullptr) {
+            if (!found->accountId.empty())
+                who = "account:" + found->accountId;
+            else if (!found->publicKey.empty())
+                who = "key:" + found->publicKey;
+        }
+    }
+    state.suspicions.push_back(
+        EngineState::Suspicion{player, std::move(who), std::string(kind), std::move(detail), state.tick});
+    if (state.suspicions.size() > Kept)
+        state.suspicions.erase(state.suspicions.begin(),
+                               state.suspicions.begin() + static_cast<std::ptrdiff_t>(state.suspicions.size() - Kept));
+    state.suspicionsTotal += 1;
+    if (const auto found = state.suspicionsByKind.find(kind); found != state.suspicionsByKind.end())
+        found->second += 1;
+    else
+        state.suspicionsByKind.emplace(std::string(kind), 1);
 }
 
 } // namespace engine::scene

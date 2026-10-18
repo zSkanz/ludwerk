@@ -615,8 +615,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // 355: `Workspace`'s `RaycastAsSeenBy` and `SpherecastAsSeenBy` (ADR 0235).
     // 356: `Player:GetNetworkPing`.
     // 359: `SetRateLimit` on the three remotes (ADR 0241).
-    CHECK(coverage.declared == 359);
-    CHECK(coverage.bound == 359);
+    // 363: `NetworkService`'s `DefineAction`, `CheckAction`, `ReportSuspicion`
+    // and `IsMuted` (ADR 0241).
+    CHECK(coverage.declared == 363);
+    CHECK(coverage.bound == 363);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

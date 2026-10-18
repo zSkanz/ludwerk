@@ -5488,6 +5488,21 @@ declare extern type NetworkService extends Instance with
     --- relaying; `BytesPerSecond`, its traffic; and `Uptime`, in seconds. It does not need a match and
     --- does not disturb one, and several relays can be pinged at once from separate tasks.
     function PingRelayAsync(self, relay: string?, timeout: number?): { Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?
+    --- Says how often each player may do one of the game's own actions: `PerSecond` of them a second,
+    --- up to `Burst` at once (1 when not given). Said again for the same name, it replaces the first.
+    --- `CheckAction` then counts each player's.
+    function DefineAction(self, name: string, rule: { PerSecond: number, Burst: number? }): ()
+    --- Whether this player may do the action now, by the rate `DefineAction` gave it, counted by the
+    --- simulation's clock. True takes one; false is logged as a suspicion (`action_over_rate`), and
+    --- what to do about it is the game's. Raises an error for an action never defined.
+    function CheckAction(self, player: Player, name: string): boolean
+    --- Writes a line in the suspicion log, beside those the engine writes when a player goes past a
+    --- limit. The server console's `suspects` and `suspect` read it, and `/metrics` counts it by
+    --- `kind`. Nothing is done to the player by it.
+    function ReportSuspicion(self, player: Player, kind: string, detail: string?): ()
+    --- Whether the server console has muted this player (`mute`), by their account where the game named
+    --- one, else by their key. What a mute stops, such as chat or voice, is the game's to decide.
+    function IsMuted(self, player: Player): boolean
     --- Returns statistics about the connection, as a table. Use them to show a connection quality
     --- indicator. Every number is 0 in single-player. On an authority, the link numbers are those of
     --- the worst client and the deepest input queue. Link quality: - `Ping`: the round trip, in

@@ -1869,4 +1869,65 @@ TEST_CASE("ADR 0241: a client's calls of one remote are held to its rate and its
     CHECK(fixture.failure(R"(workspace:FindFirstChild("Shout"):SetRateLimit(0))") == "");
     flood(2000, 8);
     CHECK(heard(2480) == "");
+
+    // **Removed past the limits**, when the server says so: ten in a second.
+    CHECK(fixture.failure(R"(workspace:FindFirstChild("Shout"):SetRateLimit(240))") == "");
+    fixture.world->engineState().kickOverLimit = 10;
+    fixture.world->engineState().pendingRemovals.clear();
+    flood(2000, 8);
+    REQUIRE(fixture.world->engineState().pendingRemovals.size() == 1);
+    CHECK(fixture.world->engineState().pendingRemovals[0].first == 9u);
+    CHECK(fixture.world->engineState().suspicionsByKind.at("remote_over_rate") >= 1520u);
+}
+
+TEST_CASE("ADR 0241: an action's rate is the game's, a suspicion names who, and a mute is read by IsMuted")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    const auto shooter = scene::createPlayer(*fixture.world, service, 9, false);
+    REQUIRE(shooter.valid());
+    fixture.world->players().find(shooter)->publicKey = std::string(64, 'a');
+    // Each chunk its own: the service and the player, then the line.
+    const auto check = [&](const char* code) {
+        return fixture.failure(std::string(R"(local NetworkService = game:GetService("NetworkService")
+            local Shooter = NetworkService:GetPlayers()[1]
+            assert(Shooter)
+            )") + code);
+    };
+    REQUIRE(check(R"(NetworkService:DefineAction("Fire", { PerSecond = 5, Burst = 2 }))") == "");
+
+    // Two at once, the burst; the third is over, and said under the player's key.
+    CHECK(check(R"(assert(NetworkService:CheckAction(Shooter, "Fire")))") == "");
+    CHECK(check(R"(assert(NetworkService:CheckAction(Shooter, "Fire")))") == "");
+    CHECK(check(R"(assert(not NetworkService:CheckAction(Shooter, "Fire")))") == "");
+    REQUIRE(!fixture.world->engineState().suspicions.empty());
+    CHECK(fixture.world->engineState().suspicions.back().kind == "action_over_rate");
+    CHECK(fixture.world->engineState().suspicions.back().who == "key:" + std::string(64, 'a'));
+    // A fifth of a second later, one more.
+    for (int at = 0; at < 12; ++at)
+        fixture.tick();
+    CHECK(check(R"(assert(NetworkService:CheckAction(Shooter, "Fire")))") == "");
+    CHECK(check(R"(assert(not NetworkService:CheckAction(Shooter, "Fire")))") == "");
+    // An action never defined, and a rule that is none.
+    CHECK(check(R"(NetworkService:CheckAction(Shooter, "Cast"))") != "");
+    CHECK(check(R"(NetworkService:DefineAction("Cast", { PerSecond = 0 }))") != "");
+
+    // The game's own.
+    CHECK(check(R"(NetworkService:ReportSuspicion(Shooter, "impossible_score", "9999"))") == "");
+    CHECK(fixture.world->engineState().suspicions.back().kind == "impossible_score");
+    CHECK(fixture.world->engineState().suspicions.back().detail == "9999");
+    CHECK(fixture.world->engineState().suspicionsByKind.at("action_over_rate") == 2u);
+
+    // Muted by key, as the console writes it.
+    CHECK(check(R"(assert(not NetworkService:IsMuted(Shooter)))") == "");
+    fixture.world->engineState().muted.push_back("key:" + std::string(64, 'a'));
+    CHECK(check(R"(assert(NetworkService:IsMuted(Shooter)))") == "");
+    // By account, once the game has named one.
+    fixture.world->engineState().muted = {"account:ana"};
+    CHECK(check(R"(assert(not NetworkService:IsMuted(Shooter)))") == "");
+    fixture.world->players().find(shooter)->accountId = "ana";
+    CHECK(check(R"(assert(NetworkService:IsMuted(Shooter)))") == "");
 }

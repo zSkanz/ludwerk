@@ -227,6 +227,12 @@ std::optional<replication::JoinAnswer> ManagedWorld::admit(replication::JoinAsk&
         const std::array<core::I18nArg, 2> args{core::I18nArg{"address", std::string_view{ask.address}},
                                                 core::I18nArg{"why", std::string_view{said}}};
         core::log(core::LogLevel::Info, ENG_TR("net.info.pass_refused"), args);
+        // **What only a forger does is a suspicion** (ADR 0241 §3); a pass
+        // missing or out of date is a player who took the wrong door.
+        if (why == PassRefusal::NotTheManagers || why == PassRefusal::OtherPlayer || why == PassRefusal::OtherWorld ||
+            why == PassRefusal::Used)
+            scene::suspect(world, core::InstanceId{}, "pass_refused", said,
+                           ask.publicKey.empty() ? std::string{} : "key:" + ask.publicKey);
         return replication::JoinAnswer{.admit = false, .reason = said, .accountId = {}};
     }
     // What the player logged in with at the front door is what the game's

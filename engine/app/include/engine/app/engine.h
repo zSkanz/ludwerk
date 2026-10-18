@@ -260,6 +260,8 @@ struct EngineOptions
     core::u32 physicsThreads = 4;
     // `[network] rewind_cap_ms` (ADR 0235).
     core::f64 rewindCapMs = 200.0;
+    // `[network] kick_over_limit` (ADR 0241 §1).
+    core::u32 kickOverLimit = 0;
     // `[server] time_dilation` and `time_dilation_floor`, or
     // `--time-dilation[=floor]` (ADR 0233): an overloaded world slows its
     // clock, down to the floor, instead of stalling.

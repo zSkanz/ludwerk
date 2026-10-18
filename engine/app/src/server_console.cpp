@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <thread>
 #include <utility>
 
@@ -44,7 +45,7 @@ struct EngineCommand
 };
 
 // ADR 0218 §2 and §3: who may run each.
-const std::array<EngineCommand, 9> EngineCommands{{
+const std::array<EngineCommand, 13> EngineCommands{{
     {"help", 0, ENG_TR("console.usage.help")},
     {"status", 0, ENG_TR("console.usage.status")},
     {"players", 0, ENG_TR("console.usage.players")},
@@ -52,6 +53,10 @@ const std::array<EngineCommand, 9> EngineCommands{{
     {"say", 1, ENG_TR("console.usage.say")},
     {"ban", 2, ENG_TR("console.usage.ban")},
     {"unban", 2, ENG_TR("console.usage.unban")},
+    {"mute", 1, ENG_TR("console.usage.mute")},
+    {"unmute", 1, ENG_TR("console.usage.unmute")},
+    {"suspects", 1, ENG_TR("console.usage.suspects")},
+    {"suspect", 1, ENG_TR("console.usage.suspect")},
     {"save", 2, ENG_TR("console.usage.save")},
     {"stop", 3, ENG_TR("console.usage.stop")},
 }};
@@ -411,9 +416,34 @@ void BanList::save() const
     }
 }
 
+namespace {
+
+// Who a `mute`, `unmute` or `suspect` names, as a ban does: a key or an
+// account written out, else an online player's account or key. Empty, with
+// `error` said, when nobody.
+[[nodiscard]] std::string whoOf(std::string_view target, const ServerConsole::Host& host, std::string& error)
+{
+    if (target.starts_with("key:") || target.starts_with("account:"))
+        return std::string(target);
+    if (target.size() == 64 && hexWord(target))
+        return "key:" + lower(target);
+    const std::optional<Seen> online = findPlayer(host, target, error);
+    if (!online.has_value())
+        return {};
+    if (!online->account.empty())
+        return "account:" + online->account;
+    if (!online->key.empty())
+        return "key:" + online->key;
+    error = say(ENG_TR("console.err.ban_no_key"));
+    return {};
+}
+
+} // namespace
+
 // --- ServerConsole -------------------------------------------------------------
 
-ServerConsole::ServerConsole(std::filesystem::path bansFile) : m_bans(std::move(bansFile))
+ServerConsole::ServerConsole(std::filesystem::path bansFile)
+    : m_bans(bansFile), m_mutes(bansFile.empty() ? std::filesystem::path{} : bansFile.parent_path() / "mutes.json")
 {}
 
 ServerConsole::Health ServerConsole::health(const Host& host) const
@@ -795,6 +825,95 @@ void ServerConsole::runEngineCommand(std::string_view name, std::string_view res
         answer(reply, line, caller, say(ENG_TR("console.done.unbanned"), args), false);
         return;
     }
+    // **Mute and unmute** (ADR 0241 §4): named as a ban names a player, for
+    // as long as it says; what a mute stops is the game's (`IsMuted`).
+    if (name == "mute") {
+        const auto [target, after] = firstWord(rest);
+        std::string error;
+        const std::string who = target.empty() ? std::string{} : whoOf(target, host, error);
+        if (who.empty()) {
+            answer(reply, line, caller, error.empty() ? say(ENG_TR("console.usage.mute")) : error, true);
+            return;
+        }
+        std::int64_t until = 0;
+        const auto [maybeMinutes, afterMinutes] = firstWord(after);
+        std::string_view reason = after;
+        if (const std::optional<core::f64> minutes = numberOf(maybeMinutes); minutes.has_value()) {
+            if (*minutes <= 0.0 || *minutes > MostBanMinutes) {
+                answer(reply, line, caller, say(ENG_TR("console.usage.mute")), true);
+                return;
+            }
+            until = host.nowUnix + static_cast<std::int64_t>(*minutes * 60.0);
+            reason = afterMinutes;
+        }
+        const std::string by = caller.local ? caller.name : caller.name + " " + fingerprint(caller.key);
+        m_mutes.add(BanList::Ban{who, std::string(reason), until, by, host.nowUnix});
+        m_mutesReadNs = 0;
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"who", std::string_view{who}}};
+        answer(reply, line, caller, say(ENG_TR("console.done.muted"), args), false);
+        return;
+    }
+    if (name == "unmute") {
+        const std::string target(firstWord(rest).first);
+        std::string error;
+        const std::string who = target.empty() ? std::string{} : whoOf(target, host, error);
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"who", std::string_view{who.empty() ? target : who}}};
+        if (who.empty() || !m_mutes.remove(who)) {
+            answer(reply, line, caller, say(ENG_TR("console.err.not_muted"), args), true);
+            return;
+        }
+        m_mutesReadNs = 0;
+        answer(reply, line, caller, say(ENG_TR("console.done.unmuted"), args), false);
+        return;
+    }
+    // **Who went past a limit** (ADR 0241 §3): the ten players with the most
+    // suspicions in the last hour, or one player's, line by line.
+    if (name == "suspects" || name == "suspect") {
+        const core::f64 step = std::max(state.fixedTimestep, 1.0e-3);
+        const core::u64 hour = static_cast<core::u64>(3600.0 / step);
+        const core::u64 since = state.tick > hour ? state.tick - hour : 0;
+        std::string text;
+        if (name == "suspects") {
+            std::map<std::string, core::u64> counts;
+            for (const scene::EngineState::Suspicion& each : state.suspicions) {
+                if (each.tick >= since && !each.who.empty())
+                    counts[each.who] += 1;
+            }
+            std::vector<std::pair<core::u64, std::string>> ranked;
+            for (const auto& [someone, count] : counts)
+                ranked.emplace_back(count, someone);
+            std::sort(ranked.begin(), ranked.end(), std::greater<>());
+            for (core::usize at = 0; at < ranked.size() && at < 10; ++at) {
+                const std::array<core::I18nArg, 2> args{
+                    core::I18nArg{"who", std::string_view{ranked[at].second}},
+                    core::I18nArg{"count", static_cast<core::i64>(ranked[at].first)}};
+                text += say(ENG_TR("console.say.suspect_count"), args) + "\n";
+            }
+        }
+        else {
+            const std::string target(firstWord(rest).first);
+            std::string error;
+            const std::string who = target.empty() ? std::string{} : whoOf(target, host, error);
+            if (who.empty()) {
+                answer(reply, line, caller, error.empty() ? say(ENG_TR("console.usage.suspect")) : error, true);
+                return;
+            }
+            for (const scene::EngineState::Suspicion& each : state.suspicions) {
+                if (each.tick < since || each.who != who)
+                    continue;
+                const std::array<core::I18nArg, 3> args{core::I18nArg{"tick", static_cast<core::i64>(each.tick)},
+                                                        core::I18nArg{"kind", std::string_view{each.kind}},
+                                                        core::I18nArg{"detail", std::string_view{each.detail}}};
+                text += say(ENG_TR("console.say.suspect_line"), args) + "\n";
+            }
+        }
+        if (text.empty())
+            text = say(ENG_TR("console.say.no_suspects"));
+        else
+            text.pop_back();
+        answer(reply, line, caller, text, false);
+        return;
+    }
     if (name == "say") {
         if (rest.empty()) {
             answer(reply, line, caller, say(ENG_TR("console.usage.say")), true);
@@ -851,6 +970,18 @@ void ServerConsole::frame(const Host& host)
     if (m_startedNs == 0)
         m_startedNs = host.nowNs;
     scene::EngineState& state = host.world->engineState();
+    // **Who is muted now**, for `NetworkService:IsMuted`: a mute another
+    // world of the manager wrote reaches this one within a second.
+    constexpr core::u64 MutesEveryNs = 1'000'000'000;
+    if (m_mutesWorld != host.world || m_mutesReadNs == 0 || host.nowNs - m_mutesReadNs >= MutesEveryNs) {
+        m_mutesWorld = host.world;
+        m_mutesReadNs = std::max<core::u64>(host.nowNs, 1);
+        state.muted.clear();
+        for (const BanList::Ban& mute : m_mutes.all()) {
+            if (mute.until == 0 || mute.until > host.nowUnix)
+                state.muted.push_back(mute.who);
+        }
+    }
     // What the game's commands answered.
     std::vector<scene::EngineState::ConsoleAnswer> answers;
     answers.swap(state.consoleAnswers);

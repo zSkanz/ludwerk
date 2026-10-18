@@ -12,6 +12,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/ticket.h"
+#include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/instance_binding.h"
@@ -169,6 +170,7 @@ int networkServiceVerifyTicket(lua_State* L)
     if (!claims.has_value()) {
         const std::array<core::I18nArg, 1> args{core::I18nArg{"why", std::string_view{why}}};
         core::log(core::LogLevel::Info, ENG_TR("net.info.ticket_refused"), args);
+        scene::suspect(world(L), core::InstanceId{}, "ticket_refused", why);
         lua_pushnil(L);
         return 1;
     }

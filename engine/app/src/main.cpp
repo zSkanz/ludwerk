@@ -2009,6 +2009,7 @@ static int hostMain(int argc, char** argv)
         options.dormantRadius = config.serverDormantRadius;
         options.physicsThreads = config.serverPhysicsThreads;
         options.rewindCapMs = static_cast<double>(config.networkRewindCapMs);
+        options.kickOverLimit = config.networkKickOverLimit;
         // The run's own word, or the project's.
         options.timeDilation = options.timeDilation || config.serverTimeDilation;
         if (!options.timeDilationFromFlag)

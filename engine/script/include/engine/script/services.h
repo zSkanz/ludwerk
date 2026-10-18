@@ -249,6 +249,15 @@ public:
         core::u64 tick = 0;
     };
     std::map<std::pair<core::u64, core::u64>, RemoteBucket> remoteBuckets;
+    // **The actions a game said the rate of** (`DefineAction`, ADR 0241 §2),
+    // and each player's bucket of each.
+    struct ActionRule
+    {
+        f64 perSecond = 0.0;
+        f64 burst = 1.0;
+    };
+    std::map<std::string, ActionRule> actionRules;
+    std::map<std::pair<core::u64, std::string>, RemoteBucket> actionBuckets;
     struct InvokeWaiter
     {
         core::u32 call = 0;

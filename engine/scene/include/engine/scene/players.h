@@ -11,6 +11,8 @@
 // `PlayerAdded` and `PlayerRemoving` fire on every path that does either.
 #pragma once
 
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine/core/id.h"
@@ -66,5 +68,11 @@ void restLocalIntents(World& world);
 // And their characters, whatever a controller asked of them this tick by
 // whatever it read: not walked and not made to jump. Before the simulation.
 void restLocalCharacters(World& world);
+
+// **A suspicion** (ADR 0241 §3): what a player did past a limit, or what the
+// game found, kept for the console and `/metrics`, never acted on by itself.
+// Named by `who` when given -- a joiner not yet a player -- else by the
+// player's account or key.
+void suspect(World& world, core::InstanceId player, std::string_view kind, std::string detail, std::string who = {});
 
 } // namespace engine::scene

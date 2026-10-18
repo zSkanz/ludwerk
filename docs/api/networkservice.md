@@ -39,6 +39,14 @@ listed on the page of the class that declares them.
 
 Adds a guest player to an offline game on this machine and fires `PlayerAdded`. Returns nil on a dedicated server or while connected to a match. A guest's id is valid for the session only and is not a platform account. The game decides how many local players it allows, and assigns each one's input with `InputContext.Player`. Local guests cannot join online matches.
 
+### `CheckAction(player: Player, name: string): boolean`
+
+Whether this player may do the action now, by the rate `DefineAction` gave it, counted by the simulation's clock. True takes one; false is logged as a suspicion (`action_over_rate`), and what to do about it is the game's. Raises an error for an action never defined.
+
+### `DefineAction(name: string, rule: { PerSecond: number, Burst: number? })`
+
+Says how often each player may do one of the game's own actions: `PerSecond` of them a second, up to `Burst` at once (1 when not given). Said again for the same name, it replaces the first. `CheckAction` then counts each player's.
+
 ### `Disconnect()`
 
 Leaves the match, or stops hosting, and returns to single-player in the current scene. Server scripts start again from the beginning, because this machine is the authority again. `Disconnected` fires. A dedicated server cannot call it.
@@ -103,6 +111,10 @@ Makes this machine the authority of a match that others can join, on `port` (777
 
 With a relay, from `options.Relay = "host:port"` or `[network] relay`, the match is registered with the relay, and players anywhere can join it with `JoinCode`, with no port opened on a router. Hosting does not wait for the relay or depend on it: `RelayState` reports the relay's state, and the match can always be joined by address.
 
+### `IsMuted(player: Player): boolean`
+
+Whether the server console has muted this player (`mute`), by their account where the game named one, else by their key. What a mute stops, such as chat or voice, is the game's to decide.
+
 ### `Join(address: string? = nil, options: { Relay: string?, Direct: boolean?, Ticket: string? }? = nil)`
 
 Connects to a server at `address`, written as `host` or `host:port`. With no address, it connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with the server's, and server scripts stop, because this machine is no longer the authority. `Connected` or `JoinFailed` fires with the outcome. A dedicated server cannot join.
@@ -124,6 +136,10 @@ The result has `Ping`, the shortest of the three round trips in milliseconds; `M
 ### `RemoveLocalPlayer(player: Player): boolean`
 
 Removes a guest player from an offline game, firing `PlayerRemoving`. Returns whether the removal was started. It does not remove the primary local player or a remote player.
+
+### `ReportSuspicion(player: Player, kind: string, detail: string?)`
+
+Writes a line in the suspicion log, beside those the engine writes when a player goes past a limit. The server console's `suspects` and `suspect` read it, and `/metrics` counts it by `kind`. Nothing is done to the player by it.
 
 ### `SwitchChannel(player: Player, channel: number): boolean`
 

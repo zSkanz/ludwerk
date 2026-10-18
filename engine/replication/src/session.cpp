@@ -2944,6 +2944,11 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                         reached.position =
                             part->cframe.position + core::DVec3{moved.x * scale, moved.y * scale, moved.z * scale};
                         m_stats.ownedClamped += 1;
+                        // **A suspicion** (ADR 0241 §3), the part's name and
+                        // how far past its reach.
+                        scene::suspect(world, peer->player, "owner_beyond_reach",
+                                       std::string(world.atoms().text(world.name(id))) + " " +
+                                           std::to_string(static_cast<core::i64>(distance - reach)) + " m");
                     }
                     records.push_back(OwnedRecord{part, body, reached, speed, spin});
                 }

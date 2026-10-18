@@ -266,6 +266,19 @@ here.
   every player's character and every `BasePart.LagCompensated` part where
   the shooter's machine drew them. The rewind is at most `[network]
   rewind_cap_ms`, 200 by default.
+- What a player does past a limit is kept in one suspicion log: a remote
+  called too often or too large, an action over the rate the game gave it
+  (`NetworkService:DefineAction` and `CheckAction`), a part its owner put
+  beyond its reach, a pass or a ticket only a forger sends, and what the game
+  reports itself (`NetworkService:ReportSuspicion`). The server console's
+  `suspects` and `suspect <player>` read it, and `/metrics` counts it by kind
+  under `suspicion_total`. Nothing is done to a player by it, except that
+  `[network] kick_over_limit = N` removes one whose calls go past the
+  remotes' limits N times in a second.
+- The server console's `mute <player|key> [minutes] [reason]` and `unmute`
+  keep a list in `mutes.json` beside the bans, read by every world of the
+  game; `NetworkService:IsMuted(player)` answers it, and what a mute stops is
+  the game's.
 
 ### Changed
 

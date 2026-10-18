@@ -349,6 +349,62 @@ TEST_CASE("the worlds of one game share their bans: a ban in one holds in every 
     CHECK(town.find("key:abcd", 103) != nullptr);
 }
 
+TEST_CASE("a mute is kept beside the bans and read by every world; suspects and suspect list what went past")
+{
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/console.luau", std::string(ServerScript));
+    server.boot(wire);
+    const std::filesystem::path bans = server.project.root / "saves" / "bans.json";
+    Console console(bans);
+    Machine client;
+    client.project.write("src/client/join.luau", std::string(ClientScript));
+    client.boot(wire);
+    run(server, client, console, 40);
+    REQUIRE(client.state() == Connected);
+    const std::string name = client.playerName();
+    const scene::World& clientWorld = client.host->world();
+    const core::u32 userId = clientWorld.players().find(scene::localPlayerOf(clientWorld))->userId;
+    scene::World& world = server.host->world();
+    const core::InstanceId player = scene::playerByUserId(world, userId);
+    REQUIRE(player.valid());
+
+    // Muted for ten minutes: the file beside the bans, and the world told.
+    console.type(server, "mute " + name + " 10 spam");
+    REQUIRE(!console.failures.back());
+    CHECK(std::filesystem::exists(bans.parent_path() / "mutes.json"));
+    console.frame(server);
+    REQUIRE(world.engineState().muted.size() == 1);
+    const std::string who = world.engineState().muted[0];
+    CHECK(who.starts_with("key:"));
+
+    // **Another world of the same game** reads the same list.
+    Console other(bans);
+    world.engineState().muted.clear();
+    other.frame(server);
+    CHECK(world.engineState().muted == std::vector<std::string>{who});
+
+    // What went past, named as the mute names the player.
+    scene::suspect(world, player, "impossible_score", "9999");
+    scene::suspect(world, player, "impossible_score", "10000");
+    console.type(server, "suspects");
+    CHECK(console.answers.back().find(who + ": 2") != std::string::npos);
+    console.type(server, "suspect " + name);
+    CHECK(console.answers.back().find("impossible_score  10000") != std::string::npos);
+
+    // Past its end, nobody; and an unmute lifts one before it.
+    Console later(bans);
+    later.now = console.now + 11 * 60;
+    later.frame(server);
+    CHECK(world.engineState().muted.empty());
+    console.type(server, "unmute " + who);
+    REQUIRE(!console.failures.back());
+    console.frame(server);
+    CHECK(world.engineState().muted.empty());
+    console.type(server, "unmute " + who);
+    CHECK(console.failures.back());
+}
+
 TEST_CASE("a server whose input is an open pipe nobody writes still ends when its frames are done")
 {
     // **What held a packaged server open for an hour**: told to run a few

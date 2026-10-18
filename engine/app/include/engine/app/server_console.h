@@ -197,6 +197,12 @@ private:
     void beginClosing(const Host& host);
 
     BanList m_bans;
+    // **Who may not speak** (ADR 0241 §4), kept as the bans are and beside
+    // them, so a mute in one world of a manager holds in every one. Read into
+    // the engine's state once a second, and at once after `mute` or `unmute`.
+    BanList m_mutes;
+    core::u64 m_mutesReadNs = 0;
+    const scene::World* m_mutesWorld = nullptr;
     std::map<core::u32, Pending> m_pending;
     core::u32 m_nextCall = 1;
     std::deque<core::f64> m_ticks;

@@ -1883,6 +1883,80 @@ int networkServiceGetLocalAddresses(lua_State* L)
     return 1;
 }
 
+// **An action's rate, said once** (ADR 0241 §2): `DefineAction(name, {
+// PerSecond = n, Burst = m })`. Said again, it replaces the first.
+int networkServiceDefineAction(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::string name = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    lua_getfield(L, 3, "PerSecond");
+    const f64 perSecond = luaL_checknumber(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, 3, "Burst");
+    const f64 burst = lua_isnil(L, -1) ? 1.0 : luaL_checknumber(L, -1);
+    lua_pop(L, 1);
+    if (name.empty() || !(perSecond > 0.0) || !(burst >= 1.0))
+        raise(L, ENG_TR("net.err.action_rule"));
+    services(L).actionRules[name] = ServiceState::ActionRule{perSecond, burst};
+    return 0;
+}
+
+// **Whether one more is within its rate** (ADR 0241 §2): taken when it is,
+// a suspicion when it is not. What to do about it is the game's.
+int networkServiceCheckAction(lua_State* L)
+{
+    World& w = world(L);
+    (void)checkInstance(L, 1);
+    const core::InstanceId player = checkInstance(L, 2);
+    const std::string name = luaL_checkstring(L, 3);
+    ServiceState& state = services(L);
+    const auto rule = state.actionRules.find(name);
+    if (rule == state.actionRules.end()) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"action", std::string_view(name)}};
+        raise(L, ENG_TR("net.err.action_unknown"), args);
+    }
+    const core::u64 packed = static_cast<core::u64>(player.index) | (static_cast<core::u64>(player.generation) << 32);
+    auto [at, made] = state.actionBuckets.try_emplace({packed, name});
+    const bool within =
+        takeToken(w, at->second.tokens, at->second.tick, made, rule->second.perSecond, rule->second.burst);
+    if (!within)
+        scene::suspect(w, player, "action_over_rate", name);
+    lua_pushboolean(L, within);
+    return 1;
+}
+
+// **What the game found** (ADR 0241 §3): a line in the suspicion log.
+int networkServiceReportSuspicion(lua_State* L)
+{
+    World& w = world(L);
+    (void)checkInstance(L, 1);
+    const core::InstanceId player = checkInstance(L, 2);
+    const std::string kind = luaL_checkstring(L, 3);
+    const std::string detail = luaL_optstring(L, 4, "");
+    scene::suspect(w, player, kind, detail);
+    return 0;
+}
+
+// **Whether the console has muted this player** (ADR 0241 §4): by their
+// account where the game named one, else by their key.
+int networkServiceIsMuted(lua_State* L)
+{
+    const World& w = world(L);
+    (void)checkInstance(L, 1);
+    const core::InstanceId id = checkInstance(L, 2);
+    const scene::PlayerComponent* player = w.players().find(id);
+    bool muted = false;
+    if (player != nullptr) {
+        for (const std::string& who : w.engineState().muted) {
+            muted = muted || (!player->accountId.empty() && who == "account:" + player->accountId) ||
+                    (!player->publicKey.empty() && who == "key:" + player->publicKey);
+        }
+    }
+    lua_pushboolean(L, muted);
+    return 1;
+}
+
 // **How the connection is doing**, as the
 // host wrote it this frame.
 int networkServiceGetStats(lua_State* L)
@@ -3669,6 +3743,10 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "AddLocalPlayer", networkServiceAddLocalPlayer},
     {"NetworkService", "RemoveLocalPlayer", networkServiceRemoveLocalPlayer},
     {"NetworkService", "GetStats", networkServiceGetStats},
+    {"NetworkService", "DefineAction", networkServiceDefineAction},
+    {"NetworkService", "CheckAction", networkServiceCheckAction},
+    {"NetworkService", "ReportSuspicion", networkServiceReportSuspicion},
+    {"NetworkService", "IsMuted", networkServiceIsMuted},
     {"NetworkService", "GetLocalAddresses", networkServiceGetLocalAddresses},
     {"SaveService", "GetSlotAsync", saveServiceGetSlotAsync},
     {"SaveService", "ListSlots", saveServiceListSlots},

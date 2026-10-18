@@ -624,12 +624,26 @@ struct EngineState
     struct Suspicion
     {
         core::InstanceId player;
+        // `account:` and an account, or `key:` and a key, as a ban names a
+        // player, so a line still names them after they left; empty when
+        // nobody can be named.
+        std::string who;
         std::string kind;
         std::string detail;
         u64 tick = 0;
     };
     std::vector<Suspicion> suspicions;
     u64 suspicionsTotal = 0;
+    // Every suspicion ever, by kind, for `/metrics`.
+    std::map<std::string, u64, std::less<>> suspicionsByKind;
+    // `[network] kick_over_limit` (ADR 0241 §1): a player whose calls go past
+    // the remotes' limits this many times in a second is removed; nought for
+    // never.
+    u32 kickOverLimit = 0;
+    // **Who the console has muted** (ADR 0241 §4), as a ban names them --
+    // `key:` and a key, or `account:` and an account -- written by the
+    // console each frame, read by `NetworkService:IsMuted`.
+    std::vector<std::string> muted;
 
     // **`SceneService`** (ADR 0106). The scene the world came from,
     // content-relative, and what the last `LoadScene` handed the new one,

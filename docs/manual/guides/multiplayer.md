@@ -1301,6 +1301,10 @@ and written to the log with who ran it.
 | `kick <player> [reason]` | Removes a player, as `Player:Kick` does. They may come back. |
 | `ban <player\|key> [minutes] [reason]` | Removes them and refuses their key again, across restarts. No minutes is for good. |
 | `unban <key>` | Lets a key in again. |
+| `mute <player\|key> [minutes] [reason]` | Mutes a player, across restarts, in every world of the game. No minutes is for good. |
+| `unmute <player\|key>` | Lets them speak again. |
+| `suspects` | The ten players with the most suspicions in the last hour. |
+| `suspect <player\|key>` | One player's suspicions in the last hour, line by line. |
 | `say <text>` | A line every player hears: `NetworkService.Announced` fires with it. |
 | `save` | Writes every save that is waiting, now. |
 | `stop [minutes]` | Tells every player, and each minute after; then saves, removes everybody with a reason, and ends the process cleanly. A second `stop` cancels the countdown. |
@@ -1352,6 +1356,48 @@ require("@engine/announcements").mount()
 
 The same console can be reached from another machine, by key: see
 [Online games](manual:guides/online-games).
+
+### Limits, suspicions and mutes
+
+**Every remote is limited on the server.** Each player may call one
+`RemoteEvent`, `UnreliableRemoteEvent` or `RemoteFunction` 240 times a second,
+480 at once, with at most 16 KiB in one call; calls past it are dropped before
+any script sees them. That is four times what a game sending once a frame on a
+240 Hz display needs. A channel of your own that needs more says so:
+`remote:SetRateLimit(600)`, or `remote:SetRateLimit(0)` for no limit.
+
+**What your game knows, it says once**, and the server counts each player's:
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+NetworkService:DefineAction("Fire", { PerSecond = 5, Burst = 2 })
+
+fire.ServerReceived:Connect(function(player: Player, target: Vector3)
+    if not NetworkService:CheckAction(player, "Fire") then
+        return -- over the rate: dropped, and counted against the player
+    end
+    -- the shot
+end)
+```
+
+**Each of these is a suspicion**, kept in one log with who, what and when: a
+remote past its limits, an action past its rate, a part its owner put further
+than it could have moved, a pass or a login ticket only a forger sends, and
+what your game finds itself --
+`NetworkService:ReportSuspicion(player, "impossible_score", tostring(score))`.
+The console's `suspects` and `suspect` read it, and `/metrics` counts it by
+kind under `suspicion_total`. Nothing is done to a player because of it: a
+ban is the operator's, once the log shows what honest players do. The one
+exception is `kick_over_limit` under `[network]` in `project.toml`, nought by
+default: a player whose calls go past the remotes' limits that many times in a
+second is removed with a reason.
+
+**A mute is the console's**, kept in `mutes.json` beside the bans and read by
+every world of the game. `NetworkService:IsMuted(player)` answers it on the
+server; what a mute stops -- chat, voice, messages to other players -- is your
+game's to decide.
 
 ## Who may join, and accounts
 

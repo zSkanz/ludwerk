@@ -5197,6 +5197,36 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "CheckAction",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DefineAction",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "rule",
+              "Type": "{ PerSecond: number, Burst: number? }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "Disconnect",
           "Parameters": [],
           "Returns": [],
@@ -5261,6 +5291,17 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "IsMuted",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "Join",
           "Parameters": [
             {
@@ -5304,6 +5345,25 @@
             }
           ],
           "Returns": ["boolean"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ReportSuspicion",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "kind",
+              "Type": "string"
+            },
+            {
+              "Name": "detail",
+              "Type": "string?"
+            }
+          ],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         },
         {

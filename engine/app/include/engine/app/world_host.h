@@ -229,6 +229,8 @@ struct WorldHostOptions
     // `[network] rewind_cap_ms` (ADR 0235): the furthest back a shot is
     // checked; nought for never.
     f64 rewindCapMs = 200.0;
+    // `[network] kick_over_limit` (ADR 0241 §1): nought for never.
+    core::u32 kickOverLimit = 0;
     // **The manager's name for this world** (`--managed`, ADR 0220), known
     // before its first script runs: which channel it is (ADR 0230) is read
     // from it on the first line.

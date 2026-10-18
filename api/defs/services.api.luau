@@ -2571,6 +2571,53 @@ local Classes: { Schema.Class } = {
                     .. "does not disturb one, and several relays can be pinged at once from separate tasks.",
             },
             {
+                Name = "DefineAction",
+                Parameters = {
+                    { Name = "name", Type = "string" },
+                    { Name = "rule", Type = "{ PerSecond: number, Burst: number? }" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Says how often each player may do one of the game's own actions: `PerSecond` of them a "
+                    .. "second, up to `Burst` at once (1 when not given). Said again for the same name, it "
+                    .. "replaces the first. `CheckAction` then counts each player's.",
+            },
+            {
+                Name = "CheckAction",
+                Parameters = {
+                    { Name = "player", Type = "Player" },
+                    { Name = "name", Type = "string" },
+                },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether this player may do the action now, by the rate `DefineAction` gave it, counted "
+                    .. "by the simulation's clock. True takes one; false is logged as a suspicion "
+                    .. "(`action_over_rate`), and what to do about it is the game's. Raises an error for an "
+                    .. "action never defined.",
+            },
+            {
+                Name = "ReportSuspicion",
+                Parameters = {
+                    { Name = "player", Type = "Player" },
+                    { Name = "kind", Type = "string" },
+                    { Name = "detail", Type = "string?" },
+                },
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Doc = "Writes a line in the suspicion log, beside those the engine writes when a player goes "
+                    .. "past a limit. The server console's `suspects` and `suspect` read it, and `/metrics` "
+                    .. "counts it by `kind`. Nothing is done to the player by it.",
+            },
+            {
+                Name = "IsMuted",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Doc = "Whether the server console has muted this player (`mute`), by their account where the "
+                    .. "game named one, else by their key. What a mute stops, such as chat or voice, is the "
+                    .. "game's to decide.",
+            },
+            {
                 Name = "GetStats",
                 Parameters = {},
                 Returns = {

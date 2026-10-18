@@ -377,6 +377,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     if (options.networkTopology == scene::NetworkTopology::Dedicated)
         m_world->engineState().physicsThreads = options.physicsThreads;
     m_world->engineState().rewindCapMs = options.rewindCapMs;
+    m_world->engineState().kickOverLimit = options.kickOverLimit;
     m_world->engineState().managedWorld = options.managedWorld;
     m_world->engineState().networkChannel = options.managedWorld.empty() ? 1u : channelOf(options.managedWorld);
     m_seed = options.seed;

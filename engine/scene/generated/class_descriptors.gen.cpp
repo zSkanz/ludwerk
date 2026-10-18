@@ -6984,7 +6984,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 17> networkServiceMethods;
+    static std::array<MethodDesc, 21> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetLocalPlayers"),
@@ -7021,6 +7021,30 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Measures the round trip to a relay and returns what the relay reports, or nil if it did not answer. Use it before hosting or joining to choose among relays in several regions.\012\012`relay` is `host:port`; if omitted, the project's `[network] relay` is used. The method yields until the relay has answered three requests sent a tenth of a second apart, or until `timeout` seconds have passed (1.5 by default).\012\012The result has `Ping`, the shortest of the three round trips in milliseconds; `Matches`, the matches registered with the relay; `Relayed`, the players it is relaying; `BytesPerSecond`, its traffic; and `Uptime`, in seconds. It does not need a match and does not disturb one, and several relays can be pinged at once from separate tasks.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DefineAction"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Says how often each player may do one of the game's own actions: `PerSecond` of them a second, up to `Burst` at once (1 when not given). Said again for the same name, it replaces the first. `CheckAction` then counts each player's.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CheckAction"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether this player may do the action now, by the rate `DefineAction` gave it, counted by the simulation's clock. True takes one; false is logged as a suspicion (`action_over_rate`), and what to do about it is the game's. Raises an error for an action never defined.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ReportSuspicion"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Writes a line in the suspicion log, beside those the engine writes when a player goes past a limit. The server console's `suspects` and `suspect` read it, and `/metrics` counts it by `kind`. Nothing is done to the player by it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("IsMuted"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Whether the server console has muted this player (`mute`), by their account where the game named one, else by their key. What a mute stops, such as chat or voice, is the game's to decide.",
         },
         MethodDesc{
             .name = atoms.intern("GetStats"),

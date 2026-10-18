@@ -190,6 +190,10 @@ struct ProjectConfig
     // milliseconds, a shot is checked against what its shooter saw. From 0 --
     // never -- to 1000; 200 by default.
     core::u32 networkRewindCapMs = 200;
+    // `[network] kick_over_limit` (ADR 0241 §1): a player whose calls go past
+    // the remotes' limits this many times in a second is removed. From 0 --
+    // never, the default -- to 10000.
+    core::u32 networkKickOverLimit = 0;
 
     // **`[luau.flags]`** (ADR 0217): Luau's flags the project sets, each a
     // switch or a number, in the file's order. Applied before the first script
