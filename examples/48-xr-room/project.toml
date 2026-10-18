@@ -1,0 +1,21 @@
+# A room for a headset (ADRs 0244 to 0246): objects to pick up and throw, a
+# teleport and a snap turn from `@engine/xrcomfort`, and a panel of buttons
+# pointed at with a controller's beam or pressed with a fingertip.
+#
+# No scene file: the script builds the room, because what a game does with
+# its hands is the subject. With no headset it is drawn on the screen, and
+# says how to put one on.
+
+[project]
+name = "Ludwerk XR Room"
+id = "dev.ludwerk.xrroom"
+version = "1.0.0"
+engine = "0.1"
+default_locale = "en"
+
+[window]
+title = "Ludwerk — XR Room"
+size = [1600, 900]
+
+[xr]
+enabled = true

@@ -1,0 +1,9 @@
+{
+  "panel.title": "XR Room",
+  "panel.help": "Grip to pick something up, let go to throw it. Left stick forward to teleport, right stick to turn.",
+  "panel.reset": "Put everything back",
+  "panel.turn.snap": "Turning: in steps",
+  "panel.turn.smooth": "Turning: smooth",
+  "panel.passthrough": "Passthrough: coming soon",
+  "flat.hint": "This room is made for a headset. Start it with --xr, with your headset connected."
+}

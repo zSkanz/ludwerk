@@ -4,6 +4,9 @@ A game drawn in a headset, through OpenXR: on a PC with a headset its
 runtime drives (SteamVR, a Quest through Link), each eye drawn at the
 headset's rate. Without a headset the same game is drawn on the screen.
 
+`examples/48-xr-room` puts all of this page in one room: things to pick up
+and throw, a teleport and a turn, and a panel of buttons.
+
 ## Turning it on
 
 In `project.toml`:

@@ -2554,7 +2554,7 @@ if(ENG_BUILD_TESTS)
                     26-security-cameras 27-mirrors-and-portals 28-arcade 29-meadow
                     30-interactions 31-lake-and-river 32-menus 33-options 34-settings-list
                     35-cape 37-character 38-dubbing 39-interior 40-cinematic 41-couch 42-nightfall
-                    43-ambush 44-vehicle 45-breaking-wall 46-cloth-cape 47-realms)
+                    43-ambush 44-vehicle 45-breaking-wall 46-cloth-cape 47-realms 48-xr-room)
         add_test(NAME example_boot_${example}
             COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/${example}"
                     --headless --frames=20 --exit --rhi=null)
@@ -2605,6 +2605,19 @@ if(ENG_BUILD_TESTS)
                 "--scene-data={\"throttle\":1}")
     set_tests_properties(example_vehicle_drives PROPERTIES
         PASS_REGULAR_EXPRESSION "drove ([1-9][0-9]|[1-9][0-9][0-9]+) m"
+        FAIL_REGULAR_EXPRESSION "\\[error\\]"
+        TIMEOUT 120)
+
+    # `examples/48-xr-room` throws (ADRs 0244 to 0246): under the simulated
+    # headset its autopilot puts the right hand on the ball, closes the grip,
+    # swings forward and lets go, and the ball has to land a metre away at
+    # least. A grab that never held, or a throw that dropped the ball at the
+    # hand's feet, runs perfectly and goes nowhere.
+    add_test(NAME example_xr_room_throws
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/examples/48-xr-room" --headless --frames=170 --exit --rhi=null
+                --xr=simulated "--scene-data={\"autopilot\":true}")
+    set_tests_properties(example_xr_room_throws PROPERTIES
+        PASS_REGULAR_EXPRESSION "threw the ball ([1-9]|[1-9][0-9])\\.[0-9] m"
         FAIL_REGULAR_EXPRESSION "\\[error\\]"
         TIMEOUT 120)
 

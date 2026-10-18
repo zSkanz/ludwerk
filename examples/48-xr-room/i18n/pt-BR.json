@@ -1,0 +1,9 @@
+{
+  "panel.title": "Sala XR",
+  "panel.help": "Aperte o grip para pegar um objeto e solte para jogá-lo. Analógico esquerdo para a frente para se teleportar; o direito para virar.",
+  "panel.reset": "Recolocar tudo no lugar",
+  "panel.turn.snap": "Virar: em passos",
+  "panel.turn.smooth": "Virar: contínuo",
+  "panel.passthrough": "Passthrough: em breve",
+  "flat.hint": "Esta sala é feita para um headset. Abra com --xr, com o headset conectado."
+}
