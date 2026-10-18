@@ -572,6 +572,28 @@ if(ENG_PHYSICS_BOX2D AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/box2d/src/world.c")
 endif()
 
 # ---------------------------------------------------------------------------
+# SQLite (ADR 0238 §6): the data service's database, from the release's
+# amalgamation (an archive row of the manifest). In a build that can be a
+# server only (`ENG_ENABLE_DATA`). No extension is ever loaded, and a string
+# in double quotes is never taken for a name.
+# ---------------------------------------------------------------------------
+if(ENG_ENABLE_DATA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sqlite/sqlite3.c")
+    add_library(engine_sqlite STATIC sqlite/sqlite3.c)
+    target_include_directories(engine_sqlite SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/sqlite")
+    target_compile_definitions(engine_sqlite PRIVATE
+        SQLITE_OMIT_LOAD_EXTENSION SQLITE_DQS=0 SQLITE_THREADSAFE=1 SQLITE_DEFAULT_WAL_SYNCHRONOUS=2)
+    # Upstream's warnings are upstream's (the Jolt rule): ours are not applied.
+    if(MSVC)
+        target_compile_options(engine_sqlite PRIVATE /W0)
+    else()
+        target_compile_options(engine_sqlite PRIVATE -w)
+        find_package(Threads REQUIRED)
+        target_link_libraries(engine_sqlite PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    add_library(engine::sqlite ALIAS engine_sqlite)
+endif()
+
+# ---------------------------------------------------------------------------
 # BLAKE3 (architecture.md §2: `ContentHash` is BLAKE3-128).
 #
 # Three C files and no upstream project: `blake3/c/CMakeLists.txt` builds a

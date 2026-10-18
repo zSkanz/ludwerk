@@ -26,6 +26,7 @@
 	from memory.
 ]]
 
+local crypto = require("@lute/crypto")
 local fs = require("@std/fs")
 local json = require("@std/json")
 local process = require("@std/process")
@@ -246,6 +247,98 @@ local function readBinaries(): { Binary }
     return result
 end
 
+-- **The third kind of row: a release archive** (ADR 0238 §6). An upstream
+-- whose source release is not a git tree -- SQLite's amalgamation is made by
+-- its release process and is in no repository -- is pinned by the archive's
+-- SHA-256 and by each file taken from it, so `status` proves the vendored
+-- bytes are the release's without fetching anything.
+type ArchiveFile = {
+    name: string,
+    sha256: string,
+}
+
+type Archive = {
+    name: string,
+    version: string,
+    date: string,
+    license: string,
+    upstream: string,
+    url: string,
+    sha256: string,
+    root: string,
+    path: string,
+    files: { ArchiveFile },
+}
+
+local function expectHash(row: json.Object, key: string, context: string): string
+    local hash = expectString(row, key, context)
+    if #hash ~= 64 or not string.match(hash, "^%x+$") then
+        fail(`{context}: "{key}" must be 64 hex characters`)
+    end
+    return string.lower(hash)
+end
+
+-- Absent is fine, as `binaries` is.
+local function readArchives(): { Archive }
+    local root = json.asObject(json.deserialize(fs.readFileToString(ManifestPath)))
+    if not root then
+        fail(`{ManifestPath} is not a JSON object`)
+    end
+    local rows = json.asArray((root :: json.Object).archives)
+    if not rows then
+        return {}
+    end
+    local result: { Archive } = {}
+    for index, entry in rows :: json.Array do
+        local row = json.asObject(entry)
+        if not row then
+            fail(`{ManifestPath}: archive #{index} is not an object`)
+        end
+        local context = `{ManifestPath} archive #{index}`
+        local files: { ArchiveFile } = {}
+        local declared = json.asArray((row :: json.Object).files)
+        if not declared or #(declared :: json.Array) == 0 then
+            fail(`{context}: "files" must name what is taken from the archive`)
+        end
+        for fileIndex, fileEntry in declared :: json.Array do
+            local file = json.asObject(fileEntry)
+            if not file then
+                fail(`{context} file #{fileIndex} is not an object`)
+            end
+            local fileContext = `{context} file #{fileIndex}`
+            local name = expectString(file :: json.Object, "name", fileContext)
+            -- A name, not a path: nothing lands outside the row's own folder.
+            if string.find(name, "[/\\]") ~= nil or name == ".." then
+                fail(`{fileContext}: "name" must be a file name, not a path`)
+            end
+            table.insert(files, { name = name, sha256 = expectHash(file :: json.Object, "sha256", fileContext) })
+        end
+        table.insert(result, {
+            name = expectString(row :: json.Object, "name", context),
+            version = expectString(row :: json.Object, "version", context),
+            date = expectString(row :: json.Object, "date", context),
+            license = expectString(row :: json.Object, "license", context),
+            upstream = expectString(row :: json.Object, "upstream", context),
+            url = expectString(row :: json.Object, "url", context),
+            sha256 = expectHash(row :: json.Object, "sha256", context),
+            root = expectString(row :: json.Object, "root", context),
+            path = expectString(row :: json.Object, "path", context),
+            files = files,
+        })
+    end
+    return result
+end
+
+--- A file's SHA-256, as lowercase hex.
+local function sha256Of(file: string): string
+    local digest = crypto.digest(crypto.hash.sha256, fs.readFileToString(file))
+    local hex = table.create(buffer.len(digest))
+    for at = 0, buffer.len(digest) - 1 do
+        table.insert(hex, string.format("%02x", buffer.readu8(digest, at)))
+    end
+    return table.concat(hex)
+end
+
 local function isPinned(dependency: Dependency): boolean
     return dependency.commit ~= Unpinned and #dependency.commit == 40
 end
@@ -386,11 +479,65 @@ local function syncOne(dependency: Dependency)
     info(`{dependency.name}: vendored at {dependency.path}`)
 end
 
+-- **An archive row, synced**: fetched into the scratch, its hash checked
+-- before anything is unpacked, and each file it names checked against its
+-- own hash before it is placed. The row's folder holds those files and
+-- nothing else.
+local function syncArchive(archive: Archive)
+    local scratch = `{scratchRoot()}/{archive.name}`
+    if fs.exists(scratch) then
+        fs.removeDirectory(scratch, { recursive = true })
+    end
+    fs.createDirectory(scratch, { makeParents = true })
+    local fetched = `{scratch}/release.archive`
+
+    info(`{archive.name}: fetching {archive.version} from {archive.url}`)
+    local download = process.run({ "curl", "-fsSL", "--retry", "3", "-o", fetched, archive.url })
+    if not download.ok then
+        fail(`{archive.name}: the download failed (exit {download.exitcode})\n{download.stderr}`)
+    end
+    local found = sha256Of(fetched)
+    if found ~= archive.sha256 then
+        fail(`{archive.name}: the archive's SHA-256 is {found}, and the manifest pins {archive.sha256}`)
+    end
+
+    -- `tar` reads a zip where it is bsdtar (Windows, macOS); GNU tar does not,
+    -- and `unzip` does.
+    local unpacked = process.run({ "tar", "-xf", fetched, "-C", scratch })
+    if not unpacked.ok then
+        unpacked = process.run({ "unzip", "-oq", fetched, "-d", scratch })
+    end
+    if not unpacked.ok then
+        fail(`{archive.name}: could not unpack the archive (neither tar nor unzip)\n{unpacked.stderr}`)
+    end
+
+    if fs.exists(archive.path) then
+        fs.removeDirectory(archive.path, { recursive = true })
+    end
+    fs.createDirectory(archive.path, { makeParents = true })
+    for _, file in archive.files do
+        local source = `{scratch}/{archive.root}/{file.name}`
+        if not fs.exists(source) then
+            fail(`{archive.name}: the archive has no {archive.root}/{file.name}`)
+        end
+        local hash = sha256Of(source)
+        if hash ~= file.sha256 then
+            fail(`{archive.name}: {file.name}'s SHA-256 is {hash}, and the manifest pins {file.sha256}`)
+        end
+        fs.copy(source, `{archive.path}/{file.name}`)
+    end
+    fs.removeDirectory(scratch, { recursive = true })
+    info(`{archive.name}: vendored at {archive.path}`)
+end
+
 local function commandSync(names: { string })
     local dependencies = readManifest()
+    local archives = readArchives()
     local selected: { Dependency } = {}
+    local selectedArchives: { Archive } = {}
 
     if #names == 0 then
+        selectedArchives = archives
         for _, dependency in dependencies do
             if isPinned(dependency) then
                 table.insert(selected, dependency)
@@ -407,6 +554,16 @@ local function commandSync(names: { string })
                     break
                 end
             end
+            local foundArchive: Archive? = nil
+            for _, archive in archives do
+                if archive.name == name then
+                    foundArchive = archive
+                end
+            end
+            if foundArchive then
+                table.insert(selectedArchives, foundArchive :: Archive)
+                continue
+            end
             if not found then
                 fail(`no dependency named "{name}" in {ManifestPath}`)
             end
@@ -417,7 +574,7 @@ local function commandSync(names: { string })
         end
     end
 
-    if #selected == 0 then
+    if #selected == 0 and #selectedArchives == 0 then
         info("nothing to do — no pinned dependencies")
         return
     end
@@ -425,8 +582,12 @@ local function commandSync(names: { string })
     for _, dependency in selected do
         syncOne(dependency)
     end
+    for _, archive in selectedArchives do
+        syncArchive(archive)
+    end
 
-    info(`{#selected} dependenc{if #selected == 1 then "y" else "ies"} vendored`)
+    local count = #selected + #selectedArchives
+    info(`{count} dependenc{if count == 1 then "y" else "ies"} vendored`)
     -- Upstream trees carry their own .gitignore files; without -f, git would
     -- silently drop vendored files that upstream ignores.
     info("stage with: git add -f third_party")
@@ -559,6 +720,26 @@ local function commandStatus()
         print(string.format("  %-24s %-12s %s", dependency.name, dependency.version, state))
     end
 
+    -- An archive row is re-hashed: its files are the release's bytes, or the
+    -- row is wrong.
+    for _, archive in readArchives() do
+        local state = `ok {string.sub(archive.sha256, 1, 12)}`
+        for _, file in archive.files do
+            local placed = `{archive.path}/{file.name}`
+            if not fs.exists(placed) then
+                state = `MISSING {file.name}`
+                missing += 1
+                break
+            end
+            if sha256Of(placed) ~= file.sha256 then
+                state = `CHANGED {file.name}`
+                missing += 1
+                break
+            end
+        end
+        print(string.format("  %-24s %-12s %s", archive.name, archive.version, state))
+    end
+
     local narrowingProblems = 0
     for _, dependency in dependencies do
         if isPinned(dependency) then
@@ -581,7 +762,7 @@ local function commandStatus()
     end
 
     print(
-        `vendor: {#dependencies} rows, {missing} pinned-but-missing, {unpinned} unpinned, `
+        `vendor: {#dependencies} rows, {missing} pinned-but-missing or changed, {unpinned} unpinned, `
             .. `{narrowingProblems} narrowing problem(s), {strayAttributes} attribute file(s) of a tree's own`
     )
     if missing > 0 or narrowingProblems > 0 or strayAttributes > 0 then
@@ -619,6 +800,28 @@ local function commandNotices()
             lines,
             `| {dependency.name} | {dependency.version} | {commit} | {dependency.license} | {dependency.upstream} | \`{dependency.path}/\` |`
         )
+    end
+
+    local archives = readArchives()
+    if #archives > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "## Release archives")
+        table.insert(lines, "")
+        table.insert(lines, "Vendored from an upstream's release archive rather than a git tree, pinned by the")
+        table.insert(lines, "archive's SHA-256 and each file's (ADR 0238 §6).")
+        table.insert(lines, "")
+        table.insert(lines, "| Dependency | Version | Released | License | Archive SHA256 | Source | Vendored path |")
+        table.insert(lines, "|---|---|---|---|---|---|---|")
+        for _, archive in archives do
+            table.insert(
+                lines,
+                `| {archive.name} | {archive.version} | {archive.date} | {archive.license} | \`{string.sub(
+                    archive.sha256,
+                    1,
+                    16
+                )}…\` | {archive.url} | \`{archive.path}/\` |`
+            )
+        end
     end
 
     local binaries = readBinaries()

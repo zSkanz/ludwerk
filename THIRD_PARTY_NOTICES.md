@@ -44,6 +44,15 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | fidelityfx_fsr2 | 2.2.1 | `1680d1edd5c0` | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR2 | `third_party/fidelityfx_fsr2/` |
 | fidelityfx_sdk | 1.1.4 | `c6efa6bf7f20` | MIT | https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK | `third_party/fidelityfx_sdk/` |
 
+## Release archives
+
+Vendored from an upstream's release archive rather than a git tree, pinned by the
+archive's SHA-256 and each file's (ADR 0238 §6).
+
+| Dependency | Version | Released | License | Archive SHA256 | Source | Vendored path |
+|---|---|---|---|---|---|---|
+| sqlite | 3.53.4 | 2026-07-24 | Public Domain | `1e71ddf93849c6a6…` | https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip | `third_party/sqlite/` |
+
 ## Fetched binary artifacts
 
 Build-time tools that are **not** vendored and never committed: they are

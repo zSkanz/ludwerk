@@ -51,6 +51,9 @@ local Allowed: { [string]: boolean } = {
     -- the maintainer's decision and not by this file's: ADR 0120 approves the
     -- dependency and names its licence.
     ["ISC"] = true,
+    -- SQLite's. No licence at all: the authors dedicate it to the public
+    -- domain, and ADR 0238 §6 approves the dependency and names that.
+    ["Public Domain"] = true,
 }
 
 --- Any of these, in a dependency's root, counts as the licence text being
@@ -244,6 +247,31 @@ local function main(): number
     for prefix, seen in matched do
         if not seen then
             fail(`{prefix} is on the known-copyleft list and matches nothing. Remove the entry.`)
+        end
+    end
+
+    -- **Release archives** (ADR 0238 §6): the same two questions. The licence
+    -- of an archive row lives in a file of its own -- SQLite's dedication is
+    -- at the head of every file -- which the row names.
+    local archives = (json.deserialize(fs.readFileToString(ManifestPath)) :: any).archives or {}
+    for _, archive in archives do
+        if not Allowed[archive.license] then
+            fail(
+                `{archive.name}: licence "{archive.license}" is not on R6's list. `
+                    .. `Adding one is a maintainer-approved decision, not an edit to this file.`
+            )
+        end
+        if not (fs.exists(archive.path) and fs.type(archive.path) == "dir") then
+            continue
+        end
+        audited += 1
+        if typeof(archive.licenseFile) ~= "string" or not fs.exists(joined(archive.path, archive.licenseFile)) then
+            fail(`{archive.name}: the row names no licence file in {archive.path} that is there`)
+        end
+        local found: { string } = {}
+        copyleftFiles(archive.path, found)
+        for _, file in found do
+            fail(`{string.gsub(file, "\\", "/")} names the GPL or LGPL, in a release archive's files.`)
         end
     end
 

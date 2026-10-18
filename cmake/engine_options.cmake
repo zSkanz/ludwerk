@@ -135,6 +135,13 @@ cmake_dependent_option(ENG_DEBUG_UI
     "Build the Dear ImGui debug overlay (ADR 0011: dev builds only)" ON
     "NOT ENG_PROFILE MATCHES \"^(shipping|player)$\";ENG_RHI_SDLGPU" OFF)
 
+# **The data service's database** (ADR 0238 §6): SQLite, in every build that
+# can be a game's server or its manager -- not the player a game ships to its
+# players, a phone, the web or the Xbox app.
+cmake_dependent_option(ENG_ENABLE_DATA
+    "Build the data service's SQLite database (ADR 0238)" ON
+    "NOT ENG_PROFILE STREQUAL \"player\";NOT ANDROID;NOT EMSCRIPTEN;NOT ENG_PLATFORM_UWP" OFF)
+
 # --- Physics backend selection (ADR 0007, ADR 0023) --------------------------
 # The same shape as the RHI options above: `physics_api` is the seam every
 # module above L2 sees, and a backend is a build-time choice `app` resolves.
