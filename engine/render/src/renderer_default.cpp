@@ -1619,9 +1619,14 @@ private:
     // Several views into one target, and into the window.
     LookPipeline composeViews_;
     LookPipeline composeViewsWindow_;
-    // The headset's eyes (ADR 0244): made in the swapchain's format when a
-    // headset first draws.
+    // The headset's eyes (ADR 0244): made in the headset's image's format
+    // when a headset first draws -- and the mirror's copy of an eye into the
+    // window, in the window's. Two pipelines, because the two formats are not
+    // one: the mirror once copied through the headset's, and Direct3D 12's
+    // debug layer said so every frame.
     LookPipeline xrEye_;
+    rhi::TextureFormat xrEyeFormat_ = rhi::TextureFormat::Undefined;
+    LookPipeline xrEyeMirror_;
     // The eyes' depth copy (ADR 0244 §5), and the depth format it was made for.
     LookPipeline xrDepth_;
     rhi::TextureFormat xrDepthFormat_ = rhi::TextureFormat::Undefined;
@@ -1793,7 +1798,7 @@ private:
                         bool upscale, bool sharpen);
 
     // Every look pipeline, for `destroy`.
-    [[nodiscard]] std::array<LookPipeline*, 40> lookPipelines() noexcept
+    [[nodiscard]] std::array<LookPipeline*, 41> lookPipelines() noexcept
     {
         return {&probeGather_,
                 &probeFilter_,
@@ -1832,6 +1837,7 @@ private:
                 &composeViews_,
                 &composeViewsWindow_,
                 &xrEye_,
+                &xrEyeMirror_,
                 &skyLookSided_,
                 &motionView_,
                 &motionViewWindow_};
@@ -5554,7 +5560,10 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
 {
     if (!picture.valid() || !target.color.valid() || target.width == 0 || target.height == 0)
         return;
-    if (!ensureLookPipeline(device, xrEye_, "xr_eye", target.colorFormat))
+    if (!xrEye_.tried)
+        xrEyeFormat_ = target.colorFormat;
+    LookPipeline& eyeCopy = target.colorFormat == xrEyeFormat_ ? xrEye_ : xrEyeMirror_;
+    if (!ensureLookPipeline(device, eyeCopy, "xr_eye", target.colorFormat))
         return;
     const bool srgb = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
                       target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
@@ -5565,7 +5574,7 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
     const std::array<rhi::TextureBinding, 2> source{
         rhi::TextureBinding{picture, linearSampler_},
         rhi::TextureBinding{seeThrough ? depth_ : picture, seeThrough ? pointSampler_ : linearSampler_}};
-    fullscreenPass(cmd, xrEye_.handle, target.color, target.width, target.height, "xr-eye", source,
+    fullscreenPass(cmd, eyeCopy.handle, target.color, target.width, target.height, "xr-eye", source,
                    asBytes(uniforms.data(), sizeof(uniforms)));
 }
 
