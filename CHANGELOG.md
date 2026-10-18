@@ -11,6 +11,14 @@ here.
 
 ### Fixed
 
+- A car handed to a player while it rolls is no longer corrected over and
+  over. While its driver touched nothing, the server held or skipped that
+  player's ticks to adjust their queue, which moves nothing for a player
+  standing still and moves a car on by a tick the player's machine never
+  stepped: the car was corrected by exactly its speed times a tick, again
+  whenever the queue was adjusted. A driver is never held or skipped now, and
+  a car a script drives with nobody in it is drawn between snapshots rather
+  than predicted on a machine that does not have its inputs.
 - A braked car stands still. It was woken every tick its brake was held, so
   it never slept, and at walking pace the tyres' friction let it creep -- down
   a 10 degree slope at a centimetre or two a second for as long as it stood.

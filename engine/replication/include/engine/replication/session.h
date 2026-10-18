@@ -1255,6 +1255,9 @@ private:
     [[nodiscard]] static DrivenVehicle drivenBy(const scene::World& world, core::InstanceId character);
     // Whether a part is a vehicle's chassis.
     [[nodiscard]] static bool carriesVehicle(const scene::World& world, core::InstanceId part);
+    // Whether a part carries a vehicle nobody drives that is asked to move --
+    // a throttle, a wheel turned -- which is a script's doing.
+    [[nodiscard]] static bool drivenByScript(const scene::World& world, core::InstanceId part);
     // Which loose parts are predicted this tick: in, out, and what each
     // starts from.
     void updatePredicted(scene::World& world);

@@ -1743,6 +1743,145 @@ struct CrateRun
 
 } // namespace
 
+namespace {
+
+// A car driving itself, handed to the joining player at a known speed: the
+// authority's side of the late-hand-over row of the vehicle gate (ADR 0213).
+constexpr std::string_view HandOverServer = R"(
+    local NetworkService = game:GetService("NetworkService")
+    local RunService = game:GetService("RunService")
+    local floor = Instance.new("Part")
+    floor.Anchored = true
+    floor.Size = vector.create(600, 1, 600)
+    floor.Position = vector.create(0, -0.5, 0)
+    floor.Parent = workspace
+    local function arrive(player: Player)
+        if player.UserId == 1 then
+            return
+        end
+        local body = Instance.new("CharacterBody")
+        body.Name = "Walker"
+        body.Size = vector.create(1, 2, 1)
+        body.Position = vector.create(-3, 1.5, 6)
+        body.Parent = workspace
+        player.Character = body
+        local chassis = Instance.new("Part")
+        chassis.Name = "Car"
+        chassis.Size = vector.create(2, 0.6, 4)
+        chassis.Position = vector.create(6, 1.2, 0)
+        chassis.Parent = workspace
+        local controller = Instance.new("VehicleController")
+        controller.Parent = chassis
+        for _, corner in { { -0.9, -1.4 }, { 0.9, -1.4 }, { -0.9, 1.4 }, { 0.9, 1.4 } } do
+            local hub = Instance.new("Attachment")
+            hub.CFrame = CFrame.new(corner[1], -0.2, corner[2])
+            hub.Parent = chassis
+            local wheel = Instance.new("VehicleWheel")
+            wheel.Attachment = hub
+            wheel.MaxSteerAngle = if corner[2] < 0 then 30 else 0
+            wheel.Driven = corner[2] > 0
+            wheel.Parent = controller
+        end
+        controller.Throttle = 0.6
+        local ticks = 0
+        local handed = false
+        RunService.PostSimulation:Connect(function()
+            ticks += 1
+            if not handed and ticks >= 150 then
+                handed = true
+                controller.Throttle = 0
+                controller.Driver = player
+                workspace:SetAttribute("HandedOver", true)
+            end
+        end)
+    end
+    for _, player in NetworkService:GetPlayers() do
+        arrive(player)
+    end
+    NetworkService.PlayerAdded:Connect(arrive)
+    NetworkService:Host(47190)
+)";
+
+constexpr std::string_view HandOverClient = R"(
+    game:GetService("NetworkService"):Join("memory:47190")
+)";
+
+struct HandOver
+{
+    int corrections = 0;
+    double largest = 0.0;
+    // The car's speed at the largest, and so how far it goes in a tick.
+    double tickOfTravel = 0.0;
+};
+
+// `skew`: 0 lockstep; 1 the authority steps once alone after the hand-over,
+// so it stands an intent in; 2 the replica steps once alone, so two of its
+// intents arrive together.
+[[nodiscard]] HandOver handOver(int skew)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write("src/server/init.luau", std::string(HandOverServer));
+    server.boot(wire);
+    Machine client;
+    client.project.write("src/client/init.luau", std::string(HandOverClient));
+    client.boot(wire);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    HandOver result;
+    scene::World& world = client.host->world();
+    int after = -1;
+    core::u64 seen = 0;
+    for (int frame = 0; frame < 900; ++frame) {
+        server.frame();
+        client.frame();
+        const bool handed = std::holds_alternative<bool>(
+            world.getAttribute(client.host->workspace(), world.atoms().lookup("HandedOver")));
+        if (!handed)
+            continue;
+        ++after;
+        if (after == 30 && skew == 1)
+            server.frame();
+        if (after == 30 && skew == 2)
+            client.frame();
+        const replication::IReplication* replica = client.network->replication();
+        if (replica == nullptr || after < 1)
+            continue;
+        const replication::Stats stats = replica->stats();
+        if (stats.corrections == seen)
+            continue;
+        seen = stats.corrections;
+        ++result.corrections;
+        if (stats.lastCorrectionMetres > result.largest) {
+            result.largest = stats.lastCorrectionMetres;
+            const core::InstanceId car = world.findFirstChild(client.host->workspace(), world.atoms().lookup("Car"));
+            if (const scene::RigidBodyComponent* body = car.valid() ? world.rigidBodies().find(car) : nullptr) {
+                const core::Vec3 v = body->linearVelocity;
+                result.tickOfTravel = std::sqrt(static_cast<double>(v.x * v.x + v.y * v.y + v.z * v.z)) / 60.0;
+            }
+        }
+    }
+    CHECK(after > 300);
+    MESSAGE("MEASURE hand-over skew=" << skew << " corrections=" << result.corrections << " largest=" << result.largest
+                                      << " tickOfTravel=" << result.tickOfTravel);
+    return result;
+}
+
+} // namespace
+
+TEST_CASE("a car handed over moving is where the authority has it, whatever tick the authority stood in")
+{
+    // A car's correction that is the car's speed times one tick is a tick
+    // labelled wrong, not a car stepped wrong.
+    for (const int skew : {0, 1, 2}) {
+        CAPTURE(skew);
+        const HandOver run = handOver(skew);
+        CHECK(run.corrections == 0);
+    }
+}
+
 TEST_CASE("ten seconds pushing crates over jitter and loss are not corrected, and nothing overlaps (ADR 0133)")
 {
     // Over three different runs of loss and jitter.

@@ -3474,7 +3474,21 @@ void AuthoritySession::applyIntents(scene::World& world)
         const u64 newest = peer.intentQueue.empty() ? peer.appliedTick : peer.intentQueue.rbegin()->first;
         const u64 depth = newest > peer.appliedTick ? newest - peer.appliedTick : 0;
         m_stats.intentDepth = std::max(m_stats.intentDepth, static_cast<u32>(std::min<u64>(depth, 0xFFFF)));
-        const bool resting = idle(peer.lastIntents);
+        // **A driver at rest is not at rest** (ADR 0213): a car rolls on while
+        // the one driving it touches nothing, so a tick of theirs held or
+        // skipped moves the car a tick the replica never stepped -- the step
+        // the world holds then belongs to the intent before the one answered,
+        // and a car handed over rolling was corrected by exactly its speed
+        // times a tick, again whenever the queue caught up.
+        bool driving = false;
+        world.vehicleControllers().forEach([&](core::InstanceId, const scene::VehicleControllerComponent& vehicle) {
+            if (vehicle.driver == 0)
+                return;
+            driving = driving || vehicle.driver == peer.userId ||
+                      std::any_of(peer.guests.begin(), peer.guests.end(),
+                                  [&](const Peer::Guest& guest) { return guest.userId == vehicle.driver; });
+        });
+        const bool resting = idle(peer.lastIntents) && !driving;
         // **The delay adapts, and only while the player is idle**: holding a
         // tick or skipping one then moves nothing, so the change is never a
         // correction.
@@ -5412,6 +5426,16 @@ void ReplicaSession::updatePredicted(scene::World& world)
         const scene::PartComponent* part = world.parts().find(local);
         if (body == nullptr || part == nullptr || body->anchored || body->networkOwner != 0)
             continue;
+        // **A car a script drives is not this machine's to step** (ADR
+        // 0213): its throttle and its wheel are inputs a replay does not have
+        // for the ticks it steps, so predicted it came apart from the
+        // authority's by centimetres an answer -- a car driving itself before
+        // it was handed to the player, corrected 3 to 5 cm as it gathered
+        // speed. Drawn between snapshots, as another player's character is.
+        // One parked, asked nothing, is still predicted, so a car driven into
+        // it is pushed here.
+        if (drivenByScript(world, local))
+            continue;
         // How far from the nearest of them.
         f64 nearest = std::numeric_limits<f64>::infinity();
         for (const core::DVec3& centre : centres) {
@@ -5494,6 +5518,16 @@ void ReplicaSession::updatePredicted(scene::World& world)
         m_samples.erase(netId);
         m_predictedParts.emplace(netId, 0u);
     }
+}
+
+bool ReplicaSession::drivenByScript(const scene::World& world, core::InstanceId part)
+{
+    for (core::InstanceId child = world.firstChild(part); child.valid(); child = world.nextSibling(child)) {
+        const scene::VehicleControllerComponent* vehicle = world.vehicleControllers().find(child);
+        if (vehicle != nullptr && vehicle->driver == 0 && (vehicle->throttle != 0.0f || vehicle->steer != 0.0f))
+            return true;
+    }
+    return false;
 }
 
 bool ReplicaSession::carriesVehicle(const scene::World& world, core::InstanceId part)
