@@ -84,6 +84,18 @@ public:
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
     [[nodiscard]] rhi::TextureHandle depthImage(core::u32 eye) const noexcept { return m_depthImages[eye]; }
+    // Its frames at 72 Hz, each on time: the shape of the numbers a runtime's
+    // timing has, for the log a test reads.
+    [[nodiscard]] rhi::HeadsetTiming takeTiming() override
+    {
+        rhi::HeadsetTiming taken;
+        taken.displayPeriodNs = 13'888'889;
+        taken.frames = static_cast<core::u32>(m_frames - m_framesTaken);
+        // From the first frame's wait to the last's, as a runtime counts it.
+        taken.spanNs = static_cast<core::i64>(taken.frames > 0 ? taken.frames - 1 : 0) * taken.displayPeriodNs;
+        m_framesTaken = m_frames;
+        return taken;
+    }
     // The room seen through: always offered, as a runtime with the alpha
     // blend does; whether it is on, for a test to read.
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return true; }
@@ -105,6 +117,7 @@ private:
     std::array<rhi::TextureHandle, 2> m_images{};
     std::array<rhi::TextureHandle, 2> m_depthImages{};
     bool m_passthrough = false;
+    core::u64 m_framesTaken = 0;
     core::f32 m_near = 0.0f;
     core::f32 m_far = 0.0f;
     std::array<core::f32, 3> m_headPosition{0.0f, 1.6f, 0.0f};

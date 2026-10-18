@@ -95,6 +95,27 @@ struct HeadsetFrame
     TextureFormat depthFormat = TextureFormat::Undefined;
 };
 
+// **How the headset's frames have gone** since the last time it was asked
+// (`IHeadset::takeTiming`): what decides whether the eyes are drawn fast
+// enough. The runtime's own measurements are below zero where it gives none.
+struct HeadsetTiming
+{
+    // The display's period, as the runtime predicts it.
+    i64 displayPeriodNs = 0;
+    // Frames begun, the time from the first to the last, frames the runtime
+    // said not to draw, and frames that came more than half a period late.
+    u32 frames = 0;
+    i64 spanNs = 0;
+    u32 notDrawn = 0;
+    u32 late = 0;
+    // The runtime's measurements of the game's frames (`XR_META_performance_
+    // metrics`): its GPU and CPU time, in milliseconds, and the compositor's
+    // dropped frames since the session began; below zero where it has none.
+    f32 appGpuMs = -1.0f;
+    f32 appCpuMs = -1.0f;
+    i64 compositorDropped = -1;
+};
+
 // A place and a turn in the play space, and whether the runtime knows it.
 struct HeadsetPose
 {
@@ -177,6 +198,9 @@ public:
         (void)amplitude;
         (void)seconds;
     }
+    // **How the frames have gone since this was last called**, and starts
+    // counting again.
+    [[nodiscard]] virtual HeadsetTiming takeTiming() { return {}; }
     // **The room seen through** (ADR 0247 §1): whether the headset can show
     // the player's room behind the picture, and, from the next frame,
     // whether it does -- where a pixel's alpha is below one, the room shows.

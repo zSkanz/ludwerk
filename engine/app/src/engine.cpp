@@ -1988,6 +1988,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // the runtime's image. Their views beside the split screen's.
     std::array<SplitPicture, 2> eyePictures;
     HandPinches handPinches;
+    // **The headset's timing, for the log** (what decides multiview): the
+    // CPU each eye's pass took, summed since the last line.
+    core::f64 eyePassMs = 0.0;
+    core::u32 eyePasses = 0;
+    core::u32 headsetFramesSinceLog = 0;
     constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
     // The engine's own, when asked for (ADR 0248 §4); gone before the device.
     std::unique_ptr<SimulatedHeadset> simulatedHeadset =
@@ -7856,6 +7861,34 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     seen.simulatedKeys[key].reset();
                 }
             }
+            // **How the headset's frames go**, in the log every five seconds
+            // of them: the display's rate and the frames' own, the late and
+            // the undrawn, the eyes' passes, and the runtime's own GPU and CPU
+            // time and dropped frames where it measures them.
+            headsetFramesSinceLog += 1;
+            if (headsetFramesSinceLog >= 360) {
+                headsetFramesSinceLog = 0;
+                const rhi::HeadsetTiming timing = headset->takeTiming();
+                const f64 hz = timing.displayPeriodNs > 0 ? 1e9 / static_cast<f64>(timing.displayPeriodNs) : 0.0;
+                const f64 frameMs = timing.frames > 1
+                                        ? static_cast<f64>(timing.spanNs) / 1e6 / static_cast<f64>(timing.frames - 1)
+                                        : 0.0;
+                const std::array<core::I18nArg, 11> args{
+                    core::I18nArg{"hz", std::round(hz * 10.0) / 10.0},
+                    core::I18nArg{"frame", std::round(frameMs * 100.0) / 100.0},
+                    core::I18nArg{"frames", static_cast<core::i64>(timing.frames)},
+                    core::I18nArg{"late", static_cast<core::i64>(timing.late)},
+                    core::I18nArg{"undrawn", static_cast<core::i64>(timing.notDrawn)},
+                    core::I18nArg{"eye", eyePasses > 0 ? std::round(eyePassMs / eyePasses * 100.0) / 100.0 : 0.0},
+                    core::I18nArg{"gpu", std::round(static_cast<f64>(timing.appGpuMs) * 100.0) / 100.0},
+                    core::I18nArg{"cpu", std::round(static_cast<f64>(timing.appCpuMs) * 100.0) / 100.0},
+                    core::I18nArg{"dropped", timing.compositorDropped},
+                    core::I18nArg{"width", static_cast<core::i64>(headset->eyeWidth())},
+                    core::I18nArg{"height", static_cast<core::i64>(headset->eyeHeight())}};
+                core::log(core::LogLevel::Info, ENG_TR("engine.info.xr_timing"), args);
+                eyePassMs = 0.0;
+                eyePasses = 0;
+            }
             if (headsetBegun) {
                 rhi::HeadsetInput read;
                 headset->readInput(read);
@@ -9815,7 +9848,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                  .view = EyeViewBase + index,
                                                                  .window = true};
                             render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, eyeTarget));
+                            const u64 eyeStarted = platform::nowNs();
                             renderer->render(*device, *cmd, eyeTarget, snapshot, meshCache);
+                            eyePassMs += msSince(eyeStarted);
+                            eyePasses += 1;
                             renderer->presentEye(*device, *cmd, picture.texture,
                                                  render::RenderTarget{.color = headsetFrame.color[index],
                                                                       .colorFormat = headsetFrame.format,

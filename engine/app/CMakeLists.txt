@@ -732,6 +732,15 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION
             "\\[comfort\\] landed=-0.20,-2.2[0-9] faded=1.00 walled=-0.20,-2.2[0-9] turned=-30,-60 rest=0.00"
         TIMEOUT 60)
+    # **The headset's timing in the log** (what the first test on a device
+    # sends back): every five seconds of frames, the display's rate and the
+    # frames' own, the late and the undrawn, the eyes' passes.
+    add_test(NAME xr_timing_logged
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=400 --exit
+                --rhi=null --xr=simulated)
+    set_tests_properties(xr_timing_logged PROPERTIES
+        PASS_REGULAR_EXPRESSION "Headset: display 72(\\.0)? Hz, frames every 13\\.89 ms over 3[0-9][0-9] frames, 0 late, 0 not drawn"
+        TIMEOUT 60)
     add_test(NAME xr_service_flat
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_service.luau" --headless --frames=50 --exit --rhi=null)
     set_tests_properties(xr_service_flat PROPERTIES

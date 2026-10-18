@@ -35,6 +35,8 @@ struct XrDeviceAsk
     bool depthLayer = false;
     // XR_FB_passthrough, listed: the Quest's way to show the room.
     bool fbPassthrough = false;
+    // XR_META_performance_metrics, listed: the runtime's measurements.
+    bool metrics = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

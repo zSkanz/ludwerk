@@ -4,6 +4,7 @@
 // clang-format off
 #include <openxr/openxr.h>
 #include <SDL3/SDL_openxr.h>
+#include <SDL3/SDL_timer.h>
 // clang-format on
 
 #include <algorithm>
@@ -79,6 +80,9 @@ struct XrCalls
     PFN_xrDestroyPassthroughLayerFB destroyPassthroughLayer = nullptr;
     PFN_xrPassthroughLayerPauseFB pausePassthroughLayer = nullptr;
     PFN_xrPassthroughLayerResumeFB resumePassthroughLayer = nullptr;
+    // XR_META_performance_metrics'.
+    PFN_xrSetPerformanceMetricsStateMETA setMetricsState = nullptr;
+    PFN_xrQueryPerformanceMetricsCounterMETA queryMetric = nullptr;
 
     void loadPassthrough(XrInstance instance)
     {
@@ -98,6 +102,21 @@ struct XrCalls
         get("xrDestroyPassthroughLayerFB", destroyPassthroughLayer);
         get("xrPassthroughLayerPauseFB", pausePassthroughLayer);
         get("xrPassthroughLayerResumeFB", resumePassthroughLayer);
+    }
+
+    void loadMetrics(XrInstance instance)
+    {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        if (getProc == nullptr)
+            return;
+        const auto get = [&](const char* name, auto& out) {
+            PFN_xrVoidFunction found = nullptr;
+            if (XR_FAILED(getProc(instance, name, &found)))
+                found = nullptr;
+            out = reinterpret_cast<std::remove_reference_t<decltype(out)>>(found);
+        };
+        get("xrSetPerformanceMetricsStateMETA", setMetricsState);
+        get("xrQueryPerformanceMetricsCounterMETA", queryMetric);
     }
 
     [[nodiscard]] bool load(XrInstance instance)
@@ -259,9 +278,9 @@ class OpenXrHeadset final : public IHeadset
 {
 public:
     OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
-                  bool fbPassthrough)
-        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_fbPassthrough(fbPassthrough),
-          m_depthLayer(depthLayer), m_handTracking(handTracking)
+                  bool fbPassthrough, bool metrics)
+        : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_metrics(metrics),
+          m_fbPassthrough(fbPassthrough), m_depthLayer(depthLayer), m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
@@ -436,6 +455,15 @@ public:
         }
         if (m_fbPassthrough)
             m_calls.loadPassthrough(m_instance);
+        // **The runtime's measurements** of the game's frames, where it
+        // offers them: turned on once, read when the timing is taken.
+        if (m_metrics) {
+            m_calls.loadMetrics(m_instance);
+            auto state = made<XrPerformanceMetricsStateMETA>(XR_TYPE_PERFORMANCE_METRICS_STATE_META);
+            state.enabled = XR_TRUE;
+            m_metrics = m_calls.setMetricsState != nullptr && m_calls.queryMetric != nullptr &&
+                        XR_SUCCEEDED(m_calls.setMetricsState(m_session, &state));
+        }
         m_fbPassthrough = m_fbPassthrough && m_calls.createPassthrough != nullptr &&
                           m_calls.createPassthroughLayer != nullptr && m_calls.startPassthrough != nullptr;
         // **Each eye's depth** (ADR 0244 §5), where the runtime takes it: a
@@ -493,6 +521,22 @@ public:
         }
         m_displayTime = timing.predictedDisplayTime;
         m_drawing = false;
+        // **How the frames go** (`takeTiming`): when each came back from its
+        // wait, against the display's period.
+        {
+            const i64 now = static_cast<i64>(SDL_GetTicksNS());
+            m_timing.displayPeriodNs = timing.predictedDisplayPeriod;
+            if (m_lastWaitNs != 0) {
+                const i64 between = now - m_lastWaitNs;
+                m_timing.spanNs += between;
+                if (timing.predictedDisplayPeriod > 0 && between > timing.predictedDisplayPeriod * 3 / 2)
+                    m_timing.late += 1;
+            }
+            m_lastWaitNs = now;
+            m_timing.frames += 1;
+            if (timing.shouldRender == XR_FALSE)
+                m_timing.notDrawn += 1;
+        }
         frame.displayTimeNs = timing.predictedDisplayTime;
         frame.width = m_width;
         frame.height = m_height;
@@ -709,6 +753,39 @@ public:
                 }
             }
         }
+    }
+
+    [[nodiscard]] HeadsetTiming takeTiming() override
+    {
+        HeadsetTiming taken = m_timing;
+        m_timing = HeadsetTiming{};
+        m_timing.displayPeriodNs = taken.displayPeriodNs;
+        if (m_metrics) {
+            const auto read = [this](const char* name, f32& asFloat, i64& asInt) {
+                XrPath path = XR_NULL_PATH;
+                if (XR_FAILED(m_calls.stringToPath(m_instance, name, &path)))
+                    return false;
+                auto counter = made<XrPerformanceMetricsCounterMETA>(XR_TYPE_PERFORMANCE_METRICS_COUNTER_META);
+                if (XR_FAILED(m_calls.queryMetric(m_session, path, &counter)))
+                    return false;
+                if ((counter.counterFlags & XR_PERFORMANCE_METRICS_COUNTER_FLOAT_VALUE_VALID_BIT_META) != 0)
+                    asFloat = counter.floatValue;
+                if ((counter.counterFlags & XR_PERFORMANCE_METRICS_COUNTER_UINT_VALUE_VALID_BIT_META) != 0)
+                    asInt = static_cast<i64>(counter.uintValue);
+                return true;
+            };
+            i64 unused = 0;
+            f32 unusedFloat = 0.0f;
+            f32 dropped = -1.0f;
+            (void)read("/perfmetrics_meta/app/gpu_frametime", taken.appGpuMs, unused);
+            (void)read("/perfmetrics_meta/app/cpu_frametime", taken.appCpuMs, unused);
+            if (!read("/perfmetrics_meta/compositor/dropped_frame_count", dropped, taken.compositorDropped))
+                taken.compositorDropped = -1;
+            else if (taken.compositorDropped < 0 && dropped >= 0.0f)
+                taken.compositorDropped = static_cast<i64>(dropped);
+            (void)unusedFloat;
+        }
+        return taken;
     }
 
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
@@ -1000,6 +1077,11 @@ private:
     std::array<XrPath, 2> m_hands{};
     // Grip then aim, each left then right.
     std::array<XrSpace, 4> m_handSpaces{};
+    // **How the frames have gone**, since the timing was last taken; when the
+    // last wait came back; and whether the runtime measures the game too.
+    HeadsetTiming m_timing{};
+    i64 m_lastWaitNs = 0;
+    bool m_metrics = false;
     // **The room seen through**: whether the runtime blends by alpha, has the
     // Quest's passthrough, and whether it is on; and the Quest's objects.
     bool m_alphaBlend = false;
@@ -1041,6 +1123,7 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     handTracking = false;
     depthLayer = false;
     fbPassthrough = false;
+    metrics = false;
     if (SDL_OpenXR_LoadLibrary()) {
         const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
         PFN_xrVoidFunction found = nullptr;
@@ -1061,6 +1144,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             depthLayer = true;
                         if (name == XR_FB_PASSTHROUGH_EXTENSION_NAME)
                             fbPassthrough = true;
+                        if (name == XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)
+                            metrics = true;
                     }
                 }
             }
@@ -1073,6 +1158,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
         extensions.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
     if (fbPassthrough)
         extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
+    if (metrics)
+        extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -1094,9 +1181,9 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
 {
     if (!ask.ready())
         return nullptr;
-    auto headset =
-        std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
-                                        std::move(hooks), ask.handTracking, ask.depthLayer, ask.fbPassthrough);
+    auto headset = std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance),
+                                                   static_cast<XrSystemId>(ask.system), std::move(hooks),
+                                                   ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics);
     if (!headset->open())
         return nullptr;
     return headset;
