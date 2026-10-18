@@ -189,6 +189,9 @@ local function marker(name: string): Part
     part.CanCollide = false
     part.CanQuery = false
     part.CanTouch = false
+    -- The player's own hands cast no shadow: one under each, following
+    -- every movement, is more distracting than it is real.
+    part.CastShadow = false
     part:SetMaterialParameter("Color", Color3.fromRGB(235, 235, 240))
     part.Parent = workspace
     return part

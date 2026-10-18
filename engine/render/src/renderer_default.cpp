@@ -8964,6 +8964,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         settings_.sunRays = false;
         settings_.depthOfField = false;
         settings_.shadowCascades = std::min(settings_.shadowCascades, 2u);
+        // **Shadows that hold up at arm's length**: a handheld's 512-texel
+        // tiles over seventy metres were what a Quest's player saw of a cup
+        // on the table, a smear. Tiles of 1024 -- the two cascades in a 2048
+        // atlas -- over twenty metres, the first of them two metres deep.
+        settings_.shadowTileResolution = std::max(settings_.shadowTileResolution, 1024u);
+        settings_.shadowDistance = std::min(settings_.shadowDistance, 20.0f);
     }
     // Each pass's time on the CPU, recording it: what was submitted is
     // the GPU's, which `wait.*` measures.

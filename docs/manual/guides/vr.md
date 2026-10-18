@@ -36,7 +36,9 @@ metres out, where a player looks at what they hold and what is on the table
 in front of them. Occlusion, contact shadows and the screen's reflections and
 bounced light are not drawn in the eyes. Each eye would mark them from its
 own picture, so the two would disagree, which a pair of eyes sees as
-shimmer. `screen_effects = true` draws them anyway.
+shimmer. `screen_effects = true` draws them anyway. A game usually sets
+`CastShadow = false` on what it draws for the local player's own head and
+hands, whose shadows follow every movement.
 
 ## Where the player is
 

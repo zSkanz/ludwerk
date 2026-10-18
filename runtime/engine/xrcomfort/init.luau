@@ -130,8 +130,11 @@ local function makeVignette(): (BasePart, Frame)
     plate.CanCollide = false
     plate.CanQuery = false
     plate.CanTouch = false
-    -- Drawn only by its interface, never as a part.
+    -- Drawn only by its interface, never as a part -- and casting no
+    -- shadow: a faded part still casts one, and this plate's followed the
+    -- player's head across the floor.
     plate.Fade = 1
+    plate.CastShadow = false
     plate.Size = vector.create(1, 1, 0.01)
     local surface = Instance.new("SurfaceGui")
     surface.Face = Enum.Face.Back
@@ -163,6 +166,7 @@ local function makeArc(): (BasePart, Attachment, Attachment, Beam)
     anchor.CanQuery = false
     anchor.CanTouch = false
     anchor.Fade = 1
+    anchor.CastShadow = false
     anchor.Size = vector.create(0.1, 0.1, 0.1)
     local from = Instance.new("Attachment")
     from.Parent = anchor
