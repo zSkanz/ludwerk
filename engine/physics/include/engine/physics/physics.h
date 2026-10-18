@@ -83,6 +83,15 @@ public:
     // rebase with the streaming work needs and what a script assigning `CFrame` expects.
     virtual void setBodyTransform(WorldHandle world, BodyHandle body, const core::CFrameD& transform) = 0;
     virtual void setBodyVelocity(WorldHandle world, BodyHandle body, core::Vec3 linear, core::Vec3 angular) = 0;
+    // **Puts a body somewhere, at rest**: a teleport that leaves it no
+    // velocity and no target still to move to, kinematic or not -- where a
+    // replay starts a moving platform from. `setBodyTransform` MOVES a
+    // kinematic body, over the next step.
+    virtual void placeBody(WorldHandle world, BodyHandle body, const core::CFrameD& transform)
+    {
+        setBodyTransform(world, body, transform);
+        setBodyVelocity(world, body, core::Vec3{}, core::Vec3{});
+    }
     virtual void applyImpulse(WorldHandle world, BodyHandle body, core::Vec3 impulse) = 0;
     // A change of angular momentum (ADR 0118). Not pure, so a backend that has
     // no rotation to change -- a test's fake -- need not say so.

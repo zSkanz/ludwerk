@@ -1295,6 +1295,14 @@ void PhysicsSync::runPredictedTouches(std::span<const physics::ContactEvent> eve
     }
 }
 
+namespace {
+
+// How far from a character a kinematic part is remembered (based movement):
+// what it could stand on, or land on, within the ticks a replay steps.
+constexpr f64 KinematicMemoryMetres = 16.0;
+
+} // namespace
+
 void PhysicsSync::remember(u64 tick)
 {
     if (!m_world.valid() || tick == 0)
@@ -1351,6 +1359,27 @@ void PhysicsSync::remember(u64 tick)
     }
     for (IslandEntity& entity : island.entities)
         entity.pending = pendingOf(entity.id);
+    // The anchored parts moving within reach of a character, in id order:
+    // platforms. A loose part is kinematic here only while it is drawn
+    // between snapshots, and a replay steps it, or leaves it, as before.
+    for (usize index = 0; index < m_bodies.size(); ++index) {
+        const BodyRecord& record = m_bodies[index];
+        if (record.generation == 0 || !record.live || record.backendMotion != physics::MotionType::Kinematic)
+            continue;
+        const core::InstanceId id{static_cast<u32>(index), record.generation};
+        const PartComponent* part = m_scene.parts().find(id);
+        const RigidBodyComponent* anchored = m_scene.rigidBodies().find(id);
+        if (part == nullptr || anchored == nullptr || !anchored->anchored)
+            continue;
+        const bool near = std::any_of(island.entities.begin(), island.entities.end(), [&](const IslandEntity& one) {
+            if (!one.character)
+                return false;
+            const core::DVec3 d = part->cframe.position - one.cframe.position;
+            return d.x * d.x + d.y * d.y + d.z * d.z <= KinematicMemoryMetres * KinematicMemoryMetres;
+        });
+        if (near)
+            island.kinematics.emplace_back(id, part->cframe);
+    }
     for (usize slot = 0; slot < m_vehicles.size(); ++slot) {
         const VehicleRecord& record = m_vehicles[slot];
         if (!record.handle.valid())
@@ -1400,6 +1429,10 @@ std::optional<core::CFrameD> PhysicsSync::remembered(u64 tick, core::InstanceId 
     for (const IslandEntity& entity : island->second.entities) {
         if (entity.id == id)
             return entity.cframe;
+    }
+    for (const auto& [part, cframe] : island->second.kinematics) {
+        if (part == id)
+            return cframe;
     }
     return std::nullopt;
 }
@@ -1681,14 +1714,15 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 putVehicle(vehicle);
             for (std::vector<core::CFrameD>& each : frames)
                 each.reserve(count);
-            // **A base moves through the replay as it moved live** (based
-            // movement): the part a character stands on and this machine does
-            // not step -- drawn between snapshots, or a script's -- is where
-            // it is NOW for every tick a replay steps again, and a character on
-            // it was not carried at all: corrected again at the next answer,
-            // tick after tick, all along a ride. Each tick's pose, as the
-            // live step remembered it, is the base's target for that tick of
-            // the replay; read before the replay remembers over them.
+            // **A platform moves through the replay as it moved live** (based
+            // movement): a kinematic part -- a script's, or drawn between
+            // snapshots -- is where it is NOW, and a replay that stepped it
+            // from there carried a character standing on it backwards by all
+            // the ticks it steps again, and a character landing on it landed
+            // somewhere else. Each starts where it was at the answered tick,
+            // put there at rest, and each tick's pose, as the live step
+            // remembered it, is its target for that tick of the replay; read
+            // before the replay remembers over them.
             struct BaseMove
             {
                 usize at = 0;
@@ -1696,29 +1730,32 @@ std::vector<std::vector<core::CFrameD>> PhysicsSync::replayAll(std::span<const C
                 core::CFrameD cframe;
             };
             std::vector<BaseMove> baseMoves;
+            const auto kinematic = [this](core::InstanceId part) -> const BodyRecord* {
+                if (part.index >= m_bodies.size())
+                    return nullptr;
+                const BodyRecord& base = m_bodies[part.index];
+                return base.generation == part.generation && base.live &&
+                               base.backendMotion == physics::MotionType::Kinematic
+                           ? &base
+                           : nullptr;
+            };
+            for (const auto& [part, cframe] : saved.kinematics) {
+                if (const BodyRecord* base = kinematic(part); base != nullptr)
+                    m_backend.placeBody(m_world, base->handle, cframe);
+            }
             for (usize at = 0; at < count; ++at) {
                 const auto later = m_islands.find(tick + 1 + at);
                 if (later == m_islands.end())
                     continue;
-                for (const IslandEntity& entity : later->second.entities) {
-                    if (!entity.character || !entity.grounded || !entity.groundPart.valid())
-                        continue;
-                    const bool inIsland =
-                        std::any_of(saved.entities.begin(), saved.entities.end(), [&](const IslandEntity& held) {
-                            return held.id == entity.groundPart && held.body;
-                        });
-                    if (!inIsland)
-                        baseMoves.push_back(BaseMove{at, entity.groundPart, entity.groundCFrame});
-                }
+                for (const auto& [part, cframe] : later->second.kinematics)
+                    baseMoves.push_back(BaseMove{at, part, cframe});
             }
             for (usize at = 0; at < count; ++at) {
                 for (const BaseMove& move : baseMoves) {
-                    if (move.at != at || move.part.index >= m_bodies.size())
+                    if (move.at != at)
                         continue;
-                    const BodyRecord& base = m_bodies[move.part.index];
-                    if (base.generation == move.part.generation && base.live &&
-                        base.backendMotion == physics::MotionType::Kinematic)
-                        m_backend.setBodyTransform(m_world, base.handle, move.cframe);
+                    if (const BodyRecord* base = kinematic(move.part); base != nullptr)
+                        m_backend.setBodyTransform(m_world, base->handle, move.cframe);
                 }
                 // **Every character by its own command of this tick** (ADR
                 // 0208), in one step: they share the world they stand in.

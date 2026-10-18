@@ -771,6 +771,12 @@ private:
     {
         std::vector<u8> solver;
         std::vector<IslandEntity> entities;
+        // **The kinematic parts near its characters, where they were**
+        // (based movement): a platform a character stands on, lands on or
+        // leaves, moved by a script or drawn between snapshots. What an
+        // answer is measured from, and what a replay moves them through.
+        // Never restored with the island: nothing here steps them.
+        std::vector<std::pair<core::InstanceId, core::CFrameD>> kinematics;
         // Each vehicle's engine, gearbox and wheels, as this machine had them.
         std::vector<CharacterReplayStart::Vehicle> vehicles;
     };

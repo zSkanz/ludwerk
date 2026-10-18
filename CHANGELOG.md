@@ -11,6 +11,12 @@ here.
 
 ### Fixed
 
+- A player walking on a moving platform, or standing on one that turns, is no
+  longer corrected nearly every tick in an online game. Their machine draws
+  the platform a few ticks in the past, and the correction stepped the player
+  again from where the platform is now. Jumping off a moving platform is now
+  corrected once at most, as the player lands, and landing on one at most
+  twice.
 - A player whose machine's clock runs fast is no longer corrected by
   however far they moved in the input the server dropped. Their input queued
   up at the server until the server caught up by dropping some of it, and a

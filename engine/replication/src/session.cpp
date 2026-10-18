@@ -8843,10 +8843,22 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
     // where the authority has it, and is left.
     if (m_replay != nullptr) {
         for (Answer& one : all) {
-            const std::optional<scene::RememberedGround> ground =
-                m_replay->rememberedGround(m_ackedIntent, one.character);
-            if (!ground.has_value() || !one.start.grounded)
+            if (!one.start.grounded)
                 continue;
+            std::optional<scene::RememberedGround> ground = m_replay->rememberedGround(m_ackedIntent, one.character);
+            // **Landed there, and not here yet**: the authority's step of
+            // the answered tick put the character on a platform this
+            // machine's had not reached. What it stands on here now, where
+            // that was at the answered tick, is what it landed on.
+            if (!ground.has_value()) {
+                const scene::CharacterBodyComponent* now = world.characterBodies().find(one.character);
+                if (now == nullptr || !now->grounded || !now->groundPart.valid())
+                    continue;
+                const std::optional<core::CFrameD> then = m_replay->remembered(m_ackedIntent, now->groundPart);
+                if (!then.has_value())
+                    continue;
+                ground = scene::RememberedGround{now->groundPart, *then};
+            }
             u32 baseNet = 0;
             for (const auto& [netId, local] : m_locals) {
                 if (local == ground->part) {
@@ -8865,7 +8877,10 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                 if (field == nullptr || field->name != "CFrame" || field->pool != "parts")
                     continue;
                 const core::CFrameD theirs = asCFrame(base->fields[at]);
-                one.start.transform = ground->cframe * (core::inverse(theirs) * one.start.transform);
+                // Its place, and not its facing: a platform carries a
+                // character and does not turn it, on either machine.
+                one.start.transform.position = core::transformPoint(
+                    ground->cframe, core::transformPoint(core::inverse(theirs), one.start.transform.position));
                 break;
             }
         }

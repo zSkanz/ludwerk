@@ -2188,22 +2188,22 @@ struct RiderRun
         }
     }
     CHECK(after > 600);
-    if (!log.firstError().empty())
-        MESSAGE("MEASURE rider " << kase << " polls=" << polls << " logged: " << log.firstError());
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
     return run;
 }
 
 } // namespace
 
-TEST_CASE("a player on a moving platform, walking, hopping, jumping on or off, or turned: measured")
+TEST_CASE("a player on a moving platform is not corrected walking on it or turned by it, and once at most leaving it")
 {
-    // Two, five and nine frames each way: 67, 167 and 300 ms there and back.
-    // Measured, not yet held: with the platform drawn between snapshots a
-    // few ticks in the past, every case is corrected -- a walker on it by
-    // about a tick of its travel, nearly every tick. Drawn as each snapshot
-    // arrives, the walk is not corrected at all and jumping off it is
-    // corrected at most once; landing on it, hopping on it and its turning
-    // still are.
+    // Two, five and nine frames each way: 67, 167 and 300 ms there and back,
+    // over the engine's own settings, the platform drawn here a few ticks in
+    // the past. A walker on it was corrected by about a tick of its travel
+    // nearly every tick: 434, 426 and 419 times. A character jumping off it
+    // leaves from where the platform is drawn here, and lands that far from
+    // the authority's on the floor: once. One landing on it from the floor
+    // is put right as it lands. Hopping on it is measured and not yet held:
+    // in the air the character has no platform to be measured from.
     for (const std::string_view kase : {"walk", "hop", "jumpon", "jumpoff", "spin"}) {
         for (const core::u32 polls : {2u, 5u, 9u}) {
             const std::string name(kase);
@@ -2212,6 +2212,12 @@ TEST_CASE("a player on a moving platform, walking, hopping, jumping on or off, o
             const RiderRun run = rider(kase, polls);
             MESSAGE("MEASURE rider " << kase << " polls=" << polls << ": " << run.corrections
                                      << " correction(s), largest " << run.largest);
+            if (kase == "walk" || kase == "spin")
+                CHECK(run.corrections == 0);
+            else if (kase == "jumpoff")
+                CHECK(run.corrections <= 1);
+            else if (kase == "jumpon")
+                CHECK(run.corrections <= 2);
         }
     }
 }

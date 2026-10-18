@@ -1862,6 +1862,20 @@ public:
             record->motion == MotionType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     }
 
+    void placeBody(BodyHandle handle, const core::CFrameD& transform)
+    {
+        BodyRecord* record = resolve(handle);
+        if (record == nullptr)
+            return;
+        const JPH::BodyID id = record->id;
+        std::erase_if(m_kinematicMoves, [id](const PendingMove& pending) { return pending.id == id; });
+        JPH::BodyInterface& bodies = m_system.GetBodyInterface();
+        bodies.SetPositionAndRotation(id, toLocal(transform.position), toJolt(transform.rotation),
+                                      JPH::EActivation::DontActivate);
+        if (record->motion != MotionType::Static)
+            bodies.SetLinearAndAngularVelocity(id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+    }
+
     void setBodyVelocity(BodyHandle handle, core::Vec3 linear, core::Vec3 angular)
     {
         BodyRecord* record = resolve(handle);
@@ -2866,8 +2880,10 @@ public:
         if (fixedDt <= 0.0f)
             return JPH::Vec3::sZero();
         const JPH::RVec3 here = character.GetPosition();
-        const JPH::Vec3 local = at->rotation.Conjugated() * JPH::Vec3(here - at->position);
-        const JPH::RVec3 there = at->targetPosition + at->targetRotation * local;
+        // Normalised here: a pose drawn between two snapshots is a blend of
+        // two rotations, a few parts in a million off unit length.
+        const JPH::Vec3 local = at->rotation.Normalized().Conjugated() * JPH::Vec3(here - at->position);
+        const JPH::RVec3 there = at->targetPosition + at->targetRotation.Normalized() * local;
         return JPH::Vec3(there - here) / fixedDt;
     }
 
@@ -5748,6 +5764,13 @@ public:
     {
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->setBodyTransform(body, transform);
+        }
+    }
+
+    void placeBody(WorldHandle handle, BodyHandle body, const core::CFrameD& transform) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr) {
+            world->placeBody(body, transform);
         }
     }
 
