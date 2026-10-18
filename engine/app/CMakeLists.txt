@@ -723,6 +723,15 @@ if(ENG_BUILD_TESTS)
         PASS_REGULAR_EXPRESSION "the room shows where nothing is drawn"
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
+    # **A small crate's corners are as drawn** (physics): a ball rolled at
+    # the corner of a fifteen-centimetre crate stops against the box that is
+    # drawn, within two millimetres.
+    add_test(NAME physics_corner_contact
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/physics/corner_contact.luau" --headless --frames=130 --exit
+                --rhi=null)
+    set_tests_properties(physics_corner_contact PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\[corner\\] deepest=-?[0-9.]+ mm ok=true"
+        TIMEOUT 60)
     # **A headset and a window together** (ADR 0244): the first headset frames
     # and the window's change of present mode they make, through a real,
     # hidden window -- the case a real headset met before any test did.

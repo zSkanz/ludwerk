@@ -868,7 +868,14 @@ struct CharacterPair
     case ShapeType::Box: {
         // Jolt's box carries a convex radius that must fit inside the box; the
         // default 0.05 makes a part thinner than 10 cm fail to build.
-        const f32 convexRadius = std::min({hx, hy, hz, JPH::cDefaultConvexRadius});
+        // **Rounded no more than a twenty-fifth of its smallest half**: a
+        // box collides as a rounded one, its edges and corners curved by the
+        // convex radius, and Jolt's default of five centimetres on a fifteen
+        // centimetre crate rounded away two thirds of its half -- a ball
+        // rolled at its corner sank into the drawn box, which a player in a
+        // headset sees from half a metre. A box of a metre and a quarter and
+        // more keeps the default.
+        const f32 convexRadius = std::min(JPH::cDefaultConvexRadius, 0.04f * std::min({hx, hy, hz}));
         return JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(hx, hy, hz), convexRadius));
     }
     case ShapeType::Sphere:
@@ -882,6 +889,8 @@ struct CharacterPair
     }
     case ShapeType::Cylinder: {
         const f32 radius = std::max(hx, hz);
+        // Not as a box's: a log rounded less tunnelled through the ground
+        // when it struck askew at speed (`terrain_shape_tests`).
         const f32 convexRadius = std::min({radius, hy, JPH::cDefaultConvexRadius});
         return JPH::ShapeRefC(new JPH::CylinderShape(hy, radius, convexRadius));
     }
@@ -1454,6 +1463,15 @@ public:
         m_system.Init(bodyBudget(desc), 0, contactBudget(desc), contactBudget(desc), m_broadPhaseLayers,
                       m_objectVsBroadPhase, m_pairFilter);
         m_system.SetGravity(toJolt(desc.gravity));
+        // **Five millimetres of sinking at rest, not two centimetres**: the
+        // depth the solver lets bodies rest into each other before it pushes
+        // them apart. Jolt's default left a twelve-centimetre ball a
+        // centimetre and a half inside the floor it lay on -- nothing at ten
+        // metres on a screen, plain from half a metre in a headset. For every
+        // player alike: a match is one physics, whoever is wearing what.
+        JPH::PhysicsSettings settings = m_system.GetPhysicsSettings();
+        settings.mPenetrationSlop = 0.005f;
+        m_system.SetPhysicsSettings(settings);
         m_system.SetContactListener(&m_contacts);
         m_contacts.setSurfaces(this);
     }
