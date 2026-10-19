@@ -47,6 +47,14 @@ SamplerState ExposureSampler : register(s2, space2);
 // so a frame without such a sprite resolves through the bytes it always did.
 Texture2D<float> ExactTexture : register(t3, space2);
 SamplerState ExactSampler : register(s3, space2);
+// **The world's interface as the display shows it** (ADR 0250): linear,
+// premultiplied, over this pass's picture (`finishOutput`). Transparent where
+// there is none.
+Texture2D UiLayerTexture : register(t4, space2);
+SamplerState UiLayerSampler : register(s4, space2);
+#else
+Texture2D UiLayerTexture : register(t3, space2);
+SamplerState UiLayerSampler : register(s3, space2);
 #endif
 
 struct Interpolants
@@ -65,68 +73,7 @@ Interpolants VertexMain(uint vertexId : SV_VertexID)
     return output;
 }
 
-// What the frame's average luminance is mapped onto: the exposure "key".
-//
-// **Photography's answer is 0.18, and 0.18 is wrong here**, for a reason worth
-// stating rather than fudging: 0.18 is middle grey in PHOTOMETRIC units, and
-// this engine's radiance unit is arbitrary. `Lighting.Brightness` defaults to
-// 2.6 because 2.6 looked right, not because it is 2.6 of anything. The constant
-// that maps an arbitrary unit onto display grey is therefore a CALIBRATION, and
-// calibrating it against 0.18 would be borrowing a number from a scale nothing
-// here is on.
-//
-// 0.45 is that calibration, and the method was: every scene in the repository
-// was authored against the fixed exposure of 1.0 this pass replaced, so the key
-// is chosen to leave those scenes at the level they were authored at. That makes
-// automatic exposure a STABILISER -- it holds a scene's level as its light
-// changes -- rather than a change of level applied to all existing content.
-//
-// The day the engine gains photometric lights, this becomes 0.18 and every
-// scene's brightness becomes a number in lux.
-static const float EngineExposureKey = 0.45f;
-
-// Khronos PBR Neutral, linear Rec.709 in, [0, 1] linear Rec.709 out. Ported
-// unchanged from the reference implementation so a difference against the glTF
-// viewer is a bug in our lighting rather than in our curve.
-float3 tonemapPbrNeutral(float3 color)
-{
-    const float startCompression = 0.8f - 0.04f;
-    const float desaturation = 0.15f;
-
-    // Lifts the darkest channel just enough to keep a near-black from taking on
-    // a colour cast when the other two channels are compressed.
-    const float x = min(color.r, min(color.g, color.b));
-    const float offset = x < 0.08f ? x - 6.25f * x * x : 0.04f;
-    color -= offset;
-
-    const float peak = max(color.r, max(color.g, color.b));
-    if (peak < startCompression)
-    {
-        return color;
-    }
-
-    // A hyperbola on the brightest channel alone, with the other two scaled by
-    // the same ratio: that is what keeps the hue where the artist put it.
-    const float d = 1.0f - startCompression;
-    const float newPeak = 1.0f - d * d / (peak + d - startCompression);
-    color *= newPeak / peak;
-
-    const float g = 1.0f - 1.0f / (desaturation * (peak - newPeak) + 1.0f);
-    return lerp(color, float3(newPeak, newPeak, newPeak), g);
-}
-
-// **One 8-bit step of noise, before the picture is rounded to 8 bits.** A glow
-// fading into a dark sky crosses a handful of the 256 levels over hundreds of
-// pixels, and each crossing is a contour ring the eye finds at once; half a
-// step either way, different at each pixel, turns the ring into grain nobody
-// sees. From the pixel's place and never from time, so a still picture is the
-// same picture every frame -- and a golden is a golden.
-float3 ditherOutput(float3 encoded, float2 pixel)
-{
-    // Interleaved gradient noise (Jimenez, 2014): even over any small block.
-    const float noise = frac(52.9829189f * frac(dot(pixel, float2(0.06711056f, 0.00583715f))));
-    return encoded + (noise - 0.5f) / 255.0f;
-}
+#include "engine_tonemap.hlsli"
 
 #ifdef ENG_TONEMAP_EXACT
 // **A sprite's pixel is already a colour for a screen.** What the HDR target
@@ -147,6 +94,25 @@ float4 resolveExact(float4 resolved, float2 uv)
     return float4(lerp(resolved.rgb, encodeSrgb(saturate(hdr)), exact), resolved.a);
 }
 #endif
+
+// **What this pass writes, from the picture it tonemapped**: the world's
+// interface laid over it where it has one -- in linear light, as a blend into
+// a headset's sRGB image would have -- and, into an sRGB image (w above a
+// half: a headset's eye drawn straight into the runtime's image, which
+// encodes what it is given), decoded after the dither, so the bytes that land
+// are the ones a copy wrote. Where there is no interface, exactly what it
+// always wrote.
+float4 finishOutput(float4 written, float2 uv)
+{
+    const float4 layer = UiLayerTexture.SampleLevel(UiLayerSampler, uv, 0.0f);
+    if (layer.a > 0.0f)
+    {
+        const float alpha = layer.a + written.a * (1.0f - layer.a);
+        const float3 composed = (layer.rgb + decodeSrgb(written.rgb) * written.a * (1.0f - layer.a)) / alpha;
+        return ExposureBloom.w > 0.5f ? float4(composed, alpha) : float4(encodeSrgb(composed), alpha);
+    }
+    return ExposureBloom.w > 0.5f ? float4(decodeSrgb(written.rgb), written.a) : written;
+}
 
 float4 FragmentMain(Interpolants input) : SV_Target0
 {
@@ -181,8 +147,5 @@ float4 FragmentMain(Interpolants input) : SV_Target0
 #else
     const float4 written = float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), input.Position.xy), alpha);
 #endif
-    // **Into an sRGB image** (w above a half): a headset's eye drawn straight
-    // into the runtime's image, which encodes what it is given. Decoded after
-    // the dither, so the bytes that land are the ones a copy wrote.
-    return ExposureBloom.w > 0.5f ? float4(decodeSrgb(written.rgb), written.a) : written;
+    return finishOutput(written, input.Uv);
 }

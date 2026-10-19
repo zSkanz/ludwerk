@@ -679,6 +679,10 @@ struct EngineState
         // asks for, and whether the headset can.
         bool passthrough = false;
         bool passthroughSupported = false;
+        // **What the window shows while the headset draws**
+        // (`XRService.SpectatorCamera`, ADR 0250): a camera of the game's, or
+        // none for the left eye.
+        core::InstanceId spectatorCamera{};
         // **How the eyes are drawn** (ADR 0250): the project's `[xr]` values,
         // put here by the host before the first script runs, and what a
         // script sets over them, read each frame the eyes are drawn.

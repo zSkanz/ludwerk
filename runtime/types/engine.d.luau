@@ -1239,6 +1239,12 @@ declare extern type BasePart extends PVInstance with
     --- this off for parts that should stay clean, such as a character standing on a scorch mark. The
     --- decal still paints the surfaces around the part. Terrain always receives decals.
     ReceivesDecals: boolean
+    --- Whether the part is a window onto the player's real room. In a headset with
+    --- `XRService.Passthrough` on, the room is seen where the part is, in place of the game: it hides
+    --- what is behind it as a solid part does, and what is in front of it is drawn over the room. Use
+    --- it for a real desk under a virtual one, or a portal out of the game. Anywhere else the part is
+    --- drawn as it otherwise would be. It casts no shadow.
+    ShowsRoom: boolean
     --- Whether this part is fixed in place. An anchored part is not moved by gravity, forces or
     --- collisions, but other parts still collide with it. Setting it keeps the part's position and
     --- orientation.
@@ -2764,6 +2770,10 @@ declare extern type ParticleEmitter extends Instance with
     --- 0 it is blended over the background. At 1 it is added to it and never darkens anything, which
     --- suits fire, sparks and magic.
     LightEmission: number
+    --- How much the scene's light decides a particle's color, from 0 to 1. At 0 it is always its own
+    --- color. At 1 it is lit by the sky and the sun, and darker in the shadows things cast, as smoke
+    --- and dust are. The light a particle adds (`LightEmission`) is its own at any value.
+    LightInfluence: number
     --- A multiplier on the particle's color. It is not clamped; a value above 1 makes a particle bright
     --- enough to bloom.
     Brightness: number
@@ -3237,8 +3247,15 @@ declare extern type BillboardGui extends Instance with
     --- The distance from the camera, in meters, beyond which the billboard is not drawn. 0 means no
     --- limit.
     MaxDistance: number
-    --- A multiplier on the billboard's colors in the scene's lighting. Above 1 it glows and blooms.
+    --- A multiplier on the billboard's own light. With `LightInfluence` at 0 and a brightness of 1 or
+    --- below, the colors are shown as they were set, dimmed below 1, whatever the scene's exposure and
+    --- lighting. Above 1 the billboard glows: the exposure brightens or darkens it with the scene, and
+    --- it blooms. It counts for less as `LightInfluence` rises, and not at all at 1.
     Brightness: number
+    --- How much the scene's light decides the billboard's colors, from 0 to 1. At 0 they are its own,
+    --- as they were set. At 1 it is lit as a surface of those colors facing the camera is: by the sun,
+    --- in the shadows things cast, and by the sky. Between the two, a mix of both.
+    LightInfluence: number
 end
 
 declare extern type SurfaceGui extends Instance with
@@ -3257,9 +3274,16 @@ declare extern type SurfaceGui extends Instance with
     PixelsPerMetre: number
     --- Whether the interface shows through objects in front of the face.
     AlwaysOnTop: boolean
-    --- A multiplier on the interface's colors in the scene's lighting. Above 1 it glows, like a lit
-    --- screen.
+    --- A multiplier on the interface's own light. With `LightInfluence` at 0 and a brightness of 1 or
+    --- below, the colors are shown as they were set, dimmed below 1, whatever the scene's exposure and
+    --- lighting. Above 1 the interface glows like a lit screen: the exposure brightens or darkens it
+    --- with the scene, and it blooms. It counts for less as `LightInfluence` rises, and not at all at
+    --- 1.
     Brightness: number
+    --- How much the scene's light decides the interface's colors, from 0 to 1. At 0 they are its own,
+    --- as they were set, like a screen's. At 1 it is lit as the face it is on would be in those colors:
+    --- by the sun, in the shadows things cast, and by the sky. Between the two, a mix of both.
+    LightInfluence: number
 end
 
 declare extern type UIObject extends Instance with
@@ -5314,6 +5338,12 @@ declare extern type XRService extends Instance with
     --- fades the game's world over it. Nothing on a headset whose runtime has no passthrough
     --- (`SupportsPassthrough`).
     Passthrough: boolean
+    --- The camera the window on the computer shows while the headset draws, for whoever is watching or
+    --- streaming. The game's world is seen through it, drawn at the window's size and the screen's
+    --- graphics quality, after the headset's eyes. With nil, the window shows the left eye. `[xr]
+    --- spectator = false` in `project.toml` keeps the left eye whatever this is. A standalone headset
+    --- has no window, and nothing more is drawn there.
+    SpectatorCamera: Camera?
     --- Which hand points at interfaces in a headset. Its ray finds the panels the screens become and
     --- every `SurfaceGui` and `BillboardGui`, and its trigger, or a pinch of its fingers, is a click
     --- where the ray meets one.

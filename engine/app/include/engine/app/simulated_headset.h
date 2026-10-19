@@ -44,8 +44,10 @@ public:
 
     [[nodiscard]] std::string_view runtimeName() const noexcept override { return "simulated"; }
     [[nodiscard]] std::string_view systemName() const noexcept override { return "simulated"; }
-    [[nodiscard]] core::u32 eyeWidth() const noexcept override { return m_desc.eyeWidth; }
-    [[nodiscard]] core::u32 eyeHeight() const noexcept override { return m_desc.eyeHeight; }
+    [[nodiscard]] core::u32 eyeWidth() const noexcept override { return m_width; }
+    [[nodiscard]] core::u32 eyeHeight() const noexcept override { return m_height; }
+    // The images remade at `scale` of the desc's size, as a runtime's are.
+    [[nodiscard]] bool setRenderScale(core::f32 scale) override;
     void poll() override {}
     [[nodiscard]] rhi::HeadsetState state() const noexcept override { return rhi::HeadsetState::Running; }
     [[nodiscard]] bool beginFrame(rhi::HeadsetFrame& frame) override;
@@ -135,8 +137,14 @@ public:
     [[nodiscard]] core::u64 framesEnded() const noexcept { return m_frames; }
 
 private:
+    // The eyes' images, colour and depth, at `m_width` by `m_height`.
+    void makeImages();
+    void releaseImages();
+
     rhi::IDevice& m_device;
     SimulatedHeadsetDesc m_desc;
+    core::u32 m_width = 0;
+    core::u32 m_height = 0;
     std::array<rhi::TextureHandle, 2> m_images{};
     std::array<rhi::TextureHandle, 2> m_depthImages{};
     bool m_passthrough = false;

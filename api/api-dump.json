@@ -672,6 +672,11 @@
           "Default": "0.01"
         },
         {
+          "Name": "ShowsRoom",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
           "Name": "Size",
           "Type": "vector"
         }
@@ -980,6 +985,11 @@
           "Name": "Enabled",
           "Type": "boolean",
           "Default": "true"
+        },
+        {
+          "Name": "LightInfluence",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "MaxDistance",
@@ -6073,6 +6083,11 @@
           "Default": "0"
         },
         {
+          "Name": "LightInfluence",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
           "Name": "Rate",
           "Type": "number",
           "Default": "20"
@@ -8502,6 +8517,11 @@
           "Name": "Face",
           "Type": "Enum.Face",
           "Default": "Enum.Face.Front"
+        },
+        {
+          "Name": "LightInfluence",
+          "Type": "number",
+          "Default": "0"
         },
         {
           "Name": "PixelsPerMeter",
@@ -11831,6 +11851,11 @@
           "Name": "Space",
           "Type": "Enum.XRSpace",
           "Default": "Enum.XRSpace.Standing",
+          "Transient": true
+        },
+        {
+          "Name": "SpectatorCamera",
+          "Type": "Camera?",
           "Transient": true
         }
       ],

@@ -116,6 +116,16 @@ struct PipelineRecipe
     // pass (the base pipeline is the first), and whether each was tried.
     std::array<SDL_GPUGraphicsPipeline*, 8> twins{};
     std::array<bool, 8> tried{};
+    // **And into a first target of another format** (the forward pass of a
+    // headset's eye with the tonemap folded into it, drawn straight into the
+    // runtime's 8-bit image): each the format, the slot above, the pipeline.
+    struct FormatTwin
+    {
+        SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_INVALID;
+        usize at = 0;
+        SDL_GPUGraphicsPipeline* pipeline = nullptr;
+    };
+    std::vector<FormatTwin> formatTwins;
 };
 
 template <class T>
@@ -263,6 +273,10 @@ public:
         stagingCapacity_ = 0;
     }
 
+    // The frame's copy pass, opened if it is not: where a readback's
+    // download is recorded, in order with what the frame drew.
+    [[nodiscard]] SDL_GPUCopyPass* copyPass() noexcept { return ensureCopyPass(); }
+
 private:
     [[nodiscard]] SDL_GPUCopyPass* ensureCopyPass() noexcept;
 
@@ -332,6 +346,9 @@ private:
     // density map shades it.
     u32 passSamples_ = 1;
     bool passDensity_ = false;
+    // The pass's first colour target's format: its pipelines are drawn in
+    // their twins of it where they were made for another.
+    SDL_GPUTextureFormat passFormat_ = SDL_GPU_TEXTUREFORMAT_INVALID;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -369,6 +386,9 @@ public:
 
         SDL_WaitForGPUIdle(device_);
         releaseInFlight();
+        for (const Readback& readback : readbacks_)
+            SDL_ReleaseGPUTransferBuffer(device_, readback.transfer);
+        readbacks_.clear();
         cmdList_.releaseStaging();
         // The headset's swapchains and session go before the device they
         // were made on.
@@ -377,10 +397,14 @@ public:
         for (SDL_GPUGraphicsPipeline* pipeline : pipelines_)
             if (pipeline != nullptr)
                 SDL_ReleaseGPUGraphicsPipeline(device_, pipeline);
-        for (const PipelineRecipe& recipe : recipes_)
+        for (const PipelineRecipe& recipe : recipes_) {
             for (SDL_GPUGraphicsPipeline* twin : recipe.twins)
                 if (twin != nullptr)
                     SDL_ReleaseGPUGraphicsPipeline(device_, twin);
+            for (const PipelineRecipe::FormatTwin& twin : recipe.formatTwins)
+                if (twin.pipeline != nullptr)
+                    SDL_ReleaseGPUGraphicsPipeline(device_, twin.pipeline);
+        }
         for (SDL_GPUComputePipeline* pipeline : computePipelines_)
             if (pipeline != nullptr)
                 SDL_ReleaseGPUComputePipeline(device_, pipeline);
@@ -922,6 +946,9 @@ public:
             for (SDL_GPUGraphicsPipeline* twin : recipe->twins)
                 if (twin != nullptr)
                     SDL_ReleaseGPUGraphicsPipeline(device_, twin);
+            for (const PipelineRecipe::FormatTwin& twin : recipe->formatTwins)
+                if (twin.pipeline != nullptr)
+                    SDL_ReleaseGPUGraphicsPipeline(device_, twin.pipeline);
             *recipe = PipelineRecipe{};
         }
     }
@@ -1005,6 +1032,7 @@ public:
             noteFailure();
         else
             inFlight_.push_back(fence);
+        submittedFrames_ += 1;
         if (timed) {
             // The frame's own buffer, waited for as every pass before it was:
             // the next frame's first pass must find the GPU idle.
@@ -1029,7 +1057,83 @@ public:
                 (void)SDL_WaitForGPUFences(device_, true, &oldest, 1);
             SDL_ReleaseGPUFence(device_, oldest);
         }
+        // The frames whose fences have been waited on, and a frame that got
+        // no fence: done as far as a readback can know.
+        finishedFrames_ = submittedFrames_ - inFlight_.size();
         cmdList_.begin(nullptr);
+    }
+
+    void warmPipeline(PipelineHandle pipeline, u32 samples, bool densityShaded, TextureFormat colorFormat) override
+    {
+        (void)pipelineAt(pipeline, samples, densityShaded,
+                         colorFormat == TextureFormat::Undefined ? SDL_GPU_TEXTUREFORMAT_INVALID : toSdl(colorFormat));
+    }
+
+    [[nodiscard]] u32 requestReadback(TextureHandle texture, u32 width, u32 height) override
+    {
+        const TextureEntry* entry = slot(textures_, texture.id);
+        if (lost_ || entry == nullptr || entry->texture == nullptr || cmdList_.buffer() == nullptr || width == 0 ||
+            height == 0 || width > entry->width || height > entry->height)
+            return 0;
+        const u32 pixelSize = bytesPerPixel(entry->format);
+        if (pixelSize == 0)
+            return 0;
+        const u32 size = width * height * pixelSize;
+        const SDL_GPUTransferBufferCreateInfo transferInfo{
+            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+            .size = size,
+            .props = 0,
+        };
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &transferInfo);
+        if (transfer == nullptr)
+            return 0;
+        SDL_GPUCopyPass* pass = cmdList_.copyPass();
+        if (pass == nullptr) {
+            SDL_ReleaseGPUTransferBuffer(device_, transfer);
+            return 0;
+        }
+        const SDL_GPUTextureRegion region{
+            .texture = entry->texture,
+            .mip_level = 0,
+            .layer = 0,
+            .x = 0,
+            .y = 0,
+            .z = 0,
+            .w = width,
+            .h = height,
+            .d = 1,
+        };
+        const SDL_GPUTextureTransferInfo destination{
+            .transfer_buffer = transfer,
+            .offset = 0,
+            .pixels_per_row = width,
+            .rows_per_layer = height,
+        };
+        SDL_DownloadFromGPUTexture(pass, &region, &destination);
+        const u32 ticket = nextReadback_++;
+        if (nextReadback_ == 0)
+            nextReadback_ = 1;
+        readbacks_.push_back(Readback{ticket, submittedFrames_ + 1, transfer, size});
+        return ticket;
+    }
+
+    [[nodiscard]] bool takeReadback(u32 ticket, std::span<std::byte> out) override
+    {
+        for (usize index = 0; index < readbacks_.size(); ++index) {
+            Readback& readback = readbacks_[index];
+            if (readback.ticket != ticket)
+                continue;
+            if (lost_ || readback.frame > finishedFrames_)
+                return false;
+            if (void* mapped = SDL_MapGPUTransferBuffer(device_, readback.transfer, false); mapped != nullptr) {
+                std::memcpy(out.data(), mapped, std::min<usize>(out.size(), readback.size));
+                SDL_UnmapGPUTransferBuffer(device_, readback.transfer);
+            }
+            SDL_ReleaseGPUTransferBuffer(device_, readback.transfer);
+            readbacks_.erase(readbacks_.begin() + static_cast<std::ptrdiff_t>(index));
+            return true;
+        }
+        return false;
     }
 
     void waitIdle() override
@@ -1150,16 +1254,53 @@ public:
         SDL_GPUShader** entry = slot(shaders_, handle.id);
         return entry != nullptr ? *entry : nullptr;
     }
-    // The pipeline at a pass's sample count and density map: itself at one
-    // sample and none, a twin made from its recipe otherwise.
-    [[nodiscard]] SDL_GPUGraphicsPipeline* pipelineAt(PipelineHandle handle, u32 samples, bool density) noexcept
+    // The pipeline at a pass's sample count, density map and first target's
+    // format: itself at one sample, none and its own format, a twin made from
+    // its recipe otherwise.
+    [[nodiscard]] SDL_GPUGraphicsPipeline*
+    pipelineAt(PipelineHandle handle, u32 samples, bool density,
+               SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_INVALID) noexcept
     {
-        if (samples <= 1 && !density)
-            return pipeline(handle);
         PipelineRecipe* recipe = slot(recipes_, handle.id);
+        const bool ownFormat = format == SDL_GPU_TEXTUREFORMAT_INVALID || recipe == nullptr ||
+                               recipe->colorTargets.empty() || recipe->colorTargets[0].format == format;
+        if (samples <= 1 && !density && ownFormat)
+            return pipeline(handle);
         if (recipe == nullptr || pipeline(handle) == nullptr)
             return nullptr;
         const usize at = (density ? 4u : 0u) + (samples >= 8 ? 3u : samples >= 4 ? 2u : samples >= 2 ? 1u : 0u);
+        if (!ownFormat) {
+            for (const PipelineRecipe::FormatTwin& twin : recipe->formatTwins) {
+                if (twin.format == format && twin.at == at)
+                    return twin.pipeline;
+            }
+            SDL_GPUGraphicsPipelineCreateInfo info = recipe->info;
+            std::vector<SDL_GPUColorTargetDescription> targets = recipe->colorTargets;
+            targets[0].format = format;
+            info.vertex_input_state.vertex_buffer_descriptions = recipe->vertexBuffers.data();
+            info.vertex_input_state.vertex_attributes = recipe->attributes.data();
+            info.target_info.color_target_descriptions = targets.data();
+            info.multisample_state.sample_count = sampleCountOf(samples);
+            SDL_PropertiesID properties = 0;
+            if (density) {
+                properties = SDL_CreateProperties();
+                SDL_SetBooleanProperty(properties,
+                                       SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, true);
+                info.props = properties;
+            }
+            const Uint64 started = SDL_GetTicksNS();
+            SDL_GPUGraphicsPipeline* made = SDL_CreateGPUGraphicsPipeline(device_, &info);
+            sayIfSlow(recipe->name, started);
+            if (properties != 0)
+                SDL_DestroyProperties(properties);
+            if (made == nullptr) {
+                const core::I18nArg args[] = {{"name", std::string_view{recipe->name}},
+                                              {"detail", std::string_view{SDL_GetError()}}};
+                core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
+            }
+            recipe->formatTwins.push_back(PipelineRecipe::FormatTwin{format, at, made});
+            return made;
+        }
         if (!recipe->tried[at]) {
             recipe->tried[at] = true;
             SDL_GPUGraphicsPipelineCreateInfo info = recipe->info;
@@ -1174,7 +1315,9 @@ public:
                                        SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, true);
                 info.props = properties;
             }
+            const Uint64 started = SDL_GetTicksNS();
             recipe->twins[at] = SDL_CreateGPUGraphicsPipeline(device_, &info);
+            sayIfSlow(recipe->name, started);
             if (properties != 0)
                 SDL_DestroyProperties(properties);
             if (recipe->twins[at] == nullptr) {
@@ -1235,7 +1378,22 @@ private:
         for (SDL_GPUFence* fence : inFlight_)
             SDL_ReleaseGPUFence(device_, fence);
         inFlight_.clear();
+        finishedFrames_ = submittedFrames_;
     }
+
+    // **The readbacks asked for and not yet taken** (`requestReadback`): each
+    // the frame it was recorded in, counted as `submittedFrames_` counts.
+    struct Readback
+    {
+        u32 ticket = 0;
+        u64 frame = 0;
+        SDL_GPUTransferBuffer* transfer = nullptr;
+        u32 size = 0;
+    };
+    std::vector<Readback> readbacks_;
+    u32 nextReadback_ = 1;
+    u64 submittedFrames_ = 0;
+    u64 finishedFrames_ = 0;
 
     std::vector<SDL_GPUBuffer*> buffers_;
     // Each buffer's size, by the same slot.
@@ -1366,7 +1524,8 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
                                       .info = info,
                                       .name = std::string(desc.debugName),
                                       .twins = {},
-                                      .tried = {}});
+                                      .tried = {},
+                                      .formatTwins = {}});
     return PipelineHandle{addSlot(pipelines_, pipeline)};
 }
 
@@ -1977,6 +2136,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
     usize colorCount = 0;
     passSamples_ = 1;
     passDensity_ = false;
+    passFormat_ = SDL_GPU_TEXTUREFORMAT_INVALID;
     for (const ColorAttachment& attachment : desc.colorAttachments) {
         TextureEntry* entry = device_.texture(attachment.texture);
         if (entry == nullptr || entry->texture == nullptr)
@@ -1999,6 +2159,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
         if (colorCount == 0) {
             passSamples_ = entry->samples;
             passDensity_ = entry->densityShaded;
+            passFormat_ = toSdl(entry->format);
         }
         colors[colorCount++] = info;
     }
@@ -2034,7 +2195,7 @@ void SdlGpuCmdList::setPipeline(PipelineHandle pipeline)
 {
     if (renderPass_ == nullptr)
         return;
-    if (SDL_GPUGraphicsPipeline* native = device_.pipelineAt(pipeline, passSamples_, passDensity_);
+    if (SDL_GPUGraphicsPipeline* native = device_.pipelineAt(pipeline, passSamples_, passDensity_, passFormat_);
         native != nullptr && native != boundPipeline_) {
         SDL_BindGPUGraphicsPipeline(renderPass_, native);
         boundPipeline_ = native;

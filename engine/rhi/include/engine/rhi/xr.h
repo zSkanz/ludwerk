@@ -214,9 +214,20 @@ public:
     // headset's, for the log and the profiler.
     [[nodiscard]] virtual std::string_view runtimeName() const noexcept = 0;
     [[nodiscard]] virtual std::string_view systemName() const noexcept = 0;
-    // The size each eye is drawn at, as the runtime recommends it.
+    // The size each eye is drawn at: as the runtime recommends it, times the
+    // render scale asked (`setRenderScale`).
     [[nodiscard]] virtual u32 eyeWidth() const noexcept = 0;
     [[nodiscard]] virtual u32 eyeHeight() const noexcept = 0;
+    // **The eyes' images made smaller** (`[xr] render_scale`, ADR 0250):
+    // `scale` of the size the runtime recommends, from the next frame begun --
+    // the images remade, and the runtime's compositor brings them up to the
+    // display. True where this headset does; false, and the renderer draws
+    // smaller and brings the picture up itself.
+    [[nodiscard]] virtual bool setRenderScale(f32 scale)
+    {
+        (void)scale;
+        return false;
+    }
 
     // Reads what the runtime said since the last call -- a session ready to
     // begin, asked to stop, lost -- and acts on it. Once a frame, before

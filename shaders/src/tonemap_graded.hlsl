@@ -79,8 +79,5 @@ float4 FragmentMain(Interpolants input) : SV_Target0
 #else
     const float4 written = float4(ditherOutput(encodeSrgb(tonemapPbrNeutral(graded)), input.Position.xy), alpha);
 #endif
-    // **Into an sRGB image** (w above a half): a headset's eye drawn straight
-    // into the runtime's image, which encodes what it is given. Decoded after
-    // the dither, so the bytes that land are the ones a copy wrote.
-    return ExposureBloom.w > 0.5f ? float4(decodeSrgb(written.rgb), written.a) : written;
+    return finishOutput(written, input.Uv);
 }

@@ -2082,6 +2082,8 @@ static int hostMain(int argc, char** argv)
             options.xr = config.xrEnabled || config.xrRequired;
         options.xrRequired = config.xrRequired && !options.xrFromFlag;
         options.xrMirror = config.xrMirror;
+        options.xrSpectator = config.xrSpectator;
+        options.xrSpectatorEvery = config.xrSpectatorEvery.value_or(options.xrSpectatorEvery);
         options.xrHands = config.xrHands;
         if (!options.xrDepthFromFlag)
             options.xrDepth = config.xrDepth;

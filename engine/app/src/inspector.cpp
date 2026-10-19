@@ -319,7 +319,7 @@ constexpr std::array<std::string_view, 18> kCategoryOrder{
 
 // Sorted by property name, so a lookup is a binary search. A name several
 // classes share is one row: it means the same thing wherever it is declared.
-constexpr std::array<CategoryRow, 158> kCategories{{
+constexpr std::array<CategoryRow, 160> kCategories{{
     {"AbsolutePosition", "Layout"},
     {"AbsoluteSize", "Layout"},
     {"Acceleration", "Emission"},
@@ -397,6 +397,7 @@ constexpr std::array<CategoryRow, 158> kCategories{{
     {"LayoutOrder", "Layout"},
     {"Lifetime", "Emission"},
     {"LightEmission", "Emission"},
+    {"LightInfluence", "Light"},
     {"LimitsEnabled", "Constraint"},
     {"LinearVelocity", "Physics"},
     {"LoadRadius", "Streaming"},
@@ -447,6 +448,7 @@ constexpr std::array<CategoryRow, 158> kCategories{{
     {"Sensor", "Collision"},
     {"Shadows", "Light"},
     {"Shape", "Appearance"},
+    {"ShowsRoom", "Appearance"},
     {"Size", "Transform"},
     {"SizeEnd", "Emission"},
     {"SliceCenter", "Image"},

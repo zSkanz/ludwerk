@@ -1992,6 +1992,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // window is -- its own picture, its own history -- and then copied into
     // the runtime's image. Their views beside the split screen's.
     std::array<SplitPicture, 2> eyePictures;
+    // **The spectator's picture** (`XRService.SpectatorCamera`, ADR 0250),
+    // drawn every few of the headset's frames and shown in every one, and the
+    // renderer's view for it.
+    SplitPicture spectatorPicture;
+    constexpr core::u32 SpectatorView = 0xFFFFFD10u;
     HandPinches handPinches;
     // **The headset's timing, for the log** (what decides multiview): the
     // CPU each eye's pass took, summed since the last line.
@@ -2000,6 +2005,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // Frames a headset has drawn, for the eyes' geometry said once and the
     // picture `--xr-eyes-shot` asks for.
     core::u64 headsetFramesDrawn = 0;
+    // Whether the spectator's picture holds a frame yet.
+    bool spectatorDrawn = false;
     core::u32 headsetFramesSinceLog = 0;
     // **Anchors asked of the headset** (ADR 0247 §3): its ask's number, the
     // script's waiter, what was asked, where, and what a load found so far.
@@ -2035,6 +2042,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // The display's rate the session was last asked for (`[xr] refresh_rate`,
     // then `XRService.RefreshRate`).
     core::f32 headsetRefreshAsked = options.xrRefreshRate;
+    // The render scale last asked of the headset (none yet), and whether it
+    // makes its images that size (`IHeadset::setRenderScale`).
+    core::f32 headsetScaleAsked = -1.0f;
+    bool headsetScales = false;
     bool headsetUnsyncDue = false;
     // The editor's icons, built once from `content/icons` on the first frame
     // that has a command list -- uploading a texture is one, so this cannot be
@@ -7942,6 +7953,15 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             if (headsetBegun)
                 headset->endFrame();
             headset->poll();
+            // **The eyes' images at the render scale** (`XRService.RenderScale`,
+            // ADR 0250), asked of the headset when it changes and before the
+            // frame is begun: where it makes them that size, the renderer
+            // draws each eye whole and the runtime's compositor brings it up.
+            if (const core::f32 scale = host->world().engineState().headset.quality.renderScale;
+                scale != headsetScaleAsked) {
+                headsetScaleAsked = scale;
+                headsetScales = headset->setRenderScale(scale);
+            }
             {
                 ENG_PROFILE_SCOPE("wait.headset");
                 headsetBegun = headset->beginFrame(headsetFrame);
@@ -9997,6 +10017,16 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         ENG_PROFILE_SCOPE("render.world");
                         if (!curtainWarmed) {
                             renderer->warm(*device);
+                            // And a headset's eyes' twins of them, behind
+                            // the same curtain: the eyes are drawn only once
+                            // it lifts, and each made at its first draw was a
+                            // hitch in the player's first seconds.
+                            if (headset != nullptr && headsetBegun) {
+                                const scene::EngineState::Headset::Quality& quality =
+                                    host->world().engineState().headset.quality;
+                                renderer->warmEyes(*device, std::max(quality.msaa, 1u), quality.foveation,
+                                                   headsetFrame.format);
+                            }
                             curtainWarmed = true;
                         }
                         renderer->render(*device, *cmd,
@@ -10107,7 +10137,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             snapshot.headsetLean = options.xrStandalone;
                             snapshot.headsetSamples = std::max(quality.msaa, 1u);
                             snapshot.headsetQuality = render::HeadsetQuality{
-                                .renderScale = quality.renderScale,
+                                .renderScale = headsetScales ? 1.0f : quality.renderScale,
                                 .shadowResolution = quality.shadowResolution,
                                 .shadowDistance = quality.shadowDistance,
                                 .shadowCascades = quality.shadowCascades,
@@ -10120,11 +10150,20 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         // **Straight into the runtime's image** on a standalone
                         // headset: no picture of the eye's own, and no pass that
                         // copies it -- 0.7 ms of a Quest 3's frame. Not where the
-                        // room shows through, whose alpha the copy writes from the
-                        // depth; nor on the frame whose pictures `--xr-eyes-shot`
-                        // reads back.
+                        // room shows through, whose alpha the copy writes from
+                        // what the picture covers; nor on the frame whose
+                        // pictures `--xr-eyes-shot` reads back.
                         const bool eyesDirect = snapshot.headsetLean && !eyeCopy.seeThrough &&
                                                 !(!options.xrEyesShot.empty() && headsetFramesDrawn + 1 == 600);
+                        // **Where the room shows, nothing is behind the
+                        // picture**: no sky, cleared to no coverage, and each
+                        // pixel's alpha what was drawn there covers -- a panel,
+                        // a sign, a pane of glass or smoke as much as a wall.
+                        // From the depth, everything that blends and writes none
+                        // was taken for nothing and vanished into the room.
+                        const bool backgroundWas = snapshot.environment.transparentBackground;
+                        if (eyeCopy.seeThrough)
+                            snapshot.environment.transparentBackground = true;
                         // Each eye from the head, as drawn: for the log below.
                         std::array<core::Vec3, 2> eyeOffsets{};
                         std::array<core::Mat3, 2> eyeTurns{};
@@ -10197,6 +10236,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                                                .width = headsetFrame.width,
                                                                                .height = headsetFrame.height});
                         }
+                        snapshot.environment.transparentBackground = backgroundWas;
                         headsetFramesDrawn += 1;
                         // **The eyes' geometry, said once a session and with a
                         // picture of them**: where each eye is and how far it sees,
@@ -10307,9 +10347,81 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         snapshot.headsetDepthRead = false;
                         snapshot.headsetFoveation = 0;
                         snapshot.headsetQuality = render::HeadsetQuality{};
+                        // **Or a camera of the game's** (`XRService.SpectatorCamera`,
+                        // ADR 0250): the world through it, extracted and drawn
+                        // for the window as a screen's frame is -- after the
+                        // eyes, which have the frame's GPU first.
+                        const core::InstanceId spectator = host->world().engineState().headset.spectatorCamera;
+                        std::optional<render::ViewOverride> spectatorLens;
+                        if (mirroring && !eyesDirect && options.xrSpectator && !options.xrStandalone &&
+                            host->world().alive(spectator))
+                            spectatorLens = lensOf(spectator);
+                        // **Every few of the headset's frames** (`[xr]
+                        // spectator_every`, two by default): into a picture of
+                        // its own, shown in the window in each -- a view for
+                        // watching is drawn at half the eyes' cost.
+                        bool spectatorShown = false;
+                        if (spectatorLens.has_value() &&
+                            (!spectatorPicture.texture.valid() || spectatorPicture.width != targetWidth ||
+                             spectatorPicture.height != targetHeight || spectatorPicture.format != targetFormat)) {
+                            if (spectatorPicture.texture.valid())
+                                device->destroy(spectatorPicture.texture);
+                            spectatorPicture = SplitPicture{};
+                            spectatorPicture.texture = device->createTexture({
+                                .format = targetFormat,
+                                .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                                .width = targetWidth,
+                                .height = targetHeight,
+                                .debugName = "headset-spectator",
+                            });
+                            spectatorPicture.width = targetWidth;
+                            spectatorPicture.height = targetHeight;
+                            spectatorPicture.format = targetFormat;
+                            spectatorDrawn = false;
+                        }
+                        if (spectatorLens.has_value() && spectatorPicture.texture.valid()) {
+                            spectatorShown = true;
+                        }
+                        if (spectatorShown &&
+                            (!spectatorDrawn || headsetFramesDrawn % std::max(options.xrSpectatorEvery, 1u) == 0)) {
+                            ENG_PROFILE_SCOPE("render.spectator");
+                            const render::RenderTarget spectatorTarget{.color = spectatorPicture.texture,
+                                                                       .colorFormat = targetFormat,
+                                                                       .width = targetWidth,
+                                                                       .height = targetHeight,
+                                                                       .view = SpectatorView,
+                                                                       .window = true};
+                            const scene::World& world = host->world();
+                            {
+                                ENG_PROFILE_SCOPE("render.extract");
+                                render::extract(world, host->workspace(), host->lighting(), meshLibrary,
+                                                static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight),
+                                                shadowRadius, host->animation(), framePoses, viewSnapshot,
+                                                &*spectatorLens, {}, &textureLibrary, terrainNodes);
+                            }
+                            host->reportSeenSkins(viewSnapshot.seenSkins, false);
+                            terrainLoader.appendRenderTerrains(world, host->workspace(), viewSnapshot, &textureLibrary);
+                            particles.append(viewSnapshot, &textureLibrary);
+                            ribbons.append(world, host->workspace(), viewSnapshot, &textureLibrary, &framePoses);
+                            foliage.append(world, meshLibrary, viewSnapshot, &textureLibrary);
+                            skyLoader.append(viewSnapshot);
+                            indirectLight.append(viewSnapshot);
+                            buildWorldUi(host->world(), host->workspace(), host->uiService(),
+                                         core::Vec2{static_cast<f32>(targetWidth), static_cast<f32>(targetHeight)},
+                                         uiTextures, worldUiDrawList, viewSnapshot, &uiGradients, &framePoses);
+                            viewSnapshot.worldUiGradients = uiRenderer.gradientTable();
+                            applyDebugHide(viewSnapshot, debugHide);
+                            render::jitterCamera(viewSnapshot.camera,
+                                                 renderer->cameraJitter(viewSnapshot, spectatorTarget));
+                            renderer->render(*device, *cmd, spectatorTarget, viewSnapshot, meshCache);
+                            spectatorDrawn = true;
+                        }
+                        if (spectatorShown && spectatorDrawn)
+                            renderer->presentEye(*device, *cmd, spectatorPicture.texture, windowTarget,
+                                                 render::PictureCrop{});
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.
-                        if (mirroring && !eyesDirect && options.xrMirror && eyePictures[0].texture.valid()) {
+                        else if (mirroring && !eyesDirect && options.xrMirror && eyePictures[0].texture.valid()) {
                             const f32 eyeAspect =
                                 static_cast<f32>(eyePictures[0].width) / static_cast<f32>(eyePictures[0].height);
                             const f32 windowAspect = static_cast<f32>(targetWidth) / static_cast<f32>(targetHeight);

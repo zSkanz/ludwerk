@@ -24,9 +24,48 @@ here.
   it. In an online game, `xrgrab.serve()` on the authority gives a part to
   the player whose hand closes on it, and refuses one another player holds
   or that is out of reach.
+- `LightInfluence` on `SurfaceGui` and `BillboardGui`, from 0 (the default:
+  the interface's own colors) to 1 (lit as a part of its colors would be
+  there: by the sun, in the shadows things cast, and by the sky), and a mix
+  between.
+- `ParticleEmitter.LightInfluence`, 1 by default, which is how blended
+  particles were always lit: smoke and dust are now darker in a shadow and
+  take the sky's light there, as a surface does, while what they add with
+  `LightEmission` is never shadowed; 0 keeps a particle's own color.
+- `BasePart.ShowsRoom` makes a part a window onto the player's real room in
+  a headset with `XRService.Passthrough` on: the room shows where the part
+  is, and anything in front of it is drawn over the room. Anywhere else the
+  part looks as it otherwise would. The wire protocol is 59.
+- `XRService.SpectatorCamera` shows the game through a camera of its own in
+  the computer's window while a headset draws, for whoever watches or
+  streams; nil keeps the left eye, and `[xr] spectator = false` keeps it
+  whatever a script sets. It is drawn every other frame of the headset's
+  (`[xr] spectator_every`), so the player pays half of it.
+- `[xr] render_scale` sizes the headset's own images, which its compositor
+  brings up to the display, and the log says the size chosen.
+
+### Changed
+
+- The world's interface shows the colors it was given: at a `Brightness`
+  of 1 or less, a `SurfaceGui` or a `BillboardGui` is no longer exposed
+  and tonemapped with the scene, so a dark panel stays the color it was
+  set to by day and by night. Above 1 it glows and blooms as before.
+- On a standalone headset, the tonemap is drawn in each eye's own pass when
+  nothing in the frame needs the light after it, which takes the 16-bit
+  picture and the tonemap pass out of the frame: on the PC's standalone
+  profile, a frame of the XR room went from 2.3 to 1.8 ms of GPU.
+- The pipelines a headset's eyes draw with are made behind the loading
+  screen, where they had been made the first time each was drawn: the
+  hitches of a headset's first seconds.
 
 ### Fixed
 
+- On a standalone headset, the sun's shadows reach as far as the project
+  says: its two cascades ended at 2.7 meters of 20, and the first was not as
+  deep as asked, so nothing farther than a few steps cast a shadow.
+- In a headset with the room seen through, the world's interface, glass and
+  particles are drawn over the room. They had been drawn under it, so a sign
+  over a crate disappeared when passthrough was on.
 - A ball rolling on a table slows the way a real one does and comes to rest,
   where it rolled on with its damping alone and stopped dead at three
   centimeters a second: `BasePart.RollingResistance` (0.01 by default) slows

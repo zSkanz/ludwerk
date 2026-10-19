@@ -909,6 +909,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, part->castShadow);
             return true;
         }
+        if (field.name == "ShowsRoom") {
+            setBool(out, part->showsRoom);
+            return true;
+        }
         if (field.name == "ReceivesDecals") {
             setBool(out, part->receivesDecals);
             return true;
@@ -1602,6 +1606,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "LightEmission") {
             setF32(out, emitter->lightEmission);
+            return true;
+        }
+        if (field.name == "LightInfluence") {
+            setF32(out, emitter->lightInfluence);
             return true;
         }
         if (field.name == "Brightness") {
@@ -2351,6 +2359,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             part->castShadow = asBool(value);
             return true;
         }
+        if (field.name == "ShowsRoom") {
+            part->showsRoom = asBool(value);
+            return true;
+        }
         if (field.name == "ReceivesDecals") {
             part->receivesDecals = asBool(value);
             return true;
@@ -2668,6 +2680,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "LightEmission") {
             emitter->lightEmission = asF32(value);
+            return true;
+        }
+        if (field.name == "LightInfluence") {
+            emitter->lightInfluence = asF32(value);
             return true;
         }
         if (field.name == "Brightness") {

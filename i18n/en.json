@@ -227,6 +227,7 @@
   "rhi.info.xr_no_depth": "The headset's runtime takes no depth this engine can make, so each eye is shown without it.",
   "rhi.info.xr_no_controllers": "The headset's runtime took no controllers, so only the head is followed.",
   "rhi.info.xr_ready": "Drawing to the headset: {system}, through {runtime}, each eye {width} by {height}.",
+  "rhi.info.xr_eye_scaled": "Each eye's image is now {width} by {height}: {scale} of the {recommendedWidth} by {recommendedHeight} the headset recommends, brought up to the display by its compositor.",
   "rhi.info.xr_unavailable": "No headset to draw to, so the game is drawn on the screen: {detail}",
   "rhi.info.xr_ended": "The headset's session has ended. The game goes on on the screen.",
   "rhi.warn.xr_call_failed": "The headset's runtime refused {what} (code {code}).",

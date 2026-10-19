@@ -1764,6 +1764,22 @@ bool setParticleEmitterLightEmission(scene::World& world, core::InstanceId id, c
     return true;
 }
 
+Value getParticleEmitterLightInfluence(const scene::World& world, core::InstanceId id)
+{
+    const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    return emitter == nullptr ? Value{} : Value{static_cast<f64>(emitter->lightInfluence)};
+}
+
+bool setParticleEmitterLightInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);
+    f32 next = 0.0f;
+    if (emitter == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    emitter->lightInfluence = next;
+    return true;
+}
+
 Value getParticleEmitterBrightness(const scene::World& world, core::InstanceId id)
 {
     const scene::ParticleEmitterComponent* emitter = world.particleEmitters().find(id);

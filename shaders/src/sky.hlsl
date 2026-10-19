@@ -17,6 +17,7 @@
 #define ENG_UNIFORMS_SKY
 #include "engine_pbr.hlsli"
 #include "engine_fullscreen.hlsli"
+#include "engine_tonemap.hlsli"
 
 struct Interpolants
 {
@@ -98,5 +99,7 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     // environment every surface reflects, and a disc at radiance 1 reflects as a
     // pale smudge rather than as a highlight. The glow keeps the unscaled
     // colour, because a glow that bright would be a second sun.
-    return float4(sky + SunColor.rgb * (disc * SunColor.w + glow), 1.0f);
+    // `ZenithColor.w`: the tonemap folded into a headset eye's pass.
+    return foldOutput(float4(sky + SunColor.rgb * (disc * SunColor.w + glow), 1.0f), ZenithColor.w,
+                      input.Position.xy);
 }

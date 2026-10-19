@@ -41,18 +41,24 @@ TEST_CASE("native D3D12 particle palette samples all seven pictures and preserve
     REQUIRE(SUCCEEDED(descriptors.initialize()));
     Commands commands(context, resources, pipelines, descriptors);
     REQUIRE(SUCCEEDED(commands.initialize()));
-    const auto vs = pipelines.createShader(
-        {.stage = ShaderStage::Vertex, .format = ShaderFormat::Dxil, .code = vertex, .uniformBufferCount = 1});
+    // The vertex stage reads the sun's shadow at a particle (`LightInfluence`):
+    // a second block, and the map.
+    const auto vs = pipelines.createShader({.stage = ShaderStage::Vertex,
+                                            .format = ShaderFormat::Dxil,
+                                            .code = vertex,
+                                            .samplerCount = 1,
+                                            .uniformBufferCount = 2});
     const auto fs = pipelines.createShader({.stage = ShaderStage::Fragment,
                                             .format = ShaderFormat::Dxil,
                                             .code = fragment,
                                             .samplerCount = 8,
                                             .uniformBufferCount = 1});
-    const VertexBufferLayout buffers[] = {{.strideBytes = 64, .perInstance = true}};
+    const VertexBufferLayout buffers[] = {{.strideBytes = 80, .perInstance = true}};
     const VertexAttribute attributes[] = {{.location = 0, .format = VertexFormat::Float4, .offsetBytes = 0},
                                           {.location = 1, .format = VertexFormat::Float4, .offsetBytes = 16},
                                           {.location = 2, .format = VertexFormat::Float4, .offsetBytes = 32},
-                                          {.location = 3, .format = VertexFormat::Float4, .offsetBytes = 48}};
+                                          {.location = 3, .format = VertexFormat::Float4, .offsetBytes = 48},
+                                          {.location = 4, .format = VertexFormat::Float4, .offsetBytes = 64}};
     const ColorTargetDesc targets[] = {
         {.format = TextureFormat::Rgba8Unorm,
          .blend = {.enabled = true, .srcColor = BlendFactor::One, .dstColor = BlendFactor::OneMinusSrcAlpha}}};
@@ -71,7 +77,7 @@ TEST_CASE("native D3D12 particle palette samples all seven pictures and preserve
     for (auto& picture : pictures)
         picture = resources.createTexture(
             {.format = TextureFormat::Rgba8Unorm, .usage = TextureUsage::Sampled, .width = 1, .height = 1});
-    std::array<std::array<float, 16>, 10> instances{};
+    std::array<std::array<float, 20>, 10> instances{};
     for (u32 at = 0; at < instances.size(); ++at) {
         auto& particle = instances[at];
         particle[0] = -1.0f + (static_cast<float>((std::min)(at, 7u)) + 0.5f) * 0.25f;
@@ -80,6 +86,8 @@ TEST_CASE("native D3D12 particle palette samples all seven pictures and preserve
         particle[7] = at < 7 ? 1.0f : 0.5f;
         particle[11] = static_cast<float>(at < 7 ? at + 1 : at == 8 ? 2 : 7);
         particle[14] = particle[15] = 1.0f;
+        // Lit by the scene's light, as every particle is by default.
+        particle[16] = 1.0f;
     }
     const auto stream = resources.createBuffer({.usage = BufferUsage::Vertex, .sizeBytes = sizeof(instances)});
     std::array<float, 24> camera{};
@@ -91,6 +99,8 @@ TEST_CASE("native D3D12 particle palette samples all seven pictures and preserve
     lighting[18] = 1.0f / 8.0f;
     lighting[19] = 1.0f;
     const float sceneDepth = 1.0f;
+    // No sun (`ShadowSun.w` nought): the shadow is not looked up.
+    std::array<float, 116> shadow{};
     const auto sampler = descriptors.createSampler({.minFilter = Filter::Nearest, .magFilter = Filter::Nearest});
     REQUIRE(context.begin() == S_OK);
     commands.uploadTexture(depth, std::as_bytes(std::span(&sceneDepth, 1)), 0);
@@ -106,6 +116,9 @@ TEST_CASE("native D3D12 particle palette samples all seven pictures and preserve
     commands.setScissor({0, 0, 8, 1});
     commands.setPipeline(pipeline);
     commands.bindUniforms(ShaderStage::Vertex, 0, std::as_bytes(std::span(camera)));
+    commands.bindUniforms(ShaderStage::Vertex, 1, std::as_bytes(std::span(shadow)));
+    const std::array<TextureBinding, 1> shadowMap{TextureBinding{depth, sampler}};
+    commands.bindTextures(ShaderStage::Vertex, 0, shadowMap);
     commands.bindUniforms(ShaderStage::Fragment, 0, std::as_bytes(std::span(lighting)));
     std::array<TextureBinding, 8> bindings;
     bindings[0] = {depth, sampler};

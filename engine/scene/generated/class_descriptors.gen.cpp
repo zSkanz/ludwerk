@@ -491,7 +491,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 31> basePartProperties;
+    static std::array<PropertyDesc, 32> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -651,6 +651,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getBasePartReceivesDecals,
             .set = native::setBasePartReceivesDecals,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShowsRoom"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the part is a window onto the player's real room. In a headset with `XRService.Passthrough` on, the room is seen where the part is, in place of the game: it hides what is behind it as a solid part does, and what is in front of it is drawn over the room. Use it for a real desk under a virtual one, or a portal out of the game. Anywhere else the part is drawn as it otherwise would be. It casts no shadow.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartShowsRoom,
+            .set = native::setBasePartShowsRoom,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),
@@ -6642,7 +6654,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 19> xRServiceProperties;
+    static std::array<PropertyDesc, 20> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6787,6 +6799,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getXRServicePassthrough,
             .set = native::setXRServicePassthrough,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SpectatorCamera"),
+            .type = ValueType::Instance,
+            .instanceClass = atoms.intern("Camera"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The camera the window on the computer shows while the headset draws, for whoever is watching or streaming. The game's world is seen through it, drawn at the window's size and the screen's graphics quality, after the headset's eyes. With nil, the window shows the left eye. `[xr] spectator = false` in `project.toml` keeps the left eye whatever this is. A standalone headset has no window, and nothing more is drawn there.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getXRServiceSpectatorCamera,
+            .set = native::setXRServiceSpectatorCamera,
         },
         PropertyDesc{
             .name = atoms.intern("PointerHand"),

@@ -197,6 +197,8 @@ scene::Value getBillboardGuiMaxDistance(const scene::World& world, core::Instanc
 bool setBillboardGuiMaxDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getBillboardGuiBrightness(const scene::World& world, core::InstanceId id);
 bool setBillboardGuiBrightness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getBillboardGuiLightInfluence(const scene::World& world, core::InstanceId id);
+bool setBillboardGuiLightInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachBillboardGuiComponents(scene::World& world, core::InstanceId id);
 void detachBillboardGuiComponents(scene::World& world, core::InstanceId id);
 
@@ -213,6 +215,8 @@ scene::Value getSurfaceGuiAlwaysOnTop(const scene::World& world, core::InstanceI
 bool setSurfaceGuiAlwaysOnTop(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getSurfaceGuiBrightness(const scene::World& world, core::InstanceId id);
 bool setSurfaceGuiBrightness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSurfaceGuiLightInfluence(const scene::World& world, core::InstanceId id);
+bool setSurfaceGuiLightInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachSurfaceGuiComponents(scene::World& world, core::InstanceId id);
 void detachSurfaceGuiComponents(scene::World& world, core::InstanceId id);
 

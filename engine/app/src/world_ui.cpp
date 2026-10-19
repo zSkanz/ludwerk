@@ -100,8 +100,9 @@ struct FaceFrame
 }
 
 // One tree's quads, placed and appended, and grouped into runs.
-void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 brightness, bool onTop,
-                std::span<const rhi::TextureHandle> textures, render::RenderWorld& out, UiGradientRows* gradients)
+void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 brightness, f32 lightInfluence,
+                bool onTop, std::span<const rhi::TextureHandle> textures, render::RenderWorld& out,
+                UiGradientRows* gradients)
 {
     for (const ui::DrawQuad& quad : list.quads) {
         const f32 gradientRow = gradients != nullptr && quad.gradient != 0 && quad.gradient <= list.gradients.size()
@@ -150,9 +151,10 @@ void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 
             quad.texture < textures.size() ? textures[quad.texture] : rhi::TextureHandle{};
         const u32 firstVertex = static_cast<u32>(out.worldUiVertices.size());
         render::WorldUiRun* run = out.worldUiRuns.empty() ? nullptr : &out.worldUiRuns.back();
-        if (run == nullptr || run->texture != texture || run->brightness != brightness || run->alwaysOnTop != onTop ||
+        if (run == nullptr || run->texture != texture || run->brightness != brightness ||
+            run->lightInfluence != lightInfluence || run->alwaysOnTop != onTop ||
             run->firstVertex + run->vertexCount != firstVertex) {
-            out.worldUiRuns.push_back(render::WorldUiRun{firstVertex, 0, texture, brightness, onTop});
+            out.worldUiRuns.push_back(render::WorldUiRun{firstVertex, 0, texture, brightness, lightInfluence, onTop});
             run = &out.worldUiRuns.back();
         }
 
@@ -337,6 +339,8 @@ struct Tree
     core::InstanceId id;
     CanvasPlacement placement;
     f32 brightness = 1.0f;
+    // `LightInfluence`.
+    f32 lightInfluence = 0.0f;
     bool onTop = false;
     // The part it is printed on or floats over.
     core::InstanceId adornee;
@@ -369,7 +373,7 @@ struct Tree
         const core::DVec3 anchor{at.x + static_cast<f64>(gui.worldOffset.x), at.y + static_cast<f64>(gui.worldOffset.y),
                                  at.z + static_cast<f64>(gui.worldOffset.z)};
         if (const std::optional<CanvasPlacement> placement = placeBillboard(gui, anchor, camera, viewport))
-            trees.push_back(Tree{id, *placement, gui.brightness, gui.alwaysOnTop, part});
+            trees.push_back(Tree{id, *placement, gui.brightness, gui.lightInfluence, gui.alwaysOnTop, part});
     });
     // **A headset's panels** (ADR 0246 §1): each `ScreenGui`, where the host
     // put it in front of the player, drawn over the world -- an interface
@@ -387,7 +391,7 @@ struct Tree
         placement.down = up * -step;
         placement.topLeft = centre - right * (panel.canvas.x * step * 0.5f) + up * (panel.canvas.y * step * 0.5f);
         placement.distance = core::length(centre);
-        trees.push_back(Tree{panel.gui, placement, 1.0f, true, {}});
+        trees.push_back(Tree{panel.gui, placement, 1.0f, 0.0f, true, {}});
     }
     world.surfaceGuis().forEach([&](core::InstanceId id, const scene::SurfaceGuiComponent& gui) {
         if (!gui.enabled || !reachable(id))
@@ -398,7 +402,7 @@ struct Tree
             return;
         if (const std::optional<CanvasPlacement> placement =
                 placeSurface(gui, posed.part(part), component->size, camera.origin))
-            trees.push_back(Tree{id, *placement, gui.brightness, gui.alwaysOnTop, part});
+            trees.push_back(Tree{id, *placement, gui.brightness, gui.lightInfluence, gui.alwaysOnTop, part});
     });
     return trees;
 }
@@ -497,7 +501,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
     for (const Tree& tree : trees) {
         ui::layoutCanvas(world, tree.id, tree.placement.canvas);
         ui::buildCanvasDrawList(world, tree.id, scratch);
-        emitCanvas(scratch, tree.placement, tree.brightness, tree.onTop, textures, out, gradients);
+        emitCanvas(scratch, tree.placement, tree.brightness, tree.lightInfluence, tree.onTop, textures, out, gradients);
     }
 
     // **The pointing hand's beam** (ADR 0246 §2): from the hand to where it
@@ -529,7 +533,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
         placed.down = across * BeamWidth;
         placed.topLeft = from - across * (BeamWidth * 0.5f);
         placed.distance = core::length(from);
-        emitCanvas(beam, placed, 1.0f, true, textures, out, nullptr);
+        emitCanvas(beam, placed, 1.0f, 0.0f, true, textures, out, nullptr);
         if (xr.pointerHit.has_value()) {
             // The dot: a round quad a centimetre across, facing the hand.
             const Vec3 up = core::cross(across, along);
@@ -549,7 +553,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
             spot.down = up * -Dot;
             spot.topLeft = at - across * (Dot * 0.5f) + up * (Dot * 0.5f);
             spot.distance = core::length(at);
-            emitCanvas(dot, spot, 1.0f, true, textures, out, nullptr);
+            emitCanvas(dot, spot, 1.0f, 0.0f, true, textures, out, nullptr);
         }
     }
 }

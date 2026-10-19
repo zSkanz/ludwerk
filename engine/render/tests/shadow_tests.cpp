@@ -82,6 +82,35 @@ TEST_CASE("lambda is the blend between the two schemes, and both ends are reacha
     CHECK(logarithmic[1] < uniform[1]);
 }
 
+TEST_CASE("a first split ends the first cascade there and the last drawn cascade at the shadow distance")
+{
+    // A standalone headset's: twenty metres in two cascades, the first two
+    // metres deep -- past the split the four would give, which used to drop
+    // it, and the two drawn ended where the four's second did.
+    auto fit = fitAt(core::DVec3{});
+    fit.distance = 20.0f;
+    fit.firstSplit = 2.0f;
+    fit.cascadeCount = 2;
+    const render::ShadowCascades two = render::fitShadowCascades(fit);
+    CHECK(nearly(two.farDistance[0], 2.0f, 1e-4f));
+    CHECK(nearly(two.farDistance[1], 20.0f, 1e-3f));
+
+    // Three drawn: the middle one between, the last at the distance.
+    fit.cascadeCount = 3;
+    const render::ShadowCascades three = render::fitShadowCascades(fit);
+    CHECK(nearly(three.farDistance[0], 2.0f, 1e-4f));
+    CHECK(three.farDistance[1] > 2.0f);
+    CHECK(three.farDistance[1] < 20.0f);
+    CHECK(nearly(three.farDistance[2], 20.0f, 1e-3f));
+
+    // With no first split, the four divide the distance whatever is drawn.
+    fit.firstSplit = 0.0f;
+    fit.cascadeCount = 2;
+    const render::ShadowCascades flat = render::fitShadowCascades(fit);
+    CHECK(flat.farDistance[1] < 20.0f);
+    CHECK(nearly(flat.farDistance[3], 20.0f, 1e-3f));
+}
+
 TEST_CASE("a distant caster between the sun and a near cascade stays inside its depth range")
 {
     const core::Vec3 sun = core::normalize(core::Vec3{-1.0f, 0.1f, 0.0f});

@@ -82,6 +82,83 @@ float4 particlePicture(uint slot, float2 uv, float2 dx, float2 dy)
 }
 #endif
 
+
+// **The sun's shadow at a particle** (`LightInfluence`), looked up once a
+// particle in this stage rather than once a pixel: a puff of smoke is one
+// shade of it, and a cloud of them is overdraw many times over. The vertex
+// stage's own copy of what the cascades are (`GpuParticleShadow`), after
+// the blocks each path binds, and the map, before the GPU path's buffer.
+#ifdef ENG_PARTICLE_GPU
+cbuffer GpuParticleShadow : register(b2, space1)
+#else
+cbuffer GpuParticleShadow : register(b1, space1)
+#endif
+{
+    column_major float4x4 ShadowViewProjection[4];
+    // Each cascade's far distance, out of reach for one not drawn.
+    float4 ShadowFar;
+    // xyz towards the sun, w its brightness: nought for no sun.
+    float4 ShadowSun;
+    // x above a half: the cascades' tiles in one row.
+    float4 ShadowLayout;
+    // The sky's light, as the surfaces have it (`IrradianceSh`), and x its
+    // intensity (`EnvironmentParams.y`).
+    float4 ShadowSky[9];
+    float4 ShadowSkyParams;
+};
+Texture2D<float> ShadowMap : register(t0, space0);
+SamplerState ShadowSampler : register(s0, space0);
+
+#include "engine_sh.hlsli"
+
+// How far towards the sun a particle's lookup is lifted, in metres: a
+// particle is a point of the air, and nothing of its own is in the map.
+static const float EngineParticleShadowLift = 0.05f;
+
+// **How much of the sun reaches a particle's centre**: the cascade its
+// distance selects, one bilinear comparison -- four point reads, which this
+// stage takes where it may not gather. A particle has no surface to be biased
+// off and no normal to filter along, so neither the disc nor the tent the
+// surfaces take.
+float particleSunShadow(float3 centre, float viewDepth)
+{
+    uint cascade = 4u;
+    [unroll]
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        if (cascade == 4u && viewDepth <= ShadowFar[i])
+            cascade = i;
+    }
+    if (cascade == 4u || ShadowFar[cascade] > 1.0e8f)
+        return 1.0f;
+    const float3 lifted = centre + ShadowSun.xyz * EngineParticleShadowLift;
+    const float4 lightClip = mul(ShadowViewProjection[cascade], float4(lifted, 1.0f));
+    const float3 ndc = lightClip.xyz / lightClip.w;
+    if (any(abs(ndc.xy) > 1.0f) || ndc.z < 0.0f || ndc.z > 1.0f)
+        return 1.0f;
+    uint width = 0;
+    uint height = 0;
+    ShadowMap.GetDimensions(width, height);
+    const float2 atlasSize = float2(float(max(width, 1u)), float(max(height, 1u)));
+    // The tile as the surfaces find it: one row of them, or two.
+    const float tileHeight = ShadowLayout.x > 0.5f ? 1.0f : 0.5f;
+    const float2 tile = float2(float(cascade & 1u) * 0.5f, float(cascade >> 1u) * tileHeight);
+    const float2 local = ndc.xy * float2(0.5f, -0.5f) + float2(0.5f, 0.5f);
+    const float2 inset = 1.5f / atlasSize;
+    const float2 uv = clamp(tile + local * float2(0.5f, tileHeight), tile + inset,
+                            tile + float2(0.5f, tileHeight) - inset);
+    const float2 texel = uv * atlasSize - 0.5f;
+    const float2 corner = floor(texel);
+    const float2 fraction = texel - corner;
+    const float2 at = (corner + 0.5f) / atlasSize;
+    const float2 step1 = 1.0f / atlasSize;
+    const float a = step(ndc.z, ShadowMap.SampleLevel(ShadowSampler, at, 0.0f));
+    const float b = step(ndc.z, ShadowMap.SampleLevel(ShadowSampler, at + float2(step1.x, 0.0f), 0.0f));
+    const float c = step(ndc.z, ShadowMap.SampleLevel(ShadowSampler, at + float2(0.0f, step1.y), 0.0f));
+    const float d = step(ndc.z, ShadowMap.SampleLevel(ShadowSampler, at + step1, 0.0f));
+    return lerp(lerp(a, b, fraction.x), lerp(c, d, fraction.x), fraction.y);
+}
+
 #ifdef ENG_PARTICLE_GPU
 // One particle as the compute pass keeps it (`particle_sim.hlsl`).
 struct SimParticle
@@ -95,7 +172,7 @@ struct SimParticle
     float Frame;
     float Stuck;
 };
-StructuredBuffer<SimParticle> SimParticles : register(t0, space0);
+StructuredBuffer<SimParticle> SimParticles : register(t1, space0);
 
 cbuffer GpuParticleLook : register(b1, space1)
 {
@@ -129,6 +206,8 @@ struct VertexInput
     float4 Params : TEXCOORD2;
     // The picture's frame: left, top, right, bottom.
     float4 Frame : TEXCOORD3;
+    // x how much the scene's light colours it (`LightInfluence`).
+    float4 Light : TEXCOORD4;
     uint Vertex : SV_VertexID;
 };
 #endif
@@ -138,18 +217,24 @@ struct Interpolants
     float4 Position : SV_Position;
     float4 Color : TEXCOORD0;
     float2 Corner : TEXCOORD1;
-    float2 Params : TEXCOORD2;
+    // x emission, y shape, z how much the scene's light colours it.
+    float3 Params : TEXCOORD2;
     float Distance : TEXCOORD3;
     // Its distance along the view axis and its half-size, for the fade.
     float ViewDepth : TEXCOORD4;
     float HalfSize : TEXCOORD5;
     float2 Uv : TEXCOORD6;
     nointerpolation float Textured : TEXCOORD7;
+    // How much of the sun reaches the particle (`particleSunShadow`), and the
+    // sky's light in the place of what the shadow took.
+    nointerpolation float Sun : TEXCOORD8;
+    nointerpolation float3 SkyFill : TEXCOORD9;
 };
 
 // One corner of one particle: `centre` camera-relative, `size` metres across,
 // `params` as an instance carries them, `frame` the picture's rectangle.
-Interpolants cornerOf(uint vertex, float3 centre, float size, float4 color, float4 params, float4 frame)
+Interpolants cornerOf(uint vertex, float3 centre, float size, float4 color, float4 params, float4 frame,
+                      float influence)
 {
     // Two triangles, in the order a square is cut: 0 1 2, 0 2 3.
     const float2 corners[6] = {float2(-1.0f, -1.0f), float2(1.0f, -1.0f), float2(1.0f, 1.0f),
@@ -166,7 +251,21 @@ Interpolants cornerOf(uint vertex, float3 centre, float size, float4 color, floa
     output.Position = mul(ViewProjection, float4(position, 1.0f));
     output.Color = color;
     output.Corner = corner;
-    output.Params = params.xy;
+    output.Params = float3(params.xy, influence);
+    output.Sun = 1.0f;
+    output.SkyFill = float3(0.0f, 0.0f, 0.0f);
+    [branch]
+    if (influence > 0.0f && params.x < 1.0f && ShadowSun.w > 0.0f)
+    {
+        output.Sun = particleSunShadow(centre, mul(ViewProjection, float4(centre, 1.0f)).w);
+        // **The sky where the sun is shadowed**: what a surface facing the
+        // camera there has over the flat ambient, by as much of the sun as the
+        // shadow took -- white smoke in the shade reads as the sky lights it,
+        // and in the sun nothing is added to what it always was.
+        if (output.Sun < 1.0f)
+            output.SkyFill = (1.0f - output.Sun) * ShadowSkyParams.x *
+                             evaluateIrradiance(ShadowSky, normalize(-centre));
+    }
     output.Distance = length(centre);
     output.ViewDepth = output.Position.w;
     output.HalfSize = halfSize;
@@ -187,7 +286,9 @@ Interpolants VertexMain(VertexInput input)
         none.Position = float4(0.0f, 0.0f, 0.0f, 0.0f);
         none.Color = float4(0.0f, 0.0f, 0.0f, 0.0f);
         none.Corner = float2(0.0f, 0.0f);
-        none.Params = float2(0.0f, 0.0f);
+        none.Params = float3(0.0f, 0.0f, 0.0f);
+        none.Sun = 1.0f;
+        none.SkyFill = float3(0.0f, 0.0f, 0.0f);
         none.Distance = 0.0f;
         none.ViewDepth = 0.0f;
         none.HalfSize = 0.0f;
@@ -220,13 +321,13 @@ Interpolants VertexMain(VertexInput input)
 
     return cornerOf(input.Vertex, particle.Position + OriginEmission.xyz, size, color,
                     float4(OriginEmission.w, Kind.x, particle.Rotation, Kind.y),
-                    float4(corner.x, corner.y, corner.x + cell.x, corner.y + cell.y));
+                    float4(corner.x, corner.y, corner.x + cell.x, corner.y + cell.y), Kind.z);
 }
 #else
 Interpolants VertexMain(VertexInput input)
 {
     return cornerOf(input.Vertex, input.PositionSize.xyz, input.PositionSize.w, input.Color, input.Params,
-                    input.Frame);
+                    input.Frame, input.Light.x);
 }
 #endif
 
@@ -283,9 +384,14 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     const float emission = saturate(input.Params.x);
     const float fog = saturate((input.Distance - ParticleFogRange.x) * ParticleFogRange.z);
     // Blended particles are lit and fogged like a surface; emitting ones carry
-    // their own light and simply fade into the fog.
+    // their own light and simply fade into the fog -- the light they add is
+    // never shadowed. **How much the scene's light colours them** is
+    // `LightInfluence`: at 1, the sky's and the sun's, the sun's in its shadow
+    // at the particle; at 0 their own colour.
     const float3 base = input.Color.rgb * picture;
-    const float3 lit = base * (Ambient.rgb + SunLight.rgb);
+    const float influence = saturate(input.Params.z);
+    const float3 lit =
+        base * lerp(float3(1.0f, 1.0f, 1.0f), Ambient.rgb + SunLight.rgb * input.Sun + input.SkyFill, influence);
     const float3 blended = lerp(lit, ParticleFogColor.rgb, fog);
     const float3 added = base * (1.0f - fog);
     const float3 color = lerp(blended, added, emission);

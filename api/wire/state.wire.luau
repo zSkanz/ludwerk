@@ -197,6 +197,14 @@ local BasePartFields: { Schema.Field } = {
             .. "not have it drew the scorch mark over the character the authority kept clean.",
     },
     {
+        Name = "ShowsRoom",
+        Id = 31,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Whether the part is a window onto the room seen through (protocol 59). A look, like `CastShadow`.",
+    },
+    {
         Name = "CollisionGroup",
         Id = 18,
         Encoding = "NameAtom",
@@ -1363,6 +1371,14 @@ local ParticleEmitterFields: { Schema.Field } = {
         Source = "Component",
         Component = "particleEmitters",
         Doc = "Where it was asked to be simulated, as authored: each machine does what its renderer can.",
+    },
+    {
+        Name = "LightInfluence",
+        Id = 37,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "particleEmitters",
+        Doc = "How much of the world's light it takes.",
     },
 }
 

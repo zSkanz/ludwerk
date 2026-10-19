@@ -188,7 +188,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(screenGuiDesc);
 
     // --- BillboardGui ---
-    static std::array<scene::PropertyDesc, 7> billboardGuiProperties;
+    static std::array<scene::PropertyDesc, 8> billboardGuiProperties;
     billboardGuiProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -262,10 +262,21 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "A multiplier on the billboard's colors in the scene's lighting. Above 1 it glows and blooms.",
+            .doc = "A multiplier on the billboard's own light. With `LightInfluence` at 0 and a brightness of 1 or below, the colors are shown as they were set, dimmed below 1, whatever the scene's exposure and lighting. Above 1 the billboard glows: the exposure brightens or darkens it with the scene, and it blooms. It counts for less as `LightInfluence` rises, and not at all at 1.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
             .get = native::getBillboardGuiBrightness,
             .set = native::setBillboardGuiBrightness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightInfluence"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much the scene's light decides the billboard's colors, from 0 to 1. At 0 they are its own, as they were set. At 1 it is lit as a surface of those colors facing the camera is: by the sun, in the shadows things cast, and by the sky. Between the two, a mix of both.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getBillboardGuiLightInfluence,
+            .set = native::setBillboardGuiLightInfluence,
         },
     }};
     scene::ClassDescriptor billboardGuiDesc;
@@ -284,7 +295,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     // --- SurfaceGui ---
     static std::array<core::NameAtom, 1> surfaceGuiPixelsPerMeterAliases;
     surfaceGuiPixelsPerMeterAliases = {{atoms.intern("PixelsPerMetre")}};
-    static std::array<scene::PropertyDesc, 6> surfaceGuiProperties;
+    static std::array<scene::PropertyDesc, 7> surfaceGuiProperties;
     surfaceGuiProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -350,10 +361,21 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "A multiplier on the interface's colors in the scene's lighting. Above 1 it glows, like a lit screen.",
+            .doc = "A multiplier on the interface's own light. With `LightInfluence` at 0 and a brightness of 1 or below, the colors are shown as they were set, dimmed below 1, whatever the scene's exposure and lighting. Above 1 the interface glows like a lit screen: the exposure brightens or darkens it with the scene, and it blooms. It counts for less as `LightInfluence` rises, and not at all at 1.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
             .get = native::getSurfaceGuiBrightness,
             .set = native::setSurfaceGuiBrightness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightInfluence"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much the scene's light decides the interface's colors, from 0 to 1. At 0 they are its own, as they were set, like a screen's. At 1 it is lit as the face it is on would be in those colors: by the sun, in the shadows things cast, and by the sky. Between the two, a mix of both.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSurfaceGuiLightInfluence,
+            .set = native::setSurfaceGuiLightInfluence,
         },
     }};
     scene::ClassDescriptor surfaceGuiDesc;

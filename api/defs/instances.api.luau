@@ -674,6 +674,17 @@ local Classes: { Schema.Class } = {
                     .. "mark. The decal still paints the surfaces around the part. Terrain always receives decals.",
             },
             {
+                Name = "ShowsRoom",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Doc = "Whether the part is a window onto the player's real room. In a headset with "
+                    .. "`XRService.Passthrough` on, the room is seen where the part is, in place of the game: it hides "
+                    .. "what is behind it as a solid part does, and what is in front of it is drawn over the room. "
+                    .. "Use it for a real desk under a virtual one, or a portal out of the game. Anywhere else the "
+                    .. "part is drawn as it otherwise would be. It casts no shadow.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Default = "false",
@@ -4731,6 +4742,16 @@ local Classes: { Schema.Class } = {
                     .. "anything, which suits fire, sparks and magic.",
             },
             {
+                Name = "LightInfluence",
+                Type = "number",
+                Default = "1",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Presentation = true,
+                Doc = "How much the scene's light decides a particle's color, from 0 to 1. At 0 it is always its own "
+                    .. "color. At 1 it is lit by the sky and the sun, and darker in the shadows things cast, as smoke "
+                    .. "and dust are. The light a particle adds (`LightEmission`) is its own at any value.",
+            },
+            {
                 Name = "Brightness",
                 Type = "number",
                 Default = "1",
@@ -6098,7 +6119,20 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "1",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "A multiplier on the billboard's colors in the scene's lighting. Above 1 it glows and blooms.",
+                Doc = "A multiplier on the billboard's own light. With `LightInfluence` at 0 and a brightness "
+                    .. "of 1 or below, the colors are shown as they were set, dimmed below 1, whatever the scene's "
+                    .. "exposure and lighting. Above 1 the billboard glows: the exposure brightens or darkens it "
+                    .. "with the scene, and it blooms. It counts for less as `LightInfluence` rises, and not at "
+                    .. "all at 1.",
+            },
+            {
+                Name = "LightInfluence",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much the scene's light decides the billboard's colors, from 0 to 1. At 0 they are its own, as "
+                    .. "they were set. At 1 it is lit as a surface of those colors facing the camera is: by the sun, "
+                    .. "in the shadows things cast, and by the sky. Between the two, a mix of both.",
             },
         } :: { Schema.Property },
     },
@@ -6154,8 +6188,20 @@ local Classes: { Schema.Class } = {
                 Type = "number",
                 Default = "1",
                 ErrorKey = "scene.err.number_at_least_zero",
-                Doc = "A multiplier on the interface's colors in the scene's lighting. Above 1 it glows, like a "
-                    .. "lit screen.",
+                Doc = "A multiplier on the interface's own light. With `LightInfluence` at 0 and a brightness "
+                    .. "of 1 or below, the colors are shown as they were set, dimmed below 1, whatever the scene's "
+                    .. "exposure and lighting. Above 1 the interface glows like a lit screen: the exposure "
+                    .. "brightens or darkens it with the scene, and it blooms. It counts for less as "
+                    .. "`LightInfluence` rises, and not at all at 1.",
+            },
+            {
+                Name = "LightInfluence",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.number_zero_to_one",
+                Doc = "How much the scene's light decides the interface's colors, from 0 to 1. At 0 they are its own, as "
+                    .. "they were set, like a screen's. At 1 it is lit as the face it is on would be in those colors: by "
+                    .. "the sun, in the shadows things cast, and by the sky. Between the two, a mix of both.",
             },
         } :: { Schema.Property },
     },

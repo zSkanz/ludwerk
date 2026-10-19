@@ -301,6 +301,39 @@ public:
     // format; false means the backend cannot read this texture back.
     [[nodiscard]] virtual bool readTexture(TextureHandle texture, std::span<std::byte> out) = 0;
 
+    // **A pipeline's twin made ahead of its first draw** (a headset's eye,
+    // behind the loading curtain): the one a pass of `samples` samples, shaded
+    // through a density map or not, into a first target of `colorFormat`
+    // (Undefined: the pipeline's own) draws it with. A backend that makes no
+    // twins has nothing to make.
+    virtual void warmPipeline(PipelineHandle pipeline, u32 samples, bool densityShaded, TextureFormat colorFormat)
+    {
+        (void)pipeline;
+        (void)samples;
+        (void)densityShaded;
+        (void)colorFormat;
+    }
+
+    // **A texture's texels a few frames later, never waiting** (a headset
+    // eye's exposure, folded into its forward pass): the top-left `width` by
+    // `height` copied in the frame being recorded, and handed back once the
+    // GPU is known to have finished that frame -- a frame or three on. A
+    // ticket, nought where the backend cannot; `takeReadback` says false until
+    // the copy is there, then fills `out` and frees the ticket.
+    [[nodiscard]] virtual u32 requestReadback(TextureHandle texture, u32 width, u32 height)
+    {
+        (void)texture;
+        (void)width;
+        (void)height;
+        return 0;
+    }
+    [[nodiscard]] virtual bool takeReadback(u32 ticket, std::span<std::byte> out)
+    {
+        (void)ticket;
+        (void)out;
+        return false;
+    }
+
     // The same for a buffer: `out.size()` bytes from `offsetBytes`. Blocking
     // and for tests and tools -- what a compute pass wrote, checked by value.
     [[nodiscard]] virtual bool readBuffer(BufferHandle buffer, u32 offsetBytes, std::span<std::byte> out) = 0;

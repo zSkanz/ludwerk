@@ -1458,7 +1458,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             // passes skip and the shadow maps do not.
             const f32 opacity = own * (1.0f - std::clamp(part->fade, 0.0f, 1.0f));
 
-            const bool transparent = opacity < 1.0f;
+            const bool transparent = opacity < 1.0f && !part->showsRoom;
             // Back-to-front for the blended pass, and the inversion happens
             // HERE rather than as a reversed walk in a backend -- that is
             // the first renderer's third design constraint, and a reversed walk is work
@@ -1490,6 +1490,15 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             });
             out.draws.back().motionKey = motionKey;
             out.draws.back().castShadow = part->castShadow;
+            // **A window onto the room seen through** (`BasePart.ShowsRoom`):
+            // drawn solid, with no coverage -- the depth hides what is
+            // behind it, and where the room is seen through, the room is
+            // seen there. A picture with something behind it ignores the
+            // coverage, and the part looks as it otherwise would.
+            if (part->showsRoom) {
+                out.draws.back().alpha = 0.0f;
+                out.draws.back().castShadow = false;
+            }
             out.draws.back().receivesDecals = part->receivesDecals;
             out.draws.back().fadedOnly = own >= 1.0f && transparent;
             // Only the sections a target reaches: a character's body stays in
@@ -2075,7 +2084,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             lastPartMaterial = partMaterials.size() - 1;
         }
 
-        const bool transparent = opacity < 1.0f;
+        const bool transparent = opacity < 1.0f && !part.showsRoom;
         const f32 depth = core::length(core::center(worldBounds));
         const f32 sortDepth = transparent ? kMaxSortDepth - depth : depth;
         out.draws.push_back(DrawItem{
@@ -2098,6 +2107,15 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         });
         out.draws.back().motionKey = motionKeyOf(id);
         out.draws.back().castShadow = part.castShadow;
+        // **A window onto the room seen through** (`BasePart.ShowsRoom`):
+        // drawn solid, with no coverage -- the depth hides what is behind
+        // it, and where the room is seen through, the room is seen there.
+        // A picture with something behind it ignores the coverage, and the
+        // part looks as it otherwise would.
+        if (part.showsRoom) {
+            out.draws.back().alpha = 0.0f;
+            out.draws.back().castShadow = false;
+        }
         out.draws.back().receivesDecals = part.receivesDecals;
         out.draws.back().fadedOnly = own >= 1.0f && transparent;
     });

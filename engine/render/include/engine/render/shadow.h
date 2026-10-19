@@ -421,8 +421,13 @@ struct ShadowFit
     // `kShadowSplitLambda` gives. A headset's player looks at what is in
     // their hands and on the table in front of them, a metre or two away,
     // where a flat game's camera looks at a character five metres off: the
-    // first cascade is made that near, and the others share the rest.
+    // first cascade is made that near, and the others drawn share the rest,
+    // out to `distance`.
     f32 firstSplit = 0.0f;
+    // **How many cascades are drawn**, for a first split: the last of them
+    // ends at `distance`. With none asked, the four divide it, and drawing
+    // fewer ends the shadows sooner -- the flat settings' own trade.
+    u32 cascadeCount = kShadowCascadeCount;
 };
 
 // `previous` is the last frame's result, or null on the first frame. It is a

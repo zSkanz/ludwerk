@@ -462,6 +462,10 @@ struct EngineOptions
     // `[xr] mirror`: while a headset draws, the window shows its left eye,
     // or nothing.
     bool xrMirror = true;
+    // `[xr] spectator`: whether the window may show the spectator's camera.
+    bool xrSpectator = true;
+    // `[xr] spectator_every`: drawn every this many headset frames.
+    core::u32 xrSpectatorEvery = 2;
     // `[xr] hands`: the hands themselves, where the headset tracks them.
     bool xrHands = true;
     // `[xr] depth`, or `--xr-depth=on|off` over it: each eye's depth handed to

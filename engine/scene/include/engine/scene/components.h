@@ -98,6 +98,8 @@ struct PartComponent
     // `BasePart.ReceivesDecals`: whether a decal paints it. On until a game
     // says otherwise.
     bool receivesDecals = true;
+    // `BasePart.ShowsRoom`: a window onto the room seen through, in a headset.
+    bool showsRoom = false;
     // `BasePart.Fade`: how much of the part this machine leaves out of its
     // own picture, 0 to 1. This machine's alone: never on the wire, never in
     // a file, never in the world's hash.
@@ -792,6 +794,9 @@ struct ParticleEmitterComponent
     // 0 is an ordinary blended particle, 1 adds its light to what is behind it
     // -- fire and sparks -- and anything between is both.
     f32 lightEmission = 0.0f;
+    // `LightInfluence`: 0 its own colour, 1 lit by the sky and the sun, in
+    // the sun's shadow.
+    f32 lightInfluence = 1.0f;
     // A multiplier on the colour, unclamped: above one is what makes a spark
     // bloom.
     f32 brightness = 1.0f;
@@ -2398,6 +2403,8 @@ struct BillboardGuiComponent
     bool alwaysOnTop = false;
     f32 maxDistance = 0.0f;
     f32 brightness = 1.0f;
+    // `LightInfluence`: 0 its own colours, 1 lit as a surface.
+    f32 lightInfluence = 0.0f;
 };
 
 // `SurfaceGui`: a tree drawn onto one face of a part.
@@ -2410,6 +2417,8 @@ struct SurfaceGuiComponent
     f32 pixelsPerMetre = 50.0f;
     bool alwaysOnTop = false;
     f32 brightness = 1.0f;
+    // `LightInfluence`: 0 its own colours, 1 lit as the face it is on.
+    f32 lightInfluence = 0.0f;
 };
 
 // `UIObject`, and therefore attached to every element on screen.

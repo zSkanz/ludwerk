@@ -22,6 +22,8 @@
 #ifndef ENG_FORWARD_HLSLI
 #define ENG_FORWARD_HLSLI
 
+#include "engine_fullscreen.hlsli"
+#include "engine_tonemap.hlsli"
 #include "engine_brdf.hlsli"
 
 // Slot order is `MaterialDef`'s own field order -- base colour, normal,
@@ -1045,7 +1047,7 @@ float4 shadeForward(Interpolants input)
         color = applyFog(color, FogColor.rgb, FogRange, length(input.ShadingPosition));
     }
 
-    return float4(color, baseColor.a);
+    return foldOutput(float4(color, baseColor.a), ForwardFold.x, input.Position.xy);
 }
 
 #endif // ENG_UNIFORMS_MATERIAL

@@ -120,6 +120,9 @@ constexpr f32 kScreenReflectionStillWeight = 0.9f;
 constexpr f32 kScreenReflectionMovingWeight = 0.35f;
 constexpr f32 kContactFadeDistance = 60.0f;
 constexpr rhi::TextureFormat kLuminanceFormat = rhi::TextureFormat::R32Float;
+// `engine_tonemap.hlsli`'s `EngineExposureKey`: the exposure a folded eye
+// writes with is worked out here, from the meter read back.
+constexpr f32 kExposureKey = 0.45f;
 
 // **FSR 2's passes** (ADR 0164), in the order a frame runs them -- but for the
 // two accumulations, of which a frame runs one: the second sharpens after it.
@@ -584,6 +587,27 @@ struct ViewState
     // depth, made the first time and at the size and count asked.
     rhi::TextureHandle msaaColor_{};
     rhi::TextureHandle msaaDepth_{};
+    // **The world's interface as the display shows it** (ADR 0250), where the
+    // tonemap is a pass of its own: drawn apart from the scene, tested against
+    // its depth, and laid over the picture by the tonemap. The samples, where
+    // the eye has them, and the layer they resolve into; whether this frame
+    // drew it.
+    rhi::TextureHandle uiLayer_{};
+    rhi::TextureHandle uiLayerSamples_{};
+    u32 uiLayerWidth_ = 0;
+    u32 uiLayerHeight_ = 0;
+    u32 uiLayerSampleCount_ = 0;
+    bool uiLayerLive_ = false;
+    // The frame's uniforms as the forward pass had them, for what is drawn
+    // after it and lit by the same sun: the world's interface lit as a
+    // surface, and the particles in its shadow (`GpuParticleShadow`).
+    GpuFrameUniforms forwardFrame_{};
+    // The format `msaaColor_` was made in: the 16-bit target's, or a headset
+    // image's when the tonemap is folded into the pass.
+    rhi::TextureFormat msaaFormat_ = rhi::TextureFormat::Undefined;
+    // **The exposure this view's forward pass writes with**, the tonemap
+    // folded into it (ADR 0250): nought where it is not folded.
+    f32 foldExposure_ = 0.0f;
     // The fragment density map that shades `msaaColor_`'s passes, and what
     // it was drawn for: the level, and the eye's own middle on the screen.
     rhi::TextureHandle densityMap_{};
@@ -825,6 +849,7 @@ public:
     void setSettings(const GraphicsSettings& settings) override;
     void setSurfaceSource(ISurfaceSource* source) override { surfaceSource_ = source; }
     void warm(rhi::IDevice& device) override;
+    void warmEyes(rhi::IDevice& device, u32 samples, u32 foveation, rhi::TextureFormat eyeFormat) override;
     [[nodiscard]] std::optional<bool> warmSurface(rhi::IDevice& device, std::string_view name) override;
     [[nodiscard]] const GraphicsSettings& settings() const noexcept override { return settings_; }
     [[nodiscard]] core::Vec2 cameraJitter(const RenderWorld& world, const RenderTarget& target) const override;
@@ -1022,6 +1047,26 @@ private:
                         const RenderTarget& target);
     // The world UI pipelines and buffer, on the same lazy terms.
     [[nodiscard]] bool ensureWorldUi(rhi::IDevice& device);
+    // Which of the world's UI runs a pass draws (ADR 0250): at a brightness
+    // of 1 or less, as the display shows them; above it, as light.
+    enum class WorldUiRuns : core::u8
+    {
+        All,
+        AsDisplayed,
+        AsLight,
+    };
+    // The world's UI into the open pass: back to front, the ones always on top
+    // after all of them.
+    void drawWorldUi(rhi::ICmdList& cmd, const RenderWorld& world, WorldUiRuns runs);
+    // Whether a run is drawn as the display shows it: its own colours, at a
+    // brightness of 1 or less, with none of the scene's light.
+    [[nodiscard]] static bool shownAsDisplayed(const WorldUiRun& run) noexcept
+    {
+        return run.brightness <= 1.0f && run.lightInfluence <= 0.0f;
+    }
+    // The layer the interface as the display shows it is drawn into apart
+    // (`uiLayer_`), at the render size and the pass's samples.
+    [[nodiscard]] bool ensureUiLayer(rhi::IDevice& device, u32 samples);
     // The sprite pipeline and its instance buffer (the 2D layer), on the same
     // lazy terms: a world with nothing on the plane builds neither.
     [[nodiscard]] bool ensureSprites(rhi::IDevice& device);
@@ -1236,6 +1281,13 @@ private:
     // The exposure a headset frame's first eye metered, which the second
     // reads (`ShadowView::reuse`). Owned by that eye's view.
     rhi::TextureHandle headsetExposure_{};
+    // **The meter's adapted value, read back a few frames late** for a
+    // headset's eyes with the tonemap folded in (ADR 0250): the renderer's,
+    // not a view's -- the second eye meters nothing and draws at the first's.
+    // Whether one has come, and the tickets asked for.
+    f32 foldMeasured_ = 0.0f;
+    bool foldMeasuredKnown_ = false;
+    std::vector<u32> foldReadbacks_;
     // The local-light atlas and this frame's assignment of its tiles. Held
     // across frames only so the vector behind `localCandidates_` keeps its
     // capacity; nothing in either survives a frame.
@@ -2611,6 +2663,58 @@ void DefaultRenderer::warm(rhi::IDevice& device)
     }
 }
 
+void DefaultRenderer::warmEyes(rhi::IDevice& device, u32 samples, u32 foveation, rhi::TextureFormat eyeFormat)
+{
+    if (!valid_ || samples <= 1)
+        return;
+    core::profile::Sections sections;
+    ENG_PROFILE_NEXT(sections, "warm.eyes");
+    // What an eye's pass with samples draws (`forwardWhole`): the lit
+    // surfaces in every family, the sky, the world's interface, the ground,
+    // the blocks and the foliage. Prepassed variants are not among them: a
+    // frame with a depth prepass is not drawn with samples. Each that is
+    // made by then; the rest are made at their first use, as they were.
+    const MorphPipelines& morph = morphPipelines_[0];
+    const MorphPipelines& morphSkinned = morphPipelines_[1];
+    const std::array<rhi::PipelineHandle, 16> folding{
+        pbrPipeline_,
+        pbrBlendPipeline_,
+        pbrSkinnedPipeline_,
+        pbrSkinnedBlendPipeline_,
+        pbrInstancedPipeline_,
+        pbrInstancedBlendPipeline_,
+        pbrSkinnedInstancedPipeline_,
+        morph.forward,
+        morph.blend,
+        morphSkinned.forward,
+        morphSkinned.blend,
+        skyPipeline_,
+        skySidedPipeline_,
+        skyLook_.handle,
+        worldUiPipeline_,
+        worldUiOnTopPipeline_,
+    };
+    const std::array<rhi::PipelineHandle, 8> lit{
+        foliagePipeline_,     terrainPipeline_,     terrainNoHexPipeline_, terrainTriplanarNoHexPipeline_,
+        terrainFastPipeline_, terrainFlatPipeline_, voxelPipeline_,        voxelBlendPipeline_,
+    };
+    const rhi::Capabilities& caps = device.caps();
+    const bool density = foveation > 0 && caps.densityTexelWidth > 0;
+    // **Twice where the tonemap may be folded in**: into the 16-bit target,
+    // and into the eye's image.
+    for (const rhi::PipelineHandle pipeline : folding) {
+        if (!pipeline.valid())
+            continue;
+        device.warmPipeline(pipeline, samples, density, rhi::TextureFormat::Undefined);
+        if (eyeFormat != rhi::TextureFormat::Undefined)
+            device.warmPipeline(pipeline, samples, density, eyeFormat);
+    }
+    for (const rhi::PipelineHandle pipeline : lit) {
+        if (pipeline.valid())
+            device.warmPipeline(pipeline, samples, density, rhi::TextureFormat::Undefined);
+    }
+}
+
 std::optional<bool> DefaultRenderer::warmSurface(rhi::IDevice& device, std::string_view name)
 {
     if (!valid_ || shaderLibrary_ == nullptr)
@@ -3019,7 +3123,7 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
     for (rhi::TextureHandle* texture :
          {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
           &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &msaaColor_, &msaaDepth_,
-          &densityMap_})
+          &densityMap_, &uiLayer_, &uiLayerSamples_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -4838,6 +4942,91 @@ constexpr u32 MaxWorldUiVertices = 60000;
 // a screen of 16-pixel tiles at 4K is a little over thirty thousand of them.
 constexpr u32 MaxSprites = 65536;
 
+void DefaultRenderer::drawWorldUi(rhi::ICmdList& cmd, const RenderWorld& world, WorldUiRuns runs)
+{
+    GpuWorldUiView view;
+    view.viewProjection = world.camera.viewProjection;
+    const std::array<rhi::BufferHandle, 1> uiBuffers{worldUiBuffer_};
+    for (const bool onTop : {false, true}) {
+        cmd.setPipeline(onTop ? worldUiOnTopPipeline_ : worldUiPipeline_);
+        cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&view, sizeof(view)));
+        cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&forwardFrame_, sizeof(forwardFrame_)));
+        cmd.bindVertexBuffers(0, uiBuffers);
+        for (const WorldUiRun& run : world.worldUiRuns) {
+            if (run.alwaysOnTop != onTop || run.vertexCount == 0 ||
+                run.firstVertex + run.vertexCount > worldUiVertexCount_)
+                continue;
+            const bool displayed = shownAsDisplayed(run);
+            if ((runs == WorldUiRuns::AsDisplayed && !displayed) || (runs == WorldUiRuns::AsLight && displayed))
+                continue;
+            GpuWorldUiLook look;
+            look.params[0] = run.brightness;
+            look.params[1] = foldExposure_;
+            look.params[2] = displayed ? 1.0f : 0.0f;
+            look.params[3] = std::exp2(world.environment.exposureCompensation);
+            look.light[0] = run.lightInfluence;
+            cmd.bindUniforms(rhi::ShaderStage::Fragment, 1, asBytes(&look, sizeof(look)));
+            // The run's picture and the frame's gradient table (ADR 0110),
+            // which the screen's UI reads too; then what lights it as a
+            // surface (`LightInfluence`) -- the exposure the frame before was
+            // drawn at, and the forward's, the light the screen bounces in a
+            // slot a material's map takes.
+            const std::array<rhi::TextureBinding, 13> texture{
+                rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, environmentSampler_},
+                rhi::TextureBinding{world.worldUiGradients.valid() ? world.worldUiGradients : whitePixel_,
+                                    environmentSampler_},
+                rhi::TextureBinding{exposure_[exposureIndex_], pointSampler_},
+                screenBounceBinding(),
+                rhi::TextureBinding{shadowMap_, shadowSampler_},
+                rhi::TextureBinding{environmentMap_, environmentSampler_},
+                rhi::TextureBinding{brdfLut_, environmentSampler_},
+                rhi::TextureBinding{clusterGrid_, pointSampler_},
+                rhi::TextureBinding{lightIndices_, pointSampler_},
+                rhi::TextureBinding{lightData_, pointSampler_},
+                rhi::TextureBinding{occlusion_, linearSampler_},
+                rhi::TextureBinding{localShadowMap_, shadowSampler_},
+                rhi::TextureBinding{contact_, pointSampler_}};
+            cmd.bindTextures(rhi::ShaderStage::Fragment, 0, texture);
+            cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
+            countDraw(DrawKind::WorldUi);
+        }
+    }
+}
+
+bool DefaultRenderer::ensureUiLayer(rhi::IDevice& device, u32 samples)
+{
+    if (uiLayer_.valid() && uiLayerWidth_ == renderWidth_ && uiLayerHeight_ == renderHeight_ &&
+        uiLayerSampleCount_ == samples && (samples <= 1 || uiLayerSamples_.valid()))
+        return true;
+    for (rhi::TextureHandle* texture : {&uiLayer_, &uiLayerSamples_}) {
+        if (texture->valid())
+            device.destroy(*texture);
+        *texture = {};
+    }
+    // 8-bit sRGB, so a blend into it is in linear light and what it holds is
+    // what the display shows, as a headset's image is.
+    uiLayer_ = device.createTexture({
+        .format = rhi::TextureFormat::Rgba8UnormSrgb,
+        .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+        .width = renderWidth_,
+        .height = renderHeight_,
+        .debugName = "world-ui-layer",
+    });
+    if (samples > 1)
+        uiLayerSamples_ = device.createTexture({
+            .format = rhi::TextureFormat::Rgba8UnormSrgb,
+            .usage = rhi::TextureUsage::ColorTarget,
+            .width = renderWidth_,
+            .height = renderHeight_,
+            .samples = samples,
+            .debugName = "world-ui-layer-samples",
+        });
+    uiLayerWidth_ = renderWidth_;
+    uiLayerHeight_ = renderHeight_;
+    uiLayerSampleCount_ = samples;
+    return uiLayer_.valid() && (samples <= 1 || uiLayerSamples_.valid());
+}
+
 bool DefaultRenderer::ensureWorldUi(rhi::IDevice& device)
 {
     if (worldUiTried_)
@@ -4900,11 +5089,12 @@ bool DefaultRenderer::ensureWorldUi(rhi::IDevice& device)
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(WorldUiVertex)},
     };
-    // Straight alpha, as the screen's UI blends: a panel's transparency is a
-    // property, and a UI colour is not premultiplied anywhere upstream.
+    // Premultiplied by the shader, from a straight alpha upstream as the
+    // screen's UI blends: the same blend into the 16-bit target, into the
+    // interface's own layer and into a headset's image (ADR 0250).
     const std::array<rhi::ColorTargetDesc, 1> hdrTarget{rhi::ColorTargetDesc{
         .format = kHdrFormat,
-        .blend = {.enabled = true},
+        .blend = {.enabled = true, .srcColor = rhi::BlendFactor::One},
     }};
     const auto make = [&](bool tested, const char* name) {
         return device.createGraphicsPipeline({
@@ -5608,13 +5798,10 @@ void DefaultRenderer::presentEye(rhi::IDevice& device, rhi::ICmdList& cmd, rhi::
         return;
     const bool srgb = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
                       target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
-    const bool seeThrough = crop.seeThrough && depth_.valid();
+    const bool seeThrough = crop.seeThrough;
     const std::array<f32, 8> uniforms{
         srgb ? 1.0f : 0.0f, seeThrough ? 1.0f : 0.0f, crop.roomOpacity, 0.0f, crop.x, crop.y, crop.width, crop.height};
-    // The depth beside the picture; the picture again where it is not read.
-    const std::array<rhi::TextureBinding, 2> source{
-        rhi::TextureBinding{picture, linearSampler_},
-        rhi::TextureBinding{seeThrough ? depth_ : picture, seeThrough ? pointSampler_ : linearSampler_}};
+    const std::array<rhi::TextureBinding, 1> source{rhi::TextureBinding{picture, linearSampler_}};
     fullscreenPass(cmd, eyeCopy.handle, target.color, target.width, target.height, "xr-eye", source,
                    asBytes(uniforms.data(), sizeof(uniforms)));
 }
@@ -7491,11 +7678,12 @@ bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
 
     // **Instances only**: the six corners come from the vertex index, so the
     // one stream is per instance and there is no per-vertex buffer at all.
-    const std::array<rhi::VertexAttribute, 4> attributes{
+    const std::array<rhi::VertexAttribute, 5> attributes{
         rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
         rhi::VertexAttribute{.location = 1, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
         rhi::VertexAttribute{.location = 2, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
         rhi::VertexAttribute{.location = 3, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
+        rhi::VertexAttribute{.location = 4, .bufferSlot = 0, .format = rhi::VertexFormat::Float4, .offsetBytes = 64},
     };
     const std::array<rhi::VertexBufferLayout, 1> buffers{
         rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(GpuParticle), .perInstance = true},
@@ -8993,8 +9181,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         if (settings_.antiAliasing == AntiAliasingMode::Taa)
             settings_.antiAliasing = AntiAliasingMode::Smaa;
         settings_.upscaling = UpscalingMode::None;
-        // At its own resolution unless the project says less (`[xr]
-        // render_scale`), brought up by the tonemap's own filtering.
+        // At its own resolution: `[xr] render_scale` makes the runtime's
+        // images smaller instead, and its compositor brings them up. Only a
+        // headset that cannot leaves the scale here, and the tonemap's own
+        // filtering brings the picture up.
         settings_.renderScale = std::clamp(world.headsetQuality.renderScale, 0.5f, 1.0f);
         settings_.renderResolutionCap = 0;
         settings_.frameGeneration = false;
@@ -9284,6 +9474,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             gpu.params[3] = static_cast<f32>(appendParticle(particleRuns_, particle.texture, static_cast<u32>(at)));
             for (usize corner = 0; corner < 4; ++corner)
                 gpu.uv[corner] = particle.uv[corner];
+            gpu.light[0] = particle.lightInfluence;
             particleStaging_.push_back(gpu);
         }
         cmd.upload(particleBuffer_, asBytes(particleStaging_.data(), particleStaging_.size() * sizeof(GpuParticle)), 0);
@@ -9569,6 +9760,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     fit.casters = casterBounds_;
     fit.distance = settings_.shadowDistance;
     fit.tileResolution = settings_.shadowTileResolution;
+    fit.cascadeCount = settings_.shadowCascades;
 
     // Last frame's fit is handed back in, which is what lets a cascade keep the
     // same box -- and therefore the same texel lattice -- while nothing has left
@@ -9971,6 +10163,57 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                               ribbonVertexCount_ == 0 && world.gpuEmitters.empty() && !readsScene && !prepassDrawn_ &&
                               !(world.look.depthOfField && settings_.depthOfField);
     u32 samples = world.headsetEye && !world.headsetDepthRead && forwardWhole ? world.headsetSamples : 1u;
+    // **The tonemap folded into the pass** (ADR 0250): a headset's eye drawn
+    // with samples straight into its runtime's 8-bit image -- the forward
+    // shaders expose, tonemap and dither what they write, the samples resolve
+    // into the image, and neither the 16-bit target nor the tonemap pass is
+    // in the frame (1.1 to 1.5 ms an eye on a Quest 3). Only where nothing
+    // drawn needs the frame's light after the pass -- no grade, blur, bloom
+    // or rays -- and only what knows how to fold is drawn: the lit surfaces,
+    // the sky and the world's UI, not ground, blocks, foliage, sprites or a
+    // surface shader. The exposure is the meter's, read back a few frames
+    // late, or the fixed one; until a reading has come, not folded.
+    {
+        // Taken by a frame's first eye only: the second is drawn at the
+        // exposure the first was, as it is when not folded.
+        const bool secondEye = world.shadowView.has_value() && world.shadowView->reuse;
+        std::array<std::byte, 4> reading{};
+        while (!secondEye && !foldReadbacks_.empty() && device.takeReadback(foldReadbacks_.front(), reading)) {
+            foldReadbacks_.erase(foldReadbacks_.begin());
+            f32 measured = 0.0f;
+            std::memcpy(&measured, reading.data(), sizeof(measured));
+            if (measured > 0.0f && std::isfinite(measured)) {
+                foldMeasured_ = measured;
+                foldMeasuredKnown_ = true;
+            }
+        }
+        const bool metering = settings_.autoExposure && world.environment.autoExposure;
+        const f32 compensation = std::exp2(world.environment.exposureCompensation);
+        const f32 exposure = !metering            ? kExposureKey * compensation
+                             : foldMeasuredKnown_ ? kExposureKey / std::max(foldMeasured_, 1e-4f) * compensation
+                                                  : 0.0f;
+        // The samples resolve into the image itself, so at its own size: an
+        // eye drawn smaller (`[xr] render_scale`) is brought up by the
+        // tonemap pass, and is not folded.
+        const bool intoImage = target.color.valid() &&
+                               (target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
+                                target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb) &&
+                               renderWidth_ == target.width && renderHeight_ == target.height;
+        bool foldable = world.terrains.empty() && world.foliageRuns.empty() && world.sprites.empty();
+        for (const DrawItem& draw : world.draws) {
+            if (!foldable)
+                break;
+            if (draw.terrain || draw.voxelBlock ||
+                (draw.material < materialSurface_.size() && materialSurface_[draw.material] != 0))
+                foldable = false;
+        }
+        const bool fold = (settings_.measuredSkip & MeasureSkip::Fold) == 0u && samples > 1 && world.headsetEye &&
+                          !world.environment.transparentBackground && world.headsetLean && intoImage &&
+                          exposure > 0.0f && foldable && !world.look.graded && world.look.blurSize <= 0.0f &&
+                          !(settings_.bloom && world.look.bloomEnabled) && !(settings_.sunRays && world.look.sunRays);
+        foldExposure_ = fold ? exposure : 0.0f;
+    }
+    const rhi::TextureFormat samplesFormat = foldExposure_ > 0.0f ? target.colorFormat : kHdrFormat;
     // **Shaded less away from where the eye looks** (`headsetFoveation`), on
     // a device with a fragment density map: the map made at its texel size,
     // filled from the eye's own middle -- where its view's axis meets the
@@ -10035,15 +10278,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     }
     // The samples are remade with the map that shades them, or without one.
     const bool densityChanged = densityRemade;
-    if (samples > 1 && (!msaaColor_.valid() || !msaaDepth_.valid() || msaaSamples_ != samples ||
-                        msaaWidth_ != renderWidth_ || msaaHeight_ != renderHeight_ || densityChanged)) {
+    if (samples > 1 &&
+        (!msaaColor_.valid() || !msaaDepth_.valid() || msaaSamples_ != samples || msaaWidth_ != renderWidth_ ||
+         msaaHeight_ != renderHeight_ || densityChanged || msaaFormat_ != samplesFormat)) {
         for (rhi::TextureHandle* texture : {&msaaColor_, &msaaDepth_}) {
             if (texture->valid())
                 device.destroy(*texture);
             *texture = {};
         }
         msaaColor_ = device.createTexture({
-            .format = kHdrFormat,
+            .format = samplesFormat,
             .usage = rhi::TextureUsage::ColorTarget,
             .width = renderWidth_,
             .height = renderHeight_,
@@ -10051,6 +10295,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             .densityMap = densityMap_,
             .debugName = "eye-samples",
         });
+        msaaFormat_ = samplesFormat;
         msaaDepth_ = device.createTexture({
             .format = kDepthFormat,
             .usage = rhi::TextureUsage::DepthStencilTarget,
@@ -10063,14 +10308,32 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         msaaWidth_ = renderWidth_;
         msaaHeight_ = renderHeight_;
     }
-    if (!msaaColor_.valid() || !msaaDepth_.valid())
+    if (!msaaColor_.valid() || !msaaDepth_.valid()) {
         samples = 1;
+        foldExposure_ = 0.0f;
+    }
+    // **The world's interface, as the display shows it or as light** (ADR
+    // 0250): a run at a brightness of 1 or less is drawn as authored. Folded,
+    // every run is drawn in the pass, in the order it came; otherwise those
+    // are drawn apart, into their own layer, after the forward group -- the
+    // samples' depth kept for it -- and the brighter ones in the scene.
+    bool uiAsDisplayed = false;
+    bool uiAsLight = false;
+    if (worldUiVertexCount_ > 0) {
+        for (const WorldUiRun& run : world.worldUiRuns) {
+            if (run.vertexCount == 0)
+                continue;
+            (shownAsDisplayed(run) ? uiAsDisplayed : uiAsLight) = true;
+        }
+    }
+    const bool uiApart = uiAsDisplayed && foldExposure_ <= 0.0f;
+    const bool uiInForward = uiAsLight || (uiAsDisplayed && !uiApart);
     const std::array<rhi::ColorAttachment, 1> samplesAttachment{rhi::ColorAttachment{
         .texture = msaaColor_,
         .loadOp = rhi::LoadOp::Clear,
         .storeOp = rhi::StoreOp::Resolve,
         .clearColor = {0.0f, 0.0f, 0.0f, clearBehind ? 0.0f : 1.0f},
-        .resolveTexture = hdr_,
+        .resolveTexture = foldExposure_ > 0.0f ? target.color : hdr_,
     }};
 
     // Whether the depth of field ran inside the forward pass, before what
@@ -10083,7 +10346,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     if (samples > 1)
         cmd.beginRenderPass({
             .colorAttachments = samplesAttachment,
-            .depthStencil = {.texture = msaaDepth_, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::DontCare},
+            .depthStencil = {.texture = msaaDepth_,
+                             .loadOp = rhi::LoadOp::Clear,
+                             .storeOp = uiApart ? rhi::StoreOp::Store : rhi::StoreOp::DontCare},
             .debugName = "forward-samples",
         });
     else
@@ -10118,6 +10383,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         skyUniforms.zenithColor[0] = sky.zenithColor.r;
         skyUniforms.zenithColor[1] = sky.zenithColor.g;
         skyUniforms.zenithColor[2] = sky.zenithColor.b;
+        // w: the tonemap folded into this pass (`foldOutput`).
+        skyUniforms.zenithColor[3] = foldExposure_;
         skyUniforms.sunColor[0] = sky.sunColor.r;
         skyUniforms.sunColor[1] = sky.sunColor.g;
         skyUniforms.sunColor[2] = sky.sunColor.b;
@@ -10237,6 +10504,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             frame.occluderParams[0] = static_cast<f32>(count);
             frame.occluderParams[1] = 1.0f;
         }
+        frame.forwardFold[0] = foldExposure_;
         frame.ambient[0] = world.environment.ambient.r;
         frame.ambient[1] = world.environment.ambient.g;
         frame.ambient[2] = world.environment.ambient.b;
@@ -10391,6 +10659,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         }
         cmd.setPipeline(pbrPipeline_);
         cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
+        forwardFrame_ = frame;
         decalTurn_ = refusing ? DecalTurn::Receiving : DecalTurn::Every;
         drawGeometry(cmd, world, meshes, world.camera.viewProjection, pbrPipeline_, pbrSkinnedPipeline_,
                      Selection::Opaque);
@@ -10829,9 +11098,28 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     countDraw(DrawKind::Ribbon);
                 }
             }
+            // **The sun's cascades for the shadow at a particle**
+            // (`LightInfluence`), the vertex stage's own copy, and its map.
+            GpuParticleShadow particleShadow;
+            for (usize index = 0; index < 4; ++index) {
+                particleShadow.viewProjection[index] = forwardFrame_.cascadeViewProjection[index];
+                particleShadow.far[index] = forwardFrame_.cascadeFar[index];
+            }
+            for (usize axis = 0; axis < 3; ++axis)
+                particleShadow.sun[axis] = forwardFrame_.sunDirectionBrightness[axis];
+            particleShadow.sun[3] = forwardFrame_.sunDirectionBrightness[3];
+            particleShadow.layout[0] = forwardFrame_.sunColorUnused[3];
+            for (usize index = 0; index < 9; ++index) {
+                for (usize channel = 0; channel < 4; ++channel)
+                    particleShadow.sky[index][channel] = forwardFrame_.irradianceSh[index][channel];
+            }
+            particleShadow.skyParams[0] = forwardFrame_.environmentParams[1];
+            const std::array<rhi::TextureBinding, 1> particleShadowMap{rhi::TextureBinding{shadowMap_, shadowSampler_}};
             if (particleCount_ > 0) {
                 cmd.setPipeline(particlePipeline_);
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&particleShadow, sizeof(particleShadow)));
+                cmd.bindTextures(rhi::ShaderStage::Vertex, 0, particleShadowMap);
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
                 const std::array<rhi::BufferHandle, 1> particleBuffers{particleBuffer_};
                 cmd.bindVertexBuffers(0, particleBuffers);
@@ -10856,6 +11144,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             if (gpuParticles) {
                 cmd.setPipeline(particleGpuPipeline_);
                 cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&particleUniforms, sizeof(particleUniforms)));
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 2, asBytes(&particleShadow, sizeof(particleShadow)));
+                cmd.bindTextures(rhi::ShaderStage::Vertex, 0, particleShadowMap);
                 cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&lighting, sizeof(lighting)));
                 for (const RenderGpuEmitter& emitter : world.gpuEmitters) {
                     const auto found =
@@ -10874,6 +11164,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                     look.flipbook[3] = emitter.framerate;
                     look.kind[0] = static_cast<f32>(emitter.shape);
                     look.kind[1] = emitter.texture.valid() ? 1.0f : 0.0f;
+                    look.kind[2] = emitter.lightInfluence;
                     for (usize at = 0; at < 16; ++at) {
                         for (usize channel = 0; channel < 4; ++channel)
                             look.colorOverLife[at][channel] = emitter.colorOverLife[at][channel];
@@ -10898,7 +11189,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // nothing else is drawn after the particles, and a pass opened to
             // draw nothing still loads the picture and the depth and stores
             // them again -- every frame with a particle in it.
-            if (worldUiVertexCount_ > 0) {
+            if (uiInForward) {
                 const std::array<rhi::ColorAttachment, 1> resumeTarget{rhi::ColorAttachment{
                     .texture = hdr_,
                     .loadOp = rhi::LoadOp::Load,
@@ -10918,37 +11209,38 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
         // **World UI after the particles**: the trees arrive back to
         // front, and the ones that are always on top come after all of them.
-        if (worldUiVertexCount_ > 0) {
-            GpuWorldUiView view;
-            view.viewProjection = world.camera.viewProjection;
-            const std::array<rhi::BufferHandle, 1> uiBuffers{worldUiBuffer_};
-            for (const bool onTop : {false, true}) {
-                cmd.setPipeline(onTop ? worldUiOnTopPipeline_ : worldUiPipeline_);
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&view, sizeof(view)));
-                cmd.bindVertexBuffers(0, uiBuffers);
-                for (const WorldUiRun& run : world.worldUiRuns) {
-                    if (run.alwaysOnTop != onTop || run.vertexCount == 0 ||
-                        run.firstVertex + run.vertexCount > worldUiVertexCount_)
-                        continue;
-                    GpuWorldUiLook look;
-                    look.params[0] = run.brightness;
-                    cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&look, sizeof(look)));
-                    // The run's picture and the frame's gradient table (ADR
-                    // 0110), which the screen's UI reads too.
-                    const std::array<rhi::TextureBinding, 2> texture{
-                        rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, environmentSampler_},
-                        rhi::TextureBinding{world.worldUiGradients.valid() ? world.worldUiGradients : whitePixel_,
-                                            environmentSampler_}};
-                    cmd.bindTextures(rhi::ShaderStage::Fragment, 0, texture);
-                    cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
-                    countDraw(DrawKind::WorldUi);
-                }
-            }
-        }
+        if (uiInForward)
+            drawWorldUi(cmd, world, uiApart ? WorldUiRuns::AsLight : WorldUiRuns::All);
     }
 
     if (forwardOpen)
         cmd.endRenderPass();
+    // **And the interface as the display shows it, apart** (ADR 0250): into
+    // its own layer, tested against the scene's depth -- the samples', where
+    // the eye has them -- for the tonemap to lay over the picture.
+    uiLayerLive_ = false;
+    if (uiApart && ensureUiLayer(device, samples)) {
+        const std::array<rhi::ColorAttachment, 1> layerAttachment{rhi::ColorAttachment{
+            .texture = samples > 1 ? uiLayerSamples_ : uiLayer_,
+            .loadOp = rhi::LoadOp::Clear,
+            .storeOp = samples > 1 ? rhi::StoreOp::Resolve : rhi::StoreOp::Store,
+            .clearColor = {0.0f, 0.0f, 0.0f, 0.0f},
+            .resolveTexture = samples > 1 ? uiLayer_ : rhi::TextureHandle{},
+        }};
+        cmd.beginRenderPass({
+            .colorAttachments = layerAttachment,
+            .depthStencil = {.texture = samples > 1 ? msaaDepth_ : depth_,
+                             .loadOp = rhi::LoadOp::Load,
+                             .storeOp = samples > 1 ? rhi::StoreOp::DontCare : rhi::StoreOp::Store},
+            .debugName = "world-ui",
+        });
+        cmd.setViewport({.width = static_cast<f32>(renderWidth_), .height = static_cast<f32>(renderHeight_)});
+        cmd.setScissor(
+            {.width = static_cast<core::i32>(renderWidth_), .height = static_cast<core::i32>(renderHeight_)});
+        drawWorldUi(cmd, world, WorldUiRuns::AsDisplayed);
+        cmd.endRenderPass();
+        uiLayerLive_ = true;
+    }
     // Before the look's passes: a shaft of light or a blur over the whole
     // picture is not something that blended.
     if (fsr2Now_ && activeView_ == 0)
@@ -10966,7 +11258,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // one of these effects, which is what keeps that frame's command stream the
     // one it always was.
     const RenderLook& look = world.look;
-    rhi::TextureHandle sceneColor = hdr_;
+    // Folded, the frame is the headset's image, already tonemapped.
+    rhi::TextureHandle sceneColor = foldExposure_ > 0.0f ? target.color : hdr_;
 
     // **A picture for a reflection probe stops here** (ADR 0202): the frame as
     // it is lit, before anything that is a camera's own -- the look, the
@@ -11079,13 +11372,23 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         }
         luminance.texelRate[0] = 1.0f / static_cast<f32>(sceneWidth);
         luminance.texelRate[1] = 1.0f / static_cast<f32>(sceneHeight);
+        // Folded: the meter undoes the curve and this frame's exposure.
+        luminance.texelRate[3] = foldExposure_ > 0.0f ? 1.0f / foldExposure_ : 0.0f;
         // **A view seen on one side of a line is metered on that side** (ADR
         // 0205): the other is black, and half a picture of black read as a
         // dark room and opened the exposure. The line goes through the
         // middle, so the meter reads the kept side's mirror image there.
         luminance.range[2] = target.sideNormal.x * static_cast<f32>(target.width);
         luminance.range[3] = target.sideNormal.y * static_cast<f32>(target.height);
-        const std::array<rhi::TextureBinding, 1> hdrBinding{rhi::TextureBinding{sceneColor, linearSampler_}};
+        // The world's interface metered as part of the picture (ADR 0250),
+        // over it at the exposure the frame before was drawn at; and a
+        // picture with nothing behind it metered where something was drawn.
+        luminance.first[0] = std::exp2(world.environment.exposureCompensation);
+        luminance.first[1] = world.environment.transparentBackground ? 1.0f : 0.0f;
+        const std::array<rhi::TextureBinding, 3> hdrBinding{
+            rhi::TextureBinding{sceneColor, linearSampler_},
+            rhi::TextureBinding{uiLayerLive_ ? uiLayer_ : nothingPixel_, linearSampler_},
+            rhi::TextureBinding{exposure_[previousExposure], pointSampler_}};
         fullscreenPass(cmd, luminanceDownPipeline_, luminance64_, 64, 64, "luminance-down", hdrBinding,
                        asBytes(&luminance, sizeof(luminance)));
         luminance.range[2] = 0.0f;
@@ -11093,6 +11396,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
 
         luminance.texelRate[0] = 1.0f / 64.0f;
         luminance.texelRate[1] = 1.0f / 64.0f;
+        luminance.texelRate[3] = 0.0f;
         const std::array<rhi::TextureBinding, 1> coarse{rhi::TextureBinding{luminance64_, linearSampler_}};
         fullscreenPass(cmd, luminanceReducePipeline_, luminance8_, 8, 8, "luminance-reduce", coarse,
                        asBytes(&luminance, sizeof(luminance)));
@@ -11110,6 +11414,12 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         fullscreenPass(cmd, luminanceAdaptPipeline_, exposure_[nextExposure], 1, 1, "luminance-adapt", adapt,
                        asBytes(&luminance, sizeof(luminance)));
         exposureInitialised_ = true;
+        // **And read back for a folded eye's next frames**, a few frames
+        // late: never more than a handful asked for at once.
+        if (world.headsetEye && world.headsetLean && foldReadbacks_.size() < 4) {
+            if (const u32 ticket = device.requestReadback(exposure_[nextExposure], 1, 1); ticket != 0)
+                foldReadbacks_.push_back(ticket);
+        }
     }
     cmd.popDebugGroup();
     headsetExposure_ = world.shadowView.has_value() ? metered : rhi::TextureHandle{};
@@ -11273,12 +11583,17 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                                intoWindow ? target.colorFormat : kLdrFormat))
             exactSlot = &slot;
     }
-    const std::array<rhi::TextureBinding, 4> tonemapTextures{
+    // The world's interface as the display shows it (ADR 0250), last: after
+    // the sprites' mask in the twins that read one, in its place otherwise.
+    const rhi::TextureBinding uiLayer{uiLayerLive_ ? uiLayer_ : nothingPixel_, linearSampler_};
+    std::array<rhi::TextureBinding, 5> tonemapTextures{
         rhi::TextureBinding{sceneColor, environmentSampler_}, rhi::TextureBinding{bloom_[0], environmentSampler_},
         rhi::TextureBinding{metered, linearSampler_},
-        rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, pointSampler_}};
+        rhi::TextureBinding{exactSlot != nullptr ? spriteMask_ : whitePixel_, pointSampler_}, uiLayer};
+    if (exactSlot == nullptr)
+        tonemapTextures[3] = uiLayer;
     const std::span<const rhi::TextureBinding> tonemapBindings{tonemapTextures.data(),
-                                                               exactSlot != nullptr ? usize{4} : usize{3}};
+                                                               exactSlot != nullptr ? usize{5} : usize{4}};
 
     // With anti-aliasing on, this writes the LDR texture the resolve reads and
     // the resolve is what reaches the target. With it off, this IS the resolve
@@ -11291,14 +11606,16 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                                                                                           : rhi::PipelineHandle{})
         : intoWindow && tonemapWindowPipeline_.valid() ? tonemapWindowPipeline_
                                                        : tonemapPipeline_;
-    fullscreenPass(cmd,
-                   exactSlot != nullptr ? exactSlot->handle
-                   : graded             ? gradedSlot.handle
-                                        : plain,
-                   resolve ? ldr_ : target.color, resolve ? renderWidth_ : target.width,
-                   resolve ? renderHeight_ : target.height, "tonemap", tonemapBindings,
-                   asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
-                   graded ? asBytes(&grade, sizeof(grade)) : std::span<const std::byte>{});
+    // Folded into the forward pass (ADR 0250), the picture is already there.
+    if (foldExposure_ <= 0.0f)
+        fullscreenPass(cmd,
+                       exactSlot != nullptr ? exactSlot->handle
+                       : graded             ? gradedSlot.handle
+                                            : plain,
+                       resolve ? ldr_ : target.color, resolve ? renderWidth_ : target.width,
+                       resolve ? renderHeight_ : target.height, "tonemap", tonemapBindings,
+                       asBytes(&tonemap, sizeof(tonemap)), rhi::LoadOp::Clear,
+                       graded ? asBytes(&grade, sizeof(grade)) : std::span<const std::byte>{});
     cmd.popDebugGroup();
 
     // --- Anti-aliasing -------------------------------------------------------

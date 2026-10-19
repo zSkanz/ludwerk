@@ -200,11 +200,14 @@ struct GpuFrameUniforms
     // (`nearbyOcclusion`). x of the params how many, y how strongly.
     f32 occluders[kFrameOccluders][4]{};
     f32 occluderParams[4]{};
+    // **The tonemap folded into the forward pass** (a headset's eye, ADR
+    // 0250): x the exposure the pass writes with, nought where it does not.
+    f32 forwardFold[4]{};
 };
 
 static_assert(sizeof(GpuFrameUniforms) == 224 + 256 + 144 + 64 * kLocalShadowTileCount + 16 + 16 + 16 + 64 +
                                               96 * kFrameReflectionProbes + 16 * kVolumeRows * kFrameIrradianceVolumes +
-                                              16 * kFrameOccluders + 16,
+                                              16 * kFrameOccluders + 16 + 16,
               "GpuFrameUniforms is a cbuffer layout; see engine_forward.hlsli");
 
 // Fragment stage, `b1 space3`. Per material rather than per frame, because it
@@ -504,7 +507,8 @@ static_assert(sizeof(GpuBloomUniforms) == 32, "GpuBloomUniforms is a cbuffer lay
 struct GpuLuminanceUniforms
 {
     // x and y are one texel of the source, z how far towards the measured value
-    // one frame moves, w unused.
+    // one frame moves, w -- the first pass's -- one over the exposure a
+    // picture already tonemapped was drawn with (ADR 0250), nought for none.
     //
     // **`z` is per FRAME rather than per second**, and that is deliberate: a
     // rate driven by elapsed wall-clock time would make a screenshot at frame
@@ -522,9 +526,14 @@ struct GpuLuminanceUniforms
     // allows a gain between 0.15 and 3, so a night scene lands about a stop and
     // a half below a day one instead of level with it.
     f32 range[4]{0.15f, 3.0f, 0.0f, 0.0f};
+    // The first pass's alone: x the exposure compensation's gain, for the
+    // world's interface metered as part of the picture (ADR 0250); y above a
+    // half, a picture with nothing behind it (a headset's eye with the room
+    // seen through), where a pixel nothing covers says nothing of the light.
+    f32 first[4]{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
-static_assert(sizeof(GpuLuminanceUniforms) == 32, "GpuLuminanceUniforms is a cbuffer layout");
+static_assert(sizeof(GpuLuminanceUniforms) == 48, "GpuLuminanceUniforms is a cbuffer layout");
 
 // Fragment stage, `b0 space3`, for the anti-aliasing resolve.
 struct GpuFxaaUniforms
@@ -835,13 +844,17 @@ struct GpuSpriteExactView
 
 static_assert(sizeof(GpuSpriteExactView) == 128, "GpuSpriteExactView is a cbuffer layout");
 
-// Fragment stage, `b0 space3`, for `ui_world`: x is the brightness.
+// Fragment stage, `b1 space3`, for `ui_world` (the frame's uniforms are the
+// first block): the brightness, the folded tonemap's exposure, whether drawn
+// as the display shows it, the exposure compensation's gain; then how much
+// the scene's light decides the colours (`LightInfluence`).
 struct GpuWorldUiLook
 {
-    f32 params[4]{1.0f, 0.0f, 0.0f, 0.0f};
+    f32 params[4]{1.0f, 0.0f, 0.0f, 1.0f};
+    f32 light[4]{};
 };
 
-static_assert(sizeof(GpuWorldUiLook) == 16, "GpuWorldUiLook is a cbuffer layout");
+static_assert(sizeof(GpuWorldUiLook) == 32, "GpuWorldUiLook is a cbuffer layout");
 
 // Fragment stage, `b0 space3`, for `decal`.
 struct GpuDecalFragment
@@ -872,9 +885,11 @@ struct GpuParticle
     f32 params[4]{};
     // The picture's frame: left, top, right, bottom in texture space.
     f32 uv[4]{0.0f, 0.0f, 1.0f, 1.0f};
+    // x how much the scene's light colours it (`LightInfluence`).
+    f32 light[4]{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
-static_assert(sizeof(GpuParticle) == 64, "GpuParticle is a vertex stride; see particle.hlsl");
+static_assert(sizeof(GpuParticle) == 80, "GpuParticle is a vertex stride; see particle.hlsl");
 
 // One particle simulated on the GPU, as `particle_sim.hlsl` keeps it in its
 // buffer and `particle_gpu.hlsl` reads it (ADR 0160).
@@ -917,6 +932,22 @@ struct GpuParticleSim
 static_assert(sizeof(GpuParticleSim) == 352, "GpuParticleSim is a cbuffer layout");
 
 // Vertex `b1 space1`, for `particle_gpu`: how one emitter's particles look.
+// Vertex stage, after the blocks each particle path binds (`b1 space1` for
+// the CPU's, `b2` for the GPU's): the sun's cascades, for the shadow at a
+// particle (`LightInfluence`, particle.hlsl).
+struct GpuParticleShadow
+{
+    core::Mat4 viewProjection[4]{};
+    f32 far[4]{};
+    f32 sun[4]{};
+    f32 layout[4]{};
+    // The sky's light as the surfaces have it, and x its intensity.
+    f32 sky[9][4]{};
+    f32 skyParams[4]{};
+};
+
+static_assert(sizeof(GpuParticleShadow) == 464, "GpuParticleShadow is a cbuffer layout");
+
 struct GpuParticleLook
 {
     f32 originEmission[4]{};

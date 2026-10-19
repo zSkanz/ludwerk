@@ -1,6 +1,8 @@
 # The room seen through (ADR 0247 §1): under the simulated headset, with a
 # GPU, the left eye's picture is clear where the game drew nothing -- the sky
-# over the horizon -- and opaque where it drew the floor below it.
+# over the horizon -- and opaque where it drew the floor below it; opaque where
+# a sign that writes no depth is drawn over the sky, and clear where a part
+# that shows the room stands (ADR 0250).
 cmake_minimum_required(VERSION 3.24)
 
 foreach(required HOST PROBE SCENE WORKDIR)
@@ -27,9 +29,11 @@ endif()
 if(NOT output MATCHES "\\[passthrough\\] supported=true on=true")
     message(FATAL_ERROR "the simulated headset did not take the passthrough:\n${output}")
 endif()
-# Over the horizon, clear whatever its colour; under it, the floor, solid.
+# Over the horizon, clear whatever its colour; under it, the floor, solid;
+# the sign, solid; the window onto the room, clear.
 execute_process(
     COMMAND "${PROBE}" "${WORKDIR}/room-left.png" --tolerance=2 "0.5,0.1=-1,-1,-1,0" "0.5,0.9=-1,-1,-1,255"
+            "0.55,0.38=-1,-1,-1,255" "0.5,0.62=-1,-1,-1,0"
     RESULT_VARIABLE probed
     OUTPUT_VARIABLE probeOutput
     ERROR_VARIABLE probeOutput)

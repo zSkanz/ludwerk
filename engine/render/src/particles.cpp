@@ -564,6 +564,7 @@ void ParticleSystem::append(RenderWorld& out, const TextureLibrary* textures) co
             asked.radius = config.collisionRadius > 0.0f ? config.collisionRadius : config.size * 0.5f;
             asked.restSpeed = RestSpeed;
             asked.emission = std::clamp(config.lightEmission, 0.0f, 1.0f);
+            asked.lightInfluence = std::clamp(config.lightInfluence, 0.0f, 1.0f);
             asked.shape = config.shape;
             asked.texture = picture;
             asked.columns = static_cast<u32>(std::clamp(config.flipbookColumns, 1, MaxFlipbookEdge));
@@ -610,6 +611,7 @@ void ParticleSystem::append(RenderWorld& out, const TextureLibrary* textures) co
             drawn.color[2] = color.z * tint.b * config.brightness;
             drawn.color[3] = opacity;
             drawn.emission = std::clamp(config.lightEmission, 0.0f, 1.0f);
+            drawn.lightInfluence = std::clamp(config.lightInfluence, 0.0f, 1.0f);
             drawn.shape = config.shape;
             drawn.distance = core::length(drawn.position);
             drawn.rotation = particle.rotation;

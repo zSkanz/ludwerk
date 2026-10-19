@@ -38,6 +38,7 @@ listed on the page of the class that declares them.
 | `ShadowFirstSplit` | `number` | `2` | read/write | How many meters the sun's first cascade covers in the eyes: `[xr] shadow_first_split`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame. |
 | `ShadowResolution` | `number` | `0` | read/write | Texels a cascade of the sun's shadows, 256 to 2048, or 0 for the quality level's: `[xr] shadow_resolution`. A change makes the shadow map again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame. |
 | `Space` | `Enum.XRSpace` | `Enum.XRSpace.Standing` | read/write | Where the poses are measured from: the floor (`Standing`) or the head where the session began (`Seated`). A game that is played sitting down sets `Seated` once, at the start. The picture uses the same space, so the camera stands for the floor when standing and for the player's eyes when seated. |
+| `SpectatorCamera` | `Camera?` | — | read/write | The camera the window on the computer shows while the headset draws, for whoever is watching or streaming. The game's world is seen through it, drawn at the window's size and the screen's graphics quality, after the headset's eyes. With nil, the window shows the left eye. `[xr] spectator = false` in `project.toml` keeps the left eye whatever this is. A standalone headset has no window, and nothing more is drawn there. |
 
 ## Methods
 

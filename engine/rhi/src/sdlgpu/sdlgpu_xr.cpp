@@ -355,14 +355,7 @@ public:
             (void)m_calls.destroySpace(m_headSpace);
         if (m_actionSet != XR_NULL_HANDLE && m_calls.destroyActionSet != nullptr)
             (void)m_calls.destroyActionSet(m_actionSet);
-        for (std::array<EyeSwapchain, 2>* set : {&m_eyes, &m_depthEyes}) {
-            for (EyeSwapchain& eye : *set) {
-                for (const TextureHandle handle : eye.handles)
-                    m_hooks.unwrap(handle);
-                if (eye.swapchain != XR_NULL_HANDLE)
-                    (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
-            }
-        }
+        releaseSwapchains();
         for (const XrSpace space : {m_stage, m_local}) {
             if (space != XR_NULL_HANDLE && m_calls.destroySpace != nullptr)
                 (void)m_calls.destroySpace(space);
@@ -408,8 +401,10 @@ public:
             logFailure("xrEnumerateViewConfigurationViews", result);
             return false;
         }
-        m_width = views[0].recommendedImageRectWidth;
-        m_height = views[0].recommendedImageRectHeight;
+        m_recommendedWidth = views[0].recommendedImageRectWidth;
+        m_recommendedHeight = views[0].recommendedImageRectHeight;
+        m_width = m_recommendedWidth;
+        m_height = m_recommendedHeight;
 
         auto sessionInfo = made<XrSessionCreateInfo>(XR_TYPE_SESSION_CREATE_INFO);
         result = SDL_CreateGPUXRSession(m_hooks.device, &sessionInfo, &m_session);
@@ -473,26 +468,9 @@ public:
         }
         SDL_free(formats);
         m_format = fromSdl(chosen);
-
-        for (EyeSwapchain& eye : m_eyes) {
-            auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
-            info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
-            info.sampleCount = 1;
-            info.width = m_width;
-            info.height = m_height;
-            info.faceCount = 1;
-            info.arraySize = 1;
-            info.mipCount = 1;
-            result = SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, chosen, &eye.swapchain, &eye.images);
-            if (XR_FAILED(result)) {
-                logFailure("SDL_CreateGPUXRSwapchain", result);
-                return false;
-            }
-            u32 images = 0;
-            (void)m_calls.enumerateSwapchainImages(eye.swapchain, 0, &images, nullptr);
-            for (u32 at = 0; at < images; ++at)
-                eye.handles.push_back(m_hooks.wrap(eye.images[at], m_format, m_width, m_height));
-        }
+        m_colorFormat = chosen;
+        if (!makeEyeSwapchains())
+            return false;
         // **The room seen through** (ADR 0247 §1): the alpha blend where the
         // runtime offers it, the Quest's own passthrough where it does not.
         if (m_calls.enumerateBlendModes != nullptr) {
@@ -600,9 +578,46 @@ public:
         }
     }
 
+    [[nodiscard]] bool setRenderScale(f32 scale) override
+    {
+        const f32 held = std::clamp(scale, 0.5f, 1.0f);
+        const auto scaled = [held](u32 size) {
+            return std::max(16u, static_cast<u32>(static_cast<f32>(size) * held + 0.5f));
+        };
+        m_wantedWidth = scaled(m_recommendedWidth);
+        m_wantedHeight = scaled(m_recommendedHeight);
+        m_scaleAsked = held;
+        return true;
+    }
+
     [[nodiscard]] bool beginFrame(HeadsetFrame& frame) override
     {
         frame = HeadsetFrame{};
+        // **The images remade at another size** (`setRenderScale`), between
+        // frames: none is acquired, and the GPU is let finish with the old
+        // ones first -- a scale is changed rarely, and a hitch then is the
+        // price of every frame after it costing less.
+        if (m_wantedWidth != 0 && (m_wantedWidth != m_width || m_wantedHeight != m_height)) {
+            (void)SDL_WaitForGPUIdle(m_hooks.device);
+            releaseSwapchains();
+            m_width = m_wantedWidth;
+            m_height = m_wantedHeight;
+            if (!makeEyeSwapchains()) {
+                m_running = false;
+                return false;
+            }
+            if (m_depthLayer && !openDepth()) {
+                m_depthLayer = false;
+                core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_no_depth"));
+            }
+            const std::array<core::I18nArg, 5> args{
+                core::I18nArg{"width", static_cast<core::i64>(m_width)},
+                core::I18nArg{"height", static_cast<core::i64>(m_height)},
+                core::I18nArg{"scale", static_cast<f64>(m_scaleAsked)},
+                core::I18nArg{"recommendedWidth", static_cast<core::i64>(m_recommendedWidth)},
+                core::I18nArg{"recommendedHeight", static_cast<core::i64>(m_recommendedHeight)}};
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_eye_scaled"), args);
+        }
         if (!m_running)
             return false;
         auto timing = made<XrFrameState>(XR_TYPE_FRAME_STATE);
@@ -1285,6 +1300,46 @@ private:
         return true;
     }
 
+    // **Each eye's colour image**, at the size and in the format chosen.
+    [[nodiscard]] bool makeEyeSwapchains()
+    {
+        for (EyeSwapchain& eye : m_eyes) {
+            auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
+            info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+            info.sampleCount = 1;
+            info.width = m_width;
+            info.height = m_height;
+            info.faceCount = 1;
+            info.arraySize = 1;
+            info.mipCount = 1;
+            const XrResult result =
+                SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, m_colorFormat, &eye.swapchain, &eye.images);
+            if (XR_FAILED(result)) {
+                logFailure("SDL_CreateGPUXRSwapchain", result);
+                return false;
+            }
+            u32 images = 0;
+            (void)m_calls.enumerateSwapchainImages(eye.swapchain, 0, &images, nullptr);
+            for (u32 at = 0; at < images; ++at)
+                eye.handles.push_back(m_hooks.wrap(eye.images[at], m_format, m_width, m_height));
+        }
+        return true;
+    }
+
+    // Every eye's images, colour and depth, given back.
+    void releaseSwapchains()
+    {
+        for (std::array<EyeSwapchain, 2>* set : {&m_eyes, &m_depthEyes}) {
+            for (EyeSwapchain& eye : *set) {
+                for (const TextureHandle handle : eye.handles)
+                    m_hooks.unwrap(handle);
+                if (eye.swapchain != XR_NULL_HANDLE)
+                    (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
+                eye = EyeSwapchain{};
+            }
+        }
+    }
+
     // **What a room query found**: each space with a rectangle, where it is in
     // the play space, how big, and what the scene calls it.
     void collectRoom()
@@ -1593,6 +1648,14 @@ private:
     std::string m_systemName;
     u32 m_width = 0;
     u32 m_height = 0;
+    // The size the runtime recommends, the size asked through the render
+    // scale (nought: none asked), and the scale, for the log.
+    u32 m_recommendedWidth = 0;
+    u32 m_recommendedHeight = 0;
+    u32 m_wantedWidth = 0;
+    u32 m_wantedHeight = 0;
+    f32 m_scaleAsked = 1.0f;
+    SDL_GPUTextureFormat m_colorFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
     TextureFormat m_format = TextureFormat::Undefined;
     XrTime m_displayTime = 0;
     bool m_running = false;

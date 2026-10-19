@@ -6,12 +6,24 @@
 #include <random>
 #include <utility>
 
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/core/math.h"
 
 namespace engine::app {
 
 SimulatedHeadset::SimulatedHeadset(rhi::IDevice& device, const SimulatedHeadsetDesc& desc)
-    : m_device(device), m_desc(desc)
+    : m_device(device), m_desc(desc), m_width(desc.eyeWidth), m_height(desc.eyeHeight)
+{
+    makeImages();
+}
+
+SimulatedHeadset::~SimulatedHeadset()
+{
+    releaseImages();
+}
+
+void SimulatedHeadset::makeImages()
 {
     // sRGB, as the runtimes' images the engine prefers are, so the copy into
     // them is the one a real headset gets.
@@ -19,34 +31,56 @@ SimulatedHeadset::SimulatedHeadset(rhi::IDevice& device, const SimulatedHeadsetD
         image = m_device.createTexture({
             .format = rhi::TextureFormat::Rgba8UnormSrgb,
             .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
-            .width = m_desc.eyeWidth,
-            .height = m_desc.eyeHeight,
+            .width = m_width,
+            .height = m_height,
             .debugName = "simulated-eye",
         });
     }
-    if (desc.depth) {
+    if (m_desc.depth) {
         for (rhi::TextureHandle& image : m_depthImages) {
             image = m_device.createTexture({
                 .format = rhi::TextureFormat::D32Float,
                 .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
-                .width = m_desc.eyeWidth,
-                .height = m_desc.eyeHeight,
+                .width = m_width,
+                .height = m_height,
                 .debugName = "simulated-eye-depth",
             });
         }
     }
 }
 
-SimulatedHeadset::~SimulatedHeadset()
+void SimulatedHeadset::releaseImages()
 {
-    for (const rhi::TextureHandle image : m_images) {
-        if (image.valid())
-            m_device.destroy(image);
+    for (std::array<rhi::TextureHandle, 2>* set : {&m_images, &m_depthImages}) {
+        for (rhi::TextureHandle& image : *set) {
+            if (image.valid())
+                m_device.destroy(image);
+            image = {};
+        }
     }
-    for (const rhi::TextureHandle image : m_depthImages) {
-        if (image.valid())
-            m_device.destroy(image);
-    }
+}
+
+bool SimulatedHeadset::setRenderScale(core::f32 scale)
+{
+    const core::f32 held = std::clamp(scale, 0.5f, 1.0f);
+    const auto scaled = [held](core::u32 size) {
+        return std::max(16u, static_cast<core::u32>(static_cast<core::f32>(size) * held + 0.5f));
+    };
+    const core::u32 width = scaled(m_desc.eyeWidth);
+    const core::u32 height = scaled(m_desc.eyeHeight);
+    if (width == m_width && height == m_height)
+        return true;
+    releaseImages();
+    m_width = width;
+    m_height = height;
+    makeImages();
+    const std::array<core::I18nArg, 5> args{
+        core::I18nArg{"width", static_cast<core::i64>(m_width)},
+        core::I18nArg{"height", static_cast<core::i64>(m_height)}, core::I18nArg{"scale", static_cast<core::f64>(held)},
+        core::I18nArg{"recommendedWidth", static_cast<core::i64>(m_desc.eyeWidth)},
+        core::I18nArg{"recommendedHeight", static_cast<core::i64>(m_desc.eyeHeight)}};
+    core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_eye_scaled"), args);
+    return true;
 }
 
 void SimulatedHeadset::setHead(const std::array<core::f32, 3>& position,
@@ -99,8 +133,8 @@ void SimulatedHeadset::setPose(core::u32 which, const std::array<core::f32, 3>& 
 bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
 {
     frame = rhi::HeadsetFrame{};
-    frame.width = m_desc.eyeWidth;
-    frame.height = m_desc.eyeHeight;
+    frame.width = m_width;
+    frame.height = m_height;
     frame.format = rhi::TextureFormat::Rgba8UnormSrgb;
     frame.displayTimeNs = static_cast<core::i64>(m_frames) * 13'888'889;
     if (!m_images[0].valid() || !m_images[1].valid())

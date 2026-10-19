@@ -2050,6 +2050,18 @@ local Classes: { Schema.Class } = {
                     .. "runtime has no passthrough (`SupportsPassthrough`).",
             },
             {
+                Name = "SpectatorCamera",
+                Type = "Camera?",
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0250" },
+                Doc = "The camera the window on the computer shows while the headset draws, for whoever is "
+                    .. "watching or streaming. The game's world is seen through it, drawn at the window's size and "
+                    .. "the screen's graphics quality, after the headset's eyes. With nil, the window shows the "
+                    .. "left eye. `[xr] spectator = false` in `project.toml` keeps the left eye whatever this is. "
+                    .. "A standalone headset has no window, and nothing more is drawn there.",
+            },
+            {
                 Name = "PointerHand",
                 Type = "Enum.XRHand",
                 Default = "Enum.XRHand.Right",

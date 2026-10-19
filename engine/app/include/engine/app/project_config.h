@@ -181,6 +181,13 @@ struct ProjectConfig
     // `[xr] mirror` (ADR 0244 §5): the window shows the left eye, or, false,
     // nothing.
     bool xrMirror = true;
+    // `[xr] spectator` (ADR 0250): whether the window may show
+    // `XRService.SpectatorCamera` while a headset draws; false keeps it the
+    // mirror whatever a script sets.
+    bool xrSpectator = true;
+    // `[xr] spectator_every`: the spectator's picture is drawn every this
+    // many of the headset's frames, 1 to 8, and shown in between.
+    std::optional<core::u32> xrSpectatorEvery;
     // `[xr] hands` (ADR 0245 §4): the hands themselves where a headset
     // tracks them; false for a game played only with controllers.
     bool xrHands = true;

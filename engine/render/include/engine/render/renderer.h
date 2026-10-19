@@ -164,9 +164,10 @@ struct PictureCrop
     core::f32 y = 0.0f;
     core::f32 width = 1.0f;
     core::f32 height = 1.0f;
-    // **The room seen through** (ADR 0247): the copy's alpha from the depth
-    // the view was drawn with -- none where nothing was drawn, and 1 less
-    // `roomOpacity` where something was. Off, every pixel is opaque.
+    // **The room seen through** (ADR 0247): the copy's alpha the coverage the
+    // picture was drawn with -- none where nothing was drawn, as much as what
+    // was drawn covers, times 1 less `roomOpacity`. Off, every pixel is
+    // opaque.
     bool seeThrough = false;
     core::f32 roomOpacity = 0.0f;
 };
@@ -352,6 +353,20 @@ public:
     // milliseconds a pipeline. Called behind a loading curtain. What the scene
     // itself shows is made by drawing it there; this is for what it will show.
     virtual void warm(rhi::IDevice& device) { (void)device; }
+    // **And what a headset's eyes draw with** (`warm` first): every pipeline
+    // of an eye's forward pass in its twin at the eye's samples, its density
+    // map where `foveation` asks for one, and -- for what a pass with the
+    // tonemap folded into it draws -- the eye's image's format. Made at first
+    // draw, they were the hitches of a headset's first seconds: the window's
+    // curtain was down, and a phone's GPU compiles each for tens of
+    // milliseconds.
+    virtual void warmEyes(rhi::IDevice& device, u32 samples, u32 foveation, rhi::TextureFormat eyeFormat)
+    {
+        (void)device;
+        (void)samples;
+        (void)foveation;
+        (void)eyeFormat;
+    }
 
     // Explicit content preloading includes a user's surface pipelines, not
     // just its bytecode. Null means pending, false a terminal failure. The

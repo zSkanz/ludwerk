@@ -176,6 +176,9 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // (`nearbyOcclusion`). None but in a headset's eye.
     float4 Occluders[8];
     float4 OccluderParams;
+    // **The tonemap folded into this pass** (a headset's eye): x the
+    // exposure, nought where it is not (`foldOutput`).
+    float4 ForwardFold;
 };
 #endif
 
@@ -356,7 +359,7 @@ cbuffer GpuBloomUniforms : register(b0, space3)
 #endif
 
 #if defined(ENG_UNIFORMS_LUMINANCE)
-// `render::GpuLuminanceUniforms`, 32 bytes.
+// `render::GpuLuminanceUniforms`, 48 bytes.
 cbuffer GpuLuminanceUniforms : register(b0, space3)
 {
     // x and y one source texel, z how far towards the measurement one FRAME
@@ -367,6 +370,10 @@ cbuffer GpuLuminanceUniforms : register(b0, space3)
     // zw, for the first of the three passes alone: the side of a line the
     // view is NOT seen on (ADR 0205), as a normal in UV; nought otherwise.
     float4 LuminanceRange;
+    // The first pass's alone: x the exposure compensation's gain; y above a
+    // half, a picture with nothing behind it, whose uncovered pixels count
+    // as the light measured before.
+    float4 LuminanceFirst;
 };
 #endif
 

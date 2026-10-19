@@ -1914,7 +1914,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(subWorldDesc);
 
     // --- ParticleEmitter ---
-    static std::array<scene::PropertyDesc, 35> particleEmitterProperties;
+    static std::array<scene::PropertyDesc, 36> particleEmitterProperties;
     particleEmitterProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -2081,6 +2081,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
             .get = native::getParticleEmitterLightEmission,
             .set = native::setParticleEmitterLightEmission,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightInfluence"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much the scene's light decides a particle's color, from 0 to 1. At 0 it is always its own color. At 1 it is lit by the sky and the sun, and darker in the shadows things cast, as smoke and dust are. The light a particle adds (`LightEmission`) is its own at any value.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getParticleEmitterLightInfluence,
+            .set = native::setParticleEmitterLightInfluence,
         },
         scene::PropertyDesc{
             .name = atoms.intern("Brightness"),

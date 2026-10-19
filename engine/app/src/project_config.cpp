@@ -749,6 +749,11 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.xrRequired = *value;
     if (const std::optional<bool> value = document.boolean("xr.mirror"))
         config.xrMirror = *value;
+    if (const std::optional<bool> value = document.boolean("xr.spectator"))
+        config.xrSpectator = *value;
+    if (const std::optional<f64> value = document.number("xr.spectator_every");
+        value.has_value() && *value >= 1.0 && *value <= 8.0)
+        config.xrSpectatorEvery = static_cast<core::u32>(*value);
     if (const std::optional<bool> value = document.boolean("xr.hands"))
         config.xrHands = *value;
     if (const std::optional<bool> value = document.boolean("xr.depth"))

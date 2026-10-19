@@ -16,6 +16,7 @@
 #define ENG_UNIFORMS_LOOK_SKY
 #include "engine_look.hlsli"
 #include "engine_fullscreen.hlsli"
+#include "engine_tonemap.hlsli"
 
 // The six pictures, resampled into one octahedral image; a white pixel when
 // there are none, which the flags then ignore.
@@ -187,5 +188,5 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         sky = lerp(sky, lit * shade, alpha);
     }
 
-    return float4(sky, 1.0f);
+    return foldOutput(float4(sky, 1.0f), ZenithColor.w, input.Position.xy);
 }

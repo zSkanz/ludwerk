@@ -486,6 +486,8 @@ scene::Value getParticleEmitterTransparencyEnd(const scene::World& world, core::
 bool setParticleEmitterTransparencyEnd(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterLightEmission(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterLightEmission(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getParticleEmitterLightInfluence(const scene::World& world, core::InstanceId id);
+bool setParticleEmitterLightInfluence(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterBrightness(const scene::World& world, core::InstanceId id);
 bool setParticleEmitterBrightness(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getParticleEmitterShape(const scene::World& world, core::InstanceId id);

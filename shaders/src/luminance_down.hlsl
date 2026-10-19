@@ -15,9 +15,44 @@
 #define ENG_UNIFORMS_LUMINANCE
 #include "engine_pbr.hlsli"
 #include "engine_fullscreen.hlsli"
+#include "engine_tonemap.hlsli"
 
 Texture2D SourceTexture : register(t0, space2);
 SamplerState SourceSampler : register(s0, space2);
+// **The world's interface as the display shows it** (ADR 0250), drawn apart
+// from the scene into a layer the tonemap lays over the picture -- metered as
+// part of it, as it is where the tonemap is folded into a headset eye's pass
+// and the interface is in the picture: laid over at the exposure of the frame
+// before, then the curve and that exposure undone. Transparent where there is
+// none, and the picture is read as it always was.
+Texture2D UiLayerTexture : register(t1, space2);
+SamplerState UiLayerSampler : register(s1, space2);
+// The adapted average the frame before was drawn at.
+Texture2D<float> PreviousTexture : register(t2, space2);
+SamplerState PreviousSampler : register(s2, space2);
+
+// One tap of the picture, with the interface over it where it has one.
+// `LuminanceFirst.x`: the exposure compensation's gain, `exp2` of its stops.
+float3 meteredTap(float2 uv)
+{
+    const float4 texel = SourceTexture.SampleLevel(SourceSampler, uv, 0.0f);
+    const float3 scene = texel.rgb;
+    const float4 layer = UiLayerTexture.SampleLevel(UiLayerSampler, uv, 0.0f);
+    // **Nothing drawn, nothing measured** (the room seen through behind a
+    // headset's picture): such a pixel counts as the light measured the
+    // frame before, so an empty view neither opens the exposure nor shuts it.
+    if (LuminanceFirst.y > 0.5f && texel.a + layer.a <= 0.0f)
+    {
+        const float before = max(PreviousTexture.SampleLevel(PreviousSampler, float2(0.5f, 0.5f), 0.0f), 1e-4f);
+        return float3(before, before, before);
+    }
+    if (layer.a <= 0.0f)
+        return scene;
+    const float measured = max(PreviousTexture.SampleLevel(PreviousSampler, float2(0.5f, 0.5f), 0.0f), 1e-4f);
+    const float exposure = EngineExposureKey / measured * LuminanceFirst.x;
+    const float3 shown = layer.rgb + tonemapPbrNeutral(max(scene * exposure, float3(0.0f, 0.0f, 0.0f))) * (1.0f - layer.a);
+    return untonemapPbrNeutral(shown) / exposure;
+}
 
 struct Interpolants
 {
@@ -47,10 +82,16 @@ float4 FragmentMain(Interpolants input) : SV_Target0
         uv = 1.0f - uv;
 
     float3 total = float3(0.0f, 0.0f, 0.0f);
-    total += SourceTexture.SampleLevel(SourceSampler, uv + float2(-texel.x, -texel.y), 0.0f).rgb;
-    total += SourceTexture.SampleLevel(SourceSampler, uv + float2(texel.x, -texel.y), 0.0f).rgb;
-    total += SourceTexture.SampleLevel(SourceSampler, uv + float2(-texel.x, texel.y), 0.0f).rgb;
-    total += SourceTexture.SampleLevel(SourceSampler, uv + float2(texel.x, texel.y), 0.0f).rgb;
+    total += meteredTap(uv + float2(-texel.x, -texel.y));
+    total += meteredTap(uv + float2(texel.x, -texel.y));
+    total += meteredTap(uv + float2(-texel.x, texel.y));
+    total += meteredTap(uv + float2(texel.x, texel.y));
+    // **A picture already tonemapped** (a headset's eye with the tonemap
+    // folded in): `w` is one over the exposure it was drawn with, and what
+    // the meter wants is the scene before it -- the curve undone, then the
+    // exposure. Nought for the 16-bit picture every other frame meters.
+    if (LuminanceTexelRate.w > 0.0f)
+        total = untonemapPbrNeutral(total * 0.25f) * (4.0f * LuminanceTexelRate.w);
 
     // Rec.709 luminance, which is the space the tonemap operates in.
     const float luminance = dot(total * 0.25f, float3(0.2126f, 0.7152f, 0.0722f));

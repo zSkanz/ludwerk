@@ -614,6 +614,8 @@ struct RenderParticle
     f32 color[4]{1.0f, 1.0f, 1.0f, 1.0f};
     // 0 blends over what is behind, 1 adds to it.
     f32 emission = 0.0f;
+    // `LightInfluence`: how much the scene's light colours it.
+    f32 lightInfluence = 1.0f;
     // `Enum.ParticleShape`.
     core::i32 shape = 0;
     // From the camera, for the back-to-front sort.
@@ -665,6 +667,7 @@ struct RenderGpuEmitter
     f32 restSpeed = 0.0f;
     // How it is drawn: as a CPU particle is.
     f32 emission = 0.0f;
+    f32 lightInfluence = 1.0f;
     core::i32 shape = 0;
     rhi::TextureHandle texture;
     core::u32 columns = 1;
@@ -756,6 +759,8 @@ struct WorldUiRun
     // Invalid for none: the renderer's white pixel.
     rhi::TextureHandle texture;
     f32 brightness = 1.0f;
+    // `LightInfluence`: 0 its own colours, 1 lit as a surface.
+    f32 lightInfluence = 0.0f;
     // Drawn after everything else in the world and never hidden.
     bool alwaysOnTop = false;
 };

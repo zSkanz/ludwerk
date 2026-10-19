@@ -365,6 +365,9 @@ inline constexpr u32 Cloth = 16384u;
 // What rests near a surface darkening its light from around, in a headset's
 // eye (`nearbyOcclusion`).
 inline constexpr u32 Nearby = 32768u;
+// The tonemap folded into a headset eye's forward pass (ADR 0250): drawn as
+// every other frame is, into the 16-bit target and tonemapped after.
+inline constexpr u32 Fold = 65536u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

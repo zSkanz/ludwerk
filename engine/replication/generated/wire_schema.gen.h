@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 58;
+inline constexpr u32 ProtocolVersion = 59;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -136,6 +136,7 @@ inline constexpr FieldDesc BasePartFields[] = {
     {"AngularVelocity", 16, Encoding::Vector3, Source::Component, "rigidBodies"},
     {"CastShadow", 17, Encoding::Bool, Source::Component, "parts"},
     {"ReceivesDecals", 19, Encoding::Bool, Source::Component, "parts"},
+    {"ShowsRoom", 31, Encoding::Bool, Source::Component, "parts"},
     {"CollisionGroup", 18, Encoding::NameAtom, Source::Component, "rigidBodies"},
     {"CanTouch", 20, Encoding::Bool, Source::Component, "rigidBodies"},
     {"CanQuery", 21, Encoding::Bool, Source::Component, "rigidBodies"},
@@ -248,6 +249,7 @@ inline constexpr FieldDesc ParticleEmitterFields[] = {
     {"Friction", 34, Encoding::F32, Source::Component, "particleEmitters"},
     {"CollisionRadius", 35, Encoding::F32, Source::Component, "particleEmitters"},
     {"Simulation", 36, Encoding::I32, Source::Component, "particleEmitters"},
+    {"LightInfluence", 37, Encoding::F32, Source::Component, "particleEmitters"},
 };
 
 inline constexpr FieldDesc Part2DFields[] = {

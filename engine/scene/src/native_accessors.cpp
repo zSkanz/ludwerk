@@ -1504,6 +1504,22 @@ bool setBasePartCastShadow(World& world, core::InstanceId id, const Value& value
     return true;
 }
 
+Value getBasePartShowsRoom(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{part->showsRoom};
+}
+
+bool setBasePartShowsRoom(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    PartComponent* part = writePart(world, id);
+    if (flag == nullptr || part == nullptr)
+        return false;
+    part->showsRoom = *flag;
+    return true;
+}
+
 Value getBasePartFade(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);
@@ -2273,6 +2289,31 @@ Value getXRAnchorId(const World& world, core::InstanceId id)
 {
     const EngineState::Headset::Anchor* anchor = anchorOf(world, id);
     return Value{anchor != nullptr ? anchor->id : std::string{}};
+}
+
+Value getXRServiceSpectatorCamera(const World& world, core::InstanceId)
+{
+    const core::InstanceId camera = world.engineState().headset.spectatorCamera;
+    if (!world.alive(camera))
+        return Value{};
+    return Value{camera};
+}
+
+bool setXRServiceSpectatorCamera(World& world, core::InstanceId, const Value& value)
+{
+    if (const auto* reference = std::get_if<core::InstanceId>(&value); reference != nullptr) {
+        // `Camera?`, held at run time too: what the window looks through is
+        // a camera or nothing.
+        const ClassId cameraClass = world.classes().findId(world.atoms().lookup("Camera"));
+        if (cameraClass == InvalidClass || !world.isA(*reference, cameraClass))
+            return false;
+        world.engineState().headset.spectatorCamera = *reference;
+        return true;
+    }
+    if (valueType(value) != ValueType::Nil)
+        return false;
+    world.engineState().headset.spectatorCamera = core::InstanceId{};
+    return true;
 }
 
 Value getXRServicePassthrough(const World& world, core::InstanceId)

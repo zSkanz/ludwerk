@@ -2993,6 +2993,15 @@ namespace {
     return true;
 }
 
+[[nodiscard]] bool takeZeroToOne(const Value& value, f32& out)
+{
+    const auto* number = std::get_if<core::f64>(&value);
+    if (number == nullptr || !std::isfinite(*number) || *number < 0.0 || *number > 1.0)
+        return false;
+    out = static_cast<f32>(*number);
+    return true;
+}
+
 } // namespace
 
 Value getBillboardGuiEnabled(const scene::World& world, core::InstanceId id)
@@ -3096,6 +3105,18 @@ bool setBillboardGuiBrightness(scene::World& world, core::InstanceId id, const V
     return gui != nullptr && takeAtLeastZero(value, gui->brightness);
 }
 
+Value getBillboardGuiLightInfluence(const scene::World& world, core::InstanceId id)
+{
+    const scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->lightInfluence)};
+}
+
+bool setBillboardGuiLightInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::BillboardGuiComponent* gui = world.billboardGuis().find(id);
+    return gui != nullptr && takeZeroToOne(value, gui->lightInfluence);
+}
+
 void attachBillboardGuiComponents(scene::World& world, core::InstanceId id)
 {
     world.billboardGuis().add(id, scene::BillboardGuiComponent{});
@@ -3196,6 +3217,18 @@ bool setSurfaceGuiBrightness(scene::World& world, core::InstanceId id, const Val
 {
     scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
     return gui != nullptr && takeAtLeastZero(value, gui->brightness);
+}
+
+Value getSurfaceGuiLightInfluence(const scene::World& world, core::InstanceId id)
+{
+    const scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui == nullptr ? Value{} : Value{static_cast<core::f64>(gui->lightInfluence)};
+}
+
+bool setSurfaceGuiLightInfluence(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::SurfaceGuiComponent* gui = world.surfaceGuis().find(id);
+    return gui != nullptr && takeZeroToOne(value, gui->lightInfluence);
 }
 
 void attachSurfaceGuiComponents(scene::World& world, core::InstanceId id)

@@ -149,14 +149,23 @@ ShadowCascades fitShadowCascades(const ShadowFit& fit, const ShadowCascades* pre
 
     f32 splits[kShadowCascadeCount + 1]{};
     shadowSplits(fit.nearPlane, fit.distance, kShadowSplitLambda, splits);
-    // A first split asked for: the first cascade ends there, and the others
-    // divide what is left the way the four divide the whole.
-    if (fit.firstSplit > splits[0] && fit.firstSplit < splits[1]) {
+    // **A first split asked for** (a headset's eye): the first cascade ends
+    // there, and the others drawn divide what is left out to the distance the
+    // way the four divide the whole -- the last drawn ending at it. Before,
+    // the four divided the distance whatever was drawn, and a split asked for
+    // past the one they gave was dropped: a headset's two cascades ended at
+    // 2.7 metres of twenty, and nothing further cast a shadow.
+    const u32 drawn = std::clamp(fit.cascadeCount, 1u, kShadowCascadeCount);
+    const f32 far = splits[kShadowCascadeCount];
+    if (drawn > 1 && fit.firstSplit > splits[0] && fit.firstSplit < far) {
         const f32 near = fit.firstSplit;
-        const f32 far = splits[kShadowCascadeCount];
         splits[1] = near;
-        for (u32 index = 2; index < kShadowCascadeCount; ++index) {
-            const f32 fraction = static_cast<f32>(index - 1) / static_cast<f32>(kShadowCascadeCount - 1);
+        for (u32 index = 2; index <= kShadowCascadeCount; ++index) {
+            if (index >= drawn) {
+                splits[index] = far;
+                continue;
+            }
+            const f32 fraction = static_cast<f32>(index - 1) / static_cast<f32>(drawn - 1);
             const f32 logarithmic = near * std::pow(far / near, fraction);
             const f32 uniform = near + (far - near) * fraction;
             splits[index] = kShadowSplitLambda * logarithmic + (1.0f - kShadowSplitLambda) * uniform;

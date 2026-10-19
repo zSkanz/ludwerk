@@ -18,8 +18,9 @@ listed on the page of the class that declares them.
 |---|---|---|---|---|
 | `Adornee` | `BasePart?` | — | read/write | The part the interface covers. With nil, its parent is used if the parent is a part. |
 | `AlwaysOnTop` | `boolean` | `false` | read/write | Whether the interface shows through objects in front of the face. |
-| `Brightness` | `number` | `1` | read/write | A multiplier on the interface's colors in the scene's lighting. Above 1 it glows, like a lit screen. |
+| `Brightness` | `number` | `1` | read/write | A multiplier on the interface's own light. With `LightInfluence` at 0 and a brightness of 1 or below, the colors are shown as they were set, dimmed below 1, whatever the scene's exposure and lighting. Above 1 the interface glows like a lit screen: the exposure brightens or darkens it with the scene, and it blooms. It counts for less as `LightInfluence` rises, and not at all at 1. |
 | `Enabled` | `boolean` | `true` | read/write | Whether the interface is laid out and drawn. |
 | `Face` | `Enum.Face` | `Enum.Face.Front` | read/write | The face of the part the interface covers. `Front` is the face the part's `LookVector` points out of. On every side face the interface is the right way up. |
+| `LightInfluence` | `number` | `0` | read/write | How much the scene's light decides the interface's colors, from 0 to 1. At 0 they are its own, as they were set, like a screen's. At 1 it is lit as the face it is on would be in those colors: by the sun, in the shadows things cast, and by the sky. Between the two, a mix of both. |
 | `PixelsPerMeter` | `number` | `50` | read/write | The number of canvas pixels per meter of the face. Offsets and `TextSize` under the interface are measured in these pixels. At 50, text of size 14 is about 0.28 meters tall on a wall; a higher value gives finer text on the same face. |
 | `PixelsPerMetre` | `number` | — | deprecated | Deprecated: use `PixelsPerMeter`. The old name still works. |

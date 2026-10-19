@@ -16,6 +16,8 @@ In `project.toml`:
 enabled = true     # try a headset at start; the screen when there is none
 # required = true  # a game played only in a headset: without one it says so and does not start
 # mirror = false   # the window stays black instead of showing the left eye
+# spectator = false     # the window keeps the left eye even when a script sets XRService.SpectatorCamera
+# spectator_every = 1   # draw the spectator's view every frame instead of every other one
 # depth = true     # the headset is given each eye's depth (see below); off on a Quest by default
 # screen_effects = true  # occlusion, contact shadows and the screen's reflections in the eyes (see below)
 # foveation = "medium"    # "off", "low", "medium" or "high": less shading away from where the eye looks
@@ -28,7 +30,7 @@ and under `[xr.android]` for a standalone headset, where its values replace
 | Key | Values | PC default | Standalone default |
 |---|---|---|---|
 | `msaa` | 1 (none), 2, 4, 8 samples a pixel | 1 | 2 |
-| `render_scale` | 0.5 to 1: the eye drawn at that fraction of its pixels | 1 | 1 |
+| `render_scale` | 0.5 to 1: the headset's images made that fraction of the size it recommends, and brought up to the display by its compositor | 1 | 1 |
 | `shadow_resolution` | 256 to 2048 texels a cascade | the quality level's | 2048 |
 | `shadow_distance` | 5 to 500 meters of sun shadows | the quality level's | 20 |
 | `shadow_cascades` | 1 to 4 | the quality level's | 2 |
@@ -182,6 +184,30 @@ properties on the `ScreenGui` decide where:
 An interface somewhere precise -- a screen on a wall, a watch on a wrist --
 is a `SurfaceGui` on a part, which already lives in the world.
 
+An interface in the world shows the colors it was given, whatever the light
+and the exposure, as a screen does. `LightInfluence`, from 0 to 1, lets the
+scene's light decide them instead: at 1 a `SurfaceGui` is lit as a part of
+its colors on that face would be, sun, shadows and sky, so a sign painted on
+a wall darkens at night with the wall. `Brightness` above 1 makes it glow.
+
+**Someone watching on the computer** sees the left eye in the window. A
+game can show them a camera of its own instead -- a view from behind the
+player, for a stream:
+
+```luau
+--!strict
+local XRService = game:GetService("XRService")
+
+local spectator = Instance.new("Camera")
+spectator.CFrame = CFrame.lookAt(vector.create(3, 2.5, 3), vector.create(0, 1, 0))
+spectator.Parent = workspace
+XRService.SpectatorCamera = spectator   -- nil for the left eye again
+```
+
+It is drawn after the eyes, at the window's size and the screen's quality,
+every other frame of the headset's, so the player pays as little of it as
+possible. A standalone headset has no window and draws nothing more.
+
 The player points at interfaces with a hand -- the right one, or
 `XRService.PointerHand` -- and its trigger, or a pinch, is a click: on the
 panels, and on every `SurfaceGui` and `BillboardGui`, as a mouse's click is.
@@ -321,10 +347,18 @@ if XRService:SupportsPassthrough() then
 end
 ```
 
-The room shows wherever the game draws nothing; the sky is not drawn. A game
-for augmented reality builds only what stands in the room -- a creature on
-the floor, a board on the table. `Lighting.XRPassthroughOpacity`, from 0 to
-1, fades the game's world over the room, for a portal or a transition.
+The room shows wherever the game draws nothing; the sky is not drawn. What
+is drawn covers the room as much as it is opaque: a panel, a pane of glass
+or a puff of smoke is over the room as a wall is. A game for augmented
+reality builds only what stands in the room -- a creature on the floor, a
+board on the table. `Lighting.XRPassthroughOpacity`, from 0 to 1, fades the
+game's world over the room, for a portal or a transition.
+
+A part with `ShowsRoom` on is a window onto the room: the room is seen where
+the part is, and the part hides what is behind it in the game, while
+anything in front of it is drawn over the room -- a real desk under a
+virtual one, or a doorway out of the game. Without passthrough the part is
+drawn as any part is.
 
 Where the headset knows the room -- the Quest's scene, which the player
 captures once in its settings -- a game can ask for it, and make it solid:

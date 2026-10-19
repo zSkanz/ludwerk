@@ -34,6 +34,7 @@ listed on the page of the class that declares them.
 | `Friction` | `number` | `0.2` | read/write | The fraction of its speed along a surface that a particle loses each time it touches, from 0 (it slides forever) to 1 (it stops where it lands). |
 | `Lifetime` | `number` | `2` | read/write | How long each particle lives, in seconds. |
 | `LightEmission` | `number` | `0` | read/write | How much a particle adds its light to what is behind it instead of covering it, from 0 to 1. At 0 it is blended over the background. At 1 it is added to it and never darkens anything, which suits fire, sparks and magic. |
+| `LightInfluence` | `number` | `1` | read/write | How much the scene's light decides a particle's color, from 0 to 1. At 0 it is always its own color. At 1 it is lit by the sky and the sun, and darker in the shadows things cast, as smoke and dust are. The light a particle adds (`LightEmission`) is its own at any value. |
 | `Rate` | `number` | `20` | read/write | The number of particles emitted per second while the emitter is enabled. |
 | `Rotation` | `number` | `0` | read/write | The angle, in degrees, a particle is rotated by when it is emitted, in the plane facing the camera. |
 | `RotationSpeed` | `number` | `0` | read/write | How fast a particle rotates, in degrees per second. A negative value rotates the other way. |
