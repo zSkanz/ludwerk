@@ -147,25 +147,52 @@ float3 fresnelSchlick(float3 f0, float voh)
 // One light's contribution, given the direction towards it and the radiance
 // arriving from it. Cook-Torrance specular plus Lambert diffuse, with the two
 // lobes split by the same Fresnel term so a grazing surface never gains energy.
+//
+// **In half precision** (`min16float`), what a phone's GPU runs at twice the
+// rate and a desktop's runs as it always did -- the type is a hint a desktop
+// driver takes as full precision. Two places would break at sixteen bits,
+// and are written so they do not:
+//   - the distribution's `noh * noh * (a2 - 1) + 1` cancels where noh is
+//     near one, which at eleven bits of mantissa is every highlight: here it
+//     is the same number as `|n x h|^2 + (noh * alpha)^2`, the cross product
+//     taken at full precision, and nothing cancels;
+//   - its square overflows sixteen bits on a smooth surface, so it is
+//     squared at full precision.
 float3 shadeDirect(Surface surface, float3 lightDirection, float3 radiance)
 {
-    const float nol = saturate(dot(surface.Normal, lightDirection));
-    if (nol <= 0.0f)
+    const float nolFull = saturate(dot(surface.Normal, lightDirection));
+    if (nolFull <= 0.0f)
     {
         return float3(0.0f, 0.0f, 0.0f);
     }
 
     const float3 halfVector = normalize(lightDirection + surface.View);
-    const float noh = saturate(dot(surface.Normal, halfVector));
-    const float voh = saturate(dot(surface.View, halfVector));
+    const float3 across = cross(surface.Normal, halfVector);
+    const min16float nol = (min16float)nolFull;
+    const min16float noh = (min16float)saturate(dot(surface.Normal, halfVector));
+    const min16float voh = (min16float)saturate(dot(surface.View, halfVector));
+    const min16float nov = (min16float)surface.NoV;
+    const min16float alpha = (min16float)surface.Alpha;
+    const min16float a2 = alpha * alpha;
 
-    const float d = distributionGgx(noh, surface.Alpha);
-    const float v = visibilitySmithGgxCorrelated(surface.NoV, nol, surface.Alpha);
-    const float3 f = fresnelSchlick(surface.SpecularF0, voh);
+    // GGX: (alpha / (|n x h|^2 + (noh alpha)^2))^2 / pi.
+    const min16float spread = (min16float)dot(across, across) + noh * noh * a2;
+    const float k = (float)(alpha / max(spread, (min16float)EngineEpsilon));
+    const min16float d = (min16float)min(k * k / EnginePi, 60000.0f);
 
-    const float3 specular = d * v * f;
-    const float3 diffuse = (float3(1.0f, 1.0f, 1.0f) - f) * surface.DiffuseColor / EnginePi;
-    return (diffuse + specular) * radiance * nol;
+    // Height-correlated Smith, divided by 4 nol nov (`visibilitySmithGgxCorrelated`).
+    const min16float lambdaV = nol * sqrt(nov * nov * ((min16float)1.0f - a2) + a2);
+    const min16float lambdaL = nov * sqrt(nol * nol * ((min16float)1.0f - a2) + a2);
+    const min16float v = (min16float)0.5f / max(lambdaV + lambdaL, (min16float)EngineEpsilon);
+
+    const min16float3 f0 = (min16float3)surface.SpecularF0;
+    const min16float grazing = (min16float)1.0f - voh;
+    const min16float grazing2 = grazing * grazing;
+    const min16float3 f = f0 + ((min16float3)1.0f - f0) * (grazing2 * grazing2 * grazing);
+
+    const min16float3 specular = d * v * f;
+    const min16float3 diffuse = ((min16float3)1.0f - f) * (min16float3)surface.DiffuseColor * (min16float)(1.0f / EnginePi);
+    return (float3)(diffuse + specular) * radiance * nolFull;
 }
 
 // A point or spot light, including its distance and cone falloff.
@@ -359,16 +386,18 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
     // Gather returns the 2x2 neighbourhood in counter-clockwise order starting
     // at the lower left: (-,+), (+,+), (+,-), (-,-) relative to the sample.
     const float4 depths = atlas.Gather(pointSampler, uv);
-    const float4 lit = step(reference, depths);
+    // The comparisons at full precision, the depths being; the blend of their
+    // answers, each nought or one, in half (`shadeDirect`).
+    const min16float4 lit = (min16float4)step(reference, depths);
 
     // The same bilinear weights the texture unit would have used, from where the
     // sample falls inside its texel.
     const float2 texel = uv * atlasSize - 0.5f;
-    const float2 fraction = frac(texel);
+    const min16float2 fraction = (min16float2)frac(texel);
 
-    const float bottom = lerp(lit.w, lit.z, fraction.x);
-    const float top = lerp(lit.x, lit.y, fraction.x);
-    return lerp(bottom, top, 1.0f - fraction.y);
+    const min16float bottom = lerp(lit.w, lit.z, fraction.x);
+    const min16float top = lerp(lit.x, lit.y, fraction.x);
+    return (float)lerp(bottom, top, (min16float)1.0f - fraction.y);
 }
 
 // **Vogel's disc, as sixteen points**: point i at radius sqrt(i + 0.5), a
