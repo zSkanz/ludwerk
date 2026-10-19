@@ -10188,7 +10188,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 core::I18nArg{"width", static_cast<core::i64>(caps.densityTexelWidth)},
                                 core::I18nArg{"height", static_cast<core::i64>(caps.densityTexelHeight)}};
                             core::log(LogLevel::Info,
-                                      options.xrFoveation == 0       ? ENG_TR("engine.info.xr_foveation_off")
+                                      options.xrFoveation == 0     ? ENG_TR("engine.info.xr_foveation_off")
                                       : caps.densityTexelWidth > 0 ? ENG_TR("engine.info.xr_foveation")
                                                                    : ENG_TR("engine.info.xr_foveation_none"),
                                       foveationArgs);
