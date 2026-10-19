@@ -1812,6 +1812,22 @@ bool setBasePartFriction(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getBasePartRollingResistance(const World& world, core::InstanceId id)
+{
+    const RigidBodyComponent* body = readBody(world, id);
+    return body == nullptr ? Value{} : Value{static_cast<f64>(body->rollingResistance)};
+}
+
+bool setBasePartRollingResistance(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    RigidBodyComponent* body = writeBody(world, id);
+    if (number == nullptr || body == nullptr || !finite(*number) || *number < 0.0)
+        return false;
+    body->rollingResistance = static_cast<f32>(*number);
+    return true;
+}
+
 Value getBasePartRestitution(const World& world, core::InstanceId id)
 {
     const RigidBodyComponent* body = readBody(world, id);

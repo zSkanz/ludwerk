@@ -23,6 +23,11 @@ here.
 
 ### Fixed
 
+- A ball rolling on a table slows the way a real one does and comes to rest,
+  where it rolled on with its damping alone and stopped dead at three
+  centimeters a second: `BasePart.RollingResistance` (0.01 by default) slows
+  a round part touching something steadily, and a body is put to sleep only
+  once it has all but stopped. The wire protocol is 58.
 - Shadow edges no longer show a comb: each of a shadow's bilinear
   comparisons weighted its two rows the wrong way round, so across an edge
   the answer stepped once a texel. A headset's four comparisons showed it as
@@ -33,7 +38,7 @@ here.
 - In a headset, the table just under a ball that rests on it no longer
   shows specks of sunlight between the ball and its shadow: the spheres that
   shade what rests near a surface also take the sun out where the sun's ray
-  from the surface passes through one, within a centimetre of it.
+  from the surface passes through one, within a centimeter of it.
 - In a headset, what rests on a surface shades it: the small things nearest
   the head darken the light from around on the surfaces near them, so a cube
   on a table sits in a soft shade round its base where it had looked to

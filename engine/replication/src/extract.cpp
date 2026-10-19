@@ -654,6 +654,7 @@ constexpr Carried<Body> BodyCarried[] = {
     {"Density", &Body::density},
     {"LinearDamping", &Body::linearDamping},
     {"AngularDamping", &Body::angularDamping},
+    {"RollingResistance", &Body::rollingResistance},
     {"Buoyant", &Body::buoyant},
     {"ContactDetails", &Body::contactDetails},
 };

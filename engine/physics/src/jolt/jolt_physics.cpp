@@ -284,6 +284,10 @@ struct BodyRecord
     // Volume times density, kept because a body the solver does not move has
     // no mass of its own to be asked for.
     f32 mass = 0.0f;
+    // `BodyDesc::rollingResistance`, and the radius it rolls on: the shape's
+    // inner radius where the shape is round, nought where it is not.
+    f32 rollingResistance = 0.0f;
+    f32 rollingRadius = 0.0f;
 };
 
 // A live joint, plus everything needed to rebuild it: `updateBody` destroys and
@@ -1295,7 +1299,14 @@ public:
         // No lock: called between steps, from the simulation thread.
         m_pairs.clear();
         m_details.clear();
+        m_touched.clear();
     }
+
+    // **The bodies that touched something this step**, by Jolt's own id:
+    // sorted and made unique by the step that reads them, so the order the
+    // job system reported them in is not what the rolling bodies are slowed
+    // in.
+    [[nodiscard]] std::vector<u32>& touched() noexcept { return m_touched; }
 
     [[nodiscard]] std::vector<ContactPair>& pairs() noexcept { return m_pairs; }
     [[nodiscard]] std::vector<ContactDetail>& details() noexcept { return m_details; }
@@ -1307,14 +1318,34 @@ private:
         if (pair.second < pair.first) {
             std::swap(pair.first, pair.second);
         }
+        const bool firstRolls = rolls(first);
+        const bool secondRolls = rolls(second);
         const std::lock_guard<std::mutex> guard(m_mutex);
         m_pairs.push_back(pair);
+        if (firstRolls)
+            m_touched.push_back(first.GetID().GetIndexAndSequenceNumber());
+        if (secondRolls)
+            m_touched.push_back(second.GetID().GetIndexAndSequenceNumber());
+    }
+
+    // A body that can roll (`slowRollingBodies`): moving, solid and round.
+    // Asked of the shape here so a pile of crates records nothing -- a
+    // thousand stacked boxes paid a tenth of their step for it.
+    [[nodiscard]] static bool rolls(const JPH::Body& body) noexcept
+    {
+        if (!body.IsDynamic() || body.IsSensor())
+            return false;
+        const JPH::EShapeSubType kind = body.GetShape()->GetSubType();
+        return kind == JPH::EShapeSubType::Sphere || kind == JPH::EShapeSubType::Capsule ||
+               kind == JPH::EShapeSubType::TaperedCapsule || kind == JPH::EShapeSubType::Cylinder ||
+               kind == JPH::EShapeSubType::TaperedCylinder;
     }
 
     const SurfaceSource* m_surfaces = nullptr;
     mutable std::mutex m_mutex;
     std::vector<ContactPair> m_pairs;
     std::vector<ContactDetail> m_details;
+    std::vector<u32> m_touched;
     // Sorted, and read under the same lock: the validate hook runs on Jolt's
     // worker threads while nothing may be writing here, but a constraint created
     // between steps writes from the simulation thread and the lock is what makes
@@ -1474,6 +1505,11 @@ public:
         // player alike: a match is one physics, whoever is wearing what.
         JPH::PhysicsSettings settings = m_system.GetPhysicsSettings();
         settings.mPenetrationSlop = 0.005f;
+        // **And asleep only once it has all but stopped**: half a centimetre
+        // a second at any point of it, where Jolt's default is three. A ball
+        // rolling slowly toward a player stopped dead at three centimetres a
+        // second, half a second after it fell under them.
+        settings.mPointVelocitySleepThreshold = 0.005f;
         m_system.SetPhysicsSettings(settings);
         m_system.SetContactListener(&m_contacts);
         m_contacts.setSurfaces(this);
@@ -1978,6 +2014,53 @@ public:
         }
     }
 
+    void setBodyRollingResistance(BodyHandle handle, f32 resistance)
+    {
+        if (BodyRecord* record = resolve(handle); record != nullptr)
+            record->rollingResistance = std::max(resistance, 0.0f);
+    }
+
+    // **A round body rolling on something slows at a steady rate** (`BasePart.
+    // RollingResistance`): gravity's strength times the coefficient, taken
+    // off the speed across gravity and off the turn about a level axis, as
+    // rolling on that radius would. Never past nought, so it stops rather
+    // than rolls back. The solver has nothing of the kind: a ball rolled on
+    // with its damping alone and went to sleep while it still visibly moved.
+    // In the order of the bodies' handles, after the step whose contacts say
+    // what touched (R10).
+    void slowRollingBodies(f32 fixedDt)
+    {
+        std::vector<u32>& touched = m_contacts.touched();
+        if (touched.empty())
+            return;
+        std::sort(touched.begin(), touched.end());
+        touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+        const f32 strength = core::length(m_gravity);
+        if (!(strength > 0.0f))
+            return;
+        const JPH::Vec3 down = toJolt(m_gravity) / strength;
+        JPH::BodyInterface& bodies = m_system.GetBodyInterfaceNoLock();
+        for (const BodyRecord& record : m_bodies) {
+            if (!record.alive || record.motion != MotionType::Dynamic || record.rollingResistance <= 0.0f ||
+                record.rollingRadius <= 0.0f)
+                continue;
+            if (!std::binary_search(touched.begin(), touched.end(), record.id.GetIndexAndSequenceNumber()))
+                continue;
+            const f32 lost = record.rollingResistance * strength * fixedDt;
+            JPH::Vec3 linear = bodies.GetLinearVelocity(record.id);
+            const JPH::Vec3 across = linear - down * linear.Dot(down);
+            const f32 speed = across.Length();
+            if (speed > 0.0f)
+                linear -= across * std::min(lost / speed, 1.0f);
+            JPH::Vec3 angular = bodies.GetAngularVelocity(record.id);
+            const JPH::Vec3 rolling = angular - down * angular.Dot(down);
+            const f32 turn = rolling.Length();
+            if (turn > 0.0f)
+                angular -= rolling * std::min(lost / (record.rollingRadius * turn), 1.0f);
+            bodies.SetLinearAndAngularVelocity(record.id, linear, angular);
+        }
+    }
+
     void setPairCollidable(BodyHandle first, BodyHandle second, bool collidable)
     {
         if (collidable) {
@@ -2365,6 +2448,8 @@ public:
         reportUpdateError(updateError);
         const auto end = std::chrono::steady_clock::now();
         m_timings.step = std::chrono::duration<f64>(end - begin).count();
+
+        slowRollingBodies(fixedDt);
 
         buildContactEvents();
         collectCharacterContacts();
@@ -4850,6 +4935,14 @@ private:
                                            toJoltMotion(motion), encodeLayer(desc.group, motion != MotionType::Static));
         settings.mFriction = desc.friction;
         settings.mRestitution = desc.restitution;
+        record.rollingResistance = std::max(desc.rollingResistance, 0.0f);
+        {
+            const JPH::EShapeSubType kind = shape->GetSubType();
+            const bool round = kind == JPH::EShapeSubType::Sphere || kind == JPH::EShapeSubType::Capsule ||
+                               kind == JPH::EShapeSubType::TaperedCapsule || kind == JPH::EShapeSubType::Cylinder ||
+                               kind == JPH::EShapeSubType::TaperedCylinder;
+            record.rollingRadius = round ? shape->GetInnerRadius() : 0.0f;
+        }
         settings.mLinearDamping = std::max(desc.linearDamping, 0.0f);
         settings.mAngularDamping = std::max(desc.angularDamping, 0.0f);
         settings.mIsSensor = !desc.collidable;
@@ -5834,6 +5927,12 @@ public:
         if (JoltWorld* world = resolve(handle); world != nullptr) {
             world->setBodyDamping(body, linear, angular);
         }
+    }
+
+    void setBodyRollingResistance(WorldHandle handle, BodyHandle body, f32 resistance) override
+    {
+        if (JoltWorld* world = resolve(handle); world != nullptr)
+            world->setBodyRollingResistance(body, resistance);
     }
 
     void setPairCollidable(WorldHandle handle, BodyHandle first, BodyHandle second, bool collidable) override

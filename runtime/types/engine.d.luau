@@ -1279,6 +1279,11 @@ declare extern type BasePart extends PVInstance with
     --- How quickly this part stops spinning when nothing touches it, as the share of its spin that it
     --- loses each second.
     AngularDamping: number
+    --- How much a round part resists rolling while it touches something: it slows steadily, by this
+    --- many times the strength of gravity, until it stops. 0.01 is a hard ball on wood, 0.001 a steel
+    --- ball on steel and 0.05 a ball on carpet. A ball, a cylinder and a capsule are slowed by it, and
+    --- a part of another shape is not. 0 turns it off.
+    RollingResistance: number
     --- Whether `Collided` fires for this part. Off by default, because reporting every contact has a
     --- cost.
     ContactDetails: boolean

@@ -101,6 +101,16 @@ end
 speed and of its spin a part loses each second with nothing touching it: 0.05
 by default, zero for something that should coast for ever.
 
+`BasePart.RollingResistance` slows a round part rolling on something the way
+a table slows a ball: steadily, by that many times the strength of gravity,
+until it stops, rather than a share of its speed that never quite reaches
+nothing. 0.01 by default, a hard ball on wood; 0.001 is a steel ball on steel,
+and 0.05 or more a ball on carpet or grass. A ball, a cylinder and a capsule
+are slowed by it; a box, a wedge and a mesh are not, and nor is a vehicle's
+wheel, which has its own grip. 0 turns it off, for a part whose motion was
+tuned without it. A body is put to sleep only once no point of it moves
+faster than half a centimeter a second.
+
 `BasePart.Friction` defaults to 0.3 and `BasePart.Restitution` to 0. Both
 combine across a contact pair, so one slippery surface is enough to make a pair
 slide. A part still at those defaults takes its material's instead

@@ -776,6 +776,16 @@ local Classes: { Schema.Class } = {
                     .. "that it loses each second.",
             },
             {
+                Name = "RollingResistance",
+                Type = "number",
+                Default = "0.01",
+                ErrorKey = "scene.err.number_at_least_zero",
+                Doc = "How much a round part resists rolling while it touches something: it slows steadily, by "
+                    .. "this many times the strength of gravity, until it stops. 0.01 is a hard ball on wood, 0.001 "
+                    .. "a steel ball on steel and 0.05 a ball on carpet. A ball, a cylinder and a capsule are slowed "
+                    .. "by it, and a part of another shape is not. 0 turns it off.",
+            },
+            {
                 Name = "ContactDetails",
                 Type = "boolean",
                 Default = "false",

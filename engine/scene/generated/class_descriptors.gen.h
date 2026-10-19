@@ -245,6 +245,8 @@ Value getBasePartLinearDamping(const World& world, core::InstanceId id);
 bool setBasePartLinearDamping(World& world, core::InstanceId id, const Value& value);
 Value getBasePartAngularDamping(const World& world, core::InstanceId id);
 bool setBasePartAngularDamping(World& world, core::InstanceId id, const Value& value);
+Value getBasePartRollingResistance(const World& world, core::InstanceId id);
+bool setBasePartRollingResistance(World& world, core::InstanceId id, const Value& value);
 Value getBasePartContactDetails(const World& world, core::InstanceId id);
 bool setBasePartContactDetails(World& world, core::InstanceId id, const Value& value);
 Value getBasePartLinearVelocity(const World& world, core::InstanceId id);

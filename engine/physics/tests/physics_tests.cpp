@@ -180,6 +180,34 @@ TEST_CASE("a body spins as fast as it is spun, past Jolt's own 47 rad/s")
     CHECK(static_cast<double>(fixture.physics->bodyState(fixture.world, box).angularVelocity.y) < 50.0);
 }
 
+TEST_CASE("a ball rolling on the ground slows steadily and comes to rest; one with none rolls on")
+{
+    // `BodyDesc::rollingResistance`: 0.01 of gravity, a hard ball on wood --
+    // a tenth of a metre a second lost each second -- where the damping alone
+    // kept a slow ball rolling until the solver froze it.
+    Fixture fixture;
+    fixture.spawn(floorDesc());
+    const auto ball = [&](double x, f32 resistance) {
+        BodyDesc desc = cubeDesc({x, 0.06, 0.0}, static_cast<u64>(10 + x));
+        desc.shape.type = ShapeType::Sphere;
+        desc.shape.size = core::Vec3{0.12f, 0.12f, 0.12f};
+        desc.rollingResistance = resistance;
+        const BodyHandle made = fixture.physics->createBody(fixture.world, desc);
+        fixture.physics->setBodyVelocity(fixture.world, made, core::Vec3{0.25f, 0.0f, 0.0f},
+                                         core::Vec3{0.0f, 0.0f, -0.25f / 0.06f});
+        return made;
+    };
+    const BodyHandle slowed = ball(0.0, 0.01f);
+    const BodyHandle free = ball(5.0, 0.0f);
+    fixture.run(60);
+    const double after = static_cast<double>(fixture.physics->bodyState(fixture.world, slowed).linearVelocity.x);
+    CHECK(after == doctest::Approx(0.25 - 0.0981).epsilon(0.15));
+    CHECK(static_cast<double>(fixture.physics->bodyState(fixture.world, free).linearVelocity.x) > 0.2);
+    fixture.run(180);
+    CHECK(std::abs(static_cast<double>(fixture.physics->bodyState(fixture.world, slowed).linearVelocity.x)) < 0.001);
+    CHECK(static_cast<double>(fixture.physics->bodyState(fixture.world, free).linearVelocity.x) > 0.15);
+}
+
 TEST_CASE("density decides mass, and mass decides which way a seesaw tips")
 {
     Fixture fixture;

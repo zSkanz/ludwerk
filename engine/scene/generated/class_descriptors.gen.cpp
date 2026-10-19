@@ -491,7 +491,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 30> basePartProperties;
+    static std::array<PropertyDesc, 31> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -794,6 +794,17 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
             .get = native::getBasePartAngularDamping,
             .set = native::setBasePartAngularDamping,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RollingResistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .doc = "How much a round part resists rolling while it touches something: it slows steadily, by this many times the strength of gravity, until it stops. 0.01 is a hard ball on wood, 0.001 a steel ball on steel and 0.05 a ball on carpet. A ball, a cylinder and a capsule are slowed by it, and a part of another shape is not. 0 turns it off.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBasePartRollingResistance,
+            .set = native::setBasePartRollingResistance,
         },
         PropertyDesc{
             .name = atoms.intern("ContactDetails"),

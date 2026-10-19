@@ -105,6 +105,10 @@ local function roll()
     ball.Shape = Enum.PartShape.Ball
     ball.Size = vector.create(1.6, 1.6, 1.6)
     ball.Density = 40
+    -- The blow is tuned as it lands at sixteen metres a second, and where a
+    -- wall breaks is chaotic: the floor's drag on the way, six centimetres a
+    -- second, is enough to break it otherwise.
+    ball.RollingResistance = 0
     ball.Position = vector.create(-1, 1.6, 10)
     ball:SetMaterialParameter("Color", Color3.fromRGB(60, 62, 70))
     ball.Parent = workspace

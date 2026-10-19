@@ -268,6 +268,14 @@ local BasePartFields: { Schema.Field } = {
         Doc = "How soon it stops turning.",
     },
     {
+        Name = "RollingResistance",
+        Id = 30,
+        Encoding = "F32",
+        Source = "Component",
+        Component = "rigidBodies",
+        Doc = "How a round body slows rolling: a replica that predicts a ball slows it as the authority does.",
+    },
+    {
         Name = "Buoyant",
         Id = 27,
         Encoding = "Bool",

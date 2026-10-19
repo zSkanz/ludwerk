@@ -126,6 +126,13 @@ public:
         (void)linear;
         (void)angular;
     }
+    // No rebuild: how a round body slows rolling (`BodyDesc::rollingResistance`).
+    virtual void setBodyRollingResistance(WorldHandle world, BodyHandle body, f32 resistance)
+    {
+        (void)world;
+        (void)body;
+        (void)resistance;
+    }
     // **Two bodies that pass through each other, with no joint between them**
     // (`NoCollisionConstraint`). Counted, like a joint's own exclusion: asked
     // twice, it takes two to undo.

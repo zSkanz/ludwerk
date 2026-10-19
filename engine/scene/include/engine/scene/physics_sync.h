@@ -316,6 +316,7 @@ private:
         f32 density = 1.0f;
         f32 linearDamping = 0.05f;
         f32 angularDamping = 0.05f;
+        f32 rollingResistance = 0.01f;
         // **What the worn material is to touch** (ADR 0117), remembered so a
         // part wearing one costs a lookup when the material or the library
         // changes and not once a tick.

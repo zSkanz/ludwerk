@@ -179,6 +179,9 @@ struct RigidBodyComponent
     // The share of a speed lost in a second with nothing touching it.
     f32 linearDamping = 0.05f;
     f32 angularDamping = 0.05f;
+    // `RollingResistance`: a round body's steady slowing while it touches
+    // something, as a share of gravity.
+    f32 rollingResistance = 0.01f;
     // `ContactDetails`: whether `Collided` is queued for this part.
     bool contactDetails = false;
     // Written by REPLICATION: the authority sent this part. On a

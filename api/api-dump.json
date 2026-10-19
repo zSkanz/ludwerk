@@ -667,6 +667,11 @@
           "Default": "0"
         },
         {
+          "Name": "RollingResistance",
+          "Type": "number",
+          "Default": "0.01"
+        },
+        {
           "Name": "Size",
           "Type": "vector"
         }

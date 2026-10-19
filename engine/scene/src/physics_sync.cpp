@@ -366,6 +366,7 @@ physics::BodyDesc PhysicsSync::descOf(core::InstanceId id, const PartComponent& 
     desc.density = body.density;
     desc.linearDamping = body.linearDamping;
     desc.angularDamping = body.angularDamping;
+    desc.rollingResistance = body.rollingResistance;
     desc.collidable = body.canCollide;
     desc.queryable = body.canQuery;
     // What this replica only follows: its
@@ -516,6 +517,7 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
         record.density = desc.density;
         record.linearDamping = desc.linearDamping;
         record.angularDamping = desc.angularDamping;
+        record.rollingResistance = desc.rollingResistance;
         record.friction = desc.friction;
         record.restitution = desc.restitution;
         record.collidable = desc.collidable;
@@ -634,6 +636,10 @@ void PhysicsSync::applyBody(core::InstanceId id, PartComponent& part, RigidBodyC
             m_backend.setBodyDamping(m_world, record.handle, desc.linearDamping, desc.angularDamping);
             record.linearDamping = desc.linearDamping;
             record.angularDamping = desc.angularDamping;
+        }
+        if (record.rollingResistance != desc.rollingResistance) {
+            m_backend.setBodyRollingResistance(m_world, record.handle, desc.rollingResistance);
+            record.rollingResistance = desc.rollingResistance;
         }
 
         // The one place a script's write is told apart from the mirror's own:

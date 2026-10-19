@@ -766,6 +766,9 @@ struct BodyDesc
     // lost in a second with nothing touching it. The solver's own defaults.
     f32 linearDamping = 0.05f;
     f32 angularDamping = 0.05f;
+    // `BasePart.RollingResistance`: a round body's steady slowing while it
+    // touches something, as a share of gravity.
+    f32 rollingResistance = 0.01f;
 
     // `CanCollide`. A non-colliding body still reports contacts -- that is what
     // makes a trigger volume work, and it matches what a `Touched` on a
