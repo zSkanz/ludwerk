@@ -1151,6 +1151,7 @@ public:
     {
         record(first, second);
         applySurface(first, second, manifold, settings);
+        recordSupport(first, second, manifold);
         // **How the two met**, read here because here is the only place it
         // exists: the bodies' velocities are still the ones they arrived with.
         // The first contact point, the normal from the first body to the
@@ -1177,6 +1178,7 @@ public:
     {
         record(first, second);
         applySurface(first, second, manifold, settings);
+        recordSupport(first, second, manifold);
     }
 
     // **The one place `collideConnected = false` can be implemented.**
@@ -1318,34 +1320,64 @@ private:
         if (pair.second < pair.first) {
             std::swap(pair.first, pair.second);
         }
-        const bool firstRolls = rolls(first);
-        const bool secondRolls = rolls(second);
         const std::lock_guard<std::mutex> guard(m_mutex);
         m_pairs.push_back(pair);
-        if (firstRolls)
+    }
+
+    // **A round body held up by what it touches** (`slowRollingBodies`): the
+    // contact pushes it within forty-five degrees of up -- the ground under a
+    // ball, not a crate a fist meets or a wall a wheel scrapes. Asked of the
+    // shape first, so a pile of crates records nothing: a thousand stacked
+    // boxes paid a tenth of their step for a list of every body touched.
+    void recordSupport(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold)
+    {
+        const bool firstRolls = rolls(first);
+        const bool secondRolls = rolls(second);
+        if (!firstRolls && !secondRolls)
+            return;
+        // The normal points from the first body to the second: the second
+        // pushes the first along its negative.
+        constexpr float HeldUp = 0.7071f;
+        const bool firstHeld = firstRolls && (-manifold.mWorldSpaceNormal).Dot(m_up) > HeldUp;
+        const bool secondHeld = secondRolls && manifold.mWorldSpaceNormal.Dot(m_up) > HeldUp;
+        if (!firstHeld && !secondHeld)
+            return;
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        if (firstHeld)
             m_touched.push_back(first.GetID().GetIndexAndSequenceNumber());
-        if (secondRolls)
+        if (secondHeld)
             m_touched.push_back(second.GetID().GetIndexAndSequenceNumber());
     }
 
-    // A body that can roll (`slowRollingBodies`): moving, solid and round.
-    // Asked of the shape here so a pile of crates records nothing -- a
-    // thousand stacked boxes paid a tenth of their step for it.
     [[nodiscard]] static bool rolls(const JPH::Body& body) noexcept
     {
-        if (!body.IsDynamic() || body.IsSensor())
-            return false;
-        const JPH::EShapeSubType kind = body.GetShape()->GetSubType();
-        return kind == JPH::EShapeSubType::Sphere || kind == JPH::EShapeSubType::Capsule ||
-               kind == JPH::EShapeSubType::TaperedCapsule || kind == JPH::EShapeSubType::Cylinder ||
-               kind == JPH::EShapeSubType::TaperedCylinder;
+        return body.IsDynamic() && !body.IsSensor() && rollingRadiusOf(body.GetShape()) > 0.0f;
     }
 
+public:
+    // Which way is up, said before each step (no lock: between steps).
+    void setUp(JPH::Vec3 up) noexcept { m_up = up; }
+
+    // **The radius a shape rolls on**: a ball's, a capsule's or a cylinder's
+    // own, turned or not; nought for any other shape, which is not slowed.
+    [[nodiscard]] static f32 rollingRadiusOf(const JPH::Shape* shape) noexcept
+    {
+        if (shape->GetSubType() == JPH::EShapeSubType::RotatedTranslated)
+            shape = static_cast<const JPH::RotatedTranslatedShape*>(shape)->GetInnerShape();
+        const JPH::EShapeSubType kind = shape->GetSubType();
+        const bool round = kind == JPH::EShapeSubType::Sphere || kind == JPH::EShapeSubType::Capsule ||
+                           kind == JPH::EShapeSubType::TaperedCapsule || kind == JPH::EShapeSubType::Cylinder ||
+                           kind == JPH::EShapeSubType::TaperedCylinder;
+        return round ? shape->GetLocalBounds().GetExtent().GetX() : 0.0f;
+    }
+
+private:
     const SurfaceSource* m_surfaces = nullptr;
     mutable std::mutex m_mutex;
     std::vector<ContactPair> m_pairs;
     std::vector<ContactDetail> m_details;
     std::vector<u32> m_touched;
+    JPH::Vec3 m_up = JPH::Vec3::sAxisY();
     // Sorted, and read under the same lock: the validate hook runs on Jolt's
     // worker threads while nothing may be writing here, but a constraint created
     // between steps writes from the simulation thread and the lock is what makes
@@ -2020,14 +2052,16 @@ public:
             record->rollingResistance = std::max(resistance, 0.0f);
     }
 
-    // **A round body rolling on something slows at a steady rate** (`BasePart.
-    // RollingResistance`): gravity's strength times the coefficient, taken
-    // off the speed across gravity and off the turn about a level axis, as
-    // rolling on that radius would. Never past nought, so it stops rather
-    // than rolls back. The solver has nothing of the kind: a ball rolled on
-    // with its damping alone and went to sleep while it still visibly moved.
-    // In the order of the bodies' handles, after the step whose contacts say
-    // what touched (R10).
+    // **A round body rolling on what holds it up slows at a steady rate**
+    // (`BasePart.RollingResistance`): gravity's strength times the
+    // coefficient, off its speed across gravity, and off its turn only the
+    // turn that rolling at that speed is -- up across the change, over its
+    // radius. Never past nought, so it stops rather than rolls back. A body
+    // that is not moving across the ground loses nothing of its turn: a
+    // jointed limb's swing, a punch, a spinning top. The solver has nothing
+    // of the kind: a ball rolled on with its damping alone and went to sleep
+    // while it still visibly moved. In the order of the bodies' handles,
+    // after the step whose contacts say what held each up (R10).
     void slowRollingBodies(f32 fixedDt)
     {
         std::vector<u32>& touched = m_contacts.touched();
@@ -2046,18 +2080,17 @@ public:
                 continue;
             if (!std::binary_search(touched.begin(), touched.end(), record.id.GetIndexAndSequenceNumber()))
                 continue;
-            const f32 lost = record.rollingResistance * strength * fixedDt;
-            JPH::Vec3 linear = bodies.GetLinearVelocity(record.id);
+            const JPH::Vec3 linear = bodies.GetLinearVelocity(record.id);
             const JPH::Vec3 across = linear - down * linear.Dot(down);
             const f32 speed = across.Length();
-            if (speed > 0.0f)
-                linear -= across * std::min(lost / speed, 1.0f);
-            JPH::Vec3 angular = bodies.GetAngularVelocity(record.id);
-            const JPH::Vec3 rolling = angular - down * angular.Dot(down);
-            const f32 turn = rolling.Length();
-            if (turn > 0.0f)
-                angular -= rolling * std::min(lost / (record.rollingRadius * turn), 1.0f);
-            bodies.SetLinearAndAngularVelocity(record.id, linear, angular);
+            if (!(speed > 0.0f))
+                continue;
+            const f32 lost = std::min(record.rollingResistance * strength * fixedDt, speed);
+            const JPH::Vec3 change = across * (-lost / speed);
+            // Rolling at v on radius r is a turn of up x v / r.
+            const JPH::Vec3 turned = (-down).Cross(change) / record.rollingRadius;
+            bodies.SetLinearAndAngularVelocity(record.id, linear + change,
+                                               bodies.GetAngularVelocity(record.id) + turned);
         }
     }
 
@@ -2444,6 +2477,8 @@ public:
         // One collision step per tick. Jolt allows several sub-steps per call;
         // the sim tick already IS the substep grid, and a second, hidden one
         // would make `FixedTimestep` mean two different things.
+        if (const f32 strength = core::length(m_gravity); strength > 0.0f)
+            m_contacts.setUp(toJolt(m_gravity) / -strength);
         const JPH::EPhysicsUpdateError updateError = m_system.Update(fixedDt, 1, &m_temp, &m_jobs);
         reportUpdateError(updateError);
         const auto end = std::chrono::steady_clock::now();
@@ -4936,13 +4971,7 @@ private:
         settings.mFriction = desc.friction;
         settings.mRestitution = desc.restitution;
         record.rollingResistance = std::max(desc.rollingResistance, 0.0f);
-        {
-            const JPH::EShapeSubType kind = shape->GetSubType();
-            const bool round = kind == JPH::EShapeSubType::Sphere || kind == JPH::EShapeSubType::Capsule ||
-                               kind == JPH::EShapeSubType::TaperedCapsule || kind == JPH::EShapeSubType::Cylinder ||
-                               kind == JPH::EShapeSubType::TaperedCylinder;
-            record.rollingRadius = round ? shape->GetInnerRadius() : 0.0f;
-        }
+        record.rollingRadius = ContactRecorder::rollingRadiusOf(shape.GetPtr());
         settings.mLinearDamping = std::max(desc.linearDamping, 0.0f);
         settings.mAngularDamping = std::max(desc.angularDamping, 0.0f);
         settings.mIsSensor = !desc.collidable;

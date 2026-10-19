@@ -208,6 +208,47 @@ TEST_CASE("a ball rolling on the ground slows steadily and comes to rest; one wi
     CHECK(static_cast<double>(fixture.physics->bodyState(fixture.world, free).linearVelocity.x) > 0.15);
 }
 
+TEST_CASE("a round body turning where it stands keeps its turn: rolling resistance is rolling's alone")
+{
+    // A jointed limb's swing, a punch, a top: turning without travelling
+    // across what holds it up. The first rolling resistance took its share
+    // off any round body's turn that touched anything -- a punch's fist
+    // pushed a crate 0.018 m where it had pushed it 0.29 -- and here a
+    // capsule and a ball on a floor with no friction, spun about a level
+    // axis, keep exactly the turn of their twins with none.
+    Fixture fixture;
+    BodyDesc floor = floorDesc();
+    floor.friction = 0.0f;
+    fixture.spawn(floor);
+    const auto spinner = [&](double x, ShapeType type, f32 resistance) {
+        BodyDesc desc = cubeDesc({x, 0.06, 0.0}, static_cast<u64>(20 + x));
+        desc.shape.type = type;
+        desc.shape.size = core::Vec3{0.12f, 0.12f, 0.12f};
+        if (type == ShapeType::Capsule) {
+            desc.shape.size = core::Vec3{0.12f, 0.4f, 0.12f};
+            desc.transform.position.y = 0.2;
+        }
+        desc.friction = 0.0f;
+        desc.rollingResistance = resistance;
+        const BodyHandle made = fixture.physics->createBody(fixture.world, desc);
+        fixture.physics->setBodyVelocity(fixture.world, made, core::Vec3{}, core::Vec3{0.0f, 0.0f, 10.0f});
+        return made;
+    };
+    const BodyHandle ball = spinner(0.0, ShapeType::Sphere, 0.01f);
+    const BodyHandle ballTwin = spinner(2.0, ShapeType::Sphere, 0.0f);
+    const BodyHandle limb = spinner(4.0, ShapeType::Capsule, 0.01f);
+    const BodyHandle limbTwin = spinner(6.0, ShapeType::Capsule, 0.0f);
+    fixture.run(60);
+    const auto turn = [&](BodyHandle body) {
+        return static_cast<double>(fixture.physics->bodyState(fixture.world, body).angularVelocity.z);
+    };
+    // Within a thousandth: the ball slides a hair on the frictionless floor
+    // and is slowed that much. The first resistance took a sixth.
+    CHECK(turn(ball) == doctest::Approx(turn(ballTwin)).epsilon(1e-3));
+    CHECK(turn(limb) == doctest::Approx(turn(limbTwin)).epsilon(1e-4));
+    CHECK(std::abs(turn(ball)) > 5.0);
+}
+
 TEST_CASE("density decides mass, and mass decides which way a seesaw tips")
 {
     Fixture fixture;
