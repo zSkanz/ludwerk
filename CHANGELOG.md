@@ -35,6 +35,10 @@ here.
   now a little sharper too. In a headset, a shadow also starts at the base
   of what casts it, where a sliver of lit table had shown, and
   `--xr-profile=standalone` draws a standalone headset's eyes on a PC.
+- No lit pixels inside a shadow along its edge: a shadow's comparison
+  gathered its four texels where the hardware chose, which on a texel's
+  centre line was the next row, and weighed them as the ones it meant -- a
+  dotted line of light along a crate's or a ball's shadow, once a texel.
 - In a headset, the table just under a ball that rests on it no longer
   shows specks of sunlight between the ball and its shadow: the spheres that
   shade what rests near a surface also take the sun out where the sun's ray

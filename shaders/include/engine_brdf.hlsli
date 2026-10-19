@@ -394,17 +394,21 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
 {
     // Gather returns the 2x2 neighbourhood in counter-clockwise order starting
     // at the lower left: (-,+), (+,+), (+,-), (-,-) relative to the sample.
-    const float4 depths = atlas.Gather(pointSampler, uv);
+    // **Which four, said here and not left to the sampler** (as
+    // `shadowReference` does): a gather at a point on a texel's centre line
+    // takes one row or the next by the last bit, and the weights below are
+    // the other row's -- a pixel lit in a shadow, once a texel along an edge,
+    // a dotted line in a headset. Read at the corner the four share, they are
+    // the four these weights are for.
+    const float2 texel = uv * atlasSize - 0.5f;
+    const float2 corner = floor(texel);
+    const float2 fraction = texel - corner;
+    const float4 depths = atlas.Gather(pointSampler, (corner + 1.0f) / atlasSize);
     // **At full precision, all of it**: a phone's compiler carries a half's
     // precision back up the chain that feeds it, to the texel's coordinate
     // in an atlas thousands of texels wide -- and the edges of a Quest's
     // shadows came out as a comb.
     const float4 lit = step(reference, depths);
-
-    // The same bilinear weights the texture unit would have used, from where the
-    // sample falls inside its texel.
-    const float2 texel = uv * atlasSize - 0.5f;
-    const float2 fraction = frac(texel);
 
     // `top` is the row below the sample in V (Gather's x and y), and the
     // fraction runs toward it. Weighted the other way round, each texel's
