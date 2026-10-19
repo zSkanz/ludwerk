@@ -38,7 +38,10 @@ task.spawn(function()
                 end
             end
         end
-        if traded >= said + 50 then
+        -- Said at the first trade and every twenty-five after: what the
+        -- test kills on, and a line is written out whole (the log flushes
+        -- each), so a run killed after it has said it traded.
+        if traded > 0 and (said == 0 or traded >= said + 25) then
             said = traded
             print(`[trade] traded={traded}`)
         end

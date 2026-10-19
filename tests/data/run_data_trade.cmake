@@ -27,10 +27,18 @@ if(NOT output MATCHES "\\[trade\\] swords=5 gold=1000")
 endif()
 math(EXPR startup "${after} - ${before} + 1")
 set(killed 0)
-foreach(run RANGE 1 8)
-    # Killed after a time that differs each run, and differs from the time
-    # a trade takes.
-    math(EXPR seconds "${startup} + 1 + (${run} * 7) % 3")
+# **Killed once it has traded, on a machine of any speed**: a run killed
+# before its first trade says nothing (`[trade] traded=` comes with the
+# first), and every run that dies so moves the kill a second later for the
+# runs after it -- a two-core runner, whose transactions each wait on its
+# disk, killed most runs before they had traded at all. The offset still
+# differs each run, and from the time a trade takes.
+set(later 0)
+foreach(run RANGE 1 12)
+    if(killed GREATER_EQUAL 4)
+        break()
+    endif()
+    math(EXPR seconds "${startup} + 1 + ${later} + (${run} * 7) % 3")
     execute_process(
         COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves"
         TIMEOUT ${seconds}
@@ -44,6 +52,8 @@ foreach(run RANGE 1 8)
     endif()
     if(output MATCHES "traded=[1-9]")
         math(EXPR killed "${killed} + 1")
+    elseif(later LESS 8)
+        math(EXPR later "${later} + 1")
     endif()
 endforeach()
 if(killed LESS 3)

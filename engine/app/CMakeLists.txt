@@ -845,7 +845,7 @@ if(ENG_BUILD_TESTS)
             TIMEOUT 120)
         set_tests_properties(data_trade_killed PROPERTIES
             PASS_REGULAR_EXPRESSION "runs killed while trading, and nothing was duplicated or lost"
-            TIMEOUT 180)
+            TIMEOUT 300)
     endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the
