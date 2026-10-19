@@ -171,6 +171,11 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // one (ADR 0206); then its tint, and in w whether its light is added to
     // the sky's and the flat ambient (one) or takes their place (nought).
     float4 VolumeRows[56];
+    // **What rests near a surface**: a sphere each, camera-relative centre
+    // and radius; x of the params how many, y how strongly
+    // (`nearbyOcclusion`). None but in a headset's eye.
+    float4 Occluders[8];
+    float4 OccluderParams;
 };
 #endif
 

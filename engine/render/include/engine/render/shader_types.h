@@ -96,6 +96,8 @@ static_assert(sizeof(GpuObjectUniforms) == 208, "GpuObjectUniforms is a cbuffer 
 // choose among (ADRs 0202, 0203): the nearest in view.
 inline constexpr core::u32 kFrameReflectionProbes = 8;
 inline constexpr core::u32 kFrameIrradianceVolumes = 8;
+// Things whose nearness darkens a surface's light from around, a frame.
+inline constexpr core::u32 kFrameOccluders = 8;
 // The rows of the frame's uniforms one volume takes.
 inline constexpr core::u32 kVolumeRows = 7;
 
@@ -192,10 +194,17 @@ struct GpuFrameUniforms
     // Six rows a probe and seven a volume; `engine_pbr.hlsli` says what each is.
     f32 probeRows[kFrameReflectionProbes * 6][4]{};
     f32 volumeRows[kFrameIrradianceVolumes * kVolumeRows][4]{};
+    // **What rests near a surface**, in a headset's eye: the small things
+    // near the camera, each a sphere -- camera-relative centre, and radius
+    // in w -- whose shade the light from around falls into
+    // (`nearbyOcclusion`). x of the params how many, y how strongly.
+    f32 occluders[kFrameOccluders][4]{};
+    f32 occluderParams[4]{};
 };
 
 static_assert(sizeof(GpuFrameUniforms) == 224 + 256 + 144 + 64 * kLocalShadowTileCount + 16 + 16 + 16 + 64 +
-                                              96 * kFrameReflectionProbes + 16 * kVolumeRows * kFrameIrradianceVolumes,
+                                              96 * kFrameReflectionProbes + 16 * kVolumeRows * kFrameIrradianceVolumes +
+                                              16 * kFrameOccluders + 16,
               "GpuFrameUniforms is a cbuffer layout; see engine_forward.hlsli");
 
 // Fragment stage, `b1 space3`. Per material rather than per frame, because it

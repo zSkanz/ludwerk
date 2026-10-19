@@ -54,7 +54,16 @@ gives an edge two or three millimeters wide that stays attached where a cube
 stands on a table. A flat game's sixteen-read filter, softened over five
 centimeters, smeared it at half a meter and took most of the GPU's frame.
 The shadow starts at the base of what casts it, under a millimeter away: an
-eye's depth bias is two millimeters, where a flat game's is eight.
+eye's depth bias is two millimeters, where a flat game's is eight. On a
+standalone headset the two cascades are 2048 texels each, a millimeter or
+two a texel within arm's reach.
+
+**What rests on a surface shades it**: in an eye, the eight small things
+nearest the head -- a crate, a ball, a cup -- each darken the light from
+around on the surfaces near them, as a sphere their size would. A cube on a
+table sits in a soft shade round its base, and a ball held over the table
+casts a faint one under it, where the screen's own occlusion, which two
+eyes would mark differently, is not drawn.
 Occlusion, contact shadows and the screen's reflections and
 bounced light are not drawn in the eyes. Each eye would mark them from its
 own picture, so the two would disagree, which a pair of eyes sees as

@@ -1210,6 +1210,19 @@ private:
     core::usize shaderCount_ = 0;
 
     rhi::TextureHandle shadowMap_{};
+    // The atlas's rows: two by two, or the cascades side by side in one row
+    // where a standalone headset's eye draws two of them at 2048 texels.
+    u32 shadowRows_ = 2;
+    u32 shadowRowsWanted_ = 2;
+    // The things near the camera a headset's eye darkens round (frame
+    // occluders), kept for their capacity.
+    struct OccluderPick
+    {
+        f32 distanceSq = 0.0f;
+        Vec3 centre;
+        f32 radius = 0.0f;
+    };
+    std::vector<OccluderPick> occluderPicks_;
     // The fit a headset frame's first eye drew `shadowMap_` with, for the
     // second (`ShadowView::reuse`). Not a view's: the two eyes are two views
     // and one map.
@@ -2519,7 +2532,7 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
 std::optional<core::EngineError> DefaultRenderer::ensureShadowMap(rhi::IDevice& device)
 {
     ENG_PROFILE_SCOPE("prepare.shadow_map");
-    if (shadowMap_.valid() && shadowTile_ == settings_.shadowTileResolution)
+    if (shadowMap_.valid() && shadowTile_ == settings_.shadowTileResolution && shadowRows_ == shadowRowsWanted_)
         return std::nullopt;
 
     if (shadowMap_.valid())
@@ -2530,9 +2543,10 @@ std::optional<core::EngineError> DefaultRenderer::ensureShadowMap(rhi::IDevice& 
         .format = kShadowFormat,
         .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
         .width = atlas,
-        .height = atlas,
+        .height = settings_.shadowTileResolution * shadowRowsWanted_,
         .debugName = "shadow-atlas",
     });
+    shadowRows_ = shadowRowsWanted_;
     if (!shadowMap_.valid())
         return core::makeError(ENG_TR("render.err.target_create_failed"));
 
@@ -8989,7 +9003,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // tiles over seventy metres were what a Quest's player saw of a cup
         // on the table, a smear. Tiles of 1024 -- the two cascades in a 2048
         // atlas -- over twenty metres, the first of them two metres deep.
-        settings_.shadowTileResolution = std::max(settings_.shadowTileResolution, 1024u);
+        // **2048 texels a tile, the two side by side in one row**: a
+        // first cascade two metres deep at a millimetre or two a texel, whose
+        // edge a player sees at arm's length without steps -- and no atlas of
+        // four tiles, two of them empty, cleared and stored each frame.
+        settings_.shadowTileResolution = std::max(settings_.shadowTileResolution, 2048u);
         settings_.shadowDistance = std::min(settings_.shadowDistance, 20.0f);
         // **No spatial anti-aliasing pass**: a pass over each eye's three
         // million pixels, 0.9 ms of a Quest 3's frame. The eye is drawn
@@ -9016,6 +9034,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     renderWidth_ = scaled(target.width);
     renderHeight_ = scaled(target.height);
 
+    shadowRowsWanted_ = world.headsetEye && world.headsetLean && settings_.shadowCascades <= 2 ? 1u : 2u;
     if (ensureShadowMap(device).has_value())
         return;
     if (ensureTargets(device, renderWidth_, renderHeight_).has_value())
@@ -10090,6 +10109,46 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         frame.sunColorUnused[0] = sky.lightColor.r * world.environment.lightTint.r;
         frame.sunColorUnused[1] = sky.lightColor.g * world.environment.lightTint.g;
         frame.sunColorUnused[2] = sky.lightColor.b * world.environment.lightTint.b;
+        // w: the cascades in one row of the atlas rather than two by two.
+        frame.sunColorUnused[3] = shadowRows_ == 1 ? 1.0f : 0.0f;
+        // **What rests near a surface** (`nearbyOcclusion`), in a headset's
+        // eye: the small things nearest the camera, each a sphere as big as
+        // its smallest half -- a cube's half side, a ball's radius -- and no
+        // bigger than eight tenths of its bounds. Large things are what
+        // things rest on, and things far off shade nothing anyone sees.
+        frame.occluderParams[0] = 0.0f;
+        frame.occluderParams[1] = 0.0f;
+        if (world.headsetEye && (settings_.measuredSkip & MeasureSkip::Nearby) == 0u) {
+            occluderPicks_.clear();
+            for (const DrawItem& draw : world.draws) {
+                if (draw.transparent || !draw.castShadow || draw.terrain || draw.voxelBlock ||
+                    draw.boundsRadius < 0.02f || draw.boundsRadius > 0.6f)
+                    continue;
+                const f32 distanceSq = core::dot(draw.boundsCenter, draw.boundsCenter);
+                if (distanceSq > 16.0f)
+                    continue;
+                f32 smallest = draw.boundsRadius;
+                for (int column = 0; column < 3; ++column) {
+                    const Vec3 axis{draw.transform.m[column][0], draw.transform.m[column][1],
+                                    draw.transform.m[column][2]};
+                    smallest = std::min(smallest, 0.5f * core::length(axis));
+                }
+                occluderPicks_.push_back(
+                    OccluderPick{distanceSq, draw.boundsCenter, std::min(smallest, 0.8f * draw.boundsRadius)});
+            }
+            std::stable_sort(occluderPicks_.begin(), occluderPicks_.end(),
+                             [](const OccluderPick& a, const OccluderPick& b) { return a.distanceSq < b.distanceSq; });
+            const usize count = std::min<usize>(occluderPicks_.size(), kFrameOccluders);
+            for (usize index = 0; index < count; ++index) {
+                const OccluderPick& pick = occluderPicks_[index];
+                frame.occluders[index][0] = pick.centre.x;
+                frame.occluders[index][1] = pick.centre.y;
+                frame.occluders[index][2] = pick.centre.z;
+                frame.occluders[index][3] = pick.radius;
+            }
+            frame.occluderParams[0] = static_cast<f32>(count);
+            frame.occluderParams[1] = 1.0f;
+        }
         frame.ambient[0] = world.environment.ambient.r;
         frame.ambient[1] = world.environment.ambient.g;
         frame.ambient[2] = world.environment.ambient.b;

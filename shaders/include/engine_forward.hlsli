@@ -706,6 +706,37 @@ IndirectLight gatherIndirect(Surface surface, float3 position, float3 normal)
     return result;
 }
 
+// **How much of the light from around reaches a surface past the small things
+// near it**: a cube resting on a table shades the table round its base, and
+// a ball held over it the spot under it. Each occluder is a sphere; what it
+// hides of the sky over a point is its form factor seen from there, the
+// square of its radius over its distance times how squarely the surface
+// faces it, faded out between two and four radii. A point on the occluder's
+// own surface faces away from its centre and is not darkened by it. In a
+// headset's eye, where the screen's own occlusion is not drawn.
+float nearbyOcclusion(float3 position, float3 normal)
+{
+    float open = 1.0f;
+    const uint count = min(uint(OccluderParams.x), 8u);
+    [loop]
+    for (uint i = 0u; i < count; ++i)
+    {
+        const float4 occluder = Occluders[i];
+        const float3 toward = occluder.xyz - position;
+        const float distanceSq = max(dot(toward, toward), 1e-6f);
+        const float radiusSq = occluder.w * occluder.w;
+        [branch]
+        if (distanceSq < 16.0f * radiusSq)
+        {
+            const float distance = sqrt(distanceSq);
+            const float facing = saturate(dot(normal, toward) / distance);
+            const float fade = saturate(2.0f - distance / (2.0f * occluder.w));
+            open *= 1.0f - saturate(radiusSq / distanceSq) * facing * fade * OccluderParams.y;
+        }
+    }
+    return open;
+}
+
 float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, float viewDepth, float2 pixel, float sky)
 {
     const uint skipped = uint(ClusterParams.w);
@@ -774,7 +805,12 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     {
         rawOcclusion = OcclusionTexture.SampleLevel(OcclusionSampler, screenUv, 0.0f);
     }
-    const float screenOcclusion = lerp(1.0f, rawOcclusion, EnvironmentParams.z);
+    float screenOcclusion = lerp(1.0f, rawOcclusion, EnvironmentParams.z);
+    [branch]
+    if (OccluderParams.x > 0.5f)
+    {
+        screenOcclusion *= nearbyOcclusion(shadingPosition, normal);
+    }
     const float occlusion = screenOcclusion * sky;
 
     // **A frame with a probe or a volume in it** (ADRs 0202, 0203): what

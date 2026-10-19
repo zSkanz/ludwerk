@@ -20,6 +20,12 @@ here.
 
 ### Fixed
 
+- In a headset, what rests on a surface shades it: the small things nearest
+  the head darken the light from around on the surfaces near them, so a cube
+  on a table sits in a soft shade round its base where it had looked to
+  float. On a standalone headset, the sun's two cascades are 2048 texels
+  each, side by side in one atlas, so a shadow's edge at arm's length shows
+  no steps.
 - On a standalone headset, a frame of the XR room takes less of the GPU:
   each eye is drawn in one pass with two samples a pixel, straight into the
   image the headset shows, with no anti-aliasing or copy pass after it; the

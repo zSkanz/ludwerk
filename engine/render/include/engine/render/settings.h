@@ -362,6 +362,9 @@ inline constexpr u32 ShadowUnder = 8192u;
 // cloth adds to a frame's time, or to the pixels that pop from one frame to
 // the next, read off two runs.
 inline constexpr u32 Cloth = 16384u;
+// What rests near a surface darkening its light from around, in a headset's
+// eye (`nearbyOcclusion`).
+inline constexpr u32 Nearby = 32768u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

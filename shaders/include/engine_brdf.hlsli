@@ -625,14 +625,16 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float2 radiusUv = radiusTexels * texelUv;
 
     // The tile: cascade 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.
-    const float2 tile = float2(float(cascade & 1u), float(cascade >> 1u)) * 0.5f;
+    // One row of tiles, or two (`SunColorUnused.w`).
+    const float tileHeight = SunColorUnused.w > 0.5f ? 1.0f : 0.5f;
+    const float2 tile = float2(float(cascade & 1u) * 0.5f, float(cascade >> 1u) * tileHeight);
     // A tap that walks off its tile reads the NEIGHBOURING cascade's depth,
     // which is a bright seam along the split. Clamped to the tile, inset by the
     // disc's reach and the bilinear tap's own half texel.
     const float2 inset = radiusUv + texelUv;
     const float2 lowest = tile + inset;
-    const float2 highest = tile + float2(0.5f, 0.5f) - inset;
-    const float2 centre = tile + local * 0.5f;
+    const float2 highest = tile + float2(0.5f, tileHeight) - inset;
+    const float2 centre = tile + local * float2(0.5f, tileHeight);
     const float reference = shadowReference(atlas, pointSampler, centre, lowest, highest, ndc.z, texelWorld, depthRange,
                                             radiusTexels, nol, cascade, normal, atlasSize);
 

@@ -490,7 +490,8 @@ left out: `sun` (its direct light, shadow and all), `shadow` (the shadow map:
 every lit face is in the sun), `contact`, `lights` (every light but the sun),
 `environment` (the sky's reflection and its irradiance), `ambient`,
 `occlusion`, `fog`, `normal_map`, `material_maps` (metallic-roughness and
-emissive), and `unlit` -- the base color alone, which is what drawing the
+emissive), `nearby` (in a headset, the shade round things resting near a
+surface), and `unlit` -- the base color alone, which is what drawing the
 triangles and reading one texture costs. Where `hide` says which objects cost
 a frame its time, `skip` says which part of lighting them.
 
