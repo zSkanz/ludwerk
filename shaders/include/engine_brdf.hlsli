@@ -406,9 +406,13 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
     const float2 texel = uv * atlasSize - 0.5f;
     const float2 fraction = frac(texel);
 
+    // `top` is the row below the sample in V (Gather's x and y), and the
+    // fraction runs toward it. Weighted the other way round, each texel's
+    // answer ramped backwards: across an edge, a tooth a texel -- the comb
+    // four taps showed in a headset, and sixteen averaged away on a screen.
     const float bottom = lerp(lit.w, lit.z, fraction.x);
     const float top = lerp(lit.x, lit.y, fraction.x);
-    return lerp(bottom, top, 1.0f - fraction.y);
+    return lerp(bottom, top, fraction.y);
 }
 
 // **Vogel's disc, as sixteen points**: point i at radius sqrt(i + 0.5), a
@@ -439,6 +443,18 @@ static const float EngineShadowNoCascade = 1.0e8f;
 // without bound, and a surface lit that edge-on is barely lit at all.
 static const float EngineShadowSlopeTexels = 2.0f;
 static const float EngineShadowMostSlope = 4.0f;
+// **A headset's, with its tent** (`EnvironmentParams.w` below nought): the
+// receiver lifted along its own normal by a texel of its cascade, and no
+// slope term. A cube on a table stores its bottom face in the map, on the
+// table's plane: the slope term kept the table beside it lit -- a seam seven
+// eye pixels wide at half a metre, two texels of slope at a sun 45 degrees
+// up -- and with neither, the table on the sun's side of the base compared
+// against that same plane and came out in teeth. Lifted, a point on the sun's
+// side is above the bottom face and lit, and one on the far side still looks
+// through the cube: attached, with no acne on a plate two millimetres thick
+// at a sun near the horizon.
+static const float EngineHeadsetNormalOffsetTexels = 1.0f;
+static const float EngineHeadsetShadowSlopeTexels = 0.0f;
 
 // **The depth a cascade's taps are compared against**.
 //
@@ -523,12 +539,13 @@ float shadowReference(Texture2D<float> atlas, SamplerState pointSampler, float2 
     // enough where the texels are wide.
     const float slope = min(sqrt(saturate(1.0f - nol * nol)) / max(nol, 0.05f), EngineShadowMostSlope);
     const float perTexel = texelWorld * slope / depthRange;
+    const float slopeTexels = EnvironmentParams.w < 0.0f ? EngineHeadsetShadowSlopeTexels : EngineShadowSlopeTexels;
 #ifdef ENG_SHADOW_BENDS
-    return flat - perTexel * EngineShadowSlopeTexels;
+    return flat - perTexel * slopeTexels;
 #else
     if (!EngineShadowUnderCasters)
     {
-        return flat - perTexel * EngineShadowSlopeTexels;
+        return flat - perTexel * slopeTexels;
     }
 
     // The four are read inside the cascade's own tile, like every tap: at a
@@ -553,7 +570,7 @@ float shadowReference(Texture2D<float> atlas, SamplerState pointSampler, float2 
     [branch]
     if (behindDepth > 2.5f)
     {
-        return flat - perTexel * EngineShadowSlopeTexels;
+        return flat - perTexel * slopeTexels;
     }
     // And under one beyond any doubt: all four in front by more than the
     // plane could lean across them. Everything deep in a shadow -- most of a
@@ -584,13 +601,13 @@ float shadowReference(Texture2D<float> atlas, SamplerState pointSampler, float2 
     const float4 plane = depth + across * lean.x + downward * lean.y;
     const float behindPlane = dot(step(plane, around), float4(1.0f, 1.0f, 1.0f, 1.0f));
     const float clear = saturate(behindPlane - 2.0f);
-    return flat - perTexel * EngineShadowSlopeTexels * clear + perTexel * radiusTexels * (1.0f - clear);
+    return flat - perTexel * slopeTexels * clear + perTexel * radiusTexels * (1.0f - clear);
 #endif
 }
 
 // One cascade. Returns 1 where the sun reaches.
 //
-// **Rewritten after the Godot study (2026-09-22), for three defects a person
+// **Rewritten after a study of the reference renderers (2026-09-22), for three defects a person
 // saw at once:** shadows soft and faint everywhere, lifted off the base of the
 // thing casting them, and gone altogether on thin casters at a distance. All
 // three came from one number: a filter that could never be narrower than six
@@ -632,6 +649,9 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float3 toLight = normalize(SunDirectionBrightness.xyz);
     float3 offset = normal * ((1.0f - saturate(nol)) * ShadowParams.y * texelWorld);
     offset -= toLight * dot(toLight, offset);
+    // A headset's: lifted along the normal, all of it (`EngineHeadsetNormalOffsetTexels`).
+    if (tent)
+        offset = normal * (EngineHeadsetNormalOffsetTexels * texelWorld);
 
     const float4 lightClip = mul(CascadeViewProjection[cascade], float4(position + offset, 1.0f));
     const float3 ndc = lightClip.xyz / lightClip.w;

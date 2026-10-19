@@ -23,6 +23,13 @@ here.
 
 ### Fixed
 
+- Shadow edges no longer show a comb: each of a shadow's bilinear
+  comparisons weighted its two rows the wrong way round, so across an edge
+  the answer stepped once a texel. A headset's four comparisons showed it as
+  teeth; a screen's sixteen averaged it into a slightly wider edge, which is
+  now a little sharper too. In a headset, a shadow also starts at the base
+  of what casts it, where a sliver of lit table had shown, and
+  `--xr-profile=standalone` draws a standalone headset's eyes on a PC.
 - In a headset, what rests on a surface shades it: the small things nearest
   the head darken the light from around on the surfaces near them, so a cube
   on a table sits in a soft shade round its base where it had looked to
