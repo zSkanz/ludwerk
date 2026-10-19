@@ -86,6 +86,11 @@ struct Capabilities
     // without it clips: what stands nearer a light than its map begins is
     // cut, where it was flattened onto the map's near plane.
     bool depthClamp = true;
+    // **The area of a target one texel of a fragment density map covers**,
+    // in pixels; nought where the device has no density map
+    // (`TextureUsage::DensityMap`). A map is sized by it.
+    u32 densityTexelWidth = 0;
+    u32 densityTexelHeight = 0;
 };
 
 struct Swapchain

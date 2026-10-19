@@ -584,6 +584,11 @@ struct ViewState
     // depth, made the first time and at the size and count asked.
     rhi::TextureHandle msaaColor_{};
     rhi::TextureHandle msaaDepth_{};
+    // The fragment density map that shades `msaaColor_`'s passes, and what
+    // it was drawn for: the level, and the eye's own middle on the screen.
+    rhi::TextureHandle densityMap_{};
+    u32 densityLevel_ = 0;
+    f32 densityCentre_[2]{};
     u32 msaaSamples_ = 0;
     u32 msaaWidth_ = 0;
     u32 msaaHeight_ = 0;
@@ -3013,7 +3018,8 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
     };
     for (rhi::TextureHandle* texture :
          {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &msaaColor_, &msaaDepth_})
+          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &msaaColor_, &msaaDepth_,
+          &densityMap_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -9948,8 +9954,72 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                               ribbonVertexCount_ == 0 && world.gpuEmitters.empty() && !readsScene && !prepassDrawn_ &&
                               !(world.look.depthOfField && settings_.depthOfField);
     u32 samples = world.headsetEye && !world.headsetDepthRead && forwardWhole ? world.headsetSamples : 1u;
+    // **Shaded less away from where the eye looks** (`headsetFoveation`), on
+    // a device with a fragment density map: the map made at its texel size,
+    // filled from the eye's own middle -- where its view's axis meets the
+    // screen, off the picture's centre for an eye that sees further out
+    // than in.
+    const rhi::Capabilities caps = device.caps();
+    const u32 foveation = samples > 1 && caps.densityTexelWidth > 0 && caps.densityTexelHeight > 0
+                              ? std::min(world.headsetFoveation, 3u)
+                              : 0u;
+    const f32 centreU = 0.5f * (1.0f - world.camera.projection.m[2][0]);
+    const f32 centreV = 0.5f * (1.0f + world.camera.projection.m[2][1]);
+    bool densityRemade = false;
+    if (foveation == 0) {
+        if (densityMap_.valid()) {
+            device.destroy(densityMap_);
+            densityMap_ = {};
+            densityRemade = true;
+        }
+    }
+    else {
+        const u32 mapWidth = (renderWidth_ + caps.densityTexelWidth - 1) / caps.densityTexelWidth;
+        const u32 mapHeight = (renderHeight_ + caps.densityTexelHeight - 1) / caps.densityTexelHeight;
+        const bool resized = msaaWidth_ != renderWidth_ || msaaHeight_ != renderHeight_;
+        if (!densityMap_.valid() || resized) {
+            if (densityMap_.valid())
+                device.destroy(densityMap_);
+            densityMap_ = device.createTexture({
+                .format = rhi::TextureFormat::Rg8Unorm,
+                .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::DensityMap,
+                .width = mapWidth,
+                .height = mapHeight,
+                .debugName = "eye-density",
+            });
+            densityRemade = true;
+            densityLevel_ = 0;
+        }
+        if (densityMap_.valid() &&
+            (densityRemade || densityLevel_ != foveation || std::fabs(densityCentre_[0] - centreU) > 0.01f ||
+             std::fabs(densityCentre_[1] - centreV) > 0.01f)) {
+            // Full density inside the first ring, a fragment for two pixels
+            // each way out to the second, and for four beyond it -- the
+            // rings in the eye's own proportion, wider with the level.
+            const f32 inner = foveation == 3 ? 0.30f : foveation == 2 ? 0.38f : 0.45f;
+            const f32 outer = foveation == 3 ? 0.48f : foveation == 2 ? 0.58f : 2.0f;
+            std::vector<std::byte> texels(static_cast<usize>(mapWidth) * mapHeight * 2u);
+            for (u32 y = 0; y < mapHeight; ++y) {
+                for (u32 x = 0; x < mapWidth; ++x) {
+                    const f32 u = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(mapWidth) - centreU;
+                    const f32 v = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(mapHeight) - centreV;
+                    const f32 reach = std::sqrt(u * u + v * v);
+                    const auto density = static_cast<std::byte>(reach < inner ? 255 : reach < outer ? 128 : 64);
+                    const usize at = (static_cast<usize>(y) * mapWidth + x) * 2u;
+                    texels[at] = density;
+                    texels[at + 1] = density;
+                }
+            }
+            cmd.uploadTexture(densityMap_, texels, 0);
+            densityLevel_ = foveation;
+            densityCentre_[0] = centreU;
+            densityCentre_[1] = centreV;
+        }
+    }
+    // The samples are remade with the map that shades them, or without one.
+    const bool densityChanged = densityRemade;
     if (samples > 1 && (!msaaColor_.valid() || !msaaDepth_.valid() || msaaSamples_ != samples ||
-                        msaaWidth_ != renderWidth_ || msaaHeight_ != renderHeight_)) {
+                        msaaWidth_ != renderWidth_ || msaaHeight_ != renderHeight_ || densityChanged)) {
         for (rhi::TextureHandle* texture : {&msaaColor_, &msaaDepth_}) {
             if (texture->valid())
                 device.destroy(*texture);
@@ -9961,6 +10031,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             .width = renderWidth_,
             .height = renderHeight_,
             .samples = samples,
+            .densityMap = densityMap_,
             .debugName = "eye-samples",
         });
         msaaDepth_ = device.createTexture({

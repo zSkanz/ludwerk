@@ -35,6 +35,11 @@ struct TextureDesc
     // target, drawn into and resolved (`StoreOp::Resolve`), never sampled.
     // A pipeline bound in a pass of such targets is drawn at their count.
     u32 samples = 1;
+    // **The fragment density map that shades a render pass** whose first
+    // color target this is: a headset's eye drawn at full density where the
+    // eye looks and less towards its edges. Where the device has none, the
+    // pass is drawn whole.
+    TextureHandle densityMap{};
     std::string_view debugName{};
 };
 

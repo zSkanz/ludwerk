@@ -11,6 +11,9 @@ here.
 
 ### Added
 
+- Foveation in a headset: on a GPU with a fragment density map, each eye is
+  shaded less toward the edges of the lens, `[xr] foveation` and
+  `--xr-foveation` say how much, high by default on a standalone headset.
 - `@engine/xrgrab` holds a part in a headset with a force of its own, so a
   block pushed into another or into a table stops there, and a part let go
   flies at the hand's speed. The XR room holds its crates and its ball with

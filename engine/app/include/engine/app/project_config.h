@@ -195,6 +195,9 @@ struct ProjectConfig
     bool xrDepth = true;
 #endif
     bool xrScreenEffects = false;
+    // `[xr] foveation`: "off", "low", "medium" or "high"; unset, the
+    // platform's default (`EngineOptions::xrFoveation`).
+    std::optional<core::u32> xrFoveation;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

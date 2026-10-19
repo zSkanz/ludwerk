@@ -10054,6 +10054,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             // showed in steps, resolved on the tile.
                             snapshot.headsetSamples = 2;
 #endif
+                            snapshot.headsetFoveation = options.xrFoveation;
                             snapshot.headsetDepthRead =
                                 eyeCopy.seeThrough || (headsetFrame.depth[0].valid() && headsetFrame.depth[1].valid());
                         }
@@ -10181,6 +10182,15 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 core::I18nArg{"higher", millimeters(apart.y)},
                                 core::I18nArg{"turn", angleOf(core::transpose(eyeTurns[0]) * eyeTurns[1])}};
                             core::log(LogLevel::Info, ENG_TR("engine.info.xr_eyes"), pairArgs);
+                            const rhi::Capabilities caps = device->caps();
+                            const std::array<core::I18nArg, 3> foveationArgs{
+                                core::I18nArg{"level", static_cast<core::i64>(options.xrFoveation)},
+                                core::I18nArg{"width", static_cast<core::i64>(caps.densityTexelWidth)},
+                                core::I18nArg{"height", static_cast<core::i64>(caps.densityTexelHeight)}};
+                            core::log(LogLevel::Info,
+                                      caps.densityTexelWidth > 0 ? ENG_TR("engine.info.xr_foveation")
+                                                                 : ENG_TR("engine.info.xr_foveation_none"),
+                                      foveationArgs);
                         }
                         // **Both eyes as drawn, before the runtime has them**
                         // (`--xr-eyes-shot`): the headset's own capture shows each
@@ -10220,6 +10230,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         snapshot.headsetLean = false;
                         snapshot.headsetSamples = 1;
                         snapshot.headsetDepthRead = false;
+                        snapshot.headsetFoveation = 0;
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.
                         if (mirroring && !eyesDirect && options.xrMirror && eyePictures[0].texture.valid()) {

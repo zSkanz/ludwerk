@@ -871,6 +871,10 @@ struct RenderWorld
     // runtime's depth layer, or the room seen through where nothing is
     // drawn. A multisampled eye keeps no depth of one sample.
     bool headsetDepthRead = false;
+    // **How much less the eye is shaded away from where it looks**: 0 off,
+    // 1 low, 2 medium, 3 high -- a fragment density map on the multisampled
+    // forward pass, where the device has one.
+    u32 headsetFoveation = 0;
     RenderEnvironment environment;
     // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a
     // world with none of them, which is the picture it always drew.

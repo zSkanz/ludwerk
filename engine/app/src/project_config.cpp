@@ -755,6 +755,16 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.xrDepth = *value;
     if (const std::optional<bool> value = document.boolean("xr.screen_effects"))
         config.xrScreenEffects = *value;
+    if (const std::optional<std::string_view> value = document.string("xr.foveation")) {
+        if (*value == "off")
+            config.xrFoveation = 0u;
+        else if (*value == "low")
+            config.xrFoveation = 1u;
+        else if (*value == "medium")
+            config.xrFoveation = 2u;
+        else if (*value == "high")
+            config.xrFoveation = 3u;
+    }
     if (const std::optional<std::string_view> value = document.string("network.server_key"))
         config.networkServerKey = *value;
     if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))

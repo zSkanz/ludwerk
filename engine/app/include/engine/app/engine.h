@@ -467,6 +467,16 @@ struct EngineOptions
     // reflections and bounce drawn in a headset's eyes, which by default
     // they are not.
     bool xrScreenEffects = false;
+    // `[xr] foveation`, or `--xr-foveation=off|low|medium|high` over it: how
+    // much less a headset's eye is shaded away from where it looks, 0 to 3,
+    // where the device has a fragment density map. High by default on a
+    // standalone headset, off on a PC.
+#if defined(__ANDROID__)
+    core::u32 xrFoveation = 3;
+#else
+    core::u32 xrFoveation = 0;
+#endif
+    bool xrFoveationFromFlag = false;
     // `--xr-eyes-shot=<path>`: both eyes' pictures as drawn, before the
     // runtime has them, written as `<name>-left` and `<name>-right` at the
     // 600th frame a headset draws, beside the eyes' geometry in the log.

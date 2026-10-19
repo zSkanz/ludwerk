@@ -894,6 +894,8 @@ public:
             .num("mips", static_cast<u64>(desc.mipLevels));
         if (desc.samples > 1)
             line.num("samples", static_cast<u64>(desc.samples));
+        if (desc.densityMap.valid())
+            line.num("densityMap", static_cast<u64>(desc.densityMap.id));
         stream_ += line.str("name", desc.debugName).finish();
         return handle;
     }

@@ -112,9 +112,10 @@ struct PipelineRecipe
     std::vector<SDL_GPUColorTargetDescription> colorTargets;
     SDL_GPUGraphicsPipelineCreateInfo info{};
     std::string name;
-    // At 2, 4 and 8 samples, and whether each was tried.
-    std::array<SDL_GPUGraphicsPipeline*, 3> twins{};
-    std::array<bool, 3> tried{};
+    // At 1, 2, 4 and 8 samples, without and with a density map shading the
+    // pass (the base pipeline is the first), and whether each was tried.
+    std::array<SDL_GPUGraphicsPipeline*, 8> twins{};
+    std::array<bool, 8> tried{};
 };
 
 template <class T>
@@ -157,6 +158,9 @@ struct TextureEntry
     // Its samples a pixel: a pass of multisampled targets draws its pipelines
     // at their count.
     u32 samples = 1;
+    // Whether a density map shades the passes it is the first target of: its
+    // pipelines are drawn in their density map twins.
+    bool densityShaded = false;
     // What it was counted as in `DeviceMemory`, to be taken back when it goes.
     core::u64 bytes = 0;
     // Swapchain textures belong to SDL and must not be released. Their slot is
@@ -324,8 +328,10 @@ private:
     SDL_GPUBuffer* boundIndex_ = nullptr;
     IndexType boundIndexType_ = IndexType::U16;
     SDL_GPUGraphicsPipeline* boundPipeline_ = nullptr;
-    // The open pass's samples a pixel, from its attachments.
+    // The open pass's samples a pixel, from its attachments, and whether a
+    // density map shades it.
     u32 passSamples_ = 1;
+    bool passDensity_ = false;
 
     // **One transfer buffer for a frame's uploads, not one per upload.** Every
     // `upload` used to create a transfer buffer and release it: an allocation
@@ -426,6 +432,12 @@ public:
                             SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB,
                                                          SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
         caps.depthClamp = depthClamp_;
+        // Said by patch 0009 where the device has VK_EXT_fragment_density_map.
+        const SDL_PropertiesID properties = SDL_GetGPUDeviceProperties(device_);
+        caps.densityTexelWidth = static_cast<u32>(
+            SDL_GetNumberProperty(properties, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_WIDTH_NUMBER, 0));
+        caps.densityTexelHeight = static_cast<u32>(
+            SDL_GetNumberProperty(properties, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_HEIGHT_NUMBER, 0));
         return caps;
     }
 
@@ -709,6 +721,18 @@ public:
     {
         if (lost_)
             return {};
+        // A density map, or the target one shades (patch 0009).
+        SDL_PropertiesID properties = 0;
+        const TextureEntry* densityMap = desc.densityMap.valid() ? texture(desc.densityMap) : nullptr;
+        if (hasUsage(desc.usage, TextureUsage::DensityMap) || densityMap != nullptr) {
+            properties = SDL_CreateProperties();
+            if (hasUsage(desc.usage, TextureUsage::DensityMap))
+                SDL_SetBooleanProperty(properties, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN,
+                                       true);
+            if (densityMap != nullptr)
+                SDL_SetPointerProperty(properties, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER,
+                                       densityMap->texture);
+        }
         const SDL_GPUTextureCreateInfo info{
             .type = desc.layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D,
             .format = toSdl(desc.format),
@@ -718,9 +742,11 @@ public:
             .layer_count_or_depth = desc.layers,
             .num_levels = desc.mipLevels,
             .sample_count = sampleCountOf(desc.samples),
-            .props = 0,
+            .props = properties,
         };
         SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &info);
+        if (properties != 0)
+            SDL_DestroyProperties(properties);
         if (texture == nullptr) {
             noteFailure();
             return {};
@@ -746,6 +772,7 @@ public:
                                        .height = desc.height,
                                        .layers = desc.layers,
                                        .samples = std::max(desc.samples, 1u),
+                                       .densityShaded = densityMap != nullptr,
                                        .bytes = bytes,
                                        .owned = true,
                                    })};
@@ -1123,16 +1150,16 @@ public:
         SDL_GPUShader** entry = slot(shaders_, handle.id);
         return entry != nullptr ? *entry : nullptr;
     }
-    // The pipeline at a pass's sample count: itself at one, a twin made from
-    // its recipe at more.
-    [[nodiscard]] SDL_GPUGraphicsPipeline* pipelineAt(PipelineHandle handle, u32 samples) noexcept
+    // The pipeline at a pass's sample count and density map: itself at one
+    // sample and none, a twin made from its recipe otherwise.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* pipelineAt(PipelineHandle handle, u32 samples, bool density) noexcept
     {
-        if (samples <= 1)
+        if (samples <= 1 && !density)
             return pipeline(handle);
         PipelineRecipe* recipe = slot(recipes_, handle.id);
         if (recipe == nullptr || pipeline(handle) == nullptr)
             return nullptr;
-        const usize at = samples >= 8 ? 2 : samples >= 4 ? 1 : 0;
+        const usize at = (density ? 4u : 0u) + (samples >= 8 ? 3u : samples >= 4 ? 2u : samples >= 2 ? 1u : 0u);
         if (!recipe->tried[at]) {
             recipe->tried[at] = true;
             SDL_GPUGraphicsPipelineCreateInfo info = recipe->info;
@@ -1140,7 +1167,16 @@ public:
             info.vertex_input_state.vertex_attributes = recipe->attributes.data();
             info.target_info.color_target_descriptions = recipe->colorTargets.data();
             info.multisample_state.sample_count = sampleCountOf(samples);
+            SDL_PropertiesID properties = 0;
+            if (density) {
+                properties = SDL_CreateProperties();
+                SDL_SetBooleanProperty(properties,
+                                       SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, true);
+                info.props = properties;
+            }
             recipe->twins[at] = SDL_CreateGPUGraphicsPipeline(device_, &info);
+            if (properties != 0)
+                SDL_DestroyProperties(properties);
             if (recipe->twins[at] == nullptr) {
                 const core::I18nArg args[] = {{"name", std::string_view{recipe->name}},
                                               {"detail", std::string_view{SDL_GetError()}}};
@@ -1940,6 +1976,7 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
     BindList<SDL_GPUColorTargetInfo> colors(desc.colorAttachments.size());
     usize colorCount = 0;
     passSamples_ = 1;
+    passDensity_ = false;
     for (const ColorAttachment& attachment : desc.colorAttachments) {
         TextureEntry* entry = device_.texture(attachment.texture);
         if (entry == nullptr || entry->texture == nullptr)
@@ -1959,8 +1996,10 @@ void SdlGpuCmdList::beginRenderPass(const RenderPassDesc& desc)
             if (info.resolve_texture == nullptr)
                 info.store_op = SDL_GPU_STOREOP_STORE;
         }
-        if (colorCount == 0)
+        if (colorCount == 0) {
             passSamples_ = entry->samples;
+            passDensity_ = entry->densityShaded;
+        }
         colors[colorCount++] = info;
     }
     colors.shrink(colorCount);
@@ -1995,7 +2034,7 @@ void SdlGpuCmdList::setPipeline(PipelineHandle pipeline)
 {
     if (renderPass_ == nullptr)
         return;
-    if (SDL_GPUGraphicsPipeline* native = device_.pipelineAt(pipeline, passSamples_);
+    if (SDL_GPUGraphicsPipeline* native = device_.pipelineAt(pipeline, passSamples_, passDensity_);
         native != nullptr && native != boundPipeline_) {
         SDL_BindGPUGraphicsPipeline(renderPass_, native);
         boundPipeline_ = native;

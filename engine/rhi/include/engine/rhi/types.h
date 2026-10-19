@@ -147,6 +147,11 @@ enum class TextureUsage : u32
     // (ADR 0165): what an image of integers is read by, which no sampler
     // reads. Bound by `bindComputeStorageTextures`, after the sampled ones.
     ComputeStorageRead = 1u << 5,
+    // **A fragment density map**: `Rg8Unorm`, each texel how densely a
+    // render pass shades its area of the targets -- 255 every pixel, 128 one
+    // fragment for two, 64 for four -- where `Capabilities::densityTexelWidth`
+    // says the device has one. A color target names it (`TextureDesc::densityMap`).
+    DensityMap = 1u << 6,
 };
 
 [[nodiscard]] constexpr TextureUsage operator|(TextureUsage a, TextureUsage b) noexcept

@@ -773,6 +773,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrDepthFromFlag = true;
             continue;
         }
+        if (arg.starts_with("--xr-foveation=")) {
+            const std::string_view level = arg.substr(15);
+            options.xrFoveation = level == "high" ? 3u : level == "medium" ? 2u : level == "low" ? 1u : 0u;
+            options.xrFoveationFromFlag = true;
+            continue;
+        }
         if (arg.starts_with("--xr-eyes-shot=")) {
             options.xrEyesShot = std::string(arg.substr(15));
             continue;
@@ -2052,6 +2058,8 @@ static int hostMain(int argc, char** argv)
         if (!options.xrDepthFromFlag)
             options.xrDepth = config.xrDepth;
         options.xrScreenEffects = config.xrScreenEffects;
+        if (config.xrFoveation.has_value() && !options.xrFoveationFromFlag)
+            options.xrFoveation = *config.xrFoveation;
         options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;
