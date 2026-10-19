@@ -789,6 +789,14 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         }
         if (arg == "--xr-profile=standalone" || arg == "--xr-profile=pc") {
             options.xrStandalone = arg == "--xr-profile=standalone";
+            // And the depth layer as that kind of headset has it -- none on a
+            // standalone one, where the eyes are drawn with two samples a
+            // pixel only because nothing reads their depth -- unless the run
+            // says (`--xr-depth`, before or after this).
+            if (!options.xrDepthFromFlag) {
+                options.xrDepth = !options.xrStandalone;
+                options.xrDepthFromFlag = true;
+            }
             continue;
         }
         if (arg == "--xr=simulated") {

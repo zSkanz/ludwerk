@@ -54,7 +54,8 @@ eye sits and how far it sees, and how much one eye is higher than the other
 or turned from it: a pair of eyes that fuses has both near nought.
 
 `--xr-profile=standalone` draws the eyes on a PC as a standalone headset
-draws them -- one pass, two samples a pixel, the same shadows -- and with
+draws them -- one pass, two samples a pixel, the same shadows, no depth layer
+unless `--xr-depth=on` says -- and with
 `--xr=simulated` at a Quest 3's eye size, whose field of view the simulated
 headset has already. With `--quality=medium --no-shadow-under-casters`, a
 phone's settings, and `--xr-eyes-shot`, it shows on a PC what a Quest shows,
