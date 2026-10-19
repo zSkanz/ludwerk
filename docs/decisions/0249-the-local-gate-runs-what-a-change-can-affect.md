@@ -39,7 +39,11 @@ at a time), `terrain_far_flight` (305 s), the two `netcode_acceptance` runs
      the examples;
    - CMake files, `cmake/`, `third_party/`, the gate's own scripts, the
      bottom of the engine (`core`, `jobs`, `platform`), or a file no rule
-     maps → the full suite.
+     maps → the full suite. A `CMakeLists.txt` whose change only
+     registers tests -- lines of `add_test`, its properties, comments --
+     runs the tests it names instead;
+   - an `@engine/` module reaches the script area and the area of its
+     subject (`xrgrab` the headset's and the netcode's tests).
    A smoke set always runs: the host boots, a scene is drawn, a capture is
    taken, and two runs of one world agree. A test no rule knows always runs.
 4. **Every stage**, not only the tests:

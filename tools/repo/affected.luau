@@ -109,6 +109,18 @@ local AppFiles: { { pattern: string, areas: { string } } } = {
     { pattern = "^mouths", areas = { "language" } },
 }
 
+-- **What an `@engine/` module reaches** beyond the script area: the tests
+-- of the subject it is a module for.
+local RuntimeAreas: { [string]: { string } } = {
+    xrcomfort = { "xr" },
+    xrgrab = { "xr", "netcode" },
+    ragdoll = { "physics" },
+    camera = { "boot" },
+    views = { "boot" },
+    splitscreen = { "boot" },
+    npclod = { "boot" },
+}
+
 -- **An area's tests, by name** (Lua patterns). `render` is not here: it is
 -- every test that starts a host which draws (below).
 local AreaTests: { [string]: { string } } = {
@@ -168,6 +180,8 @@ type Plan = {
     areas: { [string]: boolean },
     modules: { [string]: boolean },
     paths: { string },
+    -- Tests a changed registration names (`add_test`, `set_tests_properties`).
+    registered: { [string]: boolean },
     stages: { [string]: { run: boolean, why: string } },
     steps: { [string]: { run: boolean, why: string } },
 }
@@ -283,8 +297,69 @@ local function isCode(file: string): boolean
         or endsWith(file, ".mm")
 end
 
+-- **Words a test's registration is written in**, and nothing a build is.
+local RegistrationWords = {
+    "add_test(",
+    "set_tests_properties(",
+    "COMMAND",
+    "PROPERTIES",
+    "PASS_REGULAR_EXPRESSION",
+    "FAIL_REGULAR_EXPRESSION",
+    "SKIP_REGULAR_EXPRESSION",
+    "TIMEOUT",
+    "LABELS",
+    "RESOURCE_LOCK",
+    "RESOURCE_GROUPS",
+    "RUN_SERIAL",
+    "WORKING_DIRECTORY",
+    "ENVIRONMENT",
+}
+
+-- **The tests a CMake change registers, where that is all it does**: every
+-- line it adds or takes away a comment, a blank, or a line of an
+-- `add_test` or its properties. Nil where it changes anything else.
+local function registeredOnly(file: string, mergeBase: string): { string }?
+    local result = process.run({ "git", "diff", "-U0", mergeBase, "--", file })
+    if not result.ok then
+        return nil
+    end
+    local names: { string } = {}
+    for line in string.gmatch(result.stdout, "[^\r\n]+") do
+        local first = string.sub(line, 1, 1)
+        if (first == "+" or first == "-") and not startsWith(line, "+++") and not startsWith(line, "---") then
+            local body = string.match(string.sub(line, 2), "^%s*(.-)%s*$") or ""
+            local test = true
+            if body ~= "" and string.sub(body, 1, 1) ~= "#" then
+                test = false
+                for _, word in RegistrationWords do
+                    if string.find(body, word, 1, true) then
+                        test = true
+                        break
+                    end
+                end
+                -- A command's arguments and the closing of a call.
+                test = test
+                    or string.sub(body, 1, 2) == "-D"
+                    or string.sub(body, 1, 2) == "-P"
+                    or string.sub(body, 1, 2) == "--"
+                    or body == ")"
+                    or string.sub(body, 1, 1) == '"'
+            end
+            if not test then
+                return nil
+            end
+            local named = string.match(body, "add_test%(NAME%s+([%w_%-%.]+)")
+                or string.match(body, "set_tests_properties%(([%w_%-%.]+)")
+            if named then
+                table.insert(names, named)
+            end
+        end
+    end
+    return names
+end
+
 -- What one file reaches, written into the plan.
-local function mapFile(plan: Plan, file: string)
+local function mapFile(plan: Plan, file: string, mergeBase: string)
     local function everything(reason: string)
         plan.full = true
         table.insert(plan.why, `{file}: {reason}`)
@@ -294,13 +369,28 @@ local function mapFile(plan: Plan, file: string)
     end
 
     local name = path.basename(file) or file
-    if name == "CMakeLists.txt" or endsWith(file, ".cmake") and not startsWith(file, "tests/") then
+    if name == "CMakeLists.txt" then
+        local names = registeredOnly(file, mergeBase)
+        if names ~= nil then
+            for _, test in names do
+                plan.registered[test] = true
+            end
+            return
+        end
+        return everything("the build itself")
+    end
+    if endsWith(file, ".cmake") and not startsWith(file, "tests/") then
         return everything("the build itself")
     end
     if startsWith(file, "third_party/") or startsWith(file, "cmake/") or name == "CMakePresets.json" then
         return everything("the build or a dependency")
     end
-    if startsWith(file, "scripts/gates/") or file == "scripts/localgate.ps1" or startsWith(file, "scripts/docker/") then
+    if
+        startsWith(file, "scripts/gates/")
+        or file == "scripts/localgate.ps1"
+        or startsWith(file, "scripts/docker/")
+        or file == "tools/repo/affected.luau"
+    then
         return everything("the gate itself")
     end
     if startsWith(file, "engine/platform/src/uwp/") then
@@ -343,6 +433,10 @@ local function mapFile(plan: Plan, file: string)
     end
     if startsWith(file, "runtime/") then
         area("script")
+        local runtimeModule = string.match(file, "^runtime/engine/([%w_]+)/")
+        for _, named in (if runtimeModule then RuntimeAreas[runtimeModule] else nil) or {} do
+            area(named)
+        end
         return
     end
     if file == "i18n/en.json" then
@@ -546,6 +640,9 @@ local function selectTests(plan: Plan, listing: any, root: string): ({ string },
                 choose(name, "the smoke set")
             end
         end
+        if plan.registered[name] then
+            choose(name, "its registration changed")
+        end
         -- A module's own executable.
         local exe = string.gsub(command[1] or "", "\\", "/")
         local testModule: string? = string.match(exe, "/engine/[%w_]+/engine_([%w_]+)_tests")
@@ -563,7 +660,10 @@ local function selectTests(plan: Plan, listing: any, root: string): ({ string },
             for _, part in command do
                 local argument = string.gsub(part, "\\", "/")
                 local value = string.match(argument, "^%-D[%w_]+=(.*)$") or argument
-                if value ~= "" and (absolute == value or startsWith(absolute, value .. "/")) then
+                -- The repository itself, or all of its tests or examples, is
+                -- where a test runs from, not what it runs.
+                local whole = value == root or value == `{root}/tests` or value == `{root}/examples`
+                if value ~= "" and not whole and (absolute == value or startsWith(absolute, value .. "/")) then
                     choose(name, `it runs {file}`)
                 end
             end
@@ -635,9 +735,10 @@ local function main()
     local root = string.gsub(string.gsub(run({ "git", "rev-parse", "--show-toplevel" }), "%s+$", ""), "\\", "/")
     local mergeBase = string.gsub(run({ "git", "merge-base", "HEAD", base }), "%s+$", "")
     local files = changedFiles(mergeBase)
-    local plan: Plan = { full = false, why = {}, areas = {}, modules = {}, paths = {}, stages = {}, steps = {} }
+    local plan: Plan =
+        { full = false, why = {}, areas = {}, modules = {}, paths = {}, registered = {}, stages = {}, steps = {} }
     for _, file in files do
-        mapFile(plan, file)
+        mapFile(plan, file, mergeBase)
     end
     planStages(plan, files, mergeBase)
 
