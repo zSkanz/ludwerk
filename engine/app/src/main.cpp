@@ -82,8 +82,10 @@ constexpr engine::core::u16 kDefaultGamePort = 7777;
 // anything under test. CTest maps it to SKIP, so a runner without a driver
 // reports a skipped render test instead of a red build nobody can act on.
 constexpr int kExitNoGraphicsDevice = 4;
+#if ENG_DEBUG_UI
 // `--exit-on-line`: the line was written, and the process ended at it.
 constexpr int kExitKilledByLine = 86;
+#endif
 
 // The graphics device was lost while the engine ran -- a driver reset, most
 // often a shader that ran too long. Its own code so a test can tell "survived

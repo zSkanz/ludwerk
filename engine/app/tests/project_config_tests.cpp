@@ -549,10 +549,10 @@ TEST_CASE(
 
     const app::ProjectConfig desktop = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
     CHECK(desktop.xrMsaa == std::optional<core::u32>{4u});
-    CHECK(desktop.xrRenderScale.value_or(0.0f) == doctest::Approx(0.8f).epsilon(1e-6));
+    CHECK(static_cast<double>(desktop.xrRenderScale.value_or(0.0f)) == doctest::Approx(0.8).epsilon(1e-6));
     CHECK(desktop.xrShadowResolution == std::optional<core::u32>{1024u});
     CHECK(desktop.xrFoveation == std::optional<core::u32>{1u});
-    CHECK(desktop.xrRefreshRate.value_or(0.0f) == doctest::Approx(90.0f));
+    CHECK(static_cast<double>(desktop.xrRefreshRate.value_or(0.0f)) == doctest::Approx(90.0));
     CHECK_FALSE(desktop.xrShadowCascades.has_value());
 
     const app::ProjectConfig standalone = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, true);
