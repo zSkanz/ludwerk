@@ -10143,7 +10143,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         // picture of them**: where each eye is and how far it sees,
                         // and what a pair that fuses keeps near nought -- one eye
                         // higher than the other, or turned from it.
-                        const bool eyesShot = !options.xrEyesShot.empty() && headsetFramesDrawn == 600;
+                        // Read at the frame after the one drawn for it: a frame's
+                        // commands are not yet sent when its eyes are, and what a
+                        // wait for the device finishes is only what was sent.
+                        const bool eyesShot = !options.xrEyesShot.empty() && headsetFramesDrawn == 601;
                         if (headsetFramesDrawn == 1 || eyesShot) {
                             const auto degrees = [](f32 tangent) {
                                 return std::round(std::atan(static_cast<f64>(tangent)) * 572.9578) / 10.0;
