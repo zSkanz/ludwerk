@@ -737,6 +737,39 @@ float nearbyOcclusion(float3 position, float3 normal)
     return open;
 }
 
+// **And the sun, where a surface touches one** (a headset's, with
+// `nearbyOcclusion`'s spheres): a receiver within a centimetre of a sphere
+// whose ray to the sun passes through it is in its shadow. The shadow map
+// loses that last centimetre under a ball -- a headset's receiver is lifted
+// a texel along its normal (`EngineHeadsetNormalOffsetTexels`), and within
+// the square root of twice the radius times that lift of where a ball
+// touches the table, the lifted point is inside the ball and compared as lit.
+// Each sphere is inside what it stands for, so this shades only what the
+// thing itself shades.
+float nearbySunShadow(float3 position, float3 toSun)
+{
+    float lit = 1.0f;
+    const uint count = min(uint(OccluderParams.x), 8u);
+    [loop]
+    for (uint i = 0u; i < count; ++i)
+    {
+        const float4 occluder = Occluders[i];
+        const float3 toward = occluder.xyz - position;
+        const float distanceSq = dot(toward, toward);
+        const float reach = occluder.w + 0.01f;
+        [branch]
+        if (distanceSq < reach * reach)
+        {
+            const float along = dot(toward, toSun);
+            const float missSq = max(distanceSq - along * along, 0.0f);
+            const float through = along > 0.0f ? 1.0f - smoothstep(0.9f * occluder.w, occluder.w, sqrt(missSq)) : 0.0f;
+            const float near = saturate((reach - sqrt(distanceSq)) / 0.005f);
+            lit = min(lit, 1.0f - through * near);
+        }
+    }
+    return lit;
+}
+
 float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, float viewDepth, float2 pixel, float sky)
 {
     const uint skipped = uint(ClusterParams.w);
@@ -773,7 +806,7 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
         {
             contact = ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
         }
-        const float sunShadow = min(shadow, contact);
+        const float sunShadow = min(min(shadow, contact), nearbySunShadow(shadingPosition, sunDirection));
         const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
         color = shadeDirect(surface, sunDirection, sunRadiance);
     }
