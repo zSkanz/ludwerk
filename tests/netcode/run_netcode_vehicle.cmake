@@ -158,7 +158,7 @@ foreach(entry IN LISTS conditions)
             string(REGEX MATCH " ${key}=([0-9.a-z]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
-        foreach(key otherPart car)
+        foreach(key otherPart car worstFrames)
             string(REGEX MATCH " ${key}=([^ ]+)" _ "${line}")
             set(${key} ${CMAKE_MATCH_1})
         endforeach()
@@ -289,8 +289,9 @@ foreach(entry IN LISTS conditions)
             string(REGEX REPLACE "\\..*" "" longSimulated "${simJump}")
             math(EXPR glideMost "${longSimulated} / 4 + 20")
             if(longSimulated LESS 2000 AND longDrawn GREATER glideMost)
-                string(APPEND failures "  ${name}: a ${simJump} mm jump after a dropped stall was drawn as a "
-                       "${drawnJump} mm jump -- it did not glide\n")
+                string(APPEND failures "  ${name} (seat ${seat}): a ${simJump} mm jump after a dropped stall was drawn "
+                       "as a ${drawnJump} mm jump -- it did not glide; the frames up to it, ms:mm a tick, "
+                       "${worstFrames}\n")
             endif()
         elseif(NOT mode STREQUAL "nudge")
             string(REGEX REPLACE "\\..*" "" drawnWhole "${drawnJump}")
@@ -317,7 +318,8 @@ foreach(entry IN LISTS conditions)
             endif()
             if(beyond GREATER snapMost)
                 string(APPEND failures "  ${name} (seat ${seat}): the car was drawn jumping ${drawnJump} mm in a tick, "
-                       "${beyond} mm beyond ${physicsSaid}, past the ${snapMost} its glide may add\n")
+                       "${beyond} mm beyond ${physicsSaid}, past the ${snapMost} its glide may add; the frames "
+                       "up to it, ms:mm a tick, ${worstFrames}\n")
             endif()
         endif()
         # **A duel's corrections are small**: two cars meeting at 150 ms are

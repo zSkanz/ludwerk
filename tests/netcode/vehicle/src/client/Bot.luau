@@ -174,6 +174,7 @@ task.spawn(function()
     -- second difference. A car driven smoothly is well under a millimetre;
     -- one that snaps is the snap.
     local drawnJump, simJump = 0, 0
+    local worstFrames = ""
     local drawn: { vector } = {}
     local simulated: { vector } = {}
     --
@@ -299,9 +300,20 @@ task.spawn(function()
     -- tick is that stop times the frame's ticks -- so the jump is a tick's
     -- share of it, which a machine under load and one drawing every tick
     -- both measure the same.
+    -- And the frames up to the worst, each its length and its jump a tick in
+    -- milliseconds, so a failure says whether a long frame came before it.
+    local recent: { string } = {}
     RunService:BindToRenderStep("CarJumps", 1, function(span: number)
         local ticks = math.max(1, span / tickLength)
-        drawnJump = math.max(drawnJump, jumpOf(drawn, car:GetRenderCFrame().Position, span) / ticks)
+        local jump = jumpOf(drawn, car:GetRenderCFrame().Position, span) / ticks
+        table.insert(recent, `{decimal(span * 1000, 1)}:{decimal(jump * 1000, 1)}`)
+        if #recent > 6 then
+            table.remove(recent, 1)
+        end
+        if jump > drawnJump then
+            drawnJump = jump
+            worstFrames = table.concat(recent, ",")
+        end
     end)
 
     local start, straight, corner, stopping, contact, hitches = 0, 0, 0, 0, 0, 0
@@ -409,6 +421,6 @@ task.spawn(function()
             .. `otherDrift={decimal(otherDrift * 1000, 1)} otherPart={otherPart} car={car.Name} `
             .. `authorityJump={decimal(authorityJump * 1000, 1)} `
             .. `stallFrame={decimal(stallFrame * 1000, 1)} stallBefore={decimal(stallBefore * 1000, 1)} `
-            .. `stallTicks={stallTicks}`
+            .. `stallTicks={stallTicks} worstFrames={if worstFrames == "" then "-" else worstFrames}`
     )
 end)
