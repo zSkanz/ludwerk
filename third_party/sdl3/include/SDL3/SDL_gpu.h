@@ -2608,6 +2608,15 @@ extern SDL_DECLSPEC SDL_PropertiesID SDLCALL SDL_GetGPUDeviceProperties(SDL_GPUD
 #define SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING     "SDL.gpu.device.driver_version"
 #define SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING        "SDL.gpu.device.driver_info"
 
+/* (Vulkan only) The smallest and largest area of the framebuffer one texel
+ * of a fragment density map covers, where the device supports
+ * VK_EXT_fragment_density_map; absent otherwise. Size a density map by the
+ * largest. */
+#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_WIDTH_NUMBER  "SDL.gpu.device.vulkan.fragment_density.min_texel_width"
+#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_HEIGHT_NUMBER "SDL.gpu.device.vulkan.fragment_density.min_texel_height"
+#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_WIDTH_NUMBER  "SDL.gpu.device.vulkan.fragment_density.max_texel_width"
+#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_HEIGHT_NUMBER "SDL.gpu.device.vulkan.fragment_density.max_texel_height"
+
 
 /* State Creation */
 
@@ -2688,6 +2697,12 @@ extern SDL_DECLSPEC SDL_GPUGraphicsPipeline * SDLCALL SDL_CreateGPUGraphicsPipel
     const SDL_GPUGraphicsPipelineCreateInfo *createinfo);
 
 #define SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_NAME_STRING "SDL.gpu.graphicspipeline.create.name"
+
+/* (Vulkan only) The pipeline is bound in render passes whose first color
+ * target names a fragment density map
+ * (SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER). Ignored where the
+ * device has no fragment density map. */
+#define SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN "SDL.gpu.graphicspipeline.create.vulkan.fragment_density_map"
 
 /**
  * Creates a sampler object to be used when binding textures in a graphics
@@ -2864,6 +2879,16 @@ extern SDL_DECLSPEC SDL_GPUTexture * SDLCALL SDL_CreateGPUTexture(
 #define SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_DEPTH_FLOAT     "SDL.gpu.texture.create.d3d12.clear.depth"
 #define SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_STENCIL_NUMBER  "SDL.gpu.texture.create.d3d12.clear.stencil"
 #define SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING                 "SDL.gpu.texture.create.name"
+
+/* (Vulkan only) The texture is a fragment density map: R8G8_UNORM, sampler
+ * usage for its upload, each texel the density of shading over its area of
+ * a framebuffer. Ignored where the device has no fragment density map. */
+#define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN "SDL.gpu.texture.create.vulkan.fragment_density_map"
+/* (Vulkan only) A color target: the SDL_GPUTexture made with
+ * SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN that shades
+ * every render pass whose first color target it is. Its pipelines are made
+ * with SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN. */
+#define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER          "SDL.gpu.texture.create.vulkan.density_map"
 
 /**
  * Creates a buffer object to be used in graphics or compute workflows.

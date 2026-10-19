@@ -1,0 +1,467 @@
+Ludwerk: a fragment density map on Vulkan, for a headset's foveated rendering.
+
+SDL_GPU draws every pixel of a render pass at the same density. A headset
+shades where the eye looks at full density and less towards the edges of
+the lens, which on a phone's GPU is the largest saving a frame has; the
+extension for it, VK_EXT_fragment_density_map, is a mobile GPU's. With this
+patch the Vulkan backend enables the extension where the device has it
+(its feature comes with it) and says, as device properties, how large an
+area of a framebuffer a density texel covers. A texture made with
+SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN is a
+density map; a color target made with
+SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER names one, and a
+render pass whose first color target it is carries that map as its
+fragment density map attachment, in its layout for the pass and back
+after it. A pipeline bound in such passes is made with
+SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN,
+against a render pass with the same attachment. On a device without the
+extension every property is ignored and nothing is drawn differently.
+Upstream has no fragment density map; send it, or drop it when a pinned
+release carries one.
+
+diff --git a/include/SDL3/SDL_gpu.h b/include/SDL3/SDL_gpu.h
+index d1cb701..5b43eea 100644
+--- a/include/SDL3/SDL_gpu.h
++++ b/include/SDL3/SDL_gpu.h
+@@ -2608,6 +2608,15 @@ extern SDL_DECLSPEC SDL_PropertiesID SDLCALL SDL_GetGPUDeviceProperties(SDL_GPUD
+ #define SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING     "SDL.gpu.device.driver_version"
+ #define SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING        "SDL.gpu.device.driver_info"
+ 
++/* (Vulkan only) The smallest and largest area of the framebuffer one texel
++ * of a fragment density map covers, where the device supports
++ * VK_EXT_fragment_density_map; absent otherwise. Size a density map by the
++ * largest. */
++#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_WIDTH_NUMBER  "SDL.gpu.device.vulkan.fragment_density.min_texel_width"
++#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_HEIGHT_NUMBER "SDL.gpu.device.vulkan.fragment_density.min_texel_height"
++#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_WIDTH_NUMBER  "SDL.gpu.device.vulkan.fragment_density.max_texel_width"
++#define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_HEIGHT_NUMBER "SDL.gpu.device.vulkan.fragment_density.max_texel_height"
++
+ 
+ /* State Creation */
+ 
+@@ -2689,6 +2698,12 @@ extern SDL_DECLSPEC SDL_GPUGraphicsPipeline * SDLCALL SDL_CreateGPUGraphicsPipel
+ 
+ #define SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_NAME_STRING "SDL.gpu.graphicspipeline.create.name"
+ 
++/* (Vulkan only) The pipeline is bound in render passes whose first color
++ * target names a fragment density map
++ * (SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER). Ignored where the
++ * device has no fragment density map. */
++#define SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN "SDL.gpu.graphicspipeline.create.vulkan.fragment_density_map"
++
+ /**
+  * Creates a sampler object to be used when binding textures in a graphics
+  * workflow.
+@@ -2865,6 +2880,16 @@ extern SDL_DECLSPEC SDL_GPUTexture * SDLCALL SDL_CreateGPUTexture(
+ #define SDL_PROP_GPU_TEXTURE_CREATE_D3D12_CLEAR_STENCIL_NUMBER  "SDL.gpu.texture.create.d3d12.clear.stencil"
+ #define SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING                 "SDL.gpu.texture.create.name"
+ 
++/* (Vulkan only) The texture is a fragment density map: R8G8_UNORM, sampler
++ * usage for its upload, each texel the density of shading over its area of
++ * a framebuffer. Ignored where the device has no fragment density map. */
++#define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN "SDL.gpu.texture.create.vulkan.fragment_density_map"
++/* (Vulkan only) A color target: the SDL_GPUTexture made with
++ * SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN that shades
++ * every render pass whose first color target it is. Its pipelines are made
++ * with SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN. */
++#define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER          "SDL.gpu.texture.create.vulkan.density_map"
++
+ /**
+  * Creates a buffer object to be used in graphics or compute workflows.
+  *
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index 23eeb70..4392637 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -68,6 +68,8 @@ typedef struct VulkanExtensions
+     Uint8 MSFT_layered_driver;
+     // Only required for decoding HDR ASTC textures
+     Uint8 EXT_texture_compression_astc_hdr;
++    // Only required for foveated rendering
++    Uint8 EXT_fragment_density_map;
+ } VulkanExtensions;
+ 
+ // Defines
+@@ -694,7 +696,8 @@ typedef enum VulkanTextureUsageMode
+     VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE,
+     VULKAN_TEXTURE_USAGE_MODE_COLOR_ATTACHMENT,
+     VULKAN_TEXTURE_USAGE_MODE_DEPTH_STENCIL_ATTACHMENT,
+-    VULKAN_TEXTURE_USAGE_MODE_PRESENT
++    VULKAN_TEXTURE_USAGE_MODE_PRESENT,
++    VULKAN_TEXTURE_USAGE_MODE_FRAGMENT_DENSITY_MAP
+ } VulkanTextureUsageMode;
+ 
+ typedef enum VulkanUniformBufferStage
+@@ -948,6 +951,7 @@ typedef struct RenderPassHashTableKey
+     Uint32 numResolveTargets;
+     RenderPassDepthStencilTargetDescription depthStencilTargetDescription;
+     VkSampleCountFlagBits sampleCount;
++    VkFormat densityMapFormat; // VK_FORMAT_UNDEFINED with none
+ } RenderPassHashTableKey;
+ 
+ typedef struct VulkanRenderPassHashTableValue
+@@ -962,6 +966,7 @@ typedef struct FramebufferHashTableKey
+     VkImageView resolveAttachmentViews[MAX_COLOR_TARGET_BINDINGS];
+     Uint32 numResolveAttachments;
+     VkImageView depthStencilAttachmentView;
++    VkImageView densityMapView;
+     Uint32 width;
+     Uint32 height;
+ } FramebufferHashTableKey;
+@@ -1008,6 +1013,7 @@ typedef struct VulkanCommandBuffer
+     Uint32 resolveAttachmentSubresourceCount;
+ 
+     VulkanTextureSubresource *depthStencilAttachmentSubresource; // may be NULL
++    VulkanTextureSubresource *densityMapSubresource;             // may be NULL
+ 
+     // Dynamic state
+ 
+@@ -1186,6 +1192,10 @@ struct VulkanRenderer
+     bool supportsPhysicalDeviceProperties2;
+     bool supportsPortabilityEnumeration;
+     bool supportsFillModeNonSolid;
++    // VK_EXT_fragment_density_map enabled, and the area a density texel covers.
++    bool supportsFragmentDensityMap;
++    VkExtent2D minFragmentDensityTexelSize;
++    VkExtent2D maxFragmentDensityTexelSize;
+     bool supportsMultiDrawIndirect;
+ 
+     VulkanMemoryAllocator *memoryAllocator;
+@@ -2797,6 +2807,10 @@ static void VULKAN_INTERNAL_TextureMemoryBarrier(
+         srcStages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+         memoryBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+         memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
++    } else if (sourceUsageMode == VULKAN_TEXTURE_USAGE_MODE_FRAGMENT_DENSITY_MAP) {
++        srcStages = VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
++        memoryBarrier.srcAccessMask = VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT;
++        memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+     } else {
+         SDL_LogError(SDL_LOG_CATEGORY_GPU, "Unrecognized texture source barrier type!");
+         return;
+@@ -2838,6 +2852,10 @@ static void VULKAN_INTERNAL_TextureMemoryBarrier(
+         dstStages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+         memoryBarrier.dstAccessMask = 0;
+         memoryBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++    } else if (destinationUsageMode == VULKAN_TEXTURE_USAGE_MODE_FRAGMENT_DENSITY_MAP) {
++        dstStages = VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT;
++        memoryBarrier.dstAccessMask = VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT;
++        memoryBarrier.newLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
+     } else {
+         SDL_LogError(SDL_LOG_CATEGORY_GPU, "Unrecognized texture destination barrier type!");
+         return;
+@@ -5838,6 +5856,10 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
+                              SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE)) {
+         vkUsageFlags |= VK_IMAGE_USAGE_STORAGE_BIT;
+     }
++    if (renderer->supportsFragmentDensityMap &&
++        SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, false)) {
++        vkUsageFlags |= VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT;
++    }
+ 
+     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+     imageCreateInfo.pNext = NULL;
+@@ -6178,10 +6200,12 @@ static VkRenderPass VULKAN_INTERNAL_CreateRenderPass(
+     VulkanRenderer *renderer,
+     const SDL_GPUColorTargetInfo *colorTargetInfos,
+     Uint32 numColorTargets,
+-    const SDL_GPUDepthStencilTargetInfo *depthStencilTargetInfo)
++    const SDL_GPUDepthStencilTargetInfo *depthStencilTargetInfo,
++    VkFormat densityMapFormat)
+ {
+     VkResult vulkanResult;
+-    VkAttachmentDescription attachmentDescriptions[2 * MAX_COLOR_TARGET_BINDINGS + 1 /* depth */];
++    VkAttachmentDescription attachmentDescriptions[2 * MAX_COLOR_TARGET_BINDINGS + 1 /* depth */ + 1 /* density map */];
++    VkRenderPassFragmentDensityMapCreateInfoEXT densityMapCreateInfo;
+     VkAttachmentReference colorAttachmentReferences[MAX_COLOR_TARGET_BINDINGS];
+     VkAttachmentReference resolveReferences[MAX_COLOR_TARGET_BINDINGS];
+     VkAttachmentReference depthStencilAttachmentReference;
+@@ -6277,6 +6301,23 @@ static VkRenderPass VULKAN_INTERNAL_CreateRenderPass(
+ 
+     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+     renderPassCreateInfo.pNext = NULL;
++    if (densityMapFormat != VK_FORMAT_UNDEFINED) {
++        attachmentDescriptions[attachmentDescriptionCount].flags = 0;
++        attachmentDescriptions[attachmentDescriptionCount].format = densityMapFormat;
++        attachmentDescriptions[attachmentDescriptionCount].samples = VK_SAMPLE_COUNT_1_BIT;
++        attachmentDescriptions[attachmentDescriptionCount].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
++        attachmentDescriptions[attachmentDescriptionCount].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        attachmentDescriptions[attachmentDescriptionCount].finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        densityMapCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_FRAGMENT_DENSITY_MAP_CREATE_INFO_EXT;
++        densityMapCreateInfo.pNext = NULL;
++        densityMapCreateInfo.fragmentDensityMapAttachment.attachment = attachmentDescriptionCount;
++        densityMapCreateInfo.fragmentDensityMapAttachment.layout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        renderPassCreateInfo.pNext = &densityMapCreateInfo;
++        attachmentDescriptionCount += 1;
++    }
+     renderPassCreateInfo.flags = 0;
+     renderPassCreateInfo.pAttachments = attachmentDescriptions;
+     renderPassCreateInfo.attachmentCount = attachmentDescriptionCount;
+@@ -6299,9 +6340,11 @@ static VkRenderPass VULKAN_INTERNAL_CreateRenderPass(
+ static VkRenderPass VULKAN_INTERNAL_CreateTransientRenderPass(
+     VulkanRenderer *renderer,
+     SDL_GPUGraphicsPipelineTargetInfo targetInfo,
+-    VkSampleCountFlagBits sampleCount)
++    VkSampleCountFlagBits sampleCount,
++    bool densityMap)
+ {
+-    VkAttachmentDescription attachmentDescriptions[MAX_COLOR_TARGET_BINDINGS + 1 /* depth */];
++    VkAttachmentDescription attachmentDescriptions[MAX_COLOR_TARGET_BINDINGS + 1 /* depth */ + 1 /* density map */];
++    VkRenderPassFragmentDensityMapCreateInfoEXT densityMapCreateInfo;
+     VkAttachmentReference colorAttachmentReferences[MAX_COLOR_TARGET_BINDINGS];
+     VkAttachmentReference depthStencilAttachmentReference;
+     SDL_GPUColorTargetDescription attachmentDescription;
+@@ -6369,6 +6412,23 @@ static VkRenderPass VULKAN_INTERNAL_CreateTransientRenderPass(
+ 
+     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+     renderPassCreateInfo.pNext = NULL;
++    if (densityMap) {
++        attachmentDescriptions[attachmentDescriptionCount].flags = 0;
++        attachmentDescriptions[attachmentDescriptionCount].format = VK_FORMAT_R8G8_UNORM;
++        attachmentDescriptions[attachmentDescriptionCount].samples = VK_SAMPLE_COUNT_1_BIT;
++        attachmentDescriptions[attachmentDescriptionCount].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
++        attachmentDescriptions[attachmentDescriptionCount].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
++        attachmentDescriptions[attachmentDescriptionCount].initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        attachmentDescriptions[attachmentDescriptionCount].finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        densityMapCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_FRAGMENT_DENSITY_MAP_CREATE_INFO_EXT;
++        densityMapCreateInfo.pNext = NULL;
++        densityMapCreateInfo.fragmentDensityMapAttachment.attachment = attachmentDescriptionCount;
++        densityMapCreateInfo.fragmentDensityMapAttachment.layout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT;
++        renderPassCreateInfo.pNext = &densityMapCreateInfo;
++        attachmentDescriptionCount += 1;
++    }
+     renderPassCreateInfo.flags = 0;
+     renderPassCreateInfo.pAttachments = attachmentDescriptions;
+     renderPassCreateInfo.attachmentCount = attachmentDescriptionCount;
+@@ -6436,7 +6496,9 @@ static SDL_GPUGraphicsPipeline *VULKAN_CreateGraphicsPipeline(
+     VkRenderPass transientRenderPass = VULKAN_INTERNAL_CreateTransientRenderPass(
+         renderer,
+         createinfo->target_info,
+-        SDLToVK_SampleCount[createinfo->multisample_state.sample_count]);
++        SDLToVK_SampleCount[createinfo->multisample_state.sample_count],
++        renderer->supportsFragmentDensityMap &&
++            SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, false));
+ 
+     // Dynamic state
+ 
+@@ -7306,7 +7368,8 @@ static VkRenderPass VULKAN_INTERNAL_FetchRenderPass(
+     VulkanRenderer *renderer,
+     const SDL_GPUColorTargetInfo *colorTargetInfos,
+     Uint32 numColorTargets,
+-    const SDL_GPUDepthStencilTargetInfo *depthStencilTargetInfo)
++    const SDL_GPUDepthStencilTargetInfo *depthStencilTargetInfo,
++    VulkanTextureContainer *densityMap)
+ {
+     VulkanRenderPassHashTableValue *renderPassWrapper = NULL;
+     VkRenderPass renderPassHandle;
+@@ -7349,6 +7412,8 @@ static VkRenderPass VULKAN_INTERNAL_FetchRenderPass(
+         key.depthStencilTargetDescription.stencilStoreOp = depthStencilTargetInfo->stencil_store_op;
+     }
+ 
++    key.densityMapFormat = densityMap != NULL ? SDLToVK_TextureFormat[densityMap->header.info.format] : VK_FORMAT_UNDEFINED;
++
+     SDL_LockMutex(renderer->renderPassFetchLock);
+ 
+     bool result = SDL_FindInHashTable(
+@@ -7365,7 +7430,8 @@ static VkRenderPass VULKAN_INTERNAL_FetchRenderPass(
+         renderer,
+         colorTargetInfos,
+         numColorTargets,
+-        depthStencilTargetInfo);
++        depthStencilTargetInfo,
++        key.densityMapFormat);
+ 
+     if (renderPassHandle == VK_NULL_HANDLE) {
+         SDL_UnlockMutex(renderer->renderPassFetchLock);
+@@ -7395,13 +7461,14 @@ static VulkanFramebuffer *VULKAN_INTERNAL_FetchFramebuffer(
+     const SDL_GPUColorTargetInfo *colorTargetInfos,
+     Uint32 numColorTargets,
+     const SDL_GPUDepthStencilTargetInfo *depthStencilTargetInfo,
++    VulkanTextureContainer *densityMap,
+     Uint32 width,
+     Uint32 height)
+ {
+     VulkanFramebuffer *vulkanFramebuffer = NULL;
+     VkFramebufferCreateInfo framebufferInfo;
+     VkResult result;
+-    VkImageView imageViewAttachments[2 * MAX_COLOR_TARGET_BINDINGS + 1 /* depth */];
++    VkImageView imageViewAttachments[2 * MAX_COLOR_TARGET_BINDINGS + 1 /* depth */ + 1 /* density map */];
+     FramebufferHashTableKey key;
+     Uint32 attachmentCount = 0;
+     Uint32 i;
+@@ -7444,6 +7511,8 @@ static VulkanFramebuffer *VULKAN_INTERNAL_FetchFramebuffer(
+         key.depthStencilAttachmentView = subresource->depthStencilView;
+     }
+ 
++    key.densityMapView = densityMap != NULL ? densityMap->activeTexture->fullView : VK_NULL_HANDLE;
++
+     key.width = width;
+     key.height = height;
+ 
+@@ -7502,6 +7571,11 @@ static VulkanFramebuffer *VULKAN_INTERNAL_FetchFramebuffer(
+         attachmentCount += 1;
+     }
+ 
++    if (key.densityMapView != VK_NULL_HANDLE) {
++        imageViewAttachments[attachmentCount] = key.densityMapView;
++        attachmentCount += 1;
++    }
++
+     framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+     framebufferInfo.pNext = NULL;
+     framebufferInfo.flags = 0;
+@@ -8042,13 +8116,34 @@ static void VULKAN_BeginRenderPass(
+         clearCount += 1;
+     }
+ 
++    // The density map the first color target names, where the device has one.
++    VulkanTextureContainer *densityMap = NULL;
++    if (renderer->supportsFragmentDensityMap && numColorTargets > 0) {
++        VulkanTextureContainer *first = (VulkanTextureContainer *)colorTargetInfos[0].texture;
++        densityMap = (VulkanTextureContainer *)SDL_GetPointerProperty(
++            first->header.info.props,
++            SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER,
++            NULL);
++    }
++    if (densityMap != NULL) {
++        VulkanTextureSubresource *densitySubresource = VULKAN_INTERNAL_FetchTextureSubresource(densityMap, 0, 0);
++        VULKAN_INTERNAL_TextureSubresourceTransitionFromDefaultUsage(
++            renderer,
++            vulkanCommandBuffer,
++            VULKAN_TEXTURE_USAGE_MODE_FRAGMENT_DENSITY_MAP,
++            densitySubresource);
++        vulkanCommandBuffer->densityMapSubresource = densitySubresource;
++        VULKAN_INTERNAL_TrackTexture(vulkanCommandBuffer, densitySubresource->parent);
++    }
++
+     // Fetch required render objects
+ 
+     renderPass = VULKAN_INTERNAL_FetchRenderPass(
+         renderer,
+         colorTargetInfos,
+         numColorTargets,
+-        depthStencilTargetInfo);
++        depthStencilTargetInfo,
++        densityMap);
+ 
+     if (renderPass == VK_NULL_HANDLE) {
+         return;
+@@ -8060,6 +8155,7 @@ static void VULKAN_BeginRenderPass(
+         colorTargetInfos,
+         numColorTargets,
+         depthStencilTargetInfo,
++        densityMap,
+         framebufferWidth,
+         framebufferHeight);
+ 
+@@ -8300,6 +8396,15 @@ static void VULKAN_EndRenderPass(
+         vulkanCommandBuffer->depthStencilAttachmentSubresource = NULL;
+     }
+ 
++    if (vulkanCommandBuffer->densityMapSubresource != NULL) {
++        VULKAN_INTERNAL_TextureSubresourceTransitionToDefaultUsage(
++            renderer,
++            vulkanCommandBuffer,
++            VULKAN_TEXTURE_USAGE_MODE_FRAGMENT_DENSITY_MAP,
++            vulkanCommandBuffer->densityMapSubresource);
++        vulkanCommandBuffer->densityMapSubresource = NULL;
++    }
++
+     vulkanCommandBuffer->currentGraphicsPipeline = NULL;
+ 
+     vulkanCommandBuffer->vertexResourceDescriptorSet = VK_NULL_HANDLE;
+@@ -9754,6 +9859,7 @@ static SDL_GPUCommandBuffer *VULKAN_AcquireCommandBuffer(
+     SDL_zeroa(commandBuffer->colorAttachmentSubresources);
+     SDL_zeroa(commandBuffer->resolveAttachmentSubresources);
+     commandBuffer->depthStencilAttachmentSubresource = NULL;
++    commandBuffer->densityMapSubresource = NULL;
+     commandBuffer->colorAttachmentSubresourceCount = 0;
+     commandBuffer->resolveAttachmentSubresourceCount = 0;
+ 
+@@ -11328,7 +11434,7 @@ static inline Uint8 CheckDeviceExtensions(
+         supports->ext = 1;                   \
+     }
+         CHECK(KHR_swapchain)
+-        else CHECK(KHR_maintenance1) else CHECK(KHR_driver_properties) else CHECK(KHR_portability_subset) else CHECK(MSFT_layered_driver) else CHECK(EXT_texture_compression_astc_hdr)
++        else CHECK(KHR_maintenance1) else CHECK(KHR_driver_properties) else CHECK(KHR_portability_subset) else CHECK(MSFT_layered_driver) else CHECK(EXT_texture_compression_astc_hdr) else CHECK(EXT_fragment_density_map)
+ #undef CHECK
+     }
+ 
+@@ -11344,7 +11450,8 @@ static inline Uint32 GetDeviceExtensionCount(VulkanExtensions *supports)
+         supports->KHR_driver_properties +
+         supports->KHR_portability_subset +
+         supports->MSFT_layered_driver +
+-        supports->EXT_texture_compression_astc_hdr);
++        supports->EXT_texture_compression_astc_hdr +
++        supports->EXT_fragment_density_map);
+ }
+ 
+ static inline void CreateDeviceExtensionArray(
+@@ -11362,6 +11469,7 @@ static inline void CreateDeviceExtensionArray(
+     CHECK(KHR_portability_subset)
+     CHECK(MSFT_layered_driver)
+     CHECK(EXT_texture_compression_astc_hdr)
++    CHECK(EXT_fragment_density_map)
+ #undef CHECK
+ }
+ 
+@@ -12650,6 +12758,30 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+         renderer->supportsMultiDrawIndirect = true;
+     }
+ 
++    // A fragment density map, where the device has the extension and says how
++    // large a density texel is.
++    VkPhysicalDeviceFragmentDensityMapFeaturesEXT densityMapFeatures;
++    SDL_zero(densityMapFeatures);
++    renderer->supportsFragmentDensityMap = false;
++    if (renderer->supports.EXT_fragment_density_map && renderer->vkGetPhysicalDeviceProperties2KHR != NULL) {
++        VkPhysicalDeviceFragmentDensityMapPropertiesEXT densityMapProperties;
++        VkPhysicalDeviceProperties2KHR properties;
++        SDL_zero(densityMapProperties);
++        SDL_zero(properties);
++        densityMapProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
++        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
++        properties.pNext = &densityMapProperties;
++        renderer->vkGetPhysicalDeviceProperties2KHR(renderer->physicalDevice, &properties);
++        if (densityMapProperties.maxFragmentDensityTexelSize.width > 0 &&
++            densityMapProperties.maxFragmentDensityTexelSize.height > 0) {
++            renderer->supportsFragmentDensityMap = true;
++            renderer->minFragmentDensityTexelSize = densityMapProperties.minFragmentDensityTexelSize;
++            renderer->maxFragmentDensityTexelSize = densityMapProperties.maxFragmentDensityTexelSize;
++            densityMapFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
++            densityMapFeatures.fragmentDensityMap = VK_TRUE;
++        }
++    }
++
+     // creating the logical device
+ 
+     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+@@ -12757,6 +12889,10 @@ static Uint8 VULKAN_INTERNAL_CreateLogicalDevice(
+     } else {
+         deviceCreateInfo.pEnabledFeatures = &features->desiredVulkan10DeviceFeatures;
+     }
++    if (renderer->supportsFragmentDensityMap) {
++        densityMapFeatures.pNext = (void *)deviceCreateInfo.pNext;
++        deviceCreateInfo.pNext = &densityMapFeatures;
++    }
+ 
+ #ifdef HAVE_GPU_OPENXR
+     if (renderer->xrInstance) {
+@@ -13605,6 +13741,13 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
+         return NULL;
+     }
+ 
++    if (renderer->supportsFragmentDensityMap) {
++        SDL_SetNumberProperty(renderer->props, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_WIDTH_NUMBER, renderer->minFragmentDensityTexelSize.width);
++        SDL_SetNumberProperty(renderer->props, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MIN_TEXEL_HEIGHT_NUMBER, renderer->minFragmentDensityTexelSize.height);
++        SDL_SetNumberProperty(renderer->props, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_WIDTH_NUMBER, renderer->maxFragmentDensityTexelSize.width);
++        SDL_SetNumberProperty(renderer->props, SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_HEIGHT_NUMBER, renderer->maxFragmentDensityTexelSize.height);
++    }
++
+     // FIXME: just move this into this function
+     result = (SDL_GPUDevice *)SDL_calloc(1, sizeof(SDL_GPUDevice));
+     ASSIGN_DRIVER(VULKAN)
