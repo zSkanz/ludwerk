@@ -63,7 +63,11 @@ function(pops_of name out)
         message("${host_output}")
         message(FATAL_ERROR "cloth shadow flicker: ${name}: the host exited ${host_result}")
     endif()
-    file(GLOB pictures "${OUTPUT}/${name}/frame-*.png")
+    # **By name, from their folder**: three hundred frames by their whole
+    # path are past what one command line on Windows holds once the build
+    # root is a few characters longer than the default, and the tool then
+    # never starts.
+    file(GLOB pictures RELATIVE "${OUTPUT}/${name}" "${OUTPUT}/${name}/frame-*.png")
     list(SORT pictures)
     list(LENGTH pictures taken)
     if(taken LESS 300)
@@ -72,6 +76,7 @@ function(pops_of name out)
     list(SUBLIST pictures ${LEFT_OUT} -1 pictures)
     execute_process(
         COMMAND "${FLICKER}" --pops=6,24 ${pictures}
+        WORKING_DIRECTORY "${OUTPUT}/${name}"
         RESULT_VARIABLE flicker_result
         OUTPUT_VARIABLE flicker_output
         ERROR_VARIABLE flicker_output)

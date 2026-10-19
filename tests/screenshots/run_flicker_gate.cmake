@@ -67,10 +67,15 @@ function(measure label mode result)
             set(padded "0${padded}")
             math(EXPR digits "${digits} + 1")
         endwhile()
-        list(APPEND frames "${OUTPUT}/${label}/f-${padded}.png")
+        list(APPEND frames "f-${padded}.png")
     endforeach()
+    # **By name, from their folder**: frames by their whole
+    # path are past what one command line on Windows holds once the build
+    # root is a few characters longer than the default, and the tool then
+    # never starts.
     execute_process(
         COMMAND "${FLICKER}" ${frames}
+        WORKING_DIRECTORY "${OUTPUT}/${label}"
         RESULT_VARIABLE measured
         OUTPUT_VARIABLE report
         ERROR_VARIABLE report)
