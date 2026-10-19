@@ -199,10 +199,18 @@ hold:Release()                              -- the grip opens
 ```
 
 `Strength` in the options, or a `GrabStrength` attribute on the part, is the
-pull as a multiple of the part's weight: 4 by default. In an online game the
-holder's machine must simulate the part for it to move at once in their
-hand, so the server gives it to them with `SetNetworkOwner` when they reach
-for it.
+pull as a multiple of the part's weight: 4 by default.
+
+**In an online game** the holder's machine must simulate the part for it to
+move at once in their hand. The authority calls `xrgrab.serve()` once, and
+from then on a hand that closes on a part asks it. The part becomes the
+holder's (`SetNetworkOwner`) where it is loose, the hand is within `Reach`
+of it (0.5 m) and within `ArmLength` of the player's character (2 m), and
+nobody else holds it. The hand holds the part at once, and lets it go if the
+answer is no. `Allow` adds the game's own rule, and `Take = true` lets a
+player take a part out of another's hand. Let go, the part stays the
+thrower's for `Settle` seconds (2 by default) so its flight is theirs, then
+returns to the authority.
 
 ## The controllers are input
 

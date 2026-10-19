@@ -1162,6 +1162,18 @@ if(ENG_BUILD_TESTS)
     # the server has changed one property of each. Every one of the sixty lines
     # but the emitter's was missing before, and the emitter's differed. The
     # joiner draws nothing, so this runs where there is no GPU.
+    # **A part held over the network** (`@engine/xrgrab`): two joiners 150 ms
+    # from a server; the first holds a block and it is theirs, and the second
+    # is refused it while held and refused another from afar.
+    add_test(NAME netcode_grab
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/grab
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-grab
+            -DPORT=47940
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_grab.cmake)
+    set_tests_properties(netcode_grab PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
     add_test(NAME netcode_carried
         COMMAND ${CMAKE_COMMAND}
             -DHOST=$<TARGET_FILE:engine_host>

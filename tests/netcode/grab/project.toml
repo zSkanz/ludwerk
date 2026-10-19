@@ -1,0 +1,11 @@
+# A part held in a headset, over a real connection (`@engine/xrgrab`): a
+# server and two joiners 150 ms away. The first holds a block and lifts it,
+# and it is theirs; the second reaches for the same block and is refused,
+# reaches for another from too far and is refused, and then holds it from
+# near. `run_grab.cmake` runs the three and reads what each said.
+
+[project]
+name = "Grab"
+id = "dev.ludwerk.netcode-grab"
+version = "1.0.0"
+engine = "0.1"

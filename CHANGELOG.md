@@ -14,7 +14,9 @@ here.
 - `@engine/xrgrab` holds a part in a headset with a force of its own, so a
   block pushed into another or into a table stops there, and a part let go
   flies at the hand's speed. The XR room holds its crates and its ball with
-  it.
+  it. In an online game, `xrgrab.serve()` on the authority gives a part to
+  the player whose hand closes on it, and refuses one another player holds
+  or that is out of reach.
 
 ### Fixed
 
