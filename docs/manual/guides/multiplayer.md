@@ -1307,6 +1307,7 @@ and written to the log with who ran it.
 | `suspect <player\|key>` | One player's suspicions in the last hour, line by line. |
 | `say <text>` | A line every player hears: `NetworkService.Announced` fires with it. |
 | `save` | Writes every save that is waiting, now. |
+| `data`, `moves` | The game's database, its backup and its move log: see [Backups and the move log](manual:guides/online-games#backups-and-the-move-log). In a world a manager runs, they are the manager's. |
 | `stop [minutes]` | Tells every player, and each minute after; then saves, removes everybody with a reason, and ends the process cleanly. A second `stop` cancels the countdown. |
 
 `<player>` is a name, a `UserId` or the start of a key; one that matches two
@@ -1361,10 +1362,13 @@ The same console can be reached from another machine, by key: see
 
 **Every remote is limited on the server.** Each player may call one
 `RemoteEvent`, `UnreliableRemoteEvent` or `RemoteFunction` 240 times a second,
-480 at once, with at most 16 KiB in one call; calls past it are dropped before
-any script sees them. That is four times what a game sending once a frame on a
-240 Hz display needs. A channel of your own that needs more says so:
-`remote:SetRateLimit(600)`, or `remote:SetRateLimit(0)` for no limit.
+480 at once, with at most 16 KiB in one call and 1,024 entries in all its
+tables; calls past it are dropped before any script sees them, as is a table
+nested deeper than eight. That is four times what a game sending once a frame
+on a 240 Hz display needs. A channel of your own that needs more says so:
+`remote:SetRateLimit(600)`, or `remote:SetRateLimit(0)` for no limit on the
+rate; a `MaxBytes` attribute of nought on the remote lifts the limits on a
+call's size.
 
 **What your game knows, it says once**, and the server counts each player's:
 

@@ -107,6 +107,17 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
     count("manager.max_players", 0, 1000000, config.maxPlayers);
     count("manager.queue_max", 0, 1000000, config.queueMax);
     count("manager.queue_grace_seconds", 0, 3600, config.queueGraceSeconds);
+    if (document.has("data.backup_every_hours")) {
+        const std::optional<core::f64> hours = document.number("data.backup_every_hours");
+        // A year at most; a quarter of an hour at least, where it is on.
+        if (!hours.has_value() || *hours < 0.0 || *hours > 8760.0 || (*hours > 0.0 && *hours < 0.25)) {
+            error = problem(ENG_TR("manager.err.servers_value"), source, "data.backup_every_hours");
+            return std::nullopt;
+        }
+        config.backupEveryHours = *hours;
+    }
+    count("data.backup_keep", 1, 1000, config.backupKeep);
+    count("data.moves_keep_days", 0, 36500, config.movesKeepDays);
     std::set<std::string> names;
     for (core::usize at = 0; at < document.count("world"); ++at) {
         const std::string prefix = "world." + std::to_string(at) + ".";

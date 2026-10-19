@@ -100,6 +100,8 @@ int runManager(const std::filesystem::path& serversFile, const std::filesystem::
             std::fflush(stdout);
         };
     }
+    options.exitAtTransaction = play.exitAtTransaction;
+    options.exitAfterCommit = play.exitAfterCommit;
     options.transports = []() { return net::createEnetTransport(); };
     options.clock = []() { return platform::nowNs(); };
     options.unixClock = []() {

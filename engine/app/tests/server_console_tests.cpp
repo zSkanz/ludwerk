@@ -83,7 +83,8 @@ struct Console
                                         .replication = server.network->replication(),
                                         .flushSaves = [&server]() { server.host->flushSaves(); },
                                         .nowNs = 1'000'000'000ull,
-                                        .nowUnix = now};
+                                        .nowUnix = now,
+                                        .data = nullptr};
     }
 
     void type(Machine& server, std::string_view line)

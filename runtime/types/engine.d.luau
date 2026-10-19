@@ -5930,8 +5930,9 @@ declare extern type RemoteEvent extends Instance with
     --- `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it
     --- are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit,
     --- for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of
-    --- 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same
-    --- numbers.
+    --- 480, and calls of up to 16 KiB holding at most 1,024 table entries in all; the attributes
+    --- `RateLimit`, `Burst` and `MaxBytes` hold the same numbers, and a `MaxBytes` of nought lifts both
+    --- limits on a call's size.
     function SetRateLimit(self, perSecond: number, burst: number?): ()
     --- Sends a message to the authority on behalf of one of this machine's local players, on a machine
     --- that is itself the authority. `ServerReceived` fires with that player. Raises an error on a
@@ -5967,8 +5968,9 @@ declare extern type UnreliableRemoteEvent extends Instance with
     --- `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it
     --- are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit,
     --- for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of
-    --- 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same
-    --- numbers.
+    --- 480, and calls of up to 16 KiB holding at most 1,024 table entries in all; the attributes
+    --- `RateLimit`, `Burst` and `MaxBytes` hold the same numbers, and a `MaxBytes` of nought lifts both
+    --- limits on a call's size.
     function SetRateLimit(self, perSecond: number, burst: number?): ()
     --- Sends a message to the authority on behalf of one of this machine's local players, on a machine
     --- that is itself the authority. `ServerReceived` fires with that player. Raises an error on a
@@ -5996,8 +5998,9 @@ declare extern type RemoteFunction extends Instance with
     --- `burst` may come at once (twice `perSecond`, and at least 480, when not given). Calls past it
     --- are dropped before any script sees them and are logged as a suspicion. Nought lifts the limit,
     --- for a game's own heavy channel. Without it a remote takes 240 calls a second with a burst of
-    --- 480, and calls of up to 16 KiB; the attributes `RateLimit`, `Burst` and `MaxBytes` hold the same
-    --- numbers.
+    --- 480, and calls of up to 16 KiB holding at most 1,024 table entries in all; the attributes
+    --- `RateLimit`, `Burst` and `MaxBytes` hold the same numbers, and a `MaxBytes` of nought lifts both
+    --- limits on a call's size.
     function SetRateLimit(self, perSecond: number, burst: number?): ()
     --- Sends a request to the authority, yields until it answers, and returns what its `OnServerInvoke`
     --- returned. Raises an error if the handler raised one, or if the server has no handler. On an

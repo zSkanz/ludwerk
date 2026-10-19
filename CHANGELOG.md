@@ -11,6 +11,14 @@ here.
 
 ### Added
 
+- The game's database at its operator's console: `data` says what it holds,
+  `data backup [path]` copies it while the game runs -- a few pages a pass,
+  so no world waits, and whole as of the moment it finished -- `moves` reads
+  the move log by owner, item or transaction, and `data undo <transaction>`
+  makes a transaction's moves the other way, all or nothing. `[data]` in
+  `servers.toml` schedules backups (`backup_every_hours`, `backup_keep`)
+  and keeps the move log `moves_keep_days`, 90 by default. A dedicated
+  server with no manager answers the same at its own console.
 - How a headset's eyes are drawn is the project's to set: `[xr]` and
   `[xr.android]` take `msaa`, `render_scale`, the sun shadows' resolution,
   distance, cascades and first split, and `refresh_rate`, each with a
@@ -495,10 +503,12 @@ here.
 - **Behaviour change: a client's calls of one remote are limited.** On the
   server, each player may call one `RemoteEvent`, `UnreliableRemoteEvent` or
   `RemoteFunction` 240 times a second, with up to 480 at once, and send at
-  most 16 KiB in one call; calls past it are dropped before any script sees
-  them and kept as a suspicion. The same for a project made before this as
-  for a new one. A game's own heavy channel lifts it with one line:
-  `remote:SetRateLimit(0)` (or sets its own: `remote:SetRateLimit(600)`).
+  most 16 KiB and 1,024 table entries in one call; calls past it are dropped
+  before any script sees them and kept as a suspicion. The same for a project
+  made before this as for a new one. A game's own heavy channel lifts it with
+  one line: `remote:SetRateLimit(0)` (or sets its own:
+  `remote:SetRateLimit(600)`), and a `MaxBytes` attribute of nought on the
+  remote lifts the limits on a call's size.
 - A dedicated server steps its characters on several threads: those that
   nothing they could change is near -- no loose part, no other character that
   could reach the same place in the tick -- step at once, the rest one after

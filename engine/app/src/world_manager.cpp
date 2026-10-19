@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <span>
 #include <utility>
@@ -12,6 +13,7 @@
 #include "engine/app/travel_pass.h"
 #include "engine/core/base64.h"
 #include "engine/core/i18n.h"
+#include "engine/core/json.h"
 #include "engine/core/log.h"
 #include "engine/core/ticket.h"
 #include "engine/net/secure_transport.h"
@@ -69,6 +71,9 @@ constexpr core::u64 StopLimitNs = 15 * NsPerSecond;
 // sends back are sent for this long (ADR 0222 §2).
 constexpr core::u64 ClosingNs = 5 * NsPerSecond;
 constexpr core::u64 ReturnNs = 120 * NsPerSecond;
+// What a test's kill at a transaction ends the process with: the code
+// `--exit-on-line` ends one with, so a driver reads both alike.
+constexpr int KilledAtTransaction = 86;
 
 // The engine's own world: its pipes the manager's.
 class EngineWorld final : public WorldProcess
@@ -255,6 +260,13 @@ std::optional<core::EngineError> WorldManager::start()
         }
     }
     m_data = std::make_unique<DataBroker>(store != nullptr ? std::move(store) : makeMemoryDataStore());
+    DataConsole::Options dataOptions;
+    dataOptions.backups = m_options.root / "data" / "backups";
+    dataOptions.game = m_options.projectId.empty() ? std::string{"game"} : m_options.projectId;
+    dataOptions.backupEveryHours = m_options.config.backupEveryHours;
+    dataOptions.backupKeep = m_options.config.backupKeep;
+    dataOptions.movesKeepDays = m_options.config.movesKeepDays;
+    m_dataConsole = std::make_unique<DataConsole>(std::move(dataOptions));
 
     for (const ServersConfig::World& config : m_options.config.worlds) {
         auto world = std::make_unique<World>();
@@ -854,6 +866,7 @@ void WorldManager::readWorld(World& world)
             log(world, line);
             if (m_options.worldLine)
                 m_options.worldLine(world.config.name, line);
+            core::exitOnRelayedLine(line);
         }
         start = end + 1;
     }
@@ -997,12 +1010,26 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
         return;
     }
     if (type == "data-op" && m_data != nullptr) {
+        // The test's kill, by the count of transactions alone: what else a
+        // world asks (items, balances) is not a moment a trade can be cut at.
+        bool exitAfter = false;
+        if (m_options.exitAtTransaction > 0) {
+            core::JsonDocument request;
+            if (request.parse(root["request"].asString(), "data-op") && request.root()["op"].asString() == "transact" &&
+                ++m_transactionsAsked == m_options.exitAtTransaction) {
+                if (!m_options.exitAfterCommit)
+                    std::_Exit(KilledAtTransaction);
+                exitAfter = true;
+            }
+        }
+        const std::string answer = runDataOp(m_data->store(), dataName(world), root["request"].asString());
+        if (exitAfter)
+            std::_Exit(KilledAtTransaction);
         core::JsonWriter result(core::JsonLayout::Compact);
         result.beginObject();
         result.field("type", "data-result");
         result.field("id", root["id"].asInteger(0));
-        result.field("answer",
-                     std::string_view{runDataOp(m_data->store(), dataName(world), root["request"].asString())});
+        result.field("answer", std::string_view{answer});
         result.endObject();
         send(world, result);
         return;
@@ -1345,6 +1372,8 @@ void WorldManager::frame()
         moveAll(old, next);
     }
     dataAnswers(now);
+    if (m_dataConsole != nullptr && m_data != nullptr && m_options.unixClock)
+        m_dataConsole->frame(*m_data, m_options.unixClock());
     // Drained: stopped once empty, or after a while whatever it holds.
     for (const std::unique_ptr<World>& world : m_worlds) {
         if (world->state != State::Draining || world->stopAsked)
@@ -1590,6 +1619,13 @@ std::string WorldManager::run(std::string_view line)
         update(std::filesystem::path(std::string(rest)));
         const std::array<core::I18nArg, 1> args{core::I18nArg{"path", rest}};
         return phrase(ENG_TR("manager.done.updating"), args);
+    }
+    // **The game's database** (ADR 0238 §7): here, in the one process that
+    // opens it.
+    if ((verb == "data" || verb == "moves") && m_dataConsole != nullptr && m_data != nullptr) {
+        const std::int64_t nowUnix = m_options.unixClock ? m_options.unixClock() : 0;
+        if (std::optional<DataConsole::Answer> answer = m_dataConsole->run(line, *m_data, nowUnix); answer.has_value())
+            return std::move(answer->text);
     }
     if (verb == "help")
         return phrase(ENG_TR("manager.usage"));

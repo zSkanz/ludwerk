@@ -12,6 +12,7 @@ engine_add_module(app
         src/external_changes.cpp
         src/managed_world.cpp
         src/data_broker.cpp
+        src/data_console.cpp
         src/data_ops.cpp
         src/data_store.cpp
         src/simulated_headset.cpp
@@ -856,6 +857,30 @@ if(ENG_BUILD_TESTS)
         set_tests_properties(data_trade_killed PROPERTIES
             PASS_REGULAR_EXPRESSION "runs killed while trading, and nothing was duplicated or lost"
             TIMEOUT 300)
+        # **The manager killed in the middle of a trade** (ADR 0238 §3),
+        # eight times, before a transaction ran and after it was written.
+        add_test(NAME data_manager_killed
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/trade
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-manager-killed
+                    -DPORT=47860
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_manager_killed.cmake)
+        set_tests_properties(data_manager_killed PROPERTIES
+            PASS_REGULAR_EXPRESSION "managers ended while trading, and nothing was duplicated or lost"
+            TIMEOUT 600)
+        # **A record carried by travel** (ADR 0238 §2): changed in the tick
+        # of the hop, loaded so by the next world.
+        add_test(NAME data_travel
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/travel
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-travel
+                    -DPORT=47880
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_travel.cmake)
+        set_tests_properties(data_travel PROPERTIES
+            PASS_REGULAR_EXPRESSION "the record changed in the tick of the hop is the one the next world loads"
+            TIMEOUT 200)
     endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the

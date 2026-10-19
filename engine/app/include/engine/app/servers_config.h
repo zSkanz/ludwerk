@@ -43,6 +43,14 @@ struct ServersConfig
     core::u32 queueMax = 10000;
     core::u32 queueGraceSeconds = 60;
 
+    // `[data]` (ADR 0238 §3, §7): an online backup of the game's database
+    // every `backup_every_hours` into `data/backups/` (0, never), the newest
+    // `backup_keep` kept; and the move log's lines kept `moves_keep_days`
+    // (0, for good).
+    core::f64 backupEveryHours = 0.0;
+    core::u32 backupKeep = 7;
+    core::u32 movesKeepDays = 90;
+
     // `[[world]]`: a world that runs while the manager does.
     struct World
     {

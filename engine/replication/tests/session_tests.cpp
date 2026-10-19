@@ -4919,6 +4919,13 @@ TEST_CASE("an owner cannot put what it owns across the map in one message")
     match.client.world.parts().find(mine)->cframe.position = core::DVec3{900.0, 1.0, 0.0};
     match.run(3);
     CHECK(match.server.world.parts().find(ball)->cframe.position.x < 10.0);
+    // **A suspicion** (ADR 0241 §3), under the player whose machine said it,
+    // and counted by its kind.
+    const auto& said = match.server.world.engineState();
+    REQUIRE_FALSE(said.suspicions.empty());
+    CHECK(said.suspicions.back().kind == "owner_beyond_reach");
+    CHECK(said.suspicions.back().player.valid());
+    CHECK(said.suspicionsByKind.at("owner_beyond_reach") >= 1u);
     // And no faster than reach allows, whatever speed it says.
     match.client.world.parts().find(mine)->cframe.position = core::DVec3{1.0, 1.0, 0.0};
     match.client.world.rigidBodies().find(mine)->linearVelocity = core::Vec3{1.0e5f, 0.0f, 0.0f};

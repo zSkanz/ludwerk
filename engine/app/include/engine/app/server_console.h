@@ -126,6 +126,10 @@ public:
         std::function<void()> flushSaves;
         core::u64 nowNs = 0;
         std::int64_t nowUnix = 0;
+        // **`data` and `moves`** (ADR 0238 §7), where this process keeps the
+        // game's database: the answer, and whether it failed. Absent in a
+        // world a manager runs, whose database is the manager's.
+        std::function<std::pair<std::string, bool>(std::string_view line)> data;
     };
 
     explicit ServerConsole(std::filesystem::path bansFile);

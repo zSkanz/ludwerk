@@ -55,6 +55,9 @@ void setLogTap(LogSink tap);
 // kills a run at a moment its own script names, with no clock in it. Empty
 // turns it off.
 void exitOnLogLine(std::string text, int code);
+// **A line another process wrote**, which this one passes on without logging
+// it -- a manager's worlds' output -- ends this one as its own line would.
+void exitOnRelayedLine(std::string_view line);
 // Also writes every line to `path`, in addition to wherever it already goes.
 //
 // **An addition, never a replacement.** Every gate, the conformance runner and

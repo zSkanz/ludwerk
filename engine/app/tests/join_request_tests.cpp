@@ -156,10 +156,20 @@ TEST_CASE("a joiner with a backend's ticket is their account, one without is ref
     REQUIRE(first.state() == Connected);
     CHECK(log.contains("added:account-1"));
 
-    // **Spent once**: the same ticket again is refused.
+    // **Spent once**: the same ticket again is refused -- and is a
+    // suspicion (ADR 0241 §3), as one signed by another key is.
+    const scene::EngineState& said = server.host->world().engineState();
+    const auto refusedBefore =
+        said.suspicionsByKind.contains("ticket_refused") ? said.suspicionsByKind.at("ticket_refused") : 0u;
     second.join(core::signTicket(backend.secret, "account-2", Game, unixNow(), 60, "t1"));
     run(server, {&first, &second}, 60);
     CHECK(second.state() == Offline);
+    const core::Ed25519Pair forger = core::ed25519Generate();
+    second.join(core::signTicket(forger.secret, "account-1", Game, unixNow(), 60, "t9"));
+    run(server, {&first, &second}, 60);
+    CHECK(second.state() == Offline);
+    REQUIRE(said.suspicionsByKind.contains("ticket_refused"));
+    CHECK(said.suspicionsByKind.at("ticket_refused") == refusedBefore + 2u);
 
     // **One session an account**: the same account from another machine
     // drops the first.
@@ -177,7 +187,8 @@ TEST_CASE("a joiner with a backend's ticket is their account, one without is ref
                                          .replication = server.network->replication(),
                                          .flushSaves = nullptr,
                                          .nowNs = 1,
-                                         .nowUnix = unixNow()});
+                                         .nowUnix = unixNow(),
+                                         .data = nullptr});
     first.join(core::signTicket(backend.secret, "account-1", Game, unixNow(), 60, "t3"));
     run(server, {&first, &second}, 60);
     CHECK(first.state() == Offline);

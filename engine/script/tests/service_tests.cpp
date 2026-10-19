@@ -1880,6 +1880,126 @@ TEST_CASE("ADR 0241: a client's calls of one remote are held to its rate and its
     CHECK(fixture.world->engineState().suspicionsByKind.at("remote_over_rate") >= 1520u);
 }
 
+TEST_CASE("ADR 0241: a megabyte, a table a hundred deep and a thousand entries never reach a script; once a frame at "
+          "240 Hz always does")
+{
+    Fixture fixture;
+    fixture.world->engineState().networkTopology = scene::NetworkTopology::Dedicated;
+    REQUIRE(fixture.failure(R"(game:GetService("NetworkService"))") == "");
+    const auto service = scene::networkServiceOf(*fixture.world, fixture.runtime->dataModel());
+    REQUIRE(service.valid());
+    const auto sender = scene::createPlayer(*fixture.world, service, 9, false);
+    REQUIRE(sender.valid());
+    CHECK(fixture.failure(R"(
+        local remote = Instance.new("RemoteEvent")
+        remote.Name = "Aim"
+        remote.Parent = workspace
+        workspace:SetAttribute("Heard", 0)
+        remote.ServerReceived:Connect(function()
+            workspace:SetAttribute("Heard", (workspace:GetAttribute("Heard") :: number) + 1)
+        end)
+    )") == "");
+    REQUIRE(fixture.failure(R"(workspace:FindFirstChild("Aim"):FireAllClients())") == "");
+    REQUIRE(fixture.world->engineState().remoteOutbox.size() == 1);
+    const core::InstanceId remote = fixture.world->engineState().remoteOutbox[0].remote;
+    fixture.world->engineState().remoteOutbox.clear();
+    // **Bytes as a modified client would send them**: what no encoder of
+    // ours makes, so written by hand -- one value, then its tag and body.
+    const auto send = [&](std::vector<core::u8> payload) {
+        scene::RemoteMessage message;
+        message.remote = remote;
+        message.toServer = true;
+        message.player = sender;
+        message.payload = std::move(payload);
+        fixture.world->engineState().remoteInbox.push_back(std::move(message));
+    };
+    const auto word = [](std::vector<core::u8>& out, core::u32 value) {
+        for (int byte = 0; byte < 4; ++byte)
+            out.push_back(static_cast<core::u8>(value >> (8 * byte)));
+    };
+    const auto heard = [&](int expected) {
+        return fixture.failure("assert(workspace:GetAttribute('Heard') == " + std::to_string(expected) +
+                               ", tostring(workspace:GetAttribute('Heard')))");
+    };
+    const auto lastKind = [&]() {
+        const auto& suspicions = fixture.world->engineState().suspicions;
+        return suspicions.empty() ? std::string{} : suspicions.back().kind;
+    };
+    constexpr core::u8 TagTrue = 2;
+    constexpr core::u8 TagNumber = 3;
+    constexpr core::u8 TagString = 4;
+    constexpr core::u8 TagTable = 7;
+
+    // A megabyte in one string.
+    {
+        std::vector<core::u8> payload{1, TagString};
+        word(payload, 1024u * 1024u);
+        payload.resize(payload.size() + 1024u * 1024u, 'x');
+        send(std::move(payload));
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+        CHECK(heard(0) == "");
+        CHECK(lastKind() == "remote_too_large");
+    }
+    // A table a hundred deep, each level one number key: small, and refused
+    // by the decoder before a script sees it.
+    {
+        std::vector<core::u8> payload{1};
+        for (int level = 0; level < 100; ++level) {
+            payload.push_back(TagTable);
+            word(payload, 1);
+            payload.push_back(TagNumber);
+            payload.resize(payload.size() + 8, 0);
+        }
+        payload.push_back(TagTrue);
+        send(std::move(payload));
+        engine::script::fireRemoteMessages(fixture.runtime->state());
+        fixture.tick();
+        CHECK(heard(0) == "");
+    }
+    // **A thousand entries are a call; past 1,024 is not**, though both are
+    // a few kilobytes.
+    const auto entries = [&](core::u32 count) {
+        std::vector<core::u8> payload{1, TagTable};
+        word(payload, count);
+        for (core::u32 at = 0; at < count; ++at) {
+            payload.push_back(TagTrue);
+            payload.push_back(TagTrue);
+        }
+        return payload;
+    };
+    send(entries(1000));
+    engine::script::fireRemoteMessages(fixture.runtime->state());
+    fixture.tick();
+    CHECK(heard(1) == "");
+    send(entries(1100));
+    engine::script::fireRemoteMessages(fixture.runtime->state());
+    fixture.tick();
+    CHECK(heard(1) == "");
+    CHECK(lastKind() == "remote_too_many_values");
+
+    // **Once a frame at 240 Hz**, four a tick for five seconds: every one
+    // heard, and nothing suspected.
+    const core::u64 suspectedBefore = fixture.world->engineState().suspicionsTotal;
+    lua_State* L = fixture.runtime->state();
+    for (int tick = 0; tick < 300; ++tick) {
+        for (int frame = 0; frame < 4; ++frame) {
+            scene::RemoteMessage message;
+            message.remote = remote;
+            message.toServer = true;
+            message.player = sender;
+            lua_pushvector(L, 1.0f, 2.0f, 3.0f);
+            engine::script::encodeRemoteArguments(L, lua_gettop(L), 1, message.payload, message.refs);
+            lua_pop(L, 1);
+            fixture.world->engineState().remoteInbox.push_back(std::move(message));
+        }
+        engine::script::fireRemoteMessages(L);
+        fixture.tick();
+    }
+    CHECK(heard(1 + 1200) == "");
+    CHECK(fixture.world->engineState().suspicionsTotal == suspectedBefore);
+}
+
 TEST_CASE("ADR 0241: an action's rate is the game's, a suspicion names who, and a mute is read by IsMuted")
 {
     Fixture fixture;

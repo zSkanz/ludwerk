@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "engine/app/data_broker.h"
+#include "engine/app/data_console.h"
 #include "engine/app/manager_link.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/crypto.h"
@@ -115,6 +116,12 @@ public:
         // **The game's data** (ADR 0238): absent, the database in `data/`
         // under `root`, named after the project; a test gives one in memory.
         std::function<std::unique_ptr<IDataStore>()> dataStore;
+        // **A test's kill in the middle of a trade** (ADR 0238 §3): the
+        // process ends, as a kill ends it, at the Nth transaction a world
+        // asks for -- before it runs, or once it is on the disk and before its
+        // answer is sent. 0 for never.
+        core::u32 exitAtTransaction = 0;
+        bool exitAfterCommit = false;
     };
 
     // One row of `worlds`.
@@ -273,6 +280,9 @@ private:
     Options m_options;
     core::Ed25519Pair m_signing;
     std::unique_ptr<DataBroker> m_data;
+    // `data` and `moves`, a backup copying, the move log's days (ADR 0238 §7).
+    std::unique_ptr<DataConsole> m_dataConsole;
+    core::u32 m_transactionsAsked = 0;
     core::u64 m_nextDataRun = 1;
     std::vector<std::unique_ptr<World>> m_worlds;
     // The launcher before an update, for one that fails.

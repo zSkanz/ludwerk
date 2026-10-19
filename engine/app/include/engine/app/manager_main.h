@@ -18,6 +18,10 @@ struct ManagerPlay
     core::u16 port = 0;
     std::filesystem::path project;
     std::filesystem::path root;
+    // **A test's kill** (`--exit-at-transaction=N`, `--exit-after-commit`),
+    // in a build with the test hooks: see `WorldManager::Options`.
+    core::u32 exitAtTransaction = 0;
+    bool exitAfterCommit = false;
 };
 
 // The manager of `serversFile`, starting its worlds with `engine`; the

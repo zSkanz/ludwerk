@@ -968,6 +968,98 @@ constexpr usize MaxHeldRemoteCalls = 256;
 constexpr f64 DefaultRemoteRate = 240.0;
 constexpr f64 DefaultRemoteBurst = 480.0;
 constexpr f64 DefaultRemoteMaxBytes = 16.0 * 1024.0;
+// And how many entries its tables hold, every table of the call together: a
+// call well under its bytes -- a thousand booleans are a few kilobytes --
+// still builds a table per entry on the server.
+constexpr usize MostRemoteEntries = 1024;
+
+namespace {
+
+// **The entries of a call's tables, counted from its bytes**, with no value
+// made: what the decoder would build, read ahead of it. The count stops once
+// it is past `MostRemoteEntries`; none for bytes that are not a call, which
+// the decoder drops anyway.
+[[nodiscard]] std::optional<usize> remoteTableEntries(std::span<const u8> bytes)
+{
+    if (bytes.empty())
+        return std::nullopt;
+    usize at = 1;
+    const auto skip = [&](usize width) {
+        if (bytes.size() - at < width)
+            return false;
+        at += width;
+        return true;
+    };
+    const auto length = [&](core::u64& out) {
+        if (bytes.size() - at < 4)
+            return false;
+        out = 0;
+        for (usize byte = 0; byte < 4; ++byte)
+            out |= static_cast<core::u64>(bytes[at + byte]) << (8 * byte);
+        at += 4;
+        return true;
+    };
+    usize entries = 0;
+    // The values still to be read, one table's pairs added as it is met.
+    core::u64 pending = bytes[0];
+    while (pending > 0) {
+        --pending;
+        if (at >= bytes.size())
+            return std::nullopt;
+        const auto tag = static_cast<Tag>(bytes[at++]);
+        bool fits = true;
+        switch (tag) {
+        case Tag::Nil:
+        case Tag::False:
+        case Tag::True:
+            break;
+        case Tag::Number:
+        case Tag::Vector2:
+        case Tag::UDim:
+            fits = skip(8);
+            break;
+        case Tag::String:
+        case Tag::Buffer: {
+            core::u64 size = 0;
+            fits = length(size) && skip(static_cast<usize>(size));
+            break;
+        }
+        case Tag::Vector:
+        case Tag::Color3:
+            fits = skip(12);
+            break;
+        case Tag::Instance:
+            fits = skip(4);
+            break;
+        case Tag::CFrame:
+            fits = skip(24 + 36);
+            break;
+        case Tag::UDim2:
+            fits = skip(16);
+            break;
+        case Tag::EnumItem:
+            fits = skip(6);
+            break;
+        case Tag::Table: {
+            core::u64 pairs = 0;
+            if (!length(pairs) || pairs > (bytes.size() - at) / 2)
+                return std::nullopt;
+            entries += static_cast<usize>(pairs);
+            if (entries > MostRemoteEntries)
+                return entries;
+            pending += 2 * pairs;
+            break;
+        }
+        default:
+            return std::nullopt;
+        }
+        if (!fits)
+            return std::nullopt;
+    }
+    return entries;
+}
+
+} // namespace
 
 [[nodiscard]] f64 remoteLimit(const World& w, core::InstanceId remote, std::string_view name, f64 fallback)
 {
@@ -1017,6 +1109,12 @@ void suspectRemote(World& w, core::InstanceId player, std::string_view kind, std
     if (maxBytes > 0.0 && static_cast<f64>(message.payload.size()) > maxBytes) {
         suspectRemote(w, message.player, "remote_too_large",
                       remoteName + " " + std::to_string(message.payload.size()) + " bytes");
+        return false;
+    }
+    // Lifted with the size: a remote a game streams its own data through.
+    if (const std::optional<usize> entries = remoteTableEntries(message.payload);
+        maxBytes > 0.0 && entries.has_value() && *entries > MostRemoteEntries) {
+        suspectRemote(w, message.player, "remote_too_many_values", remoteName + " " + std::to_string(*entries));
         return false;
     }
     const f64 rate = remoteLimit(w, message.remote, "RateLimit", DefaultRemoteRate);

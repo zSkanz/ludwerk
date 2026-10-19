@@ -1,0 +1,9 @@
+# The data service's travel test (ADR 0238 §2): a player's record changed in
+# the tick the player is sent to another world is what that world loads.
+
+[project]
+name = "Data Travel"
+id = "dev.ludwerk.data-travel"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/town.scene.json"

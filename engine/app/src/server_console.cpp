@@ -45,7 +45,7 @@ struct EngineCommand
 };
 
 // ADR 0218 §2 and §3: who may run each.
-const std::array<EngineCommand, 13> EngineCommands{{
+const std::array<EngineCommand, 15> EngineCommands{{
     {"help", 0, ENG_TR("console.usage.help")},
     {"status", 0, ENG_TR("console.usage.status")},
     {"players", 0, ENG_TR("console.usage.players")},
@@ -58,6 +58,8 @@ const std::array<EngineCommand, 13> EngineCommands{{
     {"suspects", 1, ENG_TR("console.usage.suspects")},
     {"suspect", 1, ENG_TR("console.usage.suspect")},
     {"save", 2, ENG_TR("console.usage.save")},
+    {"data", 3, ENG_TR("console.usage.data")},
+    {"moves", 3, ENG_TR("console.usage.moves")},
     {"stop", 3, ENG_TR("console.usage.stop")},
 }};
 
@@ -921,6 +923,15 @@ void ServerConsole::runEngineCommand(std::string_view name, std::string_view res
         }
         announce(host, std::string(rest));
         answer(reply, line, caller, say(ENG_TR("console.done.said")), false);
+        return;
+    }
+    if (name == "data" || name == "moves") {
+        if (!host.data) {
+            answer(reply, line, caller, say(ENG_TR("console.err.data_at_manager")), true);
+            return;
+        }
+        const auto [text, failed] = host.data(line);
+        answer(reply, line, caller, text, failed);
         return;
     }
     if (name == "save") {

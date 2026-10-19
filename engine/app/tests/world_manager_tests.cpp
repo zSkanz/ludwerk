@@ -209,6 +209,19 @@ TEST_CASE("servers.toml names its worlds, one entry, and is refused when it is w
     CHECK(administered->adminPort == 7778);
     CHECK(administered->adminAllow == std::vector<std::string>{"10.0.0.0/8"});
     CHECK(administered->health);
+    // The database's backups and the move log's days (ADR 0238 §7): none
+    // and ninety unless asked.
+    CHECK(config->backupEveryHours == 0.0);
+    CHECK(config->backupKeep == 7);
+    CHECK(config->movesKeepDays == 90);
+    std::optional<core::EngineError> dataWhy;
+    const std::optional<app::ServersConfig> backedUp = app::readServersConfig(
+        "[data]\nbackup_every_hours = 6\nbackup_keep = 3\nmoves_keep_days = 0\n[[world]]\nname = \"a\"\nentry = true\n",
+        "servers.toml", dataWhy);
+    REQUIRE(backedUp.has_value());
+    CHECK(backedUp->backupEveryHours == 6.0);
+    CHECK(backedUp->backupKeep == 3);
+    CHECK(backedUp->movesKeepDays == 0);
 
     // No entry; two; a name twice; a name that is not one; a port in the
     // range, the front door's or administration's.
@@ -218,7 +231,9 @@ TEST_CASE("servers.toml names its worlds, one entry, and is refused when it is w
           std::string_view{"[[world]]\nname = \"a\"\nentry = true\n[[world]]\nname = \"a\"\n"},
           std::string_view{"[[world]]\nname = \"Town Square\"\nentry = true\n"},
           std::string_view{"[manager]\nport = 7800\n[[world]]\nname = \"a\"\nentry = true\n"},
-          std::string_view{"[manager]\nport = 7799\nadmin = true\n[[world]]\nname = \"a\"\nentry = true\n"}}) {
+          std::string_view{"[manager]\nport = 7799\nadmin = true\n[[world]]\nname = \"a\"\nentry = true\n"},
+          std::string_view{"[data]\nbackup_every_hours = 0.1\n[[world]]\nname = \"a\"\nentry = true\n"},
+          std::string_view{"[data]\nbackup_keep = 0\n[[world]]\nname = \"a\"\nentry = true\n"}}) {
         std::optional<core::EngineError> why;
         CHECK_FALSE(app::readServersConfig(wrong, "servers.toml", why).has_value());
         CHECK(why.has_value());

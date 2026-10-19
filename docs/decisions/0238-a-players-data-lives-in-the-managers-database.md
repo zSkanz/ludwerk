@@ -236,3 +236,65 @@ purpose), and copying backups off the machine, which is the operator's.
   once, and it ends at 600, version 600. Threads of one world interleave
   their reads and writes across frames as three worlds would, and lose to
   each other as often.
+
+## As built, the backup, the console and the move log (2026-10-19)
+
+- **Schema version 4**: a transaction says which it undoes and which undid
+  it; a move that makes or destroys an item keeps its kind and fields, so it
+  can be made again; and the move log is indexed by item, by each owner and
+  by time. A database of an older version is brought up to 4 where it is
+  opened.
+- **The console** (§7), in the process that opens the database: the
+  manager's, or a dedicated server's with no manager, whose worlds answer
+  that the data is the manager's. `data` counts the records (and how many a
+  world holds now), items, transactions and the move log's lines, and the
+  file's size. `moves [<owner> | item <id> | transaction <id>]` reads the
+  last 20 lines, newest first. `data undo <transaction>` makes its moves the
+  other way, last first, as one new transaction of the console's -- an item
+  it made is destroyed as it is now, one it destroyed is made again under
+  its own id -- and is refused whole (`NoSuchTransaction`, `AlreadyUndone`,
+  `ItemNotThere`, `NotEnough`) where the log no longer has it or what it
+  moved has moved since. A transaction is undone once.
+- **The online backup** (§7) is SQLite's backup API on the store's own
+  connection, 256 pages (a megabyte) a pass of the manager. A write made
+  between two steps goes through that connection into the copy, so the copy
+  never starts over and is the database as it was when it finished. It is
+  written beside its name and renamed to it then. `[data] backup_every_hours`
+  (at least a quarter of an hour where it is on) and `backup_keep` schedule
+  it into `data/backups/<game id>-<UTC date>-<time>.db`, counted from the
+  newest one there, so a manager started again neither takes one at once
+  nor waits a whole period more; after each scheduled one, the oldest past
+  `backup_keep` of the files so named are deleted, and nothing else in the
+  folder is.
+- **The move log's days** (§3): `[data] moves_keep_days`, 90 by default and
+  0 for good. Once an hour, the transactions older than that are let go of
+  with their lines, 2,000 transactions a pass, so a long log never holds a
+  pass up. What they moved stays where it is; only its history goes.
+- **Proved** by the stores' tests, the database and the memory store alike:
+  a trade read in the log by transaction, item and owner; undone once, and
+  refused the second time; a destroyed item made again with its id, kind
+  and fields; undoes refused, and nothing changed, where an item or the
+  money moved on since; the log let go of a few transactions at a time,
+  with what it moved still there. **A backup taken while 1,000 trades run**:
+  a page of the copy between every ten trades, still copying after hundreds,
+  and the copy opens as a database whose transactions and log are the
+  live one's when it finished, whose swords and gold add up, and in which
+  each sword's last line names who holds it. The console's tests: a
+  backup's name read back as its time, a scheduled one taken and the oldest
+  pruned, and the log's days let go of by the frame.
+- **`data_manager_killed`**: a world under a manager trades a sword for gold
+  back and forth while the manager -- the one process holding the database
+  -- is ended (`std::_Exit`, as a kill) at the Nth transaction a world asks
+  for, a different one each of eight runs: four before it ran, four once it
+  was on the disk and before the world was told. Each run first counts five
+  swords and a thousand gold, and so does a last run that is not ended.
+  The manager's `--exit-at-transaction=N` and `--exit-after-commit`, and its
+  `--exit-on-line` -- which a line a world writes now ends as the manager's
+  own would -- are test hooks, ignored by a game's build.
+- **`data_travel`**: under a manager, the town loads a player's record,
+  changes it and sends the player to the fields in the same tick; the
+  fields load it as the town left it, and the player's machine is told.
+  The town writes the record as the player goes, and the fields' load waits
+  for that write (§2).
+- **Not yet**: a game's own backend (§5), with the same tests against the
+  reference backend.

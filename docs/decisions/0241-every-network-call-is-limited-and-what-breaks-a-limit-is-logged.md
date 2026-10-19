@@ -123,3 +123,42 @@ the game's (`@engine/chat` drops the muted player's lines, ADR 0239).
 Detecting aim assistance or wall hacks from patterns (a game's own analysis
 on `ReportSuspicion`), and an optional provider for a commercial client-side
 anti-cheat, which would follow ADR 0188's rules if a game asks for one.
+
+## As built (2026-10-17 to 2026-10-19)
+
+- **§1, the remotes' limits**: a token bucket per player and remote on the
+  simulation's clock, 240 a second and a burst of 480, and 16 KiB a call;
+  `remote:SetRateLimit(perSecond, burst)` and the `RateLimit`, `Burst` and
+  `MaxBytes` attributes set a remote's own, and nought lifts each. **The
+  1,024 values** are counted as the entries of every table of a call
+  together, read from its bytes before anything is decoded, and lifted with
+  the size by a `MaxBytes` of nought. **The depth is eight, not sixteen**:
+  the wire's own limit since ADR 0077, which the decoder refuses whatever a
+  remote's limits say; a call nested deeper is dropped as malformed, never
+  reaching a script. `[network] kick_over_limit` as decided.
+- **§2 to §4** as decided: `DefineAction` and `CheckAction` on the
+  simulation's clock; one suspicion log beside the players, written by the
+  remotes, the actions, the replication (an owner put past its reach), the
+  door of a managed world (a pass only a forger sends) and `VerifyTicket` (a
+  refused ticket), each line naming who by account or key, as a ban does;
+  the console's `suspects` and `suspect`; `/metrics` `suspicion_total{kind}`;
+  `mute` and `unmute` in `mutes.json` beside the bans, read by every world
+  of the game, and `IsMuted`.
+- A refused ticket's line names no player, and no account: the account it
+  claims is the claim of whoever forged it.
+- **Proved** by the services' tests: two thousand calls in a tick are 480
+  heard and 1,520 suspicions; a 20 KiB call, a megabyte, a table a hundred
+  deep and a call of 1,100 entries reach no script, the over-large and the
+  over-full each a suspicion of its kind, while 1,000 entries are heard;
+  four calls a tick -- once a frame at 240 Hz -- for five seconds are all
+  heard with nothing suspected; `SetRateLimit(0)` lets two thousand through;
+  `kick_over_limit = 10` asks one removal; `CheckAction` at five a second
+  with a burst of two refuses the third; a mute by key and by account. By
+  the replication's: a part put across the map by the machine it was
+  handed to is a suspicion under that machine's player. By the joins': a ticket used twice and one
+  signed by another key are two suspicions. By the console's: `suspects`
+  and `suspect`, and a mute made by one console read by another.
+- **Not yet**: `examples/30-interactions` played against the limits by a
+  test, and a server's tick measured under a flood (the limits drop a call
+  before it is decoded, so a flood costs its bytes' arrival and a bucket's
+  lookup, not a script).

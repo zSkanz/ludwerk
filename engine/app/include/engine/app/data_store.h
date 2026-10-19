@@ -73,6 +73,60 @@ struct SharedWrite
     SharedDatum now;
 };
 
+// **A line of the move log** (ADR 0238 §3): when, which transaction, which
+// world, and the move. An item made comes from the game (an empty `from`) and
+// one destroyed goes to it (an empty `to`).
+struct DataMoveLine
+{
+    core::i64 id = 0;
+    // Unix seconds.
+    core::i64 at = 0;
+    core::i64 transaction = 0;
+    std::string world;
+    DataMove move;
+};
+
+// Which lines of the move log to read, newest first: those of one account
+// or name, of one item or of one transaction, or with none of them named,
+// all of them.
+struct DataMoveQuery
+{
+    std::string owner;
+    core::i64 item = 0;
+    core::i64 transaction = 0;
+    core::usize most = 20;
+};
+
+// What the console's `data` says of the store.
+struct DataCounts
+{
+    core::i64 schema = 0;
+    core::i64 records = 0;
+    core::i64 items = 0;
+    core::i64 transactions = 0;
+    core::i64 moves = 0;
+    // The file and its journal, on the disk; 0 for a store in memory.
+    core::u64 bytes = 0;
+};
+
+// **How far an online backup has gone** (ADR 0238 §7).
+struct DataBackupProgress
+{
+    enum class State : core::u8
+    {
+        // None asked for, or the last one already said how it ended.
+        Idle,
+        Copying,
+        Done,
+        Failed,
+    };
+    State state = State::Idle;
+    core::i64 copied = 0;
+    core::i64 total = 0;
+    std::filesystem::path file;
+    std::string error;
+};
+
 class IDataStore
 {
 public:
@@ -101,6 +155,33 @@ public:
     // it returns.
     [[nodiscard]] virtual SharedWrite setShared(std::string_view scope, std::string_view key, std::string_view value,
                                                 core::i64 version) = 0;
+
+    // **The move log, read** (ADR 0238 §3): what a lost or duplicated item
+    // is traced by.
+    [[nodiscard]] virtual std::vector<DataMoveLine> moves(const DataMoveQuery& query) = 0;
+    // **A transaction undone**: its moves made the other way, last first, as
+    // one new transaction of `world`'s -- an item it made destroyed, one it
+    // destroyed made again under its own id. All or nothing, as any
+    // transaction: refused with `NoSuchTransaction` where the log no longer
+    // has it, `AlreadyUndone`, or `ItemNotThere` and `NotEnough` where what
+    // it moved has moved on since.
+    [[nodiscard]] virtual DataTransaction undo(std::string_view world, core::i64 transaction) = 0;
+    // The move log's lines, and their transactions, from before `unixSeconds`
+    // let go of -- the oldest `most` transactions of them, so a long log goes
+    // a little at a time; how many lines went.
+    virtual core::i64 forgetMovesBefore(core::i64 unixSeconds, core::i64 most) = 0;
+    [[nodiscard]] virtual DataCounts counts() = 0;
+
+    // **An online backup** (ADR 0238 §7): the whole database copied to
+    // `file` a few pages at a time, between the store's other work, so
+    // nothing waits on it; the copy is consistent as of the moment it
+    // finished, and it is written beside `file` and renamed to it only then.
+    // One at a time: false, and `error` saying why, while one is copying, and
+    // for a store in memory.
+    [[nodiscard]] virtual bool startBackup(const std::filesystem::path& file, std::string& error) = 0;
+    // Copies up to `pages` more of a backup that is copying. Done or Failed
+    // is said once; it is Idle after that.
+    virtual DataBackupProgress stepBackup(int pages) = 0;
 };
 
 // Kept in memory, for a test, and for a server with nowhere to write.

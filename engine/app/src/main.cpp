@@ -1777,6 +1777,27 @@ static int hostMain(int argc, char** argv)
                 play.project = std::string(args[at].substr(std::string_view{"--manager-project="}.size()));
             else if (args[at].starts_with("--manager-root="))
                 play.root = std::string(args[at].substr(std::string_view{"--manager-root="}.size()));
+            // **A test's kills** (ADR 0238 §3): at a line a world writes, and
+            // at a transaction a world asks for. Test hooks, as a world's
+            // `--exit-on-line` is: a game's build says so and ignores them.
+            else if (args[at].starts_with("--exit-on-line=") || args[at].starts_with("--exit-at-transaction=") ||
+                     args[at] == "--exit-after-commit") {
+#if ENG_DEBUG_UI
+                if (args[at].starts_with("--exit-on-line="))
+                    engine::core::exitOnLogLine(std::string(args[at].substr(15)), kExitKilledByLine);
+                else if (args[at] == "--exit-after-commit")
+                    play.exitAfterCommit = true;
+                else {
+                    const std::string_view number = args[at].substr(std::string_view{"--exit-at-transaction="}.size());
+                    if (std::from_chars(number.data(), number.data() + number.size(), play.exitAtTransaction).ec !=
+                        std::errc{})
+                        play.exitAtTransaction = 0;
+                }
+#else
+                const std::array<I18nArg, 1> testFlag{I18nArg{"option", args[at]}};
+                engine::core::log(LogLevel::Warn, ENG_TR("engine.cli.warn.test_flag_ignored"), testFlag);
+#endif
+            }
         }
         return engine::app::runManager(
             std::filesystem::path(std::string(args[0].substr(std::string_view{"--manager="}.size()))), self, play);

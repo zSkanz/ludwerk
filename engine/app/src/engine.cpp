@@ -3,6 +3,7 @@
 #include "engine/app/admin_channel.h"
 #include "engine/app/admin_server.h"
 #include "engine/app/data_broker.h"
+#include "engine/app/data_console.h"
 #include "engine/app/data_ops.h"
 #include "engine/app/editor_drive.h"
 #include "engine/app/headset_hands.h"
@@ -3343,9 +3344,27 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         }
         localData = std::make_unique<DataBroker>(store != nullptr ? std::move(store) : makeMemoryDataStore());
     }
+    // `data` and `moves` at its console, a backup copying and the move log's
+    // days (ADR 0238 §7), as a manager keeps them for its worlds.
+    std::optional<DataConsole> dataConsole;
+    if (localData != nullptr) {
+        DataConsole::Options dataOptions;
+        dataOptions.backups = options.saveDirectory / "backups";
+        dataOptions.game = options.projectId.empty() ? std::string{"game"} : options.projectId;
+        dataConsole.emplace(std::move(dataOptions));
+    }
+    std::function<std::pair<std::string, bool>(std::string_view)> dataCommand;
+    if (dataConsole.has_value()) {
+        dataCommand = [&dataConsole, &localData](std::string_view line) {
+            std::optional<DataConsole::Answer> answer = dataConsole->run(line, *localData, unixSecondsNow());
+            if (!answer.has_value())
+                return std::pair<std::string, bool>{};
+            return std::pair<std::string, bool>{std::move(answer->text), answer->failed};
+        };
+    }
     // The records scripts asked for and wrote, carried to the database and
     // its answers back: once a frame, and once more as the world stops.
-    const auto routeData = [&host, &managedWorld, &localData]() {
+    const auto routeData = [&host, &managedWorld, &localData, &dataConsole]() {
         scene::EngineState& state = host->world().engineState();
         if (managedWorld.has_value()) {
             managedWorld->sendData(state);
@@ -3379,6 +3398,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             }
             state.dataAnswers.push_back(std::move(given));
         }
+        if (dataConsole.has_value())
+            dataConsole->frame(*localData, unixSecondsNow());
     };
     if (consoleReads || managedWorld.has_value())
         consoleInput.start();
@@ -6668,7 +6689,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                   .replication = network.replication(),
                                                   .flushSaves = [&host]() { host->flushSaves(); },
                                                   .nowNs = platform::nowNs(),
-                                                  .nowUnix = unixSecondsNow()};
+                                                  .nowUnix = unixSecondsNow(),
+                                                  .data = dataCommand};
             for (core::u32 at = 0; at < lastSimTicks; ++at)
                 serverConsole.noteTick(lastSimMs / static_cast<f64>(lastSimTicks));
             host->world().engineState().websocketClientAllowed = options.websocketClient;

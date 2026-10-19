@@ -132,6 +132,18 @@ void exitOnLogLine(std::string text, int code)
     g_exitArmed.store(!slot.text.empty(), std::memory_order_release);
 }
 
+void exitOnRelayedLine(std::string_view line)
+{
+    if (!g_exitArmed.load(std::memory_order_acquire))
+        return;
+    ExitOnLine& ending = exitOnLine();
+    const std::lock_guard guard(ending.lock);
+    if (!ending.text.empty() && line.find(ending.text) != std::string_view::npos) {
+        std::fflush(nullptr);
+        std::_Exit(ending.code);
+    }
+}
+
 void setLogTap(LogSink tap)
 {
     const std::lock_guard lock(tapLock());

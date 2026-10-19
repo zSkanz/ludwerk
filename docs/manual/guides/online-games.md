@@ -67,6 +67,10 @@ The manager reads lines from the terminal it runs in:
 | `end <world>` | Ends a world's process as a crash would, to try what the game does about one. |
 | `stop [minutes]` | Every world counts down, saves and lets its players go; then the manager ends. |
 | `update <folder>` | The build in that folder takes over, a world at a time. See below. |
+| `data` | The game's database: records, items, transactions, the move log, its size, and a backup copying. |
+| `data backup [path]` | A copy of the whole database while the game runs. See [Backups and the move log](#backups-and-the-move-log). |
+| `data undo <transaction>` | A transaction's moves made the other way, as one new transaction. |
+| `moves [<owner> \| item <id> \| transaction <id>]` | The move log's last 20 lines, newest first. |
 | `<world>: <line>` | A line for one world's own console: `town: status`, `town: kick Player3`. |
 
 ### Updating without dropping anybody
@@ -424,8 +428,42 @@ DataService.OnMigrate = function(record: DataRecord, fromVersion: number)
 end
 ```
 
-The database is SQLite's. Copy it, with the front door's key, to keep the
-game's players: they are what a server's operator must not lose.
+### Backups and the move log
+
+The database is SQLite's, `data/<game id>.db` beside `servers.toml`. **It and
+the front door's key are what a server's operator must not lose**: keep a copy
+of both somewhere else.
+
+`data backup` copies the whole database while the game runs, a few pages each
+pass of the manager, so no world waits on it. The copy is the database as it
+was when the copy finished, transactions made during it included, and it is
+written beside its name and renamed to it only then: a file with the name is
+a whole backup. With no path, it goes to `data/backups/<game id>-<date>-<time>.db`,
+in UTC. The log says when it is done. To schedule one:
+
+```toml
+# servers.toml
+[data]
+backup_every_hours = 6   # 0, the default, for never
+backup_keep = 7          # the newest kept in data/backups; older ones deleted
+moves_keep_days = 90     # the move log's lines kept; 0 for good
+```
+
+A scheduled backup is counted from the newest one in `data/backups`, so a
+manager started again does not take one at once. To restore one, stop the
+manager and put the backup in the database's place.
+
+**The move log** is how a lost or duplicated item is traced: `moves ana` is
+every line with Ana's account in it, `moves item 4172` one item's travels,
+`moves transaction 88` one trade. `data undo 88` makes that trade's moves
+the other way -- an item it made is destroyed, one it destroyed is made again
+under its own id -- as one new transaction, and is refused whole where
+something it moved has moved again since. A line older than
+`moves_keep_days` is let go of, a little at a time, once an hour.
+
+A dedicated server with no manager keeps its database in its saves folder,
+and its own console answers `data` and `moves` the same way, with its
+backups in `backups` there.
 
 ## Trying it in the editor
 
@@ -740,5 +778,7 @@ yours to answer for.
 - A second front door: while the one front door is down, no new player gets
   in, and those already in a world stay.
 - Accounts themselves: see [Who may join, and accounts](manual:guides/multiplayer).
-- A backup taken while the game runs, and a game's own backend in place of
-  the database: the rest of the data service is still to come.
+- A game's own backend in place of the database: the rest of the data
+  service is still to come.
+- Copying backups to another machine: that is the operator's, with whatever
+  the machine already uses.
