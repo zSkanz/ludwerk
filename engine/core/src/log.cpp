@@ -110,10 +110,15 @@ struct ExitOnLine
     int code = 0;
 };
 
+// **Never destroyed**, and asked only once armed: a line is logged while the
+// statics are torn down -- a tool's last words at exit -- and a slot that
+// was one of them had its mutex destroyed under it.
+std::atomic<bool> g_exitArmed{false};
+
 ExitOnLine& exitOnLine() noexcept
 {
-    static ExitOnLine slot;
-    return slot;
+    static ExitOnLine* slot = new ExitOnLine();
+    return *slot;
 }
 
 } // namespace
@@ -124,6 +129,7 @@ void exitOnLogLine(std::string text, int code)
     const std::lock_guard guard(slot.lock);
     slot.text = std::move(text);
     slot.code = code;
+    g_exitArmed.store(!slot.text.empty(), std::memory_order_release);
 }
 
 void setLogTap(LogSink tap)
@@ -281,6 +287,8 @@ void logText(LogLevel level, std::string_view text, std::string_view detail)
         writeDefault(level, text);
     t_detail = outer;
 
+    if (!g_exitArmed.load(std::memory_order_acquire))
+        return;
     ExitOnLine& ending = exitOnLine();
     const std::lock_guard guard(ending.lock);
     if (!ending.text.empty() && text.find(ending.text) != std::string_view::npos)
