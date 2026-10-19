@@ -469,10 +469,11 @@ struct EngineOptions
     bool xrScreenEffects = false;
     // `[xr] foveation`, or `--xr-foveation=off|low|medium|high` over it: how
     // much less a headset's eye is shaded away from where it looks, 0 to 3,
-    // where the device has a fragment density map. High by default on a
-    // standalone headset, off on a PC.
+    // where the device has a fragment density map. Medium by default on a
+    // standalone headset -- on a Quest 3 high saved no more time and showed
+    // steps on the edges toward the lens's rim -- and off on a PC.
 #if defined(__ANDROID__)
-    core::u32 xrFoveation = 3;
+    core::u32 xrFoveation = 2;
 #else
     core::u32 xrFoveation = 0;
 #endif

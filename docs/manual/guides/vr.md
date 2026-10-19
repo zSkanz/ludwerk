@@ -18,7 +18,7 @@ enabled = true     # try a headset at start; the screen when there is none
 # mirror = false   # the window stays black instead of showing the left eye
 # depth = true     # the headset is given each eye's depth (see below); off on a Quest by default
 # screen_effects = true  # occlusion, contact shadows and the screen's reflections in the eyes (see below)
-# foveation = "high"      # "off", "low", "medium" or "high": less shading away from where the eye looks
+# foveation = "medium"    # "off", "low", "medium" or "high": less shading away from where the eye looks
 ```
 
 `--xr` and `--no-xr` on the command line override `enabled` and `required`.
@@ -39,10 +39,13 @@ a frame whose depth the headset or the room behind the picture reads.
 Quest's does -- each eye is shaded at full density where it looks and with
 one fragment for two pixels, then for four, toward the edges of the lens,
 where the lens blurs what is drawn anyway. `foveation` under `[xr]` sets how
-much (`"high"` by default on a standalone headset, `"off"` on a PC), and
+much (`"medium"` by default on a standalone headset, `"off"` on a PC), and
 `--xr-foveation=off|low|medium|high` overrides it for a run. The log says at
-the start of a session the level and the size of a density texel, or that
-the device has no density map.
+the start of a session the level and the size of a density texel, that it
+is off, or that the device has no density map. Off draws without a density
+map at all. On a Quest 3, medium took the forward pass from 5.8 to 4.1 ms
+and the frame's GPU time from 12.3 to 9.4 ms; high measured the same as
+medium and shows steps on edges toward the lens's rim.
 
 `--xr-eyes-shot=<path>` writes both eyes' pictures as drawn, before the
 headset's runtime has them, as `<name>-left.png` and `<name>-right.png`, at
