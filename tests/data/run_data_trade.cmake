@@ -12,36 +12,28 @@ endforeach()
 
 file(REMOVE_RECURSE "${WORKDIR}")
 file(MAKE_DIRECTORY "${WORKDIR}")
-# **How long a server takes to start here**, from a run that is not killed:
-# the kills below come that long and more after the start. Fixed at two
-# seconds, a cold runner killed most runs before their first trade.
-string(TIMESTAMP before "%s" UTC)
+# The first run, not killed: what there is to trade.
 execute_process(
     COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves" --frames=60 --exit
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)
-string(TIMESTAMP after "%s" UTC)
 if(NOT output MATCHES "\\[trade\\] swords=5 gold=1000")
     message(FATAL_ERROR "the first run did not count five swords and a thousand gold (${result}):\n${output}")
 endif()
-math(EXPR startup "${after} - ${before} + 1")
 set(killed 0)
-# **Killed once it has traded, on a machine of any speed**: a run killed
-# before its first trade says nothing (`[trade] traded=` comes with the
-# first), and every run that dies so moves the kill a second later for the
-# runs after it -- a two-core runner, whose transactions each wait on its
-# disk, killed most runs before they had traded at all. The offset still
-# differs each run, and from the time a trade takes.
-set(later 0)
-foreach(run RANGE 1 12)
-    if(killed GREATER_EQUAL 4)
-        break()
-    endif()
-    math(EXPR seconds "${startup} + 1 + ${later} + (${run} * 7) % 3")
+# **Ended with a trade in flight, by construction**: each run is told which
+# of its trades to stop at (`stopAt`), says so while that transaction has not
+# come back, and `--exit-on-line` ends it at that line -- no destructor, no
+# clean close, as a kill. No clock decides it: a two-core runner whose
+# transactions each wait on its disk killed most runs, by time, before their
+# first trade. The trade differs each run, and every run has to die so.
+foreach(run RANGE 1 6)
+    math(EXPR stopAt "1 + (${run} * 7) % 23")
     execute_process(
         COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves"
-        TIMEOUT ${seconds}
+                "--scene-data={\"stopAt\":${stopAt}}" "--exit-on-line=[trade] in flight"
+        TIMEOUT 120
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)
@@ -50,15 +42,11 @@ foreach(run RANGE 1 12)
             message(FATAL_ERROR "run ${run} found ${CMAKE_MATCH_1} swords and ${CMAKE_MATCH_2} gold:\n${output}")
         endif()
     endif()
-    if(output MATCHES "traded=[1-9]")
-        math(EXPR killed "${killed} + 1")
-    elseif(later LESS 8)
-        math(EXPR later "${later} + 1")
+    if(NOT result EQUAL 86 OR NOT output MATCHES "in flight at trade [0-9]+")
+        message(FATAL_ERROR "run ${run} was to end with trade ${stopAt} in flight (${result}):\n${output}")
     endif()
+    math(EXPR killed "${killed} + 1")
 endforeach()
-if(killed LESS 3)
-    message(FATAL_ERROR "only ${killed} runs traded before they were killed")
-endif()
 # The last count, from a run that is not killed.
 execute_process(
     COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves" --frames=5 --exit

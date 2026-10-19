@@ -49,6 +49,12 @@ void resetLogSink();
 // and take its own lock. Null removes it.
 void setLogTap(LogSink tap);
 
+// **The process ends at once when it writes a line holding `text`**
+// (`--exit-on-line`): written and flushed first, then `std::_Exit(code)` --
+// no destructor, no flush of anything else, as a kill would leave it. A test
+// kills a run at a moment its own script names, with no clock in it. Empty
+// turns it off.
+void exitOnLogLine(std::string text, int code);
 // Also writes every line to `path`, in addition to wherever it already goes.
 //
 // **An addition, never a replacement.** Every gate, the conformance runner and

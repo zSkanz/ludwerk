@@ -3,6 +3,12 @@
 -- owners, and a thousand gold -- then trades until it is killed.
 local DataService = game:GetService("DataService")
 local RunService = game:GetService("RunService")
+local SceneService = game:GetService("SceneService")
+
+-- `--scene-data={"stopAt": N}`: the Nth trade says it is in flight while its
+-- transaction has not come back, and the test ends the process on that line.
+type Load = { stopAt: number? }
+local Stop = ((SceneService:GetLoadData() or {}) :: Load).stopAt
 
 local Owners = { "ana", "bo" }
 
@@ -24,15 +30,33 @@ task.spawn(function()
     -- A sword one way and its price the other, whichever way can.
     local traded = 0
     local said = 0
+    local started = 0
     while true do
         for index, seller in Owners do
             local buyer = Owners[3 - index]
             local items = DataService:GetItemsAsync(seller)
             if #items > 0 then
-                local ok = DataService:TransactAsync({
-                    { Move = items[1].Id, From = seller, To = buyer },
-                    { Pay = 10, Currency = "Gold", From = buyer, To = seller },
-                })
+                -- Begun in a task of its own, so this one can say it is in
+                -- flight before it comes back.
+                local done = false
+                local ok = false
+                task.spawn(function()
+                    ok = DataService:TransactAsync({
+                        { Move = items[1].Id, From = seller, To = buyer },
+                        { Pay = 10, Currency = "Gold", From = buyer, To = seller },
+                    })
+                    done = true
+                end)
+                started += 1
+                -- The first at or past the one asked for that has not come
+                -- back at once.
+                local stopAt = Stop
+                if stopAt ~= nil and started >= stopAt and not done then
+                    print(`[trade] in flight at trade {started}`)
+                end
+                while not done do
+                    RunService.PostSimulation:Wait()
+                end
                 if ok then
                     traded += 1
                 end

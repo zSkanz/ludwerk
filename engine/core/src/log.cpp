@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #ifdef _WIN32
 #include <share.h>
@@ -98,6 +99,31 @@ std::string formatLogLine(LogLevel level, std::string_view text)
     line += text;
     line += '\n';
     return line;
+}
+
+namespace {
+
+struct ExitOnLine
+{
+    std::mutex lock;
+    std::string text;
+    int code = 0;
+};
+
+ExitOnLine& exitOnLine() noexcept
+{
+    static ExitOnLine slot;
+    return slot;
+}
+
+} // namespace
+
+void exitOnLogLine(std::string text, int code)
+{
+    ExitOnLine& slot = exitOnLine();
+    const std::lock_guard guard(slot.lock);
+    slot.text = std::move(text);
+    slot.code = code;
 }
 
 void setLogTap(LogSink tap)
@@ -254,6 +280,11 @@ void logText(LogLevel level, std::string_view text, std::string_view detail)
     else
         writeDefault(level, text);
     t_detail = outer;
+
+    ExitOnLine& ending = exitOnLine();
+    const std::lock_guard guard(ending.lock);
+    if (!ending.text.empty() && text.find(ending.text) != std::string_view::npos)
+        std::_Exit(ending.code);
 }
 
 void logText(LogLevel level, std::string_view text)

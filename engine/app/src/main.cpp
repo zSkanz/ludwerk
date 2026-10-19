@@ -82,6 +82,8 @@ constexpr engine::core::u16 kDefaultGamePort = 7777;
 // anything under test. CTest maps it to SKIP, so a runner without a driver
 // reports a skipped render test instead of a red build nobody can act on.
 constexpr int kExitNoGraphicsDevice = 4;
+// `--exit-on-line`: the line was written, and the process ended at it.
+constexpr int kExitKilledByLine = 86;
 
 // The graphics device was lost while the engine ran -- a driver reset, most
 // often a shader that ran too long. Its own code so a test can tell "survived
@@ -968,6 +970,18 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
         }
         if (arg.starts_with("--log-file=")) {
             options.logFile = std::filesystem::path(std::string(arg.substr(11)));
+            continue;
+        }
+        // **Ended by its own line** (`core::exitOnLogLine`): a test's kill at
+        // a moment the script names, with no clock in it. A test hook, so a
+        // game's build -- player, shipping -- says so and does not honour it.
+        if (arg.starts_with("--exit-on-line=")) {
+#if ENG_DEBUG_UI
+            engine::core::exitOnLogLine(std::string(arg.substr(15)), kExitKilledByLine);
+#else
+            const std::array<I18nArg, 1> testFlag{I18nArg{"option", std::string_view{"--exit-on-line"}}};
+            engine::core::log(LogLevel::Warn, ENG_TR("engine.cli.warn.test_flag_ignored"), testFlag);
+#endif
             continue;
         }
         if (arg.starts_with("--frames=")) {
