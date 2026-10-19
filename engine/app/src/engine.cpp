@@ -2015,10 +2015,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     constexpr core::u32 EyeViewBase = 0xFFFFFD00u;
     // The engine's own, when asked for (ADR 0248 §4); gone before the device.
     std::unique_ptr<SimulatedHeadset> simulatedHeadset =
-        options.xrSimulated
-            ? std::make_unique<SimulatedHeadset>(
-                  *device, SimulatedHeadsetDesc{.depth = options.xrDepth, .store = options.xrSimulatedStore})
-            : nullptr;
+        options.xrSimulated ? std::make_unique<SimulatedHeadset>(*device,
+                                                                 SimulatedHeadsetDesc{
+                                                                     .eyeWidth = options.xrStandalone ? 1680u : 1024u,
+                                                                     .eyeHeight = options.xrStandalone ? 1760u : 1024u,
+                                                                     .depth = options.xrDepth,
+                                                                     .store = options.xrSimulatedStore,
+                                                                 })
+                            : nullptr;
     rhi::IHeadset* const headset = simulatedHeadset != nullptr ? simulatedHeadset.get() : device->headset();
     rhi::HeadsetFrame headsetFrame;
     bool headsetBegun = false;
@@ -10048,12 +10052,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             snapshot.shadowView = shared;
                             snapshot.headsetEye = true;
                             snapshot.headsetScreenEffects = options.xrScreenEffects;
-#if defined(__ANDROID__)
-                            snapshot.headsetLean = true;
-                            // **Two samples a pixel**: the edges a Quest's eye
-                            // showed in steps, resolved on the tile.
-                            snapshot.headsetSamples = 2;
-#endif
+                            if (options.xrStandalone) {
+                                snapshot.headsetLean = true;
+                                // **Two samples a pixel**: the edges a Quest's
+                                // eye showed in steps, resolved on the tile.
+                                snapshot.headsetSamples = 2;
+                            }
                             snapshot.headsetFoveation = options.xrFoveation;
                             snapshot.headsetDepthRead =
                                 eyeCopy.seeThrough || (headsetFrame.depth[0].valid() && headsetFrame.depth[1].valid());

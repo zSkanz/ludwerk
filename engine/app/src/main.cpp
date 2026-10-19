@@ -787,6 +787,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrSimulatedStore = std::string(arg.substr(21));
             continue;
         }
+        if (arg == "--xr-profile=standalone" || arg == "--xr-profile=pc") {
+            options.xrStandalone = arg == "--xr-profile=standalone";
+            continue;
+        }
         if (arg == "--xr=simulated") {
             options.xr = false;
             options.xrSimulated = true;

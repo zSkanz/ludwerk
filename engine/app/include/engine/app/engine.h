@@ -442,6 +442,16 @@ struct EngineOptions
     // runtime and no window -- headless too. With `--screenshot`, each eye's
     // picture is written beside it (`-left`, `-right`).
     bool xrSimulated = false;
+    // **A standalone headset's drawing** (`--xr-profile=standalone|pc`): each
+    // eye in one pass with two samples a pixel and the lean shadows, as a
+    // Quest draws it -- by default on a standalone headset, and on a PC when
+    // asked, to see there what a Quest shows. The simulated headset's eyes
+    // are then a Quest 3's size; its field of view is a Quest 3's already.
+#if defined(__ANDROID__)
+    bool xrStandalone = true;
+#else
+    bool xrStandalone = false;
+#endif
     // `--xr-simulated-store=<file>`: where the simulated headset keeps the
     // anchors a script saves, for a second run to load (ADR 0247 §3).
     std::string xrSimulatedStore;

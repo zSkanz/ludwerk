@@ -52,6 +52,14 @@ headset's runtime has them, as `<name>-left.png` and `<name>-right.png`, at
 the 600th frame the headset draws. The log says, once a session, where each
 eye sits and how far it sees, and how much one eye is higher than the other
 or turned from it: a pair of eyes that fuses has both near nought.
+
+`--xr-profile=standalone` draws the eyes on a PC as a standalone headset
+draws them -- one pass, two samples a pixel, the same shadows -- and with
+`--xr=simulated` at a Quest 3's eye size, whose field of view the simulated
+headset has already. With `--quality=medium --no-shadow-under-casters`, a
+phone's settings, and `--xr-eyes-shot`, it shows on a PC what a Quest shows,
+pixel for pixel; `--xr-profile=pc` is a PC's own drawing on a standalone
+headset.
 While a headset draws, the window shows what the left eye sees, cropped to
 the window's shape: someone watching sees what the player sees. The OpenXR loader
 ships beside the engine; nothing of it is loaded by a game that does not ask
