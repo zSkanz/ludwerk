@@ -135,6 +135,50 @@ struct Match
 
 } // namespace
 
+TEST_CASE("corrections that add up past the snap glide from it; one past it alone is drawn where it lands")
+{
+    using replication::CarriedOffset;
+    using replication::carryVisualOffset;
+    const auto length = [](core::DVec3 v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
+
+    // A long stall's answers, reconciled together: three of 0.8 m the same
+    // way. Zeroed past 2 m, the car was drawn jumping the whole sum.
+    core::DVec3 offset{};
+    core::DVec3 displaced{};
+    for (int answer = 0; answer < 3; ++answer) {
+        const CarriedOffset carried =
+            carryVisualOffset(offset, core::DVec3{0.8, 0.0, 0.0}, replication::VisualSnapMetres);
+        offset = carried.offset;
+        displaced = displaced - carried.kept;
+    }
+    CHECK(length(offset) == doctest::Approx(replication::VisualSnapMetres));
+    CHECK(offset.x > 0.0);
+    // The history is moved by what the offset took, no more: the part held
+    // back is drawn where it is, once.
+    CHECK(displaced.x == doctest::Approx(-replication::VisualSnapMetres));
+
+    // Then ticks as usual, each answer a few millimetres the same way: the
+    // offset glides down and never grows again -- under a centimetre within
+    // half a second at sixty.
+    double largest = length(offset);
+    for (int tick = 0; tick < 30; ++tick) {
+        offset = core::DVec3{offset.x * replication::VehicleVisualDecayPerTick,
+                             offset.y * replication::VehicleVisualDecayPerTick,
+                             offset.z * replication::VehicleVisualDecayPerTick};
+        offset = carryVisualOffset(offset, core::DVec3{0.001, 0.0, 0.0}, replication::VisualSnapMetres).offset;
+        CHECK(length(offset) <= largest);
+        largest = length(offset);
+    }
+    CHECK(length(offset) < 0.01);
+
+    // A teleport -- one correction past the snap on its own -- is drawn where
+    // it lands, and moves nothing of the history.
+    const CarriedOffset teleport =
+        carryVisualOffset(core::DVec3{0.5, 0.0, 0.0}, core::DVec3{0.0, 0.0, 3.0}, replication::VisualSnapMetres);
+    CHECK(length(teleport.offset) == 0.0);
+    CHECK(length(teleport.kept) == 0.0);
+}
+
 TEST_CASE("a replica is welcomed, and holds the authority's instances, named, parented and placed")
 {
     Match match;

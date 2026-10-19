@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -447,5 +448,35 @@ struct VisualCorrection
     core::DVec3 vehicleOffset{};
     core::DVec3 vehicleDisplaced{};
 };
+
+// **What is left to slide, after one more correction**: `kept` is the
+// part of `moved` the offset took, which the drawing's history is moved by
+// (`VisualCorrection::displaced`).
+struct CarriedOffset
+{
+    core::DVec3 offset{};
+    core::DVec3 kept{};
+};
+
+// A correction farther than `snapMetres` on its own is a teleport -- a
+// script putting the part somewhere -- and is drawn where it lands: nothing
+// left to slide, and nothing kept. Corrections that only add up past it are
+// held at it, in the direction they add up to, and go on gliding: zeroed,
+// the sum was drawn as one jump -- a car after a long stall drawn 2.08 m in
+// one frame against the 1.30 m it was simulated to move.
+[[nodiscard]] inline CarriedOffset carryVisualOffset(core::DVec3 offset, core::DVec3 moved,
+                                                     core::f64 snapMetres) noexcept
+{
+    const auto length = [](core::DVec3 v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
+    if (length(moved) > snapMetres)
+        return CarriedOffset{};
+    core::DVec3 summed{offset.x + moved.x, offset.y + moved.y, offset.z + moved.z};
+    const core::f64 total = length(summed);
+    if (total > snapMetres) {
+        const core::f64 scale = snapMetres / total;
+        summed = core::DVec3{summed.x * scale, summed.y * scale, summed.z * scale};
+    }
+    return CarriedOffset{summed, core::DVec3{summed.x - offset.x, summed.y - offset.y, summed.z - offset.z}};
+}
 
 } // namespace engine::replication

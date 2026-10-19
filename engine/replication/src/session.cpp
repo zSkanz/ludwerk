@@ -9074,13 +9074,10 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         if (seat.visualCharacter != each.character)
             seat.visualOffset = core::DVec3{};
         seat.visualCharacter = each.character;
-        seat.visualOffset = seat.visualOffset + moved;
+        const CarriedOffset character = carryVisualOffset(seat.visualOffset, moved, VisualSnapMetres);
+        seat.visualOffset = character.offset;
         seat.visualFresh = distance > 0.0;
-        const core::DVec3& o = seat.visualOffset;
-        if (std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z) > VisualSnapMetres)
-            seat.visualOffset = core::DVec3{};
-        else
-            seat.displaced = seat.displaced - moved;
+        seat.displaced = seat.displaced - character.kept;
         // How far this character was moved, and nothing of what it pushes:
         // that is the machine's, below.
         if (m_stats.seatCorrections[each.seat] != seatCounted[each.seat])
@@ -9097,13 +9094,10 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
         if (seat.visualVehicle != vehicle.root)
             seat.vehicleOffset = core::DVec3{};
         seat.visualVehicle = vehicle.root;
-        seat.vehicleOffset = seat.vehicleOffset + carried;
+        const CarriedOffset car = carryVisualOffset(seat.vehicleOffset, carried, VisualSnapMetres);
+        seat.vehicleOffset = car.offset;
         seat.vehicleFresh = carried.x != 0.0 || carried.y != 0.0 || carried.z != 0.0;
-        const core::DVec3& v = seat.vehicleOffset;
-        if (std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) > VisualSnapMetres)
-            seat.vehicleOffset = core::DVec3{};
-        else
-            seat.vehicleDisplaced = seat.vehicleDisplaced - carried;
+        seat.vehicleDisplaced = seat.vehicleDisplaced - car.kept;
     }
     if (m_stats.corrections != counted)
         m_stats.lastCorrectionMetres = std::max(furthest, m_lastBodyCorrection);
