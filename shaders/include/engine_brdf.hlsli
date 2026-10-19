@@ -33,6 +33,23 @@ static const float EngineEpsilon = 1e-4f;
 // GGX highlights start aliasing into single-pixel fireflies.
 static const float EngineMinRoughness = 0.045f;
 
+// **Half precision where it is faster** (`shadeDirect`): the
+// SPIR-V a phone's or a headset's GPU runs at twice the rate at sixteen bits.
+// Full precision in the DXIL a desktop runs, whose driver takes the hint at
+// its word, saves nothing by it, and moved a polished highlight by up to
+// fifteen levels.
+#if defined(__spirv__)
+typedef min16float EngineHalf;
+typedef min16float2 EngineHalf2;
+typedef min16float3 EngineHalf3;
+typedef min16float4 EngineHalf4;
+#else
+typedef float EngineHalf;
+typedef float2 EngineHalf2;
+typedef float3 EngineHalf3;
+typedef float4 EngineHalf4;
+#endif
+
 // The surface, resolved once, so every light reads the same numbers.
 struct Surface
 {
@@ -148,16 +165,12 @@ float3 fresnelSchlick(float3 f0, float voh)
 // arriving from it. Cook-Torrance specular plus Lambert diffuse, with the two
 // lobes split by the same Fresnel term so a grazing surface never gains energy.
 //
-// **In half precision** (`min16float`), what a phone's GPU runs at twice the
-// rate and a desktop's runs as it always did -- the type is a hint a desktop
-// driver takes as full precision. Two places would break at sixteen bits,
-// and are written so they do not:
-//   - the distribution's `noh * noh * (a2 - 1) + 1` cancels where noh is
-//     near one, which at eleven bits of mantissa is every highlight: here it
-//     is the same number as `|n x h|^2 + (noh * alpha)^2`, the cross product
-//     taken at full precision, and nothing cancels;
-//   - its square overflows sixteen bits on a smooth surface, so it is
-//     squared at full precision.
+// **In half precision** (`EngineHalf`) where the shader is SPIR-V, what a
+// phone's GPU runs at twice the rate: the visibility, the Fresnel term and
+// the diffuse lobe. Not the distribution, whose `noh * noh * (a2 - 1) + 1`
+// cancels where noh is near one -- at eleven bits of mantissa, every
+// highlight. It stays below 60 (`EngineEpsilon`), so the product that
+// carries it is half again.
 float3 shadeDirect(Surface surface, float3 lightDirection, float3 radiance)
 {
     const float nolFull = saturate(dot(surface.Normal, lightDirection));
@@ -167,31 +180,27 @@ float3 shadeDirect(Surface surface, float3 lightDirection, float3 radiance)
     }
 
     const float3 halfVector = normalize(lightDirection + surface.View);
-    const float3 across = cross(surface.Normal, halfVector);
-    const min16float nol = (min16float)nolFull;
-    const min16float noh = (min16float)saturate(dot(surface.Normal, halfVector));
-    const min16float voh = (min16float)saturate(dot(surface.View, halfVector));
-    const min16float nov = (min16float)surface.NoV;
-    const min16float alpha = (min16float)surface.Alpha;
-    const min16float a2 = alpha * alpha;
+    const float nohFull = saturate(dot(surface.Normal, halfVector));
+    const EngineHalf nol = (EngineHalf)nolFull;
+    const EngineHalf voh = (EngineHalf)saturate(dot(surface.View, halfVector));
+    const EngineHalf nov = (EngineHalf)surface.NoV;
+    const EngineHalf alpha = (EngineHalf)surface.Alpha;
+    const EngineHalf a2 = alpha * alpha;
 
-    // GGX: (alpha / (|n x h|^2 + (noh alpha)^2))^2 / pi.
-    const min16float spread = (min16float)dot(across, across) + noh * noh * a2;
-    const float k = (float)(alpha / max(spread, (min16float)EngineEpsilon));
-    const min16float d = (min16float)min(k * k / EnginePi, 60000.0f);
+    const EngineHalf d = (EngineHalf)distributionGgx(nohFull, surface.Alpha);
 
     // Height-correlated Smith, divided by 4 nol nov (`visibilitySmithGgxCorrelated`).
-    const min16float lambdaV = nol * sqrt(nov * nov * ((min16float)1.0f - a2) + a2);
-    const min16float lambdaL = nov * sqrt(nol * nol * ((min16float)1.0f - a2) + a2);
-    const min16float v = (min16float)0.5f / max(lambdaV + lambdaL, (min16float)EngineEpsilon);
+    const EngineHalf lambdaV = nol * sqrt(nov * nov * ((EngineHalf)1.0f - a2) + a2);
+    const EngineHalf lambdaL = nov * sqrt(nol * nol * ((EngineHalf)1.0f - a2) + a2);
+    const EngineHalf v = (EngineHalf)0.5f / max(lambdaV + lambdaL, (EngineHalf)EngineEpsilon);
 
-    const min16float3 f0 = (min16float3)surface.SpecularF0;
-    const min16float grazing = (min16float)1.0f - voh;
-    const min16float grazing2 = grazing * grazing;
-    const min16float3 f = f0 + ((min16float3)1.0f - f0) * (grazing2 * grazing2 * grazing);
+    const EngineHalf3 f0 = (EngineHalf3)surface.SpecularF0;
+    const EngineHalf grazing = (EngineHalf)1.0f - voh;
+    const EngineHalf grazing2 = grazing * grazing;
+    const EngineHalf3 f = f0 + ((EngineHalf3)1.0f - f0) * (grazing2 * grazing2 * grazing);
 
-    const min16float3 specular = d * v * f;
-    const min16float3 diffuse = ((min16float3)1.0f - f) * (min16float3)surface.DiffuseColor * (min16float)(1.0f / EnginePi);
+    const EngineHalf3 specular = d * v * f;
+    const EngineHalf3 diffuse = ((EngineHalf3)1.0f - f) * (EngineHalf3)surface.DiffuseColor * (EngineHalf)(1.0f / EnginePi);
     return (float3)(diffuse + specular) * radiance * nolFull;
 }
 
@@ -386,18 +395,20 @@ float shadowTapPcf(Texture2D<float> atlas, SamplerState pointSampler, float2 uv,
     // Gather returns the 2x2 neighbourhood in counter-clockwise order starting
     // at the lower left: (-,+), (+,+), (+,-), (-,-) relative to the sample.
     const float4 depths = atlas.Gather(pointSampler, uv);
-    // The comparisons at full precision, the depths being; the blend of their
-    // answers, each nought or one, in half (`shadeDirect`).
-    const min16float4 lit = (min16float4)step(reference, depths);
+    // **At full precision, all of it**: a phone's compiler carries a half's
+    // precision back up the chain that feeds it, to the texel's coordinate
+    // in an atlas thousands of texels wide -- and the edges of a Quest's
+    // shadows came out as a comb.
+    const float4 lit = step(reference, depths);
 
     // The same bilinear weights the texture unit would have used, from where the
     // sample falls inside its texel.
     const float2 texel = uv * atlasSize - 0.5f;
-    const min16float2 fraction = (min16float2)frac(texel);
+    const float2 fraction = frac(texel);
 
-    const min16float bottom = lerp(lit.w, lit.z, fraction.x);
-    const min16float top = lerp(lit.x, lit.y, fraction.x);
-    return (float)lerp(bottom, top, (min16float)1.0f - fraction.y);
+    const float bottom = lerp(lit.w, lit.z, fraction.x);
+    const float top = lerp(lit.x, lit.y, fraction.x);
+    return lerp(bottom, top, 1.0f - fraction.y);
 }
 
 // **Vogel's disc, as sixteen points**: point i at radius sqrt(i + 0.5), a
