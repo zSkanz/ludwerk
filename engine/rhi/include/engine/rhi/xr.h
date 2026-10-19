@@ -39,6 +39,9 @@ struct XrRequest
     // `[xr] depth` (ADR 0244 §5): each eye's depth handed to the runtime with
     // its colour, where the runtime takes it, for its reprojection.
     bool depth = true;
+    // `[xr] refresh_rate`: the display's rate in hertz, the nearest the
+    // runtime offers where it lets a game choose; nought leaves its own.
+    f32 refreshRate = 0.0f;
 };
 
 // One eye's view this frame: where it is and how it is turned, in the play
@@ -282,6 +285,10 @@ public:
     // whether it does -- where a pixel's alpha is below one, the room shows.
     [[nodiscard]] virtual bool supportsPassthrough() const noexcept { return false; }
     virtual void setPassthrough(bool on) { (void)on; }
+    // **The display's rate**, asked again mid-session (`XRService.RefreshRate`,
+    // ADR 0250): the nearest the headset offers, nought its own. A headset
+    // that lets a game choose none goes on at its own.
+    virtual void setRefreshRate(f32 hertz) { (void)hertz; }
     // **What the depth images hold**: depth 0 at `nearZ` metres and 1 at
     // `farZ`, as the eyes were drawn. Before `endFrame`.
     virtual void setDepthRange(f32 nearZ, f32 farZ)

@@ -120,6 +120,9 @@ public:
     // blend does; whether it is on, for a test to read.
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return true; }
     void setPassthrough(bool on) override { m_passthrough = on; }
+    void setRefreshRate(core::f32 hertz) override { m_refreshRate = hertz; }
+    // The rate a script last asked for, for a test to read.
+    [[nodiscard]] core::f32 refreshRate() const noexcept { return m_refreshRate; }
     [[nodiscard]] bool passthrough() const noexcept { return m_passthrough; }
     void setDepthRange(core::f32 nearZ, core::f32 farZ) override
     {
@@ -137,6 +140,7 @@ private:
     std::array<rhi::TextureHandle, 2> m_images{};
     std::array<rhi::TextureHandle, 2> m_depthImages{};
     bool m_passthrough = false;
+    core::f32 m_refreshRate = 0.0f;
     core::u64 m_framesTaken = 0;
     bool m_roomAsked = false;
     struct Anchor

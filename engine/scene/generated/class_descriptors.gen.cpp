@@ -6642,7 +6642,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 7> xRServiceProperties;
+    static std::array<PropertyDesc, 16> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6656,6 +6656,124 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getXRServiceEnabled,
             .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Foveation"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("XRFoveation"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How much less each eye is shaded away from where it looks, on a GPU with a fragment density map: `[xr] foveation`. Nothing on a GPU without one. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getXRServiceFoveation,
+            .set = native::setXRServiceFoveation,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Msaa"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Samples a pixel each eye is drawn with: 1 (none), 2, 4 or 8, `[xr] msaa`. Where a frame needs its picture or its depth partway through, or the headset reads the eye's depth, it is drawn with one. A change makes its targets again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceMsaa,
+            .set = native::setXRServiceMsaa,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RefreshRate"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The display's rate in hertz the game asks for, the nearest the headset offers: `[xr] refresh_rate`. 0 is the headset's own. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceRefreshRate,
+            .set = native::setXRServiceRefreshRate,
+        },
+        PropertyDesc{
+            .name = atoms.intern("RenderScale"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The fraction of its pixels each eye is drawn at, 0.5 to 1, brought up to them: `[xr] render_scale`. A change makes its targets again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceRenderScale,
+            .set = native::setXRServiceRenderScale,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ScreenEffects"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether occlusion, contact shadows and the screen's reflections are drawn in the eyes: `[xr] screen_effects`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRServiceScreenEffects,
+            .set = native::setXRServiceScreenEffects,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowCascades"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many cascades the sun's shadows are, 1 to 4, or 0 for the quality level's: `[xr] shadow_cascades`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceShadowCascades,
+            .set = native::setXRServiceShadowCascades,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How far the sun's shadows reach in the eyes, in meters, or 0 for the quality level's: `[xr] shadow_distance`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceShadowDistance,
+            .set = native::setXRServiceShadowDistance,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowFirstSplit"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many meters the sun's first cascade covers in the eyes: `[xr] shadow_first_split`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceShadowFirstSplit,
+            .set = native::setXRServiceShadowFirstSplit,
+        },
+        PropertyDesc{
+            .name = atoms.intern("ShadowResolution"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Texels a cascade of the sun's shadows, 256 to 2048, or 0 for the quality level's: `[xr] shadow_resolution`. A change makes the shadow map again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceShadowResolution,
+            .set = native::setXRServiceShadowResolution,
         },
         PropertyDesc{
             .name = atoms.intern("Passthrough"),
@@ -11298,6 +11416,36 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     xRHandDesc.doc = "A hand, or the controller it holds, for `XRService`.";
     xRHandDesc.items = xRHandItems;
     enums.registerEnum(xRHandDesc);
+
+    // --- XRFoveation ---
+    static std::array<EnumItemDesc, 4> xRFoveationItems;
+    xRFoveationItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Off"),
+            .value = 0,
+            .doc = "Every pixel at full density.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Low"),
+            .value = 1,
+            .doc = "A fragment for two pixels beyond a wide middle.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Medium"),
+            .value = 2,
+            .doc = "Two pixels, then four, beyond a middle.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("High"),
+            .value = 3,
+            .doc = "Two pixels, then four, beyond a narrow middle.",
+        },
+    }};
+    EnumDescriptor xRFoveationDesc;
+    xRFoveationDesc.name = atoms.intern("XRFoveation");
+    xRFoveationDesc.doc = "How much less a headset's eye is shaded away from where it looks, on a GPU with a fragment density map (`XRService.Foveation`).";
+    xRFoveationDesc.items = xRFoveationItems;
+    enums.registerEnum(xRFoveationDesc);
 
     // --- XRPose ---
     static std::array<EnumItemDesc, 5> xRPoseItems;

@@ -796,6 +796,16 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(xr_grab PROPERTIES
         PASS_REGULAR_EXPRESSION "\\[grab\\] ok=true"
         TIMEOUT 60)
+    # **How the eyes are drawn** (ADR 0250): `XRService` reads back the
+    # values a session runs with -- a PC's, with no project -- takes a
+    # script's within their ranges, and refuses one outside them.
+    add_test(NAME xr_quality
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_quality.luau" --headless --frames=30 --exit --rhi=null
+                --xr=simulated)
+    set_tests_properties(xr_quality PROPERTIES
+        PASS_REGULAR_EXPRESSION
+            "\\[quality\\] first: msaa=1 scale=1 resolution=0 distance=0 cascades=0 split=2 effects=false foveation=Off rate=0.*\\[quality\\] set: msaa=4 scale=0\\.75 resolution=1024 distance=30 cascades=3 split=3 effects=true foveation=Medium rate=90 refused=true"
+        TIMEOUT 60)
     add_test(NAME xr_room
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_room.luau" --headless --frames=150 --exit
                 --rhi=null --xr=simulated)

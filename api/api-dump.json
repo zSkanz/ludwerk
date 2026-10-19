@@ -11726,6 +11726,18 @@
           "Transient": true
         },
         {
+          "Name": "Foveation",
+          "Type": "Enum.XRFoveation",
+          "Default": "Enum.XRFoveation.Off",
+          "Transient": true
+        },
+        {
+          "Name": "Msaa",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
           "Name": "Passthrough",
           "Type": "boolean",
           "Default": "false",
@@ -11750,9 +11762,51 @@
           "Transient": true
         },
         {
+          "Name": "RefreshRate",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "RenderScale",
+          "Type": "number",
+          "Default": "1",
+          "Transient": true
+        },
+        {
+          "Name": "ScreenEffects",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
           "Name": "SessionState",
           "Type": "Enum.XRSessionState",
           "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "ShadowCascades",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowDistance",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowFirstSplit",
+          "Type": "number",
+          "Default": "2",
+          "Transient": true
+        },
+        {
+          "Name": "ShadowResolution",
+          "Type": "number",
+          "Default": "0",
           "Transient": true
         },
         {
@@ -17636,6 +17690,27 @@
         {
           "Name": "Lazy",
           "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "XRFoveation",
+      "Items": [
+        {
+          "Name": "High",
+          "Value": 3
+        },
+        {
+          "Name": "Low",
+          "Value": 1
+        },
+        {
+          "Name": "Medium",
+          "Value": 2
+        },
+        {
+          "Name": "Off",
+          "Value": 0
         }
       ]
     },

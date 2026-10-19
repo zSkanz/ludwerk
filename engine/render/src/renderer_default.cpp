@@ -8993,7 +8993,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         if (settings_.antiAliasing == AntiAliasingMode::Taa)
             settings_.antiAliasing = AntiAliasingMode::Smaa;
         settings_.upscaling = UpscalingMode::None;
-        settings_.renderScale = 1.0f;
+        // At its own resolution unless the project says less (`[xr]
+        // render_scale`), brought up by the tonemap's own filtering.
+        settings_.renderScale = std::clamp(world.headsetQuality.renderScale, 0.5f, 1.0f);
         settings_.renderResolutionCap = 0;
         settings_.frameGeneration = false;
     }
@@ -9019,6 +9021,21 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // million pixels, 0.9 ms of a Quest 3's frame. The eye is drawn
         // straight into the runtime's image by the tonemap.
         settings_.antiAliasing = AntiAliasingMode::Off;
+    }
+    // **And the project's word over both** (`[xr]`, `HeadsetQuality`): what
+    // it sets, in place of the level's or the numbers above.
+    if (world.headsetEye) {
+        const HeadsetQuality& quality = world.headsetQuality;
+        if (quality.shadowResolution != 0) {
+            u32 tile = 256;
+            while (tile * 2 <= std::min(quality.shadowResolution, 2048u))
+                tile *= 2;
+            settings_.shadowTileResolution = tile;
+        }
+        if (quality.shadowDistance > 0.0f)
+            settings_.shadowDistance = std::clamp(quality.shadowDistance, 5.0f, 500.0f);
+        if (quality.shadowCascades != 0)
+            settings_.shadowCascades = std::min(quality.shadowCascades, 4u);
     }
     // Each pass's time on the CPU, recording it: what was submitted is
     // the GPU's, which `wait.*` measures.

@@ -198,6 +198,15 @@ struct ProjectConfig
     // `[xr] foveation`: "off", "low", "medium" or "high"; unset, the
     // platform's default (`EngineOptions::xrFoveation`).
     std::optional<core::u32> xrFoveation;
+    // The rest of `[xr]`'s quality (`EngineOptions::xrMsaa` and after), each
+    // unset where the project leaves the platform's.
+    std::optional<core::u32> xrMsaa;
+    std::optional<core::f32> xrRenderScale;
+    std::optional<core::u32> xrShadowResolution;
+    std::optional<core::f32> xrShadowDistance;
+    std::optional<core::u32> xrShadowCascades;
+    std::optional<core::f32> xrShadowFirstSplit;
+    std::optional<core::f32> xrRefreshRate;
     core::f64 serverTimeDilationFloor = 0.25;
     core::u16 serverHealthPort = 0;
     std::vector<std::string> serverHealthAllow;

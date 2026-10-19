@@ -1233,6 +1233,17 @@ How a `ScreenGui` shown as a panel in a headset follows the player's head.
 | `Lazy` | 1 | Where it appeared, until the head turns more than 30 degrees away from it; then in front of the head again. |
 | `Fixed` | 2 | Where it appeared, for as long as it is shown. |
 
+## Enum.XRFoveation
+
+How much less a headset's eye is shaded away from where it looks, on a GPU with a fragment density map (`XRService.Foveation`).
+
+| Item | Value | Description |
+|---|---|---|
+| `Off` | 0 | Every pixel at full density. |
+| `Low` | 1 | A fragment for two pixels beyond a wide middle. |
+| `Medium` | 2 | Two pixels, then four, beyond a middle. |
+| `High` | 3 | Two pixels, then four, beyond a narrow middle. |
+
 ## Enum.XRHand
 
 A hand, or the controller it holds, for `XRService`.

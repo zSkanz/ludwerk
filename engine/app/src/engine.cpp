@@ -1642,7 +1642,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                           .application = options.xrApplication,
                                                           .applicationVersion = 0,
                                                           .hands = options.xrHands,
-                                                          .depth = options.xrDepth}},
+                                                          .depth = options.xrDepth,
+                                                          .refreshRate = options.xrRefreshRate}},
                                                   &error);
     if (device == nullptr)
         return error;
@@ -2027,6 +2028,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     rhi::HeadsetFrame headsetFrame;
     bool headsetBegun = false;
     bool headsetSynced = true;
+    // The display's rate the session was last asked for (`[xr] refresh_rate`,
+    // then `XRService.RefreshRate`).
+    core::f32 headsetRefreshAsked = options.xrRefreshRate;
     bool headsetUnsyncDue = false;
     // The editor's icons, built once from `content/icons` on the first frame
     // that has a command list -- uploading a texture is one, so this cannot be
@@ -3181,6 +3185,19 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         worldOptions.keyboardAvailable = options.headless ? !Handheld : devices.keyboard;
         worldOptions.gamepadAvailable = !options.headless && devices.gamepad;
     }
+    // **How a headset's eyes are drawn** (`[xr]`, ADR 0250), where
+    // `XRService` reads it before the first script runs.
+    worldOptions.headsetQuality = scene::EngineState::Headset::Quality{
+        .msaa = options.xrMsaa != 0 ? options.xrMsaa : (options.xrStandalone ? 2u : 1u),
+        .renderScale = options.xrRenderScale,
+        .shadowResolution = options.xrShadowResolution,
+        .shadowDistance = options.xrShadowDistance,
+        .shadowCascades = options.xrShadowCascades,
+        .shadowFirstSplit = options.xrShadowFirstSplit,
+        .screenEffects = options.xrScreenEffects,
+        .foveation = static_cast<core::u8>(std::min(options.xrFoveation, 3u)),
+        .refreshRate = options.xrRefreshRate,
+    };
     if (std::optional<core::EngineError> bootError = host->boot(worldOptions); bootError.has_value())
         return bootError;
 
@@ -7937,6 +7954,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             seen.enabled = headset->state() != rhi::HeadsetState::Ended;
             seen.simulated = simulatedHeadset != nullptr;
             seen.playArea = headset->playArea();
+            // **The display's rate** a script asks for (`XRService.RefreshRate`,
+            // ADR 0250), asked of the headset when it changes.
+            if (seen.quality.refreshRate != headsetRefreshAsked) {
+                headsetRefreshAsked = seen.quality.refreshRate;
+                headset->setRefreshRate(headsetRefreshAsked);
+            }
             // **What the session is doing** (`XRService.SessionState`), said
             // to the game when it changes.
             {
@@ -10048,17 +10071,23 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             shared.view = headCamera.view;
                             shared.spread = core::ViewSpread{core::Vec2{halfApart, halfApart}, core::Vec2{wide, tall}};
                             shared.nearPlane = headCamera.nearPlane;
-                            shared.firstSplit = 2.0f;
+                            // **How the eyes are drawn** (`[xr]`, ADR 0250): the
+                            // project's values, or what a script set over them.
+                            const scene::EngineState::Headset::Quality& quality =
+                                host->world().engineState().headset.quality;
+                            shared.firstSplit = quality.shadowFirstSplit;
                             snapshot.shadowView = shared;
                             snapshot.headsetEye = true;
-                            snapshot.headsetScreenEffects = options.xrScreenEffects;
-                            if (options.xrStandalone) {
-                                snapshot.headsetLean = true;
-                                // **Two samples a pixel**: the edges a Quest's
-                                // eye showed in steps, resolved on the tile.
-                                snapshot.headsetSamples = 2;
-                            }
-                            snapshot.headsetFoveation = options.xrFoveation;
+                            snapshot.headsetScreenEffects = quality.screenEffects;
+                            snapshot.headsetLean = options.xrStandalone;
+                            snapshot.headsetSamples = std::max(quality.msaa, 1u);
+                            snapshot.headsetQuality = render::HeadsetQuality{
+                                .renderScale = quality.renderScale,
+                                .shadowResolution = quality.shadowResolution,
+                                .shadowDistance = quality.shadowDistance,
+                                .shadowCascades = quality.shadowCascades,
+                            };
+                            snapshot.headsetFoveation = quality.foveation;
                             snapshot.headsetDepthRead =
                                 eyeCopy.seeThrough || (headsetFrame.depth[0].valid() && headsetFrame.depth[1].valid());
                         }
@@ -10196,6 +10225,22 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                       : caps.densityTexelWidth > 0 ? ENG_TR("engine.info.xr_foveation")
                                                                    : ENG_TR("engine.info.xr_foveation_none"),
                                       foveationArgs);
+                            const scene::EngineState::Headset::Quality& resolved =
+                                host->world().engineState().headset.quality;
+                            const std::array<core::I18nArg, 10> qualityArgs{
+                                core::I18nArg{"msaa", static_cast<core::i64>(resolved.msaa)},
+                                core::I18nArg{"scale", static_cast<f64>(resolved.renderScale)},
+                                core::I18nArg{"resolution", static_cast<core::i64>(resolved.shadowResolution)},
+                                core::I18nArg{"distance", static_cast<f64>(resolved.shadowDistance)},
+                                core::I18nArg{"cascades", static_cast<core::i64>(resolved.shadowCascades)},
+                                core::I18nArg{"split", static_cast<f64>(resolved.shadowFirstSplit)},
+                                core::I18nArg{"effects", resolved.screenEffects ? std::string_view{"on"}
+                                                                                : std::string_view{"off"}},
+                                core::I18nArg{"foveation", static_cast<core::i64>(resolved.foveation)},
+                                core::I18nArg{"rate", static_cast<f64>(resolved.refreshRate)},
+                                core::I18nArg{"depth",
+                                              options.xrDepth ? std::string_view{"on"} : std::string_view{"off"}}};
+                            core::log(LogLevel::Info, ENG_TR("engine.info.xr_quality"), qualityArgs);
                         }
                         // **Both eyes as drawn, before the runtime has them**
                         // (`--xr-eyes-shot`): the headset's own capture shows each
@@ -10236,6 +10281,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         snapshot.headsetSamples = 1;
                         snapshot.headsetDepthRead = false;
                         snapshot.headsetFoveation = 0;
+                        snapshot.headsetQuality = render::HeadsetQuality{};
                         // The window: the middle of the left eye, as much of
                         // it as the window's shape takes -- or black.
                         if (mirroring && !eyesDirect && options.xrMirror && eyePictures[0].texture.valid()) {

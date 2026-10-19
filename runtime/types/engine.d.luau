@@ -210,6 +210,9 @@ end
 declare extern type EnumXRHand extends EnumItem with
 end
 
+declare extern type EnumXRFoveation extends EnumItem with
+end
+
 declare extern type EnumXRPose extends EnumItem with
 end
 
@@ -5267,6 +5270,45 @@ declare extern type XRService extends Instance with
     --- Whether a headset is drawing this game. False on the screen, on a server and in a headless run
     --- without `--xr=simulated`.
     read Enabled: boolean
+    --- How much less each eye is shaded away from where it looks, on a GPU with a fragment density map:
+    --- `[xr] foveation`. Nothing on a GPU without one. Read, what the session runs with: the project's
+    --- `[xr]` value until a script sets it. Set, it is applied at the next frame.
+    Foveation: EnumXRFoveation
+    --- Samples a pixel each eye is drawn with: 1 (none), 2, 4 or 8, `[xr] msaa`. Where a frame needs
+    --- its picture or its depth partway through, or the headset reads the eye's depth, it is drawn with
+    --- one. A change makes its targets again: a hitch at the switch. Read, what the session runs with:
+    --- the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.
+    Msaa: number
+    --- The display's rate in hertz the game asks for, the nearest the headset offers: `[xr]
+    --- refresh_rate`. 0 is the headset's own. Read, what the session runs with: the project's `[xr]`
+    --- value until a script sets it. Set, it is applied at the next frame.
+    RefreshRate: number
+    --- The fraction of its pixels each eye is drawn at, 0.5 to 1, brought up to them: `[xr]
+    --- render_scale`. A change makes its targets again: a hitch at the switch. Read, what the session
+    --- runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next
+    --- frame.
+    RenderScale: number
+    --- Whether occlusion, contact shadows and the screen's reflections are drawn in the eyes: `[xr]
+    --- screen_effects`. Read, what the session runs with: the project's `[xr]` value until a script
+    --- sets it. Set, it is applied at the next frame.
+    ScreenEffects: boolean
+    --- How many cascades the sun's shadows are, 1 to 4, or 0 for the quality level's: `[xr]
+    --- shadow_cascades`. Read, what the session runs with: the project's `[xr]` value until a script
+    --- sets it. Set, it is applied at the next frame.
+    ShadowCascades: number
+    --- How far the sun's shadows reach in the eyes, in meters, or 0 for the quality level's: `[xr]
+    --- shadow_distance`. Read, what the session runs with: the project's `[xr]` value until a script
+    --- sets it. Set, it is applied at the next frame.
+    ShadowDistance: number
+    --- How many meters the sun's first cascade covers in the eyes: `[xr] shadow_first_split`. Read,
+    --- what the session runs with: the project's `[xr]` value until a script sets it. Set, it is
+    --- applied at the next frame.
+    ShadowFirstSplit: number
+    --- Texels a cascade of the sun's shadows, 256 to 2048, or 0 for the quality level's: `[xr]
+    --- shadow_resolution`. A change makes the shadow map again: a hitch at the switch. Read, what the
+    --- session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the
+    --- next frame.
+    ShadowResolution: number
     --- Whether the player's real room is seen through the headset behind what the game draws. The room
     --- shows wherever the game draws nothing, and the sky is not drawn. `Lighting.XRPassthroughOpacity`
     --- fades the game's world over it. Nothing on a headset whose runtime has no passthrough
@@ -7291,6 +7333,13 @@ declare Enum: {
         Left: EnumXRHand,
         Right: EnumXRHand,
         GetEnumItems: (self: any) -> { EnumXRHand },
+    },
+    XRFoveation: {
+        Off: EnumXRFoveation,
+        Low: EnumXRFoveation,
+        Medium: EnumXRFoveation,
+        High: EnumXRFoveation,
+        GetEnumItems: (self: any) -> { EnumXRFoveation },
     },
     XRPose: {
         Head: EnumXRPose,

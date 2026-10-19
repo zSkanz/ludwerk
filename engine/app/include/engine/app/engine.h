@@ -488,6 +488,24 @@ struct EngineOptions
     core::u32 xrFoveation = 0;
 #endif
     bool xrFoveationFromFlag = false;
+    // **A headset's quality** (`[xr]`, `[xr.android]` over it on a
+    // standalone headset): samples a pixel (1 none; 2, 4 or 8; nought the
+    // profile's -- two on a standalone headset, one on a PC), and the
+    // renderer's `HeadsetQuality`, nought being the level's or the measured
+    // value. The first cascade's depth in meters.
+    core::u32 xrMsaa = 0;
+    core::f32 xrRenderScale = 1.0f;
+    core::u32 xrShadowResolution = 0;
+    core::f32 xrShadowDistance = 0.0f;
+    core::u32 xrShadowCascades = 0;
+    core::f32 xrShadowFirstSplit = 2.0f;
+    // `[xr] refresh_rate` in hertz: 72 on a standalone headset until 90 is
+    // measured with foveation on, the runtime's own on a PC.
+#if defined(__ANDROID__)
+    core::f32 xrRefreshRate = 72.0f;
+#else
+    core::f32 xrRefreshRate = 0.0f;
+#endif
     // `--xr-eyes-shot=<path>`: both eyes' pictures as drawn, before the
     // runtime has them, written as `<name>-left` and `<name>-right` at the
     // 600th frame a headset draws, beside the eyes' geometry in the log.

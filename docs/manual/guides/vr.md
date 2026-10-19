@@ -21,6 +21,35 @@ enabled = true     # try a headset at start; the screen when there is none
 # foveation = "medium"    # "off", "low", "medium" or "high": less shading away from where the eye looks
 ```
 
+**How a headset's eyes are drawn** is the project's to set, under `[xr]`,
+and under `[xr.android]` for a standalone headset, where its values replace
+`[xr]`'s. Each has a default measured on a Quest 3:
+
+| Key | Values | PC default | Standalone default |
+|---|---|---|---|
+| `msaa` | 1 (none), 2, 4, 8 samples a pixel | 1 | 2 |
+| `render_scale` | 0.5 to 1: the eye drawn at that fraction of its pixels | 1 | 1 |
+| `shadow_resolution` | 256 to 2048 texels a cascade | the quality level's | 2048 |
+| `shadow_distance` | 5 to 500 meters of sun shadows | the quality level's | 20 |
+| `shadow_cascades` | 1 to 4 | the quality level's | 2 |
+| `shadow_first_split` | meters the first cascade covers | 2 | 2 |
+| `screen_effects` | occlusion, contact shadows and the screen's reflections | false | false |
+| `foveation` | `"off"`, `"low"`, `"medium"`, `"high"` | `"off"` | `"medium"` |
+| `refresh_rate` | hertz, the nearest the headset offers | the headset's | 72 |
+| `depth` | each eye's depth given to the headset | true | false |
+
+```toml
+[xr]
+msaa = 4
+
+[xr.android]
+msaa = 2
+refresh_rate = 90
+```
+
+The log says at the start of a session the values it runs with, and which
+refresh rates the headset offers.
+
 `--xr` and `--no-xr` on the command line override `enabled` and `required`.
 With each eye's picture a PC headset is given its depth, which makes the
 picture steadier when the headset moves it to where the head has turned;

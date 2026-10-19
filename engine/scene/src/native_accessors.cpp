@@ -2289,6 +2289,135 @@ bool setXRServicePassthrough(World& world, core::InstanceId, const Value& value)
     return true;
 }
 
+// **A headset's quality** (ADR 0250): each value checked against its range,
+// and refused outside it.
+Value getXRServiceMsaa(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.msaa)};
+}
+
+bool setXRServiceMsaa(World& world, core::InstanceId, const Value& value)
+{
+    const auto* samples = std::get_if<f64>(&value);
+    if (samples == nullptr ||
+        !(*samples == 0.0 || *samples == 1.0 || *samples == 2.0 || *samples == 4.0 || *samples == 8.0))
+        return false;
+    world.engineState().headset.quality.msaa = std::max(static_cast<u32>(*samples), 1u);
+    return true;
+}
+
+Value getXRServiceRenderScale(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.renderScale)};
+}
+
+bool setXRServiceRenderScale(World& world, core::InstanceId, const Value& value)
+{
+    const auto* scale = std::get_if<f64>(&value);
+    if (scale == nullptr || *scale < 0.5 || *scale > 1.0)
+        return false;
+    world.engineState().headset.quality.renderScale = static_cast<f32>(*scale);
+    return true;
+}
+
+Value getXRServiceShadowResolution(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.shadowResolution)};
+}
+
+bool setXRServiceShadowResolution(World& world, core::InstanceId, const Value& value)
+{
+    const auto* texels = std::get_if<f64>(&value);
+    if (texels == nullptr || !(*texels == 0.0 || (*texels >= 256.0 && *texels <= 2048.0)))
+        return false;
+    world.engineState().headset.quality.shadowResolution = static_cast<u32>(*texels);
+    return true;
+}
+
+Value getXRServiceShadowDistance(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.shadowDistance)};
+}
+
+bool setXRServiceShadowDistance(World& world, core::InstanceId, const Value& value)
+{
+    const auto* meters = std::get_if<f64>(&value);
+    if (meters == nullptr || !(*meters == 0.0 || (*meters >= 5.0 && *meters <= 500.0)))
+        return false;
+    world.engineState().headset.quality.shadowDistance = static_cast<f32>(*meters);
+    return true;
+}
+
+Value getXRServiceShadowCascades(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.shadowCascades)};
+}
+
+bool setXRServiceShadowCascades(World& world, core::InstanceId, const Value& value)
+{
+    const auto* count = std::get_if<f64>(&value);
+    if (count == nullptr || *count < 0.0 || *count > 4.0 || *count != static_cast<f64>(static_cast<u32>(*count)))
+        return false;
+    world.engineState().headset.quality.shadowCascades = static_cast<u32>(*count);
+    return true;
+}
+
+Value getXRServiceShadowFirstSplit(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.shadowFirstSplit)};
+}
+
+bool setXRServiceShadowFirstSplit(World& world, core::InstanceId, const Value& value)
+{
+    const auto* meters = std::get_if<f64>(&value);
+    if (meters == nullptr || *meters < 0.0 || *meters > 50.0)
+        return false;
+    world.engineState().headset.quality.shadowFirstSplit = static_cast<f32>(*meters);
+    return true;
+}
+
+Value getXRServiceScreenEffects(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().headset.quality.screenEffects};
+}
+
+bool setXRServiceScreenEffects(World& world, core::InstanceId, const Value& value)
+{
+    const bool* on = std::get_if<bool>(&value);
+    if (on == nullptr)
+        return false;
+    world.engineState().headset.quality.screenEffects = *on;
+    return true;
+}
+
+Value getXRServiceFoveation(const World& world, core::InstanceId)
+{
+    return Value{EnumValue{generated::XRFoveationEnumId, world.engineState().headset.quality.foveation}};
+}
+
+bool setXRServiceFoveation(World& world, core::InstanceId, const Value& value)
+{
+    const EnumValue* level = std::get_if<EnumValue>(&value);
+    if (level == nullptr || level->enumId != generated::XRFoveationEnumId || level->value < 0 || level->value > 3)
+        return false;
+    world.engineState().headset.quality.foveation = static_cast<u8>(level->value);
+    return true;
+}
+
+Value getXRServiceRefreshRate(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.quality.refreshRate)};
+}
+
+bool setXRServiceRefreshRate(World& world, core::InstanceId, const Value& value)
+{
+    const auto* hertz = std::get_if<f64>(&value);
+    if (hertz == nullptr || *hertz < 0.0 || *hertz > 240.0)
+        return false;
+    world.engineState().headset.quality.refreshRate = static_cast<f32>(*hertz);
+    return true;
+}
+
 Value getXRServicePointerHand(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::XRHandEnumId, world.engineState().headset.pointerHand}};

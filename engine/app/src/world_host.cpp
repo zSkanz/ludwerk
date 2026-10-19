@@ -363,6 +363,7 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_world->engineState().volumesWorked = options.volumesWorked;
     m_world->engineState().probesTaken = options.probesTaken;
     m_world->engineState().touchAvailable = options.touchAvailable;
+    m_world->engineState().headset.quality = options.headsetQuality;
     m_world->engineState().keyboardAvailable = options.keyboardAvailable;
     m_world->engineState().gamepadAvailable = options.gamepadAvailable;
     m_world->engineState().fixedTimestep = options.fixedTimestep;

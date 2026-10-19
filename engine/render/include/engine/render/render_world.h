@@ -846,6 +846,23 @@ struct ShadowView
     bool reuse = false;
 };
 
+// **A headset's quality, the project's word on it** (`[xr]` in project.toml,
+// `[xr.android]` over it on a standalone headset). Nought is the quality
+// level's own value -- or, on a standalone headset, the measured one the
+// renderer keeps for it.
+struct HeadsetQuality
+{
+    // The eye drawn at this fraction of its pixels and brought up to them,
+    // 0.5 to 1.
+    f32 renderScale = 1.0f;
+    // A cascade's tile, in texels: 256 to 2048, a power of two.
+    u32 shadowResolution = 0;
+    // How far the sun's shadows reach, in metres.
+    f32 shadowDistance = 0.0f;
+    // How many cascades, 1 to 4.
+    u32 shadowCascades = 0;
+};
+
 struct RenderWorld
 {
     RenderCamera camera;
@@ -875,6 +892,7 @@ struct RenderWorld
     // 1 low, 2 medium, 3 high -- a fragment density map on the multisampled
     // forward pass, where the device has one.
     u32 headsetFoveation = 0;
+    HeadsetQuality headsetQuality;
     RenderEnvironment environment;
     // Atmosphere, a sky and the post effects (ADR 0096): `RenderLook{}` for a
     // world with none of them, which is the picture it always drew.

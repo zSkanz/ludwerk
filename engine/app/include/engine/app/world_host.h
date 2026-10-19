@@ -257,6 +257,9 @@ struct WorldHostOptions
     bool touchAvailable = false;
     bool keyboardAvailable = false;
     bool gamepadAvailable = false;
+    // **How a headset's eyes are drawn** (`[xr]`, ADR 0250): `XRService`'s
+    // quality properties until a script sets its own.
+    scene::EngineState::Headset::Quality headsetQuality;
 
     // **Where `SaveService` writes** (ADR 0111), decided by the host: the
     // player's own folder for a game, `.engine/saves/` in the project for the

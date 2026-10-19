@@ -679,6 +679,23 @@ struct EngineState
         // asks for, and whether the headset can.
         bool passthrough = false;
         bool passthroughSupported = false;
+        // **How the eyes are drawn** (ADR 0250): the project's `[xr]` values,
+        // put here by the host before the first script runs, and what a
+        // script sets over them, read each frame the eyes are drawn.
+        // `XRService`'s quality properties.
+        struct Quality
+        {
+            u32 msaa = 1;
+            f32 renderScale = 1.0f;
+            u32 shadowResolution = 0;
+            f32 shadowDistance = 0.0f;
+            u32 shadowCascades = 0;
+            f32 shadowFirstSplit = 2.0f;
+            bool screenEffects = false;
+            u8 foveation = 0;
+            f32 refreshRate = 0.0f;
+        };
+        Quality quality;
         // **The room** (ADR 0247 §2): whether a script waits for it, and the
         // headset's last answer -- whether it knows one, and each plane in the
         // play space a script reads, its width and height as x and y.

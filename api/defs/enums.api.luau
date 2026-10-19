@@ -1645,6 +1645,18 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "XRFoveation",
+            Records = { "ADR 0250" },
+            Doc = "How much less a headset's eye is shaded away from where it looks, on a GPU with a fragment "
+                .. "density map (`XRService.Foveation`).",
+            Items = {
+                { Name = "Off", Value = 0, Doc = "Every pixel at full density." },
+                { Name = "Low", Value = 1, Doc = "A fragment for two pixels beyond a wide middle." },
+                { Name = "Medium", Value = 2, Doc = "Two pixels, then four, beyond a middle." },
+                { Name = "High", Value = 3, Doc = "Two pixels, then four, beyond a narrow middle." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "XRPose",
             Records = { "ADR 0245" },
             Doc = "One of the poses `XRService` tracks: the head, or a hand.",

@@ -86,6 +86,9 @@ struct XrCalls
     PFN_xrPassthroughLayerResumeFB resumePassthroughLayer = nullptr;
     // XR_META_performance_metrics'.
     PFN_xrSetPerformanceMetricsStateMETA setMetricsState = nullptr;
+    // XR_FB_display_refresh_rate's.
+    PFN_xrEnumerateDisplayRefreshRatesFB enumerateRefreshRates = nullptr;
+    PFN_xrRequestDisplayRefreshRateFB requestRefreshRate = nullptr;
     PFN_xrQueryPerformanceMetricsCounterMETA queryMetric = nullptr;
     // XR_FB_spatial_entity, its query and XR_FB_scene's.
     PFN_xrQuerySpacesFB querySpaces = nullptr;
@@ -152,6 +155,21 @@ struct XrCalls
         };
         get("xrSetPerformanceMetricsStateMETA", setMetricsState);
         get("xrQueryPerformanceMetricsCounterMETA", queryMetric);
+    }
+
+    void loadRefreshRates(XrInstance instance)
+    {
+        const auto getProc = reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_OpenXR_GetXrGetInstanceProcAddr());
+        if (getProc == nullptr)
+            return;
+        const auto get = [&](const char* name, auto& out) {
+            PFN_xrVoidFunction found = nullptr;
+            if (XR_FAILED(getProc(instance, name, &found)))
+                found = nullptr;
+            out = reinterpret_cast<std::remove_reference_t<decltype(out)>>(found);
+        };
+        get("xrEnumerateDisplayRefreshRatesFB", enumerateRefreshRates);
+        get("xrRequestDisplayRefreshRateFB", requestRefreshRate);
     }
 
     [[nodiscard]] bool load(XrInstance instance)
@@ -313,9 +331,10 @@ class OpenXrHeadset final : public IHeadset
 {
 public:
     OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
-                  bool fbPassthrough, bool metrics, bool scene, bool anchors)
+                  bool fbPassthrough, bool metrics, bool scene, bool anchors, bool refreshRates, f32 refreshRate)
         : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_scene(scene), m_anchors(anchors),
-          m_metrics(metrics), m_fbPassthrough(fbPassthrough), m_depthLayer(depthLayer), m_handTracking(handTracking)
+          m_metrics(metrics), m_refreshRates(refreshRates), m_refreshRate(refreshRate), m_fbPassthrough(fbPassthrough),
+          m_depthLayer(depthLayer), m_handTracking(handTracking)
     {}
 
     ~OpenXrHeadset() override
@@ -505,6 +524,12 @@ public:
             m_metrics = m_calls.setMetricsState != nullptr && m_calls.queryMetric != nullptr &&
                         XR_SUCCEEDED(m_calls.setMetricsState(m_session, &state));
         }
+        // **The display's rate** the project asks for (`[xr] refresh_rate`):
+        // the nearest the runtime offers, said with the ones it offers --
+        // and the session goes on at the runtime's own where it lets a
+        // game choose none.
+        if (m_refreshRates)
+            chooseRefreshRate();
         m_fbPassthrough = m_fbPassthrough && m_calls.createPassthrough != nullptr &&
                           m_calls.createPassthroughLayer != nullptr && m_calls.startPassthrough != nullptr;
         // **Each eye's depth** (ADR 0244 §5), where the runtime takes it: a
@@ -1013,6 +1038,19 @@ public:
 
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
 
+    void setRefreshRate(f32 hertz) override
+    {
+        if (hertz == m_refreshRate)
+            return;
+        m_refreshRate = hertz;
+        if (!m_refreshRates || m_session == XR_NULL_HANDLE)
+            return;
+        // Nought is what the extension calls no preference: the runtime's own.
+        if (hertz <= 0.0f && m_calls.requestRefreshRate != nullptr)
+            (void)m_calls.requestRefreshRate(m_session, 0.0f);
+        chooseRefreshRate();
+    }
+
     void setPassthrough(bool on) override
     {
         on = on && supportsPassthrough();
@@ -1488,6 +1526,47 @@ private:
     HeadsetTiming m_timing{};
     i64 m_lastWaitNs = 0;
     bool m_metrics = false;
+    bool m_refreshRates = false;
+    f32 m_refreshRate = 0.0f;
+
+    void chooseRefreshRate()
+    {
+        m_calls.loadRefreshRates(m_instance);
+        if (m_calls.enumerateRefreshRates == nullptr || m_calls.requestRefreshRate == nullptr)
+            return;
+        uint32_t count = 0;
+        if (XR_FAILED(m_calls.enumerateRefreshRates(m_session, 0, &count, nullptr)) || count == 0)
+            return;
+        std::vector<float> rates(count, 0.0f);
+        if (XR_FAILED(m_calls.enumerateRefreshRates(m_session, count, &count, rates.data())))
+            return;
+        rates.resize(count);
+        std::string offered;
+        for (const float rate : rates) {
+            if (!offered.empty())
+                offered += ", ";
+            offered += std::to_string(static_cast<int>(std::lround(rate)));
+        }
+        if (m_refreshRate <= 0.0f) {
+            const core::I18nArg args[] = {{"offered", std::string_view{offered}}};
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.xr_refresh_offered"), args);
+            return;
+        }
+        float chosen = rates.front();
+        for (const float rate : rates) {
+            if (std::fabs(rate - m_refreshRate) < std::fabs(chosen - m_refreshRate))
+                chosen = rate;
+        }
+        const bool requested = XR_SUCCEEDED(m_calls.requestRefreshRate(m_session, chosen));
+        const core::I18nArg args[] = {{"asked", static_cast<core::i64>(std::lround(m_refreshRate))},
+                                      {"chosen", static_cast<core::i64>(std::lround(chosen))},
+                                      {"offered", std::string_view{offered}}};
+        core::log(core::LogLevel::Info,
+                  !requested                                 ? ENG_TR("rhi.info.xr_refresh_refused")
+                  : std::fabs(chosen - m_refreshRate) > 0.5f ? ENG_TR("rhi.info.xr_refresh_nearest")
+                                                             : ENG_TR("rhi.info.xr_refresh_chosen"),
+                  args);
+    }
     // The runtime's count of dropped frames at the last block's end.
     i64 m_droppedBefore = -1;
     // **The room seen through**: whether the runtime blends by alpha, has the
@@ -1532,6 +1611,7 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     depthLayer = false;
     fbPassthrough = false;
     metrics = false;
+    refreshRates = false;
     scene = false;
     anchors = false;
     bool storage = false;
@@ -1560,6 +1640,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             fbPassthrough = true;
                         if (name == XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)
                             metrics = true;
+                        if (name == XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME)
+                            refreshRates = true;
                         if (name == XR_FB_SPATIAL_ENTITY_EXTENSION_NAME)
                             entity = true;
                         if (name == XR_FB_SPATIAL_ENTITY_QUERY_EXTENSION_NAME)
@@ -1582,6 +1664,9 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
         extensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
     if (metrics)
         extensions.push_back(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME);
+    if (refreshRates)
+        extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+    refreshRate = request.refreshRate;
     scene = entity && query && sceneListed;
     anchors = entity && query && storage;
     if (scene || anchors) {
@@ -1613,9 +1698,10 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
 {
     if (!ask.ready())
         return nullptr;
-    auto headset = std::make_unique<OpenXrHeadset>(
-        reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system), std::move(hooks),
-        ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics, ask.scene, ask.anchors);
+    auto headset =
+        std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
+                                        std::move(hooks), ask.handTracking, ask.depthLayer, ask.fbPassthrough,
+                                        ask.metrics, ask.scene, ask.anchors, ask.refreshRates, ask.refreshRate);
     if (!headset->open())
         return nullptr;
     return headset;

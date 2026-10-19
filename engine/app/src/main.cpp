@@ -2072,6 +2072,13 @@ static int hostMain(int argc, char** argv)
         options.xrScreenEffects = config.xrScreenEffects;
         if (config.xrFoveation.has_value() && !options.xrFoveationFromFlag)
             options.xrFoveation = *config.xrFoveation;
+        options.xrMsaa = config.xrMsaa.value_or(options.xrMsaa);
+        options.xrRenderScale = config.xrRenderScale.value_or(options.xrRenderScale);
+        options.xrShadowResolution = config.xrShadowResolution.value_or(options.xrShadowResolution);
+        options.xrShadowDistance = config.xrShadowDistance.value_or(options.xrShadowDistance);
+        options.xrShadowCascades = config.xrShadowCascades.value_or(options.xrShadowCascades);
+        options.xrShadowFirstSplit = config.xrShadowFirstSplit.value_or(options.xrShadowFirstSplit);
+        options.xrRefreshRate = config.xrRefreshRate.value_or(options.xrRefreshRate);
         options.xrApplication = config.name.empty() ? config.id : config.name;
         if (!options.timeDilationFromFlag)
             options.timeDilationFloor = config.serverTimeDilationFloor;

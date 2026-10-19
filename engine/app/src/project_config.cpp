@@ -755,16 +755,49 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.xrDepth = *value;
     if (const std::optional<bool> value = document.boolean("xr.screen_effects"))
         config.xrScreenEffects = *value;
-    if (const std::optional<std::string_view> value = document.string("xr.foveation")) {
-        if (*value == "off")
-            config.xrFoveation = 0u;
-        else if (*value == "low")
-            config.xrFoveation = 1u;
-        else if (*value == "medium")
-            config.xrFoveation = 2u;
-        else if (*value == "high")
-            config.xrFoveation = 3u;
-    }
+    // **A headset's quality**: `[xr]`, then `[xr.android]` over it where this
+    // is a standalone headset's build. A value out of its range is left out,
+    // and the platform's stands.
+    const auto xrQuality = [&](std::string_view table) {
+        const auto key = [&](std::string_view name) { return std::string(table) + "." + std::string(name); };
+        if (const std::optional<std::string_view> value = document.string(key("foveation"))) {
+            if (*value == "off")
+                config.xrFoveation = 0u;
+            else if (*value == "low")
+                config.xrFoveation = 1u;
+            else if (*value == "medium")
+                config.xrFoveation = 2u;
+            else if (*value == "high")
+                config.xrFoveation = 3u;
+        }
+        if (const std::optional<f64> value = document.number(key("msaa"));
+            value.has_value() && (*value == 1.0 || *value == 2.0 || *value == 4.0 || *value == 8.0))
+            config.xrMsaa = static_cast<core::u32>(*value);
+        if (const std::optional<f64> value = document.number(key("render_scale"));
+            value.has_value() && *value >= 0.5 && *value <= 1.0)
+            config.xrRenderScale = static_cast<core::f32>(*value);
+        if (const std::optional<f64> value = document.number(key("shadow_resolution"));
+            value.has_value() && *value >= 256.0 && *value <= 2048.0)
+            config.xrShadowResolution = static_cast<core::u32>(*value);
+        if (const std::optional<f64> value = document.number(key("shadow_distance"));
+            value.has_value() && *value >= 5.0 && *value <= 500.0)
+            config.xrShadowDistance = static_cast<core::f32>(*value);
+        if (const std::optional<f64> value = document.number(key("shadow_cascades"));
+            value.has_value() && *value >= 1.0 && *value <= 4.0)
+            config.xrShadowCascades = static_cast<core::u32>(*value);
+        if (const std::optional<f64> value = document.number(key("shadow_first_split"));
+            value.has_value() && *value >= 0.0 && *value <= 50.0)
+            config.xrShadowFirstSplit = static_cast<core::f32>(*value);
+        if (const std::optional<bool> value = document.boolean(key("screen_effects")))
+            config.xrScreenEffects = *value;
+        if (const std::optional<f64> value = document.number(key("refresh_rate"));
+            value.has_value() && *value >= 0.0 && *value <= 240.0)
+            config.xrRefreshRate = static_cast<core::f32>(*value);
+    };
+    xrQuality("xr");
+#if defined(__ANDROID__)
+    xrQuality("xr.android");
+#endif
     if (const std::optional<std::string_view> value = document.string("network.server_key"))
         config.networkServerKey = *value;
     if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))

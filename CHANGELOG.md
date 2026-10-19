@@ -11,6 +11,10 @@ here.
 
 ### Added
 
+- How a headset's eyes are drawn is the project's to set: `[xr]` and
+  `[xr.android]` take `msaa`, `render_scale`, the sun shadows' resolution,
+  distance, cascades and first split, and `refresh_rate`, each with a
+  default measured on a Quest 3, and the log says what a session runs with.
 - Foveation in a headset: on a GPU with a fragment density map, each eye is
   shaded less toward the edges of the lens, `[xr] foveation` and
   `--xr-foveation` say how much, medium by default on a standalone headset.

@@ -37,6 +37,9 @@ struct XrDeviceAsk
     bool fbPassthrough = false;
     // XR_META_performance_metrics, listed: the runtime's measurements.
     bool metrics = false;
+    // XR_FB_display_refresh_rate, listed, and the rate asked: 0 the runtime's.
+    bool refreshRates = false;
+    f32 refreshRate = 0.0f;
     // XR_FB_spatial_entity, its query and XR_FB_scene, all listed: the room.
     bool scene = false;
     // XR_FB_spatial_entity, its query and its storage, all listed: anchors.
