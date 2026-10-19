@@ -5328,6 +5328,16 @@ declare extern type XRService extends Instance with
     --- uses the same space, so the camera stands for the floor when standing and for the player's eyes
     --- when seated.
     Space: EnumXRSpace
+    --- The time between the headset's frames over the last second, in milliseconds. It is the display's
+    --- period while the game keeps up, and a multiple of it when frames are missed; 0 with no headset.
+    read FrameTime: number
+    --- The GPU time of the game's frames over the last second, in milliseconds, as the headset's
+    --- runtime measures it. 0 where the runtime does not measure it.
+    read GpuTime: number
+    --- How many frames the headset has not shown on time since the session began. It is the
+    --- compositor's count where the runtime keeps one, and otherwise the frames that came more than
+    --- half a period late.
+    read DroppedFrames: number
     --- What the headset is doing with this game: `Focused` while the player plays, `Visible` while the
     --- headset's own menu is in front, and `None` with no headset. `SessionStateChanged` fires when it
     --- changes; a game pauses on anything but `Focused`.

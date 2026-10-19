@@ -10487,6 +10487,235 @@ constexpr std::array<const char*, 4> PlatformNamesInFile{"windows", "macos", "li
     return info.quality != display;
 }
 
+// **A headset's settings** (ADR 0250): `[xr]` for every headset, and
+// `[xr.android]` over it for a standalone one. A cell the file says is
+// marked, and a right-click gives it back; one it does not say shows what it
+// falls to -- the engine's for that kind of headset, or in the standalone
+// column the first column's.
+constexpr std::size_t kHeadsetKeys = 9;
+constexpr std::array<const char*, kHeadsetKeys> HeadsetKeyNames{
+    "msaa",           "render_scale", "shadow_resolution", "shadow_distance", "shadow_cascades", "shadow_first_split",
+    "screen_effects", "foveation",    "refresh_rate"};
+constexpr std::array<const char*, 2> HeadsetTables{"xr", "xr.android"};
+constexpr std::array<const char*, 4> FoveationNamesInFile{"off", "low", "medium", "high"};
+// What each kind of headset runs with when nothing says: a PC's, and a
+// standalone one's as measured on a Quest 3 (the renderer's lean values).
+constexpr std::array<std::array<core::f64, kHeadsetKeys>, 2> HeadsetDefaults{{
+    {1.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0},
+    {2.0, 1.0, 2048.0, 20.0, 2.0, 2.0, 0.0, 2.0, 72.0},
+}};
+
+struct HeadsetPage
+{
+    std::array<std::array<bool, kHeadsetKeys>, 2> said{};
+    std::array<std::array<bool, kHeadsetKeys>, 2> written{};
+    std::array<std::array<core::f64, kHeadsetKeys>, 2> value{};
+};
+
+[[nodiscard]] HeadsetPage readHeadsetPage(const core::TomlDocument* document)
+{
+    HeadsetPage page;
+    for (std::size_t column = 0; column < HeadsetTables.size(); ++column) {
+        for (std::size_t key = 0; key < kHeadsetKeys; ++key) {
+            page.value[column][key] = HeadsetDefaults[column][key];
+            if (document == nullptr)
+                continue;
+            const std::string path = std::string(HeadsetTables[column]) + "." + HeadsetKeyNames[key];
+            if (key == 6) {
+                if (const std::optional<bool> on = document->boolean(path)) {
+                    page.said[column][key] = true;
+                    page.value[column][key] = *on ? 1.0 : 0.0;
+                }
+            }
+            else if (key == 7) {
+                if (const std::optional<std::string_view> named = document->string(path)) {
+                    for (std::size_t level = 0; level < FoveationNamesInFile.size(); ++level) {
+                        if (*named == FoveationNamesInFile[level]) {
+                            page.said[column][key] = true;
+                            page.value[column][key] = static_cast<core::f64>(level);
+                        }
+                    }
+                }
+            }
+            else if (const std::optional<core::f64> number = document->number(path)) {
+                page.said[column][key] = true;
+                page.value[column][key] = *number;
+            }
+        }
+    }
+    page.written = page.said;
+    return page;
+}
+
+// One cell: a choice from `values` shown by `names`, or a number dragged
+// within `low` and `high`. True when it was changed.
+[[nodiscard]] bool headsetCell(std::size_t key, core::f64& value)
+{
+    const auto pick = [&](std::span<const core::f64> values, const std::string& names) {
+        int chosen = 0;
+        for (std::size_t index = 0; index < values.size(); ++index) {
+            if (values[index] == value)
+                chosen = static_cast<int>(index);
+        }
+        if (!ImGui::Combo("##cell", &chosen, names.c_str()))
+            return false;
+        value = values[static_cast<std::size_t>(chosen)];
+        return true;
+    };
+    switch (key) {
+    case 0: {
+        static constexpr std::array<core::f64, 4> Samples{1.0, 2.0, 4.0, 8.0};
+        return pick(Samples, choices({ENG_TR("engine.editor.project_settings.headset.samples_none"),
+                                      ENG_TR("engine.editor.project_settings.headset.samples_2"),
+                                      ENG_TR("engine.editor.project_settings.headset.samples_4"),
+                                      ENG_TR("engine.editor.project_settings.headset.samples_8")}));
+    }
+    case 1: {
+        float scale = static_cast<float>(value);
+        if (!ImGui::SliderFloat("##cell", &scale, 0.5f, 1.0f, "%.2f"))
+            return false;
+        value = static_cast<core::f64>(scale);
+        return true;
+    }
+    case 2: {
+        static constexpr std::array<core::f64, 5> Texels{0.0, 256.0, 512.0, 1024.0, 2048.0};
+        return pick(Texels, choices({ENG_TR("engine.editor.project_settings.headset.level_s"),
+                                     ENG_TR("engine.editor.project_settings.headset.texels_256"),
+                                     ENG_TR("engine.editor.project_settings.headset.texels_512"),
+                                     ENG_TR("engine.editor.project_settings.headset.texels_1024"),
+                                     ENG_TR("engine.editor.project_settings.headset.texels_2048")}));
+    }
+    case 3:
+    case 5: {
+        float meters = static_cast<float>(value);
+        const bool moved = key == 3 ? ImGui::DragFloat("##cell", &meters, 0.5f, 0.0f, 500.0f, "%.1f")
+                                    : ImGui::DragFloat("##cell", &meters, 0.05f, 0.0f, 50.0f, "%.2f");
+        if (!moved)
+            return false;
+        value = static_cast<core::f64>(meters);
+        return true;
+    }
+    case 4: {
+        static constexpr std::array<core::f64, 5> Cascades{0.0, 1.0, 2.0, 3.0, 4.0};
+        return pick(Cascades, choices({ENG_TR("engine.editor.project_settings.headset.level_s"),
+                                       ENG_TR("engine.editor.project_settings.headset.cascades_1"),
+                                       ENG_TR("engine.editor.project_settings.headset.cascades_2"),
+                                       ENG_TR("engine.editor.project_settings.headset.cascades_3"),
+                                       ENG_TR("engine.editor.project_settings.headset.cascades_4")}));
+    }
+    case 6: {
+        bool on = value != 0.0;
+        if (!ImGui::Checkbox("##cell", &on))
+            return false;
+        value = on ? 1.0 : 0.0;
+        return true;
+    }
+    case 7: {
+        static constexpr std::array<core::f64, 4> Levels{0.0, 1.0, 2.0, 3.0};
+        return pick(Levels, choices({ENG_TR("engine.editor.project_settings.headset.foveation_off"),
+                                     ENG_TR("engine.editor.project_settings.headset.foveation_low"),
+                                     ENG_TR("engine.editor.project_settings.headset.foveation_medium"),
+                                     ENG_TR("engine.editor.project_settings.headset.foveation_high")}));
+    }
+    default: {
+        static constexpr std::array<core::f64, 5> Rates{0.0, 72.0, 80.0, 90.0, 120.0};
+        return pick(Rates, choices({ENG_TR("engine.editor.project_settings.headset.rate_own"),
+                                    ENG_TR("engine.editor.project_settings.headset.rate_72"),
+                                    ENG_TR("engine.editor.project_settings.headset.rate_80"),
+                                    ENG_TR("engine.editor.project_settings.headset.rate_90"),
+                                    ENG_TR("engine.editor.project_settings.headset.rate_120")}));
+    }
+    }
+}
+
+void drawHeadsetPage(HeadsetPage& page)
+{
+    static constexpr std::array<core::TextKey, kHeadsetKeys> Labels{
+        ENG_TR("engine.editor.project_settings.headset.msaa"),
+        ENG_TR("engine.editor.project_settings.headset.render_scale"),
+        ENG_TR("engine.editor.project_settings.headset.shadow_resolution"),
+        ENG_TR("engine.editor.project_settings.headset.shadow_distance"),
+        ENG_TR("engine.editor.project_settings.headset.shadow_cascades"),
+        ENG_TR("engine.editor.project_settings.headset.shadow_first_split"),
+        ENG_TR("engine.editor.project_settings.headset.screen_effects"),
+        ENG_TR("engine.editor.project_settings.headset.foveation"),
+        ENG_TR("engine.editor.project_settings.headset.refresh_rate")};
+    if (!ImGui::CollapsingHeader(core::tr(ENG_TR("engine.editor.project_settings.headset"))))
+        return;
+    ImGui::TextWrapped("%s", core::tr(ENG_TR("engine.editor.project_settings.headset.hint")));
+    if (!ImGui::BeginTable("##headset-settings", 3,
+                           ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV))
+        return;
+    ImGui::TableSetupColumn("##setting", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.headset.every")),
+                            ImGuiTableColumnFlags_WidthStretch, 0.3f);
+    ImGui::TableSetupColumn(core::tr(ENG_TR("engine.editor.project_settings.headset.standalone")),
+                            ImGuiTableColumnFlags_WidthStretch, 0.3f);
+    ImGui::TableHeadersRow();
+    for (std::size_t key = 0; key < kHeadsetKeys; ++key) {
+        ImGui::PushID(static_cast<int>(key));
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(core::tr(Labels[key]));
+        for (std::size_t column = 0; column < HeadsetTables.size(); ++column) {
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(column));
+            const bool own = page.said[column][key];
+            // A standalone headset falls to what every headset is told.
+            core::f64 value = own                                ? page.value[column][key]
+                              : column == 1 && page.said[0][key] ? page.value[0][key]
+                                                                 : HeadsetDefaults[column][key];
+            if (own)
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, themeColor(palette().accentFill));
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (headsetCell(key, value)) {
+                page.value[column][key] = value;
+                page.said[column][key] = true;
+            }
+            if (own)
+                ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                pointerTip("%s", core::tr(own ? ENG_TR("engine.editor.project_settings.headset.own_tip")
+                                              : ENG_TR("engine.editor.project_settings.headset.default_tip")));
+            if (own && ImGui::BeginPopupContextItem("##headset-cell")) {
+                if (ImGui::MenuItem(core::tr(ENG_TR("engine.editor.project_settings.level_reset"))))
+                    page.said[column][key] = false;
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+}
+
+// What the page says is written under its table, and what it stopped saying
+// taken out -- never written as the default, which would pin it there.
+[[nodiscard]] bool writeHeadsetPage(const std::filesystem::path& root, const HeadsetPage& page, std::string* problem)
+{
+    for (std::size_t column = 0; column < HeadsetTables.size(); ++column) {
+        for (std::size_t key = 0; key < kHeadsetKeys; ++key) {
+            const std::string path = std::string(HeadsetTables[column]) + "." + HeadsetKeyNames[key];
+            const core::f64 value = page.value[column][key];
+            bool ok = true;
+            if (page.said[column][key]) {
+                const std::string rendered = key == 6   ? core::tomlBoolean(value != 0.0)
+                                             : key == 7 ? core::tomlString(FoveationNamesInFile[std::min<std::size_t>(
+                                                              static_cast<std::size_t>(std::max(value, 0.0)), 3)])
+                                                        : core::tomlNumber(value);
+                ok = writeProjectSetting(root, path, rendered, problem);
+            }
+            else if (page.written[column][key]) {
+                ok = removeProjectSetting(root, path, problem);
+            }
+            if (!ok)
+                return false;
+        }
+    }
+    return true;
+}
+
 void drawProjectSettings(Editor& editor, EditorCommands& commands)
 {
     if (!beginEditorDialog(labelled(ENG_TR("engine.editor.dialog.project_settings"), "###Project Settings").c_str(),
@@ -10531,6 +10760,8 @@ void drawProjectSettings(Editor& editor, EditorCommands& commands)
     static std::vector<LuauFlagInfo> luauFlags;
     static std::map<std::string, core::i64, std::less<>> luauWritten;
     static std::array<char, 64> luauSearch{};
+    // **The Headset page** (ADR 0250).
+    static HeadsetPage headsetPage;
 
     // Seeded on the frame it opens, and only then: re-reading every frame would
     // overwrite what somebody is typing with what is still on disk.
@@ -10569,6 +10800,7 @@ void drawProjectSettings(Editor& editor, EditorCommands& commands)
                 }
                 platformWritten[index] = platformLevel[index] >= 0;
             }
+            headsetPage = readHeadsetPage(read ? &document : nullptr);
         }
         rememberPlayer = config.rememberPlayerSettings;
         version.fill(0);
@@ -10770,6 +11002,8 @@ void drawProjectSettings(Editor& editor, EditorCommands& commands)
     if (ImGui::IsItemHovered())
         pointerTip("%s", core::tr(ENG_TR("engine.editor.project_settings.remember_player_settings_tip")));
 
+    drawHeadsetPage(headsetPage);
+
     // **Luau** (ADR 0217): the features by their names first, then every
     // flag, for somebody who knows which one they want and why.
     ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.project_settings.luau")));
@@ -10956,6 +11190,8 @@ void drawProjectSettings(Editor& editor, EditorCommands& commands)
             else if (written.test(index))
                 ok = removeProjectSetting(root, key, &problem);
         }
+        if (ok)
+            ok = writeHeadsetPage(root, headsetPage, &problem);
         // **And each level's own**, by the same rule: what a level says is
         // written under its table, and what it stopped saying taken out.
         for (std::size_t level = 0; ok && level < levels.size(); ++level) {

@@ -2028,6 +2028,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     rhi::HeadsetFrame headsetFrame;
     bool headsetBegun = false;
     bool headsetSynced = true;
+    // The headset's timing taken a second at a time, summed for the log's
+    // five, and its late frames since the session began.
+    rhi::HeadsetTiming headsetLogged;
+    core::u64 headsetLate = 0;
     // The display's rate the session was last asked for (`[xr] refresh_rate`,
     // then `XRService.RefreshRate`).
     core::f32 headsetRefreshAsked = options.xrRefreshRate;
@@ -8102,14 +8106,35 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     seen.simulatedKeys[key].reset();
                 }
             }
-            // **How the headset's frames go**, in the log every five seconds
-            // of them: the display's rate and the frames' own, the late and
-            // the undrawn, the eyes' passes, and the runtime's own GPU and CPU
-            // time and dropped frames where it measures them.
+            // **How the headset's frames go**, a second at a time for
+            // `XRService` (`FrameTime`, `GpuTime`, `DroppedFrames`), and in the
+            // log every five of those: the display's rate and the frames' own,
+            // the late and the undrawn, the eyes' passes, and the runtime's own
+            // GPU and CPU time and dropped frames where it measures them.
             headsetFramesSinceLog += 1;
+            if (headsetFramesSinceLog % 60 == 0) {
+                const rhi::HeadsetTiming second = headset->takeTiming();
+                headsetLogged.frames += second.frames;
+                headsetLogged.spanNs += second.spanNs;
+                headsetLogged.intervals += second.intervals;
+                headsetLogged.notDrawn += second.notDrawn;
+                headsetLogged.late += second.late;
+                headsetLogged.displayPeriodNs = second.displayPeriodNs;
+                headsetLogged.appGpuMs = second.appGpuMs;
+                headsetLogged.appCpuMs = second.appCpuMs;
+                headsetLogged.compositorDropped = second.compositorDropped;
+                headsetLate += second.late;
+                seen.frameTimeMs = second.intervals > 0 ? static_cast<core::f32>(static_cast<f64>(second.spanNs) / 1e6 /
+                                                                                 static_cast<f64>(second.intervals))
+                                                        : 0.0f;
+                seen.gpuTimeMs = std::max(second.appGpuMs, 0.0f);
+                seen.droppedFrames =
+                    second.compositorDropped >= 0 ? second.compositorDropped : static_cast<core::i64>(headsetLate);
+            }
             if (headsetFramesSinceLog >= 360) {
                 headsetFramesSinceLog = 0;
-                const rhi::HeadsetTiming timing = headset->takeTiming();
+                const rhi::HeadsetTiming timing = headsetLogged;
+                headsetLogged = rhi::HeadsetTiming{};
                 const f64 hz = timing.displayPeriodNs > 0 ? 1e9 / static_cast<f64>(timing.displayPeriodNs) : 0.0;
                 const f64 frameMs = timing.intervals > 0
                                         ? static_cast<f64>(timing.spanNs) / 1e6 / static_cast<f64>(timing.intervals)

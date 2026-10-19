@@ -6642,7 +6642,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 16> xRServiceProperties;
+    static std::array<PropertyDesc, 19> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6841,6 +6841,45 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getXRServiceSpace,
             .set = native::setXRServiceSpace,
+        },
+        PropertyDesc{
+            .name = atoms.intern("FrameTime"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The time between the headset's frames over the last second, in milliseconds. It is the display's period while the game keeps up, and a multiple of it when frames are missed; 0 with no headset.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceFrameTime,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("GpuTime"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The GPU time of the game's frames over the last second, in milliseconds, as the headset's runtime measures it. 0 where the runtime does not measure it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceGpuTime,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("DroppedFrames"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How many frames the headset has not shown on time since the session began. It is the compositor's count where the runtime keeps one, and otherwise the frames that came more than half a period late.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getXRServiceDroppedFrames,
+            .set = nullptr,
         },
         PropertyDesc{
             .name = atoms.intern("SessionState"),

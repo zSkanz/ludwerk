@@ -2460,6 +2460,21 @@ bool setXRServicePointerLength(World& world, core::InstanceId, const Value& valu
     return true;
 }
 
+Value getXRServiceFrameTime(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.frameTimeMs)};
+}
+
+Value getXRServiceGpuTime(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.gpuTimeMs)};
+}
+
+Value getXRServiceDroppedFrames(const World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().headset.droppedFrames)};
+}
+
 Value getXRServiceSessionState(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::XRSessionStateEnumId, world.engineState().headset.sessionState}};

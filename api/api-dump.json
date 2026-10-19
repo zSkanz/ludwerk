@@ -11720,6 +11720,12 @@
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
         {
+          "Name": "DroppedFrames",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
           "Name": "Enabled",
           "Type": "boolean",
           "ReadOnly": true,
@@ -11729,6 +11735,18 @@
           "Name": "Foveation",
           "Type": "Enum.XRFoveation",
           "Default": "Enum.XRFoveation.Off",
+          "Transient": true
+        },
+        {
+          "Name": "FrameTime",
+          "Type": "number",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
+          "Name": "GpuTime",
+          "Type": "number",
+          "ReadOnly": true,
           "Transient": true
         },
         {

@@ -795,9 +795,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
             config.xrRefreshRate = static_cast<core::f32>(*value);
     };
     xrQuality("xr");
-#if defined(__ANDROID__)
-    xrQuality("xr.android");
-#endif
+    if (handheld)
+        xrQuality("xr.android");
     if (const std::optional<std::string_view> value = document.string("network.server_key"))
         config.networkServerKey = *value;
     if (const std::optional<std::string_view> value = document.string("network.ticket_public_key"))

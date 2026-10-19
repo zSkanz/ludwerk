@@ -1110,6 +1110,9 @@ Value getXRServicePointerLength(const World& world, core::InstanceId id);
 bool setXRServicePointerLength(World& world, core::InstanceId id, const Value& value);
 Value getXRServiceSpace(const World& world, core::InstanceId id);
 bool setXRServiceSpace(World& world, core::InstanceId id, const Value& value);
+Value getXRServiceFrameTime(const World& world, core::InstanceId id);
+Value getXRServiceGpuTime(const World& world, core::InstanceId id);
+Value getXRServiceDroppedFrames(const World& world, core::InstanceId id);
 Value getXRServiceSessionState(const World& world, core::InstanceId id);
 
 // InstanceService

@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "engine/app/project_config.h"
+#include "engine/core/i18n.h"
 #include "engine/core/toml_edit.h"
 #include "engine/platform/event.h"
 #include "engine/platform/file.h"
@@ -526,6 +527,61 @@ TEST_CASE("a level's table and a platform's level, written as the editor's matri
     CHECK_FALSE(app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false)
                     .levelSettings[1]
                     .says(scene::GraphicsSetting::Bloom));
+}
+
+TEST_CASE(
+    "a headset's quality, written as the Headset page writes it, read back; a standalone one's over it (ADR 0250)")
+{
+    const ProjectDir project("[project]\nname = \"Headset\"\n");
+    std::string diagnostic;
+    const auto write = [&](const char* key, const std::string& rendered) {
+        REQUIRE_MESSAGE(app::writeProjectSetting(project.path, key, rendered, &diagnostic), diagnostic);
+    };
+    write("xr.msaa", engine::core::tomlNumber(4.0));
+    write("xr.render_scale", engine::core::tomlNumber(0.8));
+    write("xr.shadow_resolution", engine::core::tomlNumber(1024.0));
+    write("xr.foveation", engine::core::tomlString("low"));
+    write("xr.refresh_rate", engine::core::tomlNumber(90.0));
+    write("xr.android.msaa", engine::core::tomlNumber(2.0));
+    write("xr.android.foveation", engine::core::tomlString("high"));
+    // Out of its range, left out: the platform's stands.
+    write("xr.shadow_cascades", engine::core::tomlNumber(9.0));
+
+    const app::ProjectConfig desktop = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false);
+    CHECK(desktop.xrMsaa == std::optional<core::u32>{4u});
+    CHECK(desktop.xrRenderScale.value_or(0.0f) == doctest::Approx(0.8f).epsilon(1e-6));
+    CHECK(desktop.xrShadowResolution == std::optional<core::u32>{1024u});
+    CHECK(desktop.xrFoveation == std::optional<core::u32>{1u});
+    CHECK(desktop.xrRefreshRate.value_or(0.0f) == doctest::Approx(90.0f));
+    CHECK_FALSE(desktop.xrShadowCascades.has_value());
+
+    const app::ProjectConfig standalone = app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, true);
+    CHECK(standalone.xrMsaa == std::optional<core::u32>{2u});
+    CHECK(standalone.xrFoveation == std::optional<core::u32>{3u});
+    // What `[xr.android]` does not say, `[xr]` does.
+    CHECK(standalone.xrShadowResolution == std::optional<core::u32>{1024u});
+
+    // Taken out, the platform's again.
+    REQUIRE_MESSAGE(app::removeProjectSetting(project.path, "xr.msaa", &diagnostic), diagnostic);
+    CHECK_FALSE(app::loadProjectConfig(project.path, app::GraphicsOverrides{}, nullptr, false).xrMsaa.has_value());
+}
+
+TEST_CASE("every graphics setting has a name in the catalog, where the settings dialog looks for it")
+{
+    // The dialog builds the key at run time (`engine.graphics.setting.` and
+    // the setting's name in a file), which the i18n lint cannot see: an
+    // `[i18n:missing]` row in Project Settings is what a missing one was.
+    const auto loaded = engine::core::engineCatalog().loadFromFile(ENG_TEST_CATALOG);
+    REQUIRE_MESSAGE(loaded.ok, loaded.diagnostic);
+    for (core::usize index = 0; index < scene::kGraphicsSettingCount; ++index) {
+        const auto setting = static_cast<scene::GraphicsSetting>(index);
+        if (setting == scene::GraphicsSetting::QualityLevel)
+            continue;
+        const std::string key = app::projectKeyOf(setting);
+        const std::string label = "engine.graphics.setting." + key.substr(key.find('.') + 1);
+        CHECK_MESSAGE(engine::core::engineCatalog().contains(engine::core::TextKey{engine::core::hashTextKey(label)}),
+                      label);
+    }
 }
 
 TEST_CASE("a project asks for a line about its frames every few seconds")

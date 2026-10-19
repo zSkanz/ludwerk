@@ -696,6 +696,13 @@ struct EngineState
             f32 refreshRate = 0.0f;
         };
         Quality quality;
+        // **How the headset's frames go**, a second at a time: the time
+        // between them, the runtime's GPU time of them (nought where it does
+        // not measure), and the frames not shown on time since the session
+        // began. `XRService.FrameTime`, `GpuTime`, `DroppedFrames`.
+        f32 frameTimeMs = 0.0f;
+        f32 gpuTimeMs = 0.0f;
+        i64 droppedFrames = 0;
         // **The room** (ADR 0247 §2): whether a script waits for it, and the
         // headset's last answer -- whether it knows one, and each plane in the
         // play space a script reads, its width and height as x and y.

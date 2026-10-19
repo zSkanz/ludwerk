@@ -2093,6 +2093,38 @@ local Classes: { Schema.Class } = {
                     .. "for the player's eyes when seated.",
             },
             {
+                Name = "FrameTime",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0250" },
+                Doc = "The time between the headset's frames over the last second, in milliseconds. It is the "
+                    .. "display's period while the game keeps up, and a multiple of it when frames are missed; 0 "
+                    .. "with no headset.",
+            },
+            {
+                Name = "GpuTime",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0250" },
+                Doc = "The GPU time of the game's frames over the last second, in milliseconds, as the "
+                    .. "headset's runtime measures it. 0 where the runtime does not measure it.",
+            },
+            {
+                Name = "DroppedFrames",
+                Type = "number",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0250" },
+                Doc = "How many frames the headset has not shown on time since the session began. It is the "
+                    .. "compositor's count where the runtime keeps one, and otherwise the frames that came more "
+                    .. "than half a period late.",
+            },
+            {
                 Name = "SessionState",
                 Type = "Enum.XRSessionState",
                 ReadOnly = true,
