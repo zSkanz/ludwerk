@@ -258,6 +258,9 @@ struct JoinAsk
     // A manager's pass, in base64 (ADR 0222): empty for a joiner that came
     // to this server directly.
     std::string pass;
+    // **The account that pass names** (ADR 0237 amendment C): the player's
+    // `AccountId` unless the game's `OnJoinRequest` says another.
+    std::string accountId;
 };
 
 // **And what is said to them**: welcomed, or refused with words of the game's

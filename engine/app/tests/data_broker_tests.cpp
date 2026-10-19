@@ -375,7 +375,7 @@ TEST_CASE("data store > a transaction is traced in the move log and undone whole
     const auto store = engine::app::openDataStore(folder / "game.db", error);
     REQUIRE_MESSAGE(store != nullptr, error);
     checkUndo(*store);
-    CHECK(store->counts().schema == 4);
+    CHECK(store->counts().schema == 5);
     CHECK(store->counts().bytes > 0);
 }
 

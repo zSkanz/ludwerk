@@ -3126,6 +3126,45 @@ local Classes: { Schema.Class } = {
                     .. "does not disturb one, and several relays can be pinged at once from separate tasks.",
             },
             {
+                Name = "SignInAsync",
+                Parameters = {
+                    { Name = "address", Type = "string" },
+                    { Name = "name", Type = "string" },
+                    { Name = "password", Type = "string" },
+                },
+                Returns = { "{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0237" },
+                Doc = "Signs this player in to an account at an online game's servers, and returns a ticket "
+                    .. "to join with. Call it on the player's machine, then pass the ticket to `Join`: "
+                    .. "`NetworkService:Join(address, { Ticket = result.Ticket })`.\n\n"
+                    .. "`address` is the game's front door, `host` or `host:port`. The password crosses the "
+                    .. "network only encrypted, to the server this machine met before at that address, and "
+                    .. "is never kept. The method yields until the server answers, and never raises for a "
+                    .. "refusal: `Ok` is false and `Reason` says why. A wrong name and a wrong password are "
+                    .. "the same reason, `WrongNameOrPassword`, and take the same time, so nobody learns which "
+                    .. "names have accounts. A ticket is good for one join within 90 seconds.",
+            },
+            {
+                Name = "RegisterAsync",
+                Parameters = {
+                    { Name = "address", Type = "string" },
+                    { Name = "name", Type = "string" },
+                    { Name = "password", Type = "string" },
+                },
+                Returns = { "{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Records = { "ADR 0237" },
+                Doc = "Makes an account at an online game's servers and signs this player in to it, as "
+                    .. "`SignInAsync` does. A login name is 3 to 20 of the letters A to Z, the digits, `_`, "
+                    .. "`.` and `-`; two names that differ only in case, or in `l`, `I` and `1` or `o` and "
+                    .. "`0`, are one name, and the second is `Taken`. A password is 8 to 128 bytes. What the "
+                    .. "game shows a player as, with accents or other scripts, is a display name of the "
+                    .. "game's own, not the login name.",
+            },
+            {
                 Name = "DefineAction",
                 Parameters = {
                     { Name = "name", Type = "string" },

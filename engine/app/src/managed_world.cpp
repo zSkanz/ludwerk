@@ -258,6 +258,7 @@ std::optional<replication::JoinAnswer> ManagedWorld::admit(replication::JoinAsk&
     // What the player logged in with at the front door is what the game's
     // `OnJoinRequest` reads here.
     ask.ticket = pass->ticket;
+    ask.accountId = pass->account;
     world.engineState().travelArrivals.push_back(
         scene::EngineState::TravelArrival{ask.publicKey, pass->origin, pass->data, 0, pass->reason});
     return std::nullopt;

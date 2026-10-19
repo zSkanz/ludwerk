@@ -14,6 +14,9 @@ int networkServiceTravelGroup(lua_State* L);
 int networkServiceSwitchChannel(lua_State* L);
 int networkServiceTravelToPlayer(lua_State* L);
 int networkServiceGetChannelsAsync(lua_State* L);
+// `NetworkService:SignInAsync` and `RegisterAsync` (ADR 0237).
+int networkServiceSignInAsync(lua_State* L);
+int networkServiceRegisterAsync(lua_State* L);
 
 // Between ticks: who arrived, once their player is in the world, and a
 // client sent elsewhere.

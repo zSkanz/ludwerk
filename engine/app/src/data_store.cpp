@@ -219,6 +219,7 @@ public:
     [[nodiscard]] DataCounts counts() override
     {
         return DataCounts{0,
+                          static_cast<core::i64>(m_accounts.size()),
                           static_cast<core::i64>(m_records.size()),
                           static_cast<core::i64>(m_items.size()),
                           static_cast<core::i64>(m_transactions.size()),
@@ -237,6 +238,67 @@ public:
     {
         (void)pages;
         return {};
+    }
+
+    [[nodiscard]] std::optional<DataAccount> accountNamed(std::string_view skeleton) override
+    {
+        for (const auto& [id, account] : m_accounts) {
+            if (account.skeleton == skeleton)
+                return account;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<DataAccount> accountWithId(std::string_view id) override
+    {
+        const auto found = m_accounts.find(id);
+        if (found == m_accounts.end())
+            return std::nullopt;
+        return found->second;
+    }
+
+    [[nodiscard]] bool createAccount(const DataAccount& account) override
+    {
+        if (account.id.empty() || m_accounts.contains(account.id) || accountNamed(account.skeleton).has_value())
+            return false;
+        m_accounts.emplace(account.id, account);
+        return true;
+    }
+
+    [[nodiscard]] bool renameAccount(std::string_view id, std::string_view name, std::string_view skeleton) override
+    {
+        const auto found = m_accounts.find(id);
+        if (found == m_accounts.end())
+            return false;
+        if (const std::optional<DataAccount> other = accountNamed(skeleton); other.has_value() && other->id != id)
+            return false;
+        found->second.name = std::string{name};
+        found->second.skeleton = std::string{skeleton};
+        return true;
+    }
+
+    [[nodiscard]] bool setAccountHash(std::string_view id, std::string_view hash) override
+    {
+        const auto found = m_accounts.find(id);
+        if (found == m_accounts.end())
+            return false;
+        found->second.hash = std::string{hash};
+        return true;
+    }
+
+    void noteSignIn(std::string_view id, core::i64 at) override
+    {
+        if (const auto found = m_accounts.find(id); found != m_accounts.end())
+            found->second.signedIn = at;
+    }
+
+    [[nodiscard]] bool deleteAccount(std::string_view id) override
+    {
+        const auto found = m_accounts.find(id);
+        if (found == m_accounts.end())
+            return false;
+        m_accounts.erase(found);
+        return true;
     }
 
 private:
@@ -306,6 +368,7 @@ private:
     Balances m_balances;
     std::map<core::i64, Transaction> m_transactions;
     std::vector<Logged> m_log;
+    std::map<std::string, DataAccount, std::less<>> m_accounts;
     core::i64 m_lastItem = 0;
     core::i64 m_lastTransaction = 0;
     core::i64 m_lastMove = 0;
@@ -317,7 +380,7 @@ private:
 // by a newer build is refused rather than read wrong. Each version's tables
 // are made by the step that reaches it, so a database of any older version
 // is brought up to this one where it is opened.
-constexpr int SchemaVersion = 4;
+constexpr int SchemaVersion = 5;
 
 // A prepared statement, reset and its bindings cleared when it goes out of use.
 class Statement
@@ -461,6 +524,13 @@ public:
                                  "CREATE INDEX moves_to ON moves (to_owner)",
                                  4))
             return false;
+        // Version 5 (ADR 0237 §3): accounts, one to a skeleton.
+        if (version < 5 && !step(error,
+                                 "CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+                                 "skeleton TEXT NOT NULL UNIQUE, hash TEXT NOT NULL, made INTEGER NOT NULL, "
+                                 "signed_in INTEGER NOT NULL) WITHOUT ROWID",
+                                 5))
+            return false;
         const std::array<const char*, Count> texts{
             "SELECT body, version FROM records WHERE account = ?1",
             "INSERT INTO records (account, body, version, written) VALUES (?1, ?2, ?3, ?4) "
@@ -486,6 +556,13 @@ public:
             "WHERE transaction_id = ?1 ORDER BY id",
             "UPDATE transactions SET undone_by = ?1 WHERE id = ?2",
             "INSERT INTO items (id, kind, owner, fields) VALUES (?1, ?2, ?3, ?4)",
+            "SELECT id, name, skeleton, hash, made, signed_in FROM accounts WHERE skeleton = ?1",
+            "SELECT id, name, skeleton, hash, made, signed_in FROM accounts WHERE id = ?1",
+            "INSERT INTO accounts (id, name, skeleton, hash, made, signed_in) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "UPDATE accounts SET name = ?2, skeleton = ?3 WHERE id = ?1",
+            "UPDATE accounts SET hash = ?2 WHERE id = ?1",
+            "UPDATE accounts SET signed_in = ?2 WHERE id = ?1",
+            "DELETE FROM accounts WHERE id = ?1",
         };
         for (const char* text : texts) {
             auto statement = std::make_unique<Statement>(m_database, text);
@@ -833,6 +910,7 @@ public:
                 return 0;
             return sqlite3_column_int64(select.get(), 0);
         };
+        counts.accounts = count("SELECT COUNT(*) FROM accounts");
         counts.records = count("SELECT COUNT(*) FROM records");
         counts.items = count("SELECT COUNT(*) FROM items");
         counts.transactions = count("SELECT COUNT(*) FROM transactions");
@@ -897,6 +975,63 @@ public:
         return progress;
     }
 
+    [[nodiscard]] std::optional<DataAccount> accountNamed(std::string_view skeleton) override
+    {
+        return accountBy(use(AccountBySkeleton), skeleton);
+    }
+
+    [[nodiscard]] std::optional<DataAccount> accountWithId(std::string_view id) override
+    {
+        return accountBy(use(AccountById), id);
+    }
+
+    [[nodiscard]] bool createAccount(const DataAccount& account) override
+    {
+        if (account.id.empty())
+            return false;
+        Statement& insert = use(InsertAccount);
+        insert.text(1, account.id).text(2, account.name).text(3, account.skeleton).text(4, account.hash);
+        insert.integer(5, account.made).integer(6, account.signedIn);
+        const bool made = insert.step() == SQLITE_DONE;
+        insert.reset();
+        return made;
+    }
+
+    [[nodiscard]] bool renameAccount(std::string_view id, std::string_view name, std::string_view skeleton) override
+    {
+        Statement& rename = use(RenameAccount);
+        rename.text(1, id).text(2, name).text(3, skeleton);
+        const bool done = rename.step() == SQLITE_DONE && sqlite3_changes(m_database) == 1;
+        rename.reset();
+        return done;
+    }
+
+    [[nodiscard]] bool setAccountHash(std::string_view id, std::string_view hash) override
+    {
+        Statement& update = use(SetAccountHash);
+        update.text(1, id).text(2, hash);
+        const bool done = update.step() == SQLITE_DONE && sqlite3_changes(m_database) == 1;
+        update.reset();
+        return done;
+    }
+
+    void noteSignIn(std::string_view id, core::i64 at) override
+    {
+        Statement& update = use(NoteSignIn);
+        update.text(1, id).integer(2, at);
+        (void)update.step();
+        update.reset();
+    }
+
+    [[nodiscard]] bool deleteAccount(std::string_view id) override
+    {
+        Statement& remove = use(DeleteAccount);
+        remove.text(1, id);
+        const bool done = remove.step() == SQLITE_DONE && sqlite3_changes(m_database) == 1;
+        remove.reset();
+        return done;
+    }
+
 private:
     enum Which : std::size_t
     {
@@ -918,6 +1053,13 @@ private:
         MovesOf,
         MarkUndone,
         InsertItemWithId,
+        AccountBySkeleton,
+        AccountById,
+        InsertAccount,
+        RenameAccount,
+        SetAccountHash,
+        NoteSignIn,
+        DeleteAccount,
         Count,
     };
 
@@ -974,6 +1116,19 @@ private:
                 return "Failed";
         }
         return nullptr;
+    }
+
+    [[nodiscard]] std::optional<DataAccount> accountBy(Statement& select, std::string_view key)
+    {
+        select.text(1, key);
+        std::optional<DataAccount> account;
+        if (select.step() == SQLITE_ROW) {
+            sqlite3_stmt* row = select.get();
+            account = DataAccount{columnText(row, 0), columnText(row, 1),           columnText(row, 2),
+                                  columnText(row, 3), sqlite3_column_int64(row, 4), sqlite3_column_int64(row, 5)};
+        }
+        select.reset();
+        return account;
     }
 
     [[nodiscard]] std::optional<DataItem> itemRow(core::i64 id)

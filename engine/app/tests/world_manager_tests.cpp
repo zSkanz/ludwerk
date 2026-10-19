@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/app/data_store.h"
 #include "engine/app/managed_world.h"
 #include "engine/app/network_session.h"
 #include "engine/app/server_console.h"
@@ -250,6 +251,7 @@ TEST_CASE("a pass is the manager's, for one player, one world, thirty seconds an
                          .target = "fields",
                          .data = "d",
                          .ticket = "t",
+                         .account = {},
                          .reason = {},
                          .issued = now,
                          .expires = now + app::PassSeconds,
@@ -282,6 +284,30 @@ TEST_CASE("a pass is the manager's, for one player, one world, thirty seconds an
     CHECK(why == app::PassRefusal::Expired);
     CHECK_FALSE(app::openPass({}, manager.pub, "fields", "aa", now, replay, why).has_value());
     CHECK(why == app::PassRefusal::Missing);
+
+    // **The account is inside what is signed** (ADR 0237 amendment C): a
+    // pass crosses the player's machine, and one whose account was changed
+    // on the way is not the manager's.
+    made.nonce = "n3";
+    made.account = "acc-1";
+    const std::string withAccount = app::signPass(made, manager.secret);
+    const std::size_t dot = withAccount.find('.');
+    REQUIRE(dot != std::string::npos);
+    const std::optional<std::vector<core::u8>> body = core::base64UrlDecode(withAccount.substr(0, dot));
+    REQUIRE(body.has_value());
+    std::string json(body->begin(), body->end());
+    const std::size_t at = json.find("acc-1");
+    REQUIRE(at != std::string::npos);
+    json.replace(at, 5, "acc-2");
+    const std::string forged =
+        core::base64UrlEncode(std::span<const core::u8>(reinterpret_cast<const core::u8*>(json.data()), json.size())) +
+        withAccount.substr(dot);
+    CHECK_FALSE(app::openPass(forged, manager.pub, "fields", "aa", now, replay, why).has_value());
+    CHECK(why == app::PassRefusal::NotTheManagers);
+    const std::optional<app::TravelPass> honest =
+        app::openPass(withAccount, manager.pub, "fields", "aa", now, replay, why);
+    REQUIRE(honest.has_value());
+    CHECK(honest->account == "acc-1");
 }
 
 TEST_CASE("a joiner at the front door lands in the entry world, and travels to another carrying data")
@@ -393,6 +419,104 @@ TEST_CASE("a joiner at the front door lands in the entry world, and travels to a
         sneaking.frame();
     }
     CHECK(log.contains("sneak-failed:This world is joined through its game's front door, not directly."));
+}
+
+TEST_CASE("ADR 0237: with accounts on, the front door refuses who did not sign in, and a test account is known as such "
+          "in every world")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config =
+        app::readServersConfig(std::string(Servers) + "\n[accounts]\nenabled = true\n", "servers.toml", error);
+    REQUIRE(config.has_value());
+    REQUIRE(config->accounts);
+
+    // **Who a world takes a player for**: the account the pass named, and the
+    // same after a trip.
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.TravelArrived:Connect(function(player, data, origin)
+            print(`town-account:{player.AccountId}`)
+            NetworkService:Travel(player, "fields", {})
+        end)
+    )";
+    const std::string fields = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.TravelArrived:Connect(function(player, data, origin)
+            print(`fields-account:{player.AccountId}`)
+        end)
+    )";
+    const auto manage = [&](bool trial, Project& root, std::map<std::string, std::unique_ptr<WorldMachine>>& worlds,
+                            core::u64& now) {
+        app::WorldManager::Options options;
+        options.config = *config;
+        options.root = root.root;
+        options.projectId = {};
+        options.prologue = std::vector<core::u8>{};
+        options.dataStore = []() { return app::makeMemoryDataStore(); };
+        options.trialAccounts = trial;
+        options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+            auto& machine = worlds[launch.name];
+            machine = std::make_unique<WorldMachine>();
+            machine->boot(wire, launch, launch.name == "town" ? town : fields);
+            return std::make_unique<FakeProcess>(*machine);
+        };
+        options.transports = [wire]() { return net::createMemoryTransport(wire); };
+        options.clock = [&now]() { return now; };
+        options.unixClock = []() { return unixNow(); };
+        return std::make_unique<app::WorldManager>(std::move(options));
+    };
+    const std::string joiner = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.JoinFailed:Connect(function(reason)
+            print(`joiner-failed:{reason}`)
+        end)
+        task.wait(0.2)
+        NetworkService:Join("memory:47981")
+    )";
+
+    // A game's servers: nobody in without signing in.
+    {
+        Project root;
+        std::map<std::string, std::unique_ptr<WorldMachine>> worlds;
+        core::u64 now = 1;
+        std::unique_ptr<app::WorldManager> manager = manage(false, root, worlds, now);
+        REQUIRE_FALSE(manager->start().has_value());
+        Client client;
+        client.boot(wire, joiner);
+        for (int at = 0; at < 240; ++at) {
+            now += 16'000'000ull;
+            manager->frame();
+            for (auto& [name, machine] : worlds)
+                machine->frame();
+            client.frame();
+        }
+        CHECK(log.contains("joiner-failed:Sign in first: this game lets in only the players its servers signed in."));
+        CHECK_FALSE(log.contains("town-account:"));
+    }
+
+    // **Tried in the editor**: a test account of the player's key, in the
+    // entry world and after a trip.
+    {
+        Project root;
+        std::map<std::string, std::unique_ptr<WorldMachine>> worlds;
+        core::u64 now = 1;
+        std::unique_ptr<app::WorldManager> manager = manage(true, root, worlds, now);
+        REQUIRE_FALSE(manager->start().has_value());
+        Client client;
+        client.boot(wire, joiner);
+        for (int at = 0; at < 400; ++at) {
+            now += 16'000'000ull;
+            manager->frame();
+            for (auto& [name, machine] : worlds)
+                machine->frame();
+            client.frame();
+        }
+        CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+        CHECK(log.contains("town-account:trial-"));
+        CHECK(log.contains("fields-account:trial-"));
+    }
 }
 
 TEST_CASE("a world that falls is started again, and past its limit is failed until an operator restarts it")

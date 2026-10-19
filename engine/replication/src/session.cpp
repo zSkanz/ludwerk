@@ -7984,6 +7984,56 @@ std::vector<u8> queuedMessage(u32 position, u32 estimateSeconds)
     return std::move(said.bytes);
 }
 
+std::vector<u8> signInMessage(const SignInFields& fields)
+{
+    Writer said;
+    said.u8v(static_cast<u8>(MessageType::SignIn));
+    said.u8v(fields.registering ? 1 : 0);
+    said.text(std::string_view{fields.name}.substr(0, MaxSignInNameBytes));
+    said.text(std::string_view{fields.password}.substr(0, MaxSignInPasswordBytes));
+    return std::move(said.bytes);
+}
+
+std::optional<SignInFields> readSignIn(std::span<const u8> payload)
+{
+    if (payload.empty() || payload[0] != static_cast<u8>(MessageType::SignIn))
+        return std::nullopt;
+    Reader reader(payload);
+    (void)reader.u8v();
+    SignInFields fields;
+    fields.registering = reader.u8v() == 1;
+    fields.name.assign(reader.text().substr(0, MaxSignInNameBytes));
+    fields.password.assign(reader.text().substr(0, MaxSignInPasswordBytes));
+    if (!reader.ok())
+        return std::nullopt;
+    return fields;
+}
+
+std::vector<u8> signedInMessage(const SignedInFields& fields)
+{
+    Writer said;
+    said.u8v(static_cast<u8>(MessageType::SignedIn));
+    said.u8v(fields.failure);
+    said.text(std::string_view{fields.ticket}.substr(0, MaxTicketBytes));
+    said.u32v(fields.retryAfter);
+    return std::move(said.bytes);
+}
+
+std::optional<SignedInFields> readSignedIn(std::span<const u8> payload)
+{
+    if (payload.empty() || payload[0] != static_cast<u8>(MessageType::SignedIn))
+        return std::nullopt;
+    Reader reader(payload);
+    (void)reader.u8v();
+    SignedInFields fields;
+    fields.failure = reader.u8v();
+    fields.ticket.assign(reader.text().substr(0, MaxTicketBytes));
+    fields.retryAfter = reader.u32v();
+    if (!reader.ok())
+        return std::nullopt;
+    return fields;
+}
+
 std::vector<u8> matchPrologue(std::string_view projectId)
 {
     std::string text = "match " + std::to_string(generated::ProtocolVersion) + " ";

@@ -1,0 +1,10 @@
+# The accounts test (ADR 0237): a player makes an account at the front door,
+# signs in, joins, and travels; both worlds know them by the account, and the
+# record the second loads is the one the first changed.
+
+[project]
+name = "Data Accounts"
+id = "dev.ludwerk.data-accounts"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/town.scene.json"

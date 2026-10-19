@@ -34,6 +34,7 @@ std::string signPass(const TravelPass& pass, const std::array<core::u8, 64>& man
     body.field("target", std::string_view{pass.target});
     body.field("data", std::string_view{pass.data});
     body.field("ticket", std::string_view{pass.ticket});
+    body.field("account", std::string_view{pass.account});
     body.field("reason", std::string_view{pass.reason});
     body.field("issued", static_cast<core::i64>(pass.issued));
     body.field("expires", static_cast<core::i64>(pass.expires));
@@ -81,6 +82,7 @@ std::optional<TravelPass> openPass(std::string_view text, const std::array<core:
     pass.target = std::string(root["target"].asString());
     pass.data = std::string(root["data"].asString());
     pass.ticket = std::string(root["ticket"].asString());
+    pass.account = std::string(root["account"].asString());
     pass.reason = std::string(root["reason"].asString());
     pass.issued = root["issued"].asInteger(0);
     pass.expires = root["expires"].asInteger(0);

@@ -37,7 +37,12 @@ more, one game, run by the manager from `servers.toml`.
   *Restart with this build* moves every world to the scripts as they are now.
 - **From a terminal**: `run.bat` starts the manager and its worlds, with its
   console (`worlds`, `instances`, `town: status`); `run.bat play` is a player
-  joining them at `127.0.0.1:7777`, and each further `run.bat play` another.
+  at their front door, `127.0.0.1:7777`, and each further `run.bat play`
+  another. The servers sign their players in (`[accounts]` in
+  `servers.toml`): a player first makes an account or signs in on the login
+  screen (`src/client/Login.luau`), then joins. Tried from the editor, with
+  Start match and "This game's worlds", each window is let in as a test
+  account.
 - `ludwerk server run` in this folder does what `run.bat` does, wherever the
   engine is installed.
 

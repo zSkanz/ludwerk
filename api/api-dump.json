@@ -5677,6 +5677,26 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "RegisterAsync",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string"
+            },
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "password",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "RemoveLocalPlayer",
           "Parameters": [
             {
@@ -5704,6 +5724,26 @@
             }
           ],
           "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SignInAsync",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string"
+            },
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "password",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }"],
+          "Yields": true,
           "ThreadSafety": "Unsafe"
         },
         {
@@ -17380,6 +17420,39 @@
         },
         {
           "Name": "Circle",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "SignInFailure",
+      "Items": [
+        {
+          "Name": "Busy",
+          "Value": 5
+        },
+        {
+          "Name": "InvalidName",
+          "Value": 3
+        },
+        {
+          "Name": "InvalidPassword",
+          "Value": 4
+        },
+        {
+          "Name": "Refused",
+          "Value": 6
+        },
+        {
+          "Name": "Taken",
+          "Value": 2
+        },
+        {
+          "Name": "Unreachable",
+          "Value": 7
+        },
+        {
+          "Name": "WrongNameOrPassword",
           "Value": 1
         }
       ]

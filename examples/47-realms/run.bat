@@ -5,7 +5,7 @@ REM have to remember where an out-of-tree build put the binary (R14).
 REM
 REM   run.bat            the game's servers: the manager and every world in
 REM                      servers.toml, on this machine, with a console
-REM   run.bat play       a player, joining them at 127.0.0.1:7777
+REM   run.bat play       a player, signing in at 127.0.0.1:7777 and joining
 REM   run.bat solo ...   the town alone, as a gate boots it
 REM
 REM See examples/README.md for the convention and how to add one.
@@ -36,7 +36,7 @@ set "ENG_EXAMPLE=%~dp0"
 set "ENG_EXAMPLE=%ENG_EXAMPLE:~0,-1%"
 
 if "%~1"=="play" (
-    "%ENG_HOST%" "%ENG_EXAMPLE%" --join=127.0.0.1:7777
+    "%ENG_HOST%" "%ENG_EXAMPLE%" "--scene-data={\"door\":\"127.0.0.1:7777\"}"
     exit /b
 )
 if "%~1"=="solo" (

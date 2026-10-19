@@ -5253,6 +5253,46 @@ local Messages: { Schema.Message } = {
             .. "line. Said when it joins the line and every five seconds after; its turn is a `Redirect`.",
     },
     {
+        Name = "SignIn",
+        Id = 39,
+        Channel = "Control",
+        Direction = "ToAuthority",
+        Layout = {
+            { Name = "register", Type = "u8", Doc = "1 to make the account first, 0 to sign in to one." },
+            { Name = "name", Type = "text", Doc = "The login name, at most 64 bytes." },
+            {
+                Name = "password",
+                Type = "text",
+                Doc = "At most 128 bytes. Crosses the network only inside the match's encryption, and is "
+                    .. "never kept: the front door hashes or checks it and lets it go.",
+            },
+        },
+        Doc = "Sign this player in (ADR 0237): sent to a manager's front door, on a connection opened for it, "
+            .. "and answered with a `SignedIn`.",
+    },
+    {
+        Name = "SignedIn",
+        Id = 40,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            {
+                Name = "failure",
+                Type = "u8",
+                Doc = "0 signed in; else an `Enum.SignInFailure`'s value: 1 WrongNameOrPassword, 2 Taken, "
+                    .. "3 InvalidName, 4 InvalidPassword, 5 Busy, 6 Refused.",
+            },
+            {
+                Name = "ticket",
+                Type = "text",
+                Doc = "Signed in: a ticket for the account, good for one join within 90 seconds. Empty otherwise.",
+            },
+            { Name = "retryAfter", Type = "u32", Doc = "Seconds before trying again is worth it; 0 for any time." },
+        },
+        Doc = "The front door's answer to a `SignIn` (ADR 0237): the same work done whichever way it went, so "
+            .. "the time it took says nothing of which names are taken.",
+    },
+    {
         Name = "Announce",
         Id = 35,
         Channel = "Control",

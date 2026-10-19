@@ -97,10 +97,25 @@ struct DataMoveQuery
     core::usize most = 20;
 };
 
+// **An account** (ADR 0237 §3): a random id never reused, the name it signs
+// in with, the name's skeleton -- what two names that look alike share, and
+// what makes an account's name its own -- and its password's hash.
+struct DataAccount
+{
+    std::string id;
+    std::string name;
+    std::string skeleton;
+    std::string hash;
+    // Unix seconds; 0 for never.
+    core::i64 made = 0;
+    core::i64 signedIn = 0;
+};
+
 // What the console's `data` says of the store.
 struct DataCounts
 {
     core::i64 schema = 0;
+    core::i64 accounts = 0;
     core::i64 records = 0;
     core::i64 items = 0;
     core::i64 transactions = 0;
@@ -182,6 +197,20 @@ public:
     // Copies up to `pages` more of a backup that is copying. Done or Failed
     // is said once; it is Idle after that.
     virtual DataBackupProgress stepBackup(int pages) = 0;
+
+    // **Accounts** (ADR 0237 §3). Found by the skeleton of a name, or by id.
+    [[nodiscard]] virtual std::optional<DataAccount> accountNamed(std::string_view skeleton) = 0;
+    [[nodiscard]] virtual std::optional<DataAccount> accountWithId(std::string_view id) = 0;
+    // False, and nothing made, where another account has the skeleton.
+    [[nodiscard]] virtual bool createAccount(const DataAccount& account) = 0;
+    // A name, a hash, a sign-in's time: false where there is no such
+    // account, or -- for a name -- another has its skeleton.
+    [[nodiscard]] virtual bool renameAccount(std::string_view id, std::string_view name, std::string_view skeleton) = 0;
+    [[nodiscard]] virtual bool setAccountHash(std::string_view id, std::string_view hash) = 0;
+    virtual void noteSignIn(std::string_view id, core::i64 at) = 0;
+    // Gone; what it owned stays where it is. An id is 128 random bits, never
+    // made twice.
+    [[nodiscard]] virtual bool deleteAccount(std::string_view id) = 0;
 };
 
 // Kept in memory, for a test, and for a server with nowhere to write.

@@ -133,6 +133,12 @@ Measures the round trip to a relay and returns what the relay reports, or nil if
 
 The result has `Ping`, the shortest of the three round trips in milliseconds; `Matches`, the matches registered with the relay; `Relayed`, the players it is relaying; `BytesPerSecond`, its traffic; and `Uptime`, in seconds. It does not need a match and does not disturb one, and several relays can be pinged at once from separate tasks.
 
+### `RegisterAsync(address: string, name: string, password: string): { Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }`
+
+This method yields: the calling thread waits until it completes.
+
+Makes an account at an online game's servers and signs this player in to it, as `SignInAsync` does. A login name is 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`; two names that differ only in case, or in `l`, `I` and `1` or `o` and `0`, are one name, and the second is `Taken`. A password is 8 to 128 bytes. What the game shows a player as, with accents or other scripts, is a display name of the game's own, not the login name.
+
 ### `RemoveLocalPlayer(player: Player): boolean`
 
 Removes a guest player from an offline game, firing `PlayerRemoving`. Returns whether the removal was started. It does not remove the primary local player or a remote player.
@@ -140,6 +146,14 @@ Removes a guest player from an offline game, firing `PlayerRemoving`. Returns wh
 ### `ReportSuspicion(player: Player, kind: string, detail: string?)`
 
 Writes a line in the suspicion log, beside those the engine writes when a player goes past a limit. The server console's `suspects` and `suspect` read it, and `/metrics` counts it by `kind`. Nothing is done to the player by it.
+
+### `SignInAsync(address: string, name: string, password: string): { Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }`
+
+This method yields: the calling thread waits until it completes.
+
+Signs this player in to an account at an online game's servers, and returns a ticket to join with. Call it on the player's machine, then pass the ticket to `Join`: `NetworkService:Join(address, { Ticket = result.Ticket })`.
+
+`address` is the game's front door, `host` or `host:port`. The password crosses the network only encrypted, to the server this machine met before at that address, and is never kept. The method yields until the server answers, and never raises for a refusal: `Ok` is false and `Reason` says why. A wrong name and a wrong password are the same reason, `WrongNameOrPassword`, and take the same time, so nobody learns which names have accounts. A ticket is good for one join within 90 seconds.
 
 ### `SwitchChannel(player: Player, channel: number): boolean`
 

@@ -180,6 +180,9 @@ end
 declare extern type EnumTextInputKeyboard extends EnumItem with
 end
 
+declare extern type EnumSignInFailure extends EnumItem with
+end
+
 declare extern type EnumSwipeDirection extends EnumItem with
 end
 
@@ -5865,6 +5868,21 @@ declare extern type NetworkService extends Instance with
     --- relaying; `BytesPerSecond`, its traffic; and `Uptime`, in seconds. It does not need a match and
     --- does not disturb one, and several relays can be pinged at once from separate tasks.
     function PingRelayAsync(self, relay: string?, timeout: number?): { Ping: number, Matches: number, Relayed: number, BytesPerSecond: number, Uptime: number }?
+    --- Signs this player in to an account at an online game's servers, and returns a ticket to join
+    --- with. Call it on the player's machine, then pass the ticket to `Join`:
+    --- `NetworkService:Join(address, { Ticket = result.Ticket })`. `address` is the game's front door,
+    --- `host` or `host:port`. The password crosses the network only encrypted, to the server this
+    --- machine met before at that address, and is never kept. The method yields until the server
+    --- answers, and never raises for a refusal: `Ok` is false and `Reason` says why. A wrong name and a
+    --- wrong password are the same reason, `WrongNameOrPassword`, and take the same time, so nobody
+    --- learns which names have accounts. A ticket is good for one join within 90 seconds.
+    function SignInAsync(self, address: string, name: string, password: string): { Ok: boolean, Ticket: string?, Reason: EnumSignInFailure?, RetryAfter: number }
+    --- Makes an account at an online game's servers and signs this player in to it, as `SignInAsync`
+    --- does. A login name is 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`; two names
+    --- that differ only in case, or in `l`, `I` and `1` or `o` and `0`, are one name, and the second is
+    --- `Taken`. A password is 8 to 128 bytes. What the game shows a player as, with accents or other
+    --- scripts, is a display name of the game's own, not the login name.
+    function RegisterAsync(self, address: string, name: string, password: string): { Ok: boolean, Ticket: string?, Reason: EnumSignInFailure?, RetryAfter: number }
     --- Says how often each player may do one of the game's own actions: `PerSecond` of them a second,
     --- up to `Burst` at once (1 when not given). Said again for the same name, it replaces the first.
     --- `CheckAction` then counts each player's.
@@ -7394,6 +7412,16 @@ declare Enum: {
         Email: EnumTextInputKeyboard,
         Url: EnumTextInputKeyboard,
         GetEnumItems: (self: any) -> { EnumTextInputKeyboard },
+    },
+    SignInFailure: {
+        WrongNameOrPassword: EnumSignInFailure,
+        Taken: EnumSignInFailure,
+        InvalidName: EnumSignInFailure,
+        InvalidPassword: EnumSignInFailure,
+        Busy: EnumSignInFailure,
+        Refused: EnumSignInFailure,
+        Unreachable: EnumSignInFailure,
+        GetEnumItems: (self: any) -> { EnumSignInFailure },
     },
     SwipeDirection: {
         Up: EnumSwipeDirection,

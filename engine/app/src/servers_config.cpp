@@ -4,6 +4,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <regex>
 #include <set>
 
 #include "engine/core/i18n.h"
@@ -118,6 +119,17 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
     }
     count("data.backup_keep", 1, 1000, config.backupKeep);
     count("data.moves_keep_days", 0, 36500, config.movesKeepDays);
+    config.accounts = document.boolean("accounts.enabled").value_or(false);
+    config.accountsRegister = document.boolean("accounts.register").value_or(true);
+    if (const std::optional<std::string_view> pattern = document.string("accounts.name_pattern")) {
+        config.accountsNamePattern = std::string(*pattern);
+        try {
+            (void)std::regex(config.accountsNamePattern, std::regex::ECMAScript);
+        } catch (const std::regex_error&) {
+            error = problem(ENG_TR("manager.err.servers_value"), source, "accounts.name_pattern");
+            return std::nullopt;
+        }
+    }
     std::set<std::string> names;
     for (core::usize at = 0; at < document.count("world"); ++at) {
         const std::string prefix = "world." + std::to_string(at) + ".";

@@ -267,6 +267,16 @@ std::optional<core::EngineError> WorldManager::start()
     dataOptions.backupKeep = m_options.config.backupKeep;
     dataOptions.movesKeepDays = m_options.config.movesKeepDays;
     m_dataConsole = std::make_unique<DataConsole>(std::move(dataOptions));
+    if (m_options.config.accounts) {
+        AccountDoor::Options accounts;
+        accounts.secret = m_signing.secret;
+        accounts.audience = m_options.projectId;
+        accounts.registration = m_options.config.accountsRegister;
+        accounts.namePattern = m_options.config.accountsNamePattern;
+        accounts.unixClock = m_options.unixClock;
+        accounts.clock = m_options.clock;
+        m_accounts = std::make_unique<AccountDoor>(m_data->store(), std::move(accounts));
+    }
 
     for (const ServersConfig::World& config : m_options.config.worlds) {
         auto world = std::make_unique<World>();
@@ -873,6 +883,59 @@ void WorldManager::readWorld(World& world)
     world.partial.erase(0, start);
 }
 
+std::optional<std::string> WorldManager::admittedAccount(std::string_view key, std::string_view ticket)
+{
+    const std::string hex(key);
+    if (!ticket.empty()) {
+        const std::int64_t now = m_options.unixClock ? m_options.unixClock() : 0;
+        std::string why;
+        if (const std::optional<core::TicketClaims> claims =
+                core::verifyTicket(ticket, m_signing.pub, m_options.projectId, now, &m_tickets, why);
+            claims.has_value() && !claims->subject.empty()) {
+            m_accountOf[hex] = claims->subject;
+            return claims->subject;
+        }
+    }
+    // **Tried in the editor**: a test account, the same for a key each time.
+    if (ticket.empty() && m_options.trialAccounts) {
+        const std::string trial = "trial-" + hex.substr(0, 16);
+        m_accountOf[hex] = trial;
+        return trial;
+    }
+    // **Coming back** with a ticket spent long ago: to a world they dropped
+    // from, an instance they are a member of, a place in line, or from an
+    // instance that fell -- as the account the manager knows them by.
+    const auto known = m_accountOf.find(hex);
+    if (known == m_accountOf.end())
+        return std::nullopt;
+    const bool inLine =
+        m_door != nullptr && std::any_of(m_door->line.begin(), m_door->line.end(),
+                                         [&](const Door::Waiting& waiting) { return waiting.key == hex; });
+    if (m_recent.contains(hex) || m_members.contains(hex) || m_returns.contains(hex) || inLine)
+        return known->second;
+    return std::nullopt;
+}
+
+void WorldManager::forgetAccounts(core::u64 nowNs)
+{
+    // **Who the manager no longer has anywhere** is forgotten: in no world,
+    // expected by none, with no place to come back to.
+    if (nowNs < m_accountsForgottenNs)
+        return;
+    m_accountsForgottenNs = nowNs + 10 * NsPerSecond;
+    std::erase_if(m_accountOf, [this](const auto& entry) {
+        const std::string& key = entry.first;
+        if (m_recent.contains(key) || m_members.contains(key) || m_returns.contains(key))
+            return false;
+        if (m_door != nullptr && std::any_of(m_door->line.begin(), m_door->line.end(),
+                                             [&](const Door::Waiting& waiting) { return waiting.key == key; }))
+            return false;
+        return std::none_of(m_worlds.begin(), m_worlds.end(), [&](const std::unique_ptr<World>& world) {
+            return world->present.contains(key) || world->expected.contains(key);
+        });
+    });
+}
+
 std::string WorldManager::pass(std::string_view player, std::string_view origin, std::string_view target,
                                std::string_view data, std::string_view ticket, std::string_view reason)
 {
@@ -882,6 +945,8 @@ std::string WorldManager::pass(std::string_view player, std::string_view origin,
     made.target = std::string(target);
     made.data = std::string(data);
     made.ticket = std::string(ticket);
+    if (const auto known = m_accountOf.find(std::string(player)); known != m_accountOf.end())
+        made.account = known->second;
     made.reason = std::string(reason);
     made.issued = m_options.unixClock ? m_options.unixClock() : 0;
     made.expires = made.issued + PassSeconds;
@@ -934,6 +999,8 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
             }
         }
         world.present[key] = account;
+        if (!account.empty())
+            m_accountOf[key] = account;
         world.expected.erase(key);
         // In a world again: nothing to come back to.
         m_recent.erase(key);
@@ -1235,6 +1302,26 @@ void WorldManager::frame()
             }
             if (event.kind != net::TransportEvent::Kind::Message)
                 continue;
+            // **A sign-in** (ADR 0237): held at the door while its hash runs,
+            // and answered when it is done.
+            if (std::optional<replication::SignInFields> signIn = replication::readSignIn(event.payload);
+                signIn.has_value()) {
+                if (m_accounts == nullptr) {
+                    core::wipe(signIn->password);
+                    (void)m_door->transport->send(event.peer,
+                                                  replication::signedInMessage(replication::SignedInFields{
+                                                      static_cast<core::u8>(AccountDoor::Failure::Refused), {}, 0}),
+                                                  net::Delivery::Reliable, 0);
+                    continue;
+                }
+                std::string address = m_door->transport->addressText(event.peer);
+                if (const std::size_t colon = address.rfind(':'); colon != std::string::npos)
+                    address.resize(colon);
+                m_door->waiting.erase(event.peer.value);
+                m_accounts->ask(event.peer.value, address, signIn->name, std::move(signIn->password),
+                                signIn->registering);
+                continue;
+            }
             const std::optional<replication::HelloFields> hello = replication::readHello(event.payload);
             if (!hello.has_value())
                 continue;
@@ -1246,6 +1333,15 @@ void WorldManager::frame()
             const ServersConfig::World* entry = m_options.config.entry();
             World* to = entry != nullptr ? routed(entry->name, 1) : nullptr;
             const std::optional<std::array<core::u8, 32>> key = m_door->transport->remoteKey(event.peer);
+            // **Signed in, or not in** (amendment C): the door checks the
+            // ticket itself, and every pass after it names the account.
+            if (m_accounts != nullptr && (!key.has_value() || !admittedAccount(core::toHex(*key), hello->ticket))) {
+                (void)m_door->transport->send(event.peer,
+                                              replication::refusalMessage(replication::RefusedByGame,
+                                                                          phrase(ENG_TR("manager.err.sign_in_first"))),
+                                              net::Delivery::Reliable, 0);
+                continue;
+            }
             std::string reason;
             if (key.has_value()) {
                 const std::string hex = core::toHex(*key);
@@ -1312,6 +1408,19 @@ void WorldManager::frame()
                                           replication::redirectMessage(m_options.config.publicAddress, to->port,
                                                                        passText, to->key, to->config.name),
                                           net::Delivery::Reliable, 0);
+        }
+        if (m_accounts != nullptr) {
+            m_accounts->frame();
+            for (const AccountDoor::Result& result : m_accounts->take()) {
+                (void)m_door->transport->send(
+                    net::PeerId{result.peer},
+                    replication::signedInMessage(replication::SignedInFields{static_cast<core::u8>(result.failure),
+                                                                             result.ticket, result.retryAfter}),
+                    net::Delivery::Reliable, 0);
+                // Answered: let go after the door's five seconds, as any.
+                m_door->waiting[result.peer] = now;
+            }
+            forgetAccounts(now);
         }
         line();
         // Who was answered and has not gone is let go.
@@ -1627,6 +1736,8 @@ std::string WorldManager::run(std::string_view line)
         if (std::optional<DataConsole::Answer> answer = m_dataConsole->run(line, *m_data, nowUnix); answer.has_value())
             return std::move(answer->text);
     }
+    if (verb == "account")
+        return m_accounts != nullptr ? m_accounts->run(line) : phrase(ENG_TR("manager.err.accounts_off"));
     if (verb == "help")
         return phrase(ENG_TR("manager.usage"));
     const std::array<core::I18nArg, 1> args{core::I18nArg{"name", verb}};

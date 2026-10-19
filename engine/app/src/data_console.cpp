@@ -241,13 +241,11 @@ std::optional<DataConsole::Answer> DataConsole::run(std::string_view line, DataB
         std::array<char, 24> megabytes{};
         std::snprintf(megabytes.data(), megabytes.size(), "%.1f",
                       static_cast<double>(counts.bytes) / (1024.0 * 1024.0));
-        const std::array<core::I18nArg, 7> args{core::I18nArg{"schema", counts.schema},
-                                                core::I18nArg{"records", counts.records},
-                                                core::I18nArg{"held", static_cast<core::i64>(data.held())},
-                                                core::I18nArg{"items", counts.items},
-                                                core::I18nArg{"transactions", counts.transactions},
-                                                core::I18nArg{"moves", counts.moves},
-                                                core::I18nArg{"megabytes", std::string_view{megabytes.data()}}};
+        const std::array<core::I18nArg, 8> args{
+            core::I18nArg{"schema", counts.schema},   core::I18nArg{"accounts", counts.accounts},
+            core::I18nArg{"records", counts.records}, core::I18nArg{"held", static_cast<core::i64>(data.held())},
+            core::I18nArg{"items", counts.items},     core::I18nArg{"transactions", counts.transactions},
+            core::I18nArg{"moves", counts.moves},     core::I18nArg{"megabytes", std::string_view{megabytes.data()}}};
         std::string text = phrase(counts.bytes > 0 ? ENG_TR("data.status") : ENG_TR("data.status_memory"), args);
         if (m_copying) {
             const std::string to = m_copyingTo.string();

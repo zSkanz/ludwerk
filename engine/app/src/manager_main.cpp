@@ -100,6 +100,7 @@ int runManager(const std::filesystem::path& serversFile, const std::filesystem::
             std::fflush(stdout);
         };
     }
+    options.trialAccounts = playing;
     options.exitAtTransaction = play.exitAtTransaction;
     options.exitAfterCommit = play.exitAfterCommit;
     options.transports = []() { return net::createEnetTransport(); };

@@ -1447,6 +1447,14 @@ NetworkService:Join("play.example.com:7777", { Ticket = ticket })
   `Player.AccountId` is the account on the server.
 - **A ban that holds is a ban of an account**: banning a player who has an
   account bans `account:<id>`, which a new key does not get round.
+- **Under a manager, a ticket is checked once**, in the entry world: a
+  player who travels on arrives with no ticket, and with `joiner.AccountId`
+  already set from the pass that brought them, which only the manager can
+  sign. An `OnJoinRequest` that runs in every world takes that account when
+  it is there, and asks for a ticket only when it is not.
+- **An online game with no backend of its own** can sign its players in at
+  its manager's front door, which issues the tickets and checks them itself:
+  see [Signing players in](manual:guides/online-games#signing-players-in).
 
 A backend issues a ticket with the library it already has:
 

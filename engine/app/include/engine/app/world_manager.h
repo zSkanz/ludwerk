@@ -26,12 +26,14 @@
 #include <string_view>
 #include <vector>
 
+#include "engine/app/account_door.h"
 #include "engine/app/data_broker.h"
 #include "engine/app/data_console.h"
 #include "engine/app/manager_link.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/crypto.h"
 #include "engine/core/error.h"
+#include "engine/core/ticket.h"
 #include "engine/net/transport.h"
 
 namespace engine::app {
@@ -122,6 +124,10 @@ public:
         // answer is sent. 0 for never.
         core::u32 exitAtTransaction = 0;
         bool exitAfterCommit = false;
+        // **Tried in the editor** (ADR 0225), with `[accounts]` on: a player
+        // who comes without signing in is let in as a test account of their
+        // key's own, so the game's worlds are tried with no login screen.
+        bool trialAccounts = false;
     };
 
     // One row of `worlds`.
@@ -284,6 +290,17 @@ private:
     std::unique_ptr<DataConsole> m_dataConsole;
     core::u32 m_transactionsAsked = 0;
     core::u64 m_nextDataRun = 1;
+    // **Signing players in** (ADR 0237), where `[accounts]` says so; the
+    // tickets the front door has taken; and the account each player is known
+    // by, by key -- what every pass names (amendment C).
+    std::unique_ptr<AccountDoor> m_accounts;
+    core::TicketReplay m_tickets;
+    std::map<std::string, std::string> m_accountOf;
+    core::u64 m_accountsForgottenNs = 0;
+    // A ticket the front door checks, or a player coming back to a place it
+    // knows them in: the account; none refuses them.
+    [[nodiscard]] std::optional<std::string> admittedAccount(std::string_view key, std::string_view ticket);
+    void forgetAccounts(core::u64 nowNs);
     std::vector<std::unique_ptr<World>> m_worlds;
     // The launcher before an update, for one that fails.
     WorldLauncher m_launcherBefore;

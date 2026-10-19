@@ -34,6 +34,10 @@ struct TravelPass
     // the ticket the player presented at the front door (ADR 0226).
     std::string data;
     std::string ticket;
+    // **The account the manager knows the player by** (ADR 0237 amendment
+    // C), inside what is signed: a world takes `Player.AccountId` from it.
+    // A field a world of an older build ignores, so the pass's version stays.
+    std::string account;
     // Why they are sent, when not of their own accord: `InstanceFailed`.
     std::string reason;
     std::int64_t issued = 0;

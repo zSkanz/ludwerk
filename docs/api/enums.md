@@ -933,6 +933,20 @@ The outline a `Part2D` is drawn with and collides as.
 | `Circle` | 1 | A circle whose diameter is the smaller of the part's two sizes. |
 | `Capsule` | 2 | A rectangle with rounded ends at the top and bottom. Use it for a character: its rounded base slides over the seams between tiles instead of catching on them. |
 
+## Enum.SignInFailure
+
+Why `NetworkService:SignInAsync` or `RegisterAsync` did not sign a player in.
+
+| Item | Value | Description |
+|---|---|---|
+| `WrongNameOrPassword` | 1 | No account has that name, or the password is not its own. One reason for both, so that nobody learns which names have accounts. |
+| `Taken` | 2 | Another account has that name, or one that looks like it. |
+| `InvalidName` | 3 | Not a login name: 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`, and whatever the game's `name_pattern` allows of those. |
+| `InvalidPassword` | 4 | Shorter than 8 bytes or longer than 128. |
+| `Busy` | 5 | The server is checking too many sign-ins at once. Try again after the result's `RetryAfter` seconds. |
+| `Refused` | 6 | The server signs nobody in, makes no accounts here, or saw too many failures from this address. The result's `RetryAfter` says when to try again where it can. |
+| `Unreachable` | 7 | The server did not answer. |
+
 ## Enum.SortOrder
 
 The order in which a layout arranges its children.

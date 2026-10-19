@@ -1006,6 +1006,9 @@ struct EngineState
         std::string publicKey;
         std::string address;
         std::string ticket;
+        // What a manager's pass named: `joiner.AccountId` before the game's
+        // function sets it.
+        std::string accountId;
     };
     std::vector<JoinValidation> joinValidations;
     struct JoinVerdict
@@ -1109,6 +1112,27 @@ struct EngineState
     };
     std::vector<ChannelAnswer> channelAnswers;
     u32 nextChannelRequest = 1;
+    // **Signing in at a front door** (ADR 0237): what a script asked, which
+    // the network session carries to the door and answers. `failure` is 0
+    // signed in, else an `Enum.SignInFailure`'s value.
+    struct SignInAsk
+    {
+        u32 id = 0;
+        std::string address;
+        std::string name;
+        std::string password;
+        bool registering = false;
+    };
+    std::vector<SignInAsk> signInAsks;
+    struct SignInAnswer
+    {
+        u32 id = 0;
+        u8 failure = 0;
+        std::string ticket;
+        u32 retryAfter = 0;
+    };
+    std::vector<SignInAnswer> signInAnswers;
+    u32 nextSignIn = 1;
     std::vector<f64> channelMerging;
     // **In line at the front door** (ADR 0232): each place this machine was
     // told, with the seconds until its turn, below 0 for none.

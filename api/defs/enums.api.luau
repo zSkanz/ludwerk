@@ -1533,6 +1533,39 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "SignInFailure",
+            Doc = "Why `NetworkService:SignInAsync` or `RegisterAsync` did not sign a player in.",
+            Items = {
+                {
+                    Name = "WrongNameOrPassword",
+                    Value = 1,
+                    Doc = "No account has that name, or the password is not its own. One reason for both, so "
+                        .. "that nobody learns which names have accounts.",
+                },
+                { Name = "Taken", Value = 2, Doc = "Another account has that name, or one that looks like it." },
+                {
+                    Name = "InvalidName",
+                    Value = 3,
+                    Doc = "Not a login name: 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`, and "
+                        .. "whatever the game's `name_pattern` allows of those.",
+                },
+                { Name = "InvalidPassword", Value = 4, Doc = "Shorter than 8 bytes or longer than 128." },
+                {
+                    Name = "Busy",
+                    Value = 5,
+                    Doc = "The server is checking too many sign-ins at once. Try again after the result's "
+                        .. "`RetryAfter` seconds.",
+                },
+                {
+                    Name = "Refused",
+                    Value = 6,
+                    Doc = "The server signs nobody in, makes no accounts here, or saw too many failures from "
+                        .. "this address. The result's `RetryAfter` says when to try again where it can.",
+                },
+                { Name = "Unreachable", Value = 7, Doc = "The server did not answer." },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "SwipeDirection",
             Doc = "The direction of a swipe, as `InputService.TouchSwiped` reports it.",
             Items = {

@@ -11,6 +11,7 @@ engine_add_module(app
         src/project_watch.cpp
         src/external_changes.cpp
         src/managed_world.cpp
+        src/account_door.cpp
         src/data_broker.cpp
         src/data_console.cpp
         src/data_ops.cpp
@@ -423,6 +424,7 @@ engine_add_module_tests(app
         tests/server_console_tests.cpp
         tests/join_request_tests.cpp
         tests/world_manager_tests.cpp
+        tests/account_door_tests.cpp
         tests/data_broker_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
@@ -592,6 +594,13 @@ if(ENG_BUILD_TESTS)
     # CTest skip. It costs one window and one device -- about a second -- and
     # buys a summary line that tells the truth about the shell on every machine.
     add_test(NAME editor_shell COMMAND engine_app_tests "--test-case=*F3 flips*")
+    # **The sign-ins' times** (ADR 0237 amendment A): a wrong name, a wrong
+    # password and a taken one against a right one, and twenty a second on
+    # a pool of four. They measure time, so they run with the other timed
+    # tests and nowhere else; in the suite they are skipped.
+    add_test(NAME accounts_timed
+        COMMAND engine_app_tests "--test-case=*take a right one's time*,*twenty sign-ins a second*")
+    set_tests_properties(accounts_timed PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300 LABELS perf)
     set_tests_properties(editor_shell PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
@@ -881,6 +890,20 @@ if(ENG_BUILD_TESTS)
         set_tests_properties(data_travel PROPERTIES
             PASS_REGULAR_EXPRESSION "the record changed in the tick of the hop is the one the next world loads"
             TIMEOUT 200)
+        # **Accounts at the front door** (ADR 0237): made, refused each way
+        # a sign-in can be, signed in, and known by both worlds -- a
+        # traveller's account carried in the pass; the
+        # password in no log and no file.
+        add_test(NAME data_accounts
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/accounts
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-accounts
+                    -DPORT=47884
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_accounts.cmake)
+        set_tests_properties(data_accounts PROPERTIES
+            PASS_REGULAR_EXPRESSION "an account made, signed in, and known by both worlds"
+            TIMEOUT 240)
     endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the

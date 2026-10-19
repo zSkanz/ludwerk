@@ -64,6 +64,11 @@ using Sha256 = std::array<u8, 32>;
 // not one of `hashPassword`'s. Costs what the hash was made at.
 [[nodiscard]] bool verifyPassword(std::string_view hash, std::string_view password);
 
+// **A secret overwritten before it is let go**: a password once its hash is
+// made or checked, where an ordinary clear would leave it in the memory the
+// string gives back. Empty afterwards.
+void wipe(std::string& secret);
+
 // --- What a match's encryption and a signed pass are made of (ADR 0224) ----
 //
 // Each of these is libsodium's, under the names the Noise specification and

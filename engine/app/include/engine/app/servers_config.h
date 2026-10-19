@@ -51,6 +51,14 @@ struct ServersConfig
     core::u32 backupKeep = 7;
     core::u32 movesKeepDays = 90;
 
+    // `[accounts]` (ADR 0237): the front door signs players in, and lets in
+    // only those it signed in; whether a player may make an account
+    // (`register`); and a pattern a login name must match too, inside the
+    // engine's own set (amendment F).
+    bool accounts = false;
+    bool accountsRegister = true;
+    std::string accountsNamePattern;
+
     // `[[world]]`: a world that runs while the manager does.
     struct World
     {

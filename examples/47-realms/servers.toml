@@ -6,6 +6,12 @@
 port = 7777
 world_ports = "7800-7899"
 
+# Players sign in at the front door (ADR 0237): `run.bat play` shows the
+# login screen first. A player may make an account there.
+[accounts]
+enabled = true
+register = true
+
 # Where every player arrives: the front door sends them here. A crowded town
 # opens another channel of itself (ADR 0230) -- `town:2`, `town:3` -- when
 # every one open is nine tenths full; one left empty closes after two

@@ -71,6 +71,7 @@ The manager reads lines from the terminal it runs in:
 | `data backup [path]` | A copy of the whole database while the game runs. See [Backups and the move log](#backups-and-the-move-log). |
 | `data undo <transaction>` | A transaction's moves made the other way, as one new transaction. |
 | `moves [<owner> \| item <id> \| transaction <id>]` | The move log's last 20 lines, newest first. |
+| `account create\|password\|rename\|delete <name>` | The game's accounts, where `[accounts]` is on. See [Accounts at the console](#accounts-at-the-console). |
 | `<world>: <line>` | A line for one world's own console: `town: status`, `town: kick Player3`. |
 
 ### Updating without dropping anybody
@@ -327,6 +328,95 @@ It yields until the socket is open and raises when it cannot be. Messages are
 text or binary, at most 1 MiB, and at most eight sockets are open at once. A
 client's game opens one only with `websocket_client = true` under
 `[permissions]` in `project.toml`.
+
+## Signing players in
+
+An online game can sign its players in with nothing but its own servers.
+Turn it on in `servers.toml`:
+
+```toml
+# servers.toml
+[accounts]
+enabled = true
+register = true            # players may make an account; false: only the console makes them
+name_pattern = "^[a-z0-9_]+$" # optional: a narrower set of login names
+```
+
+On the player's machine, the game's login screen calls `SignInAsync` -- or
+`RegisterAsync` for a new account -- with what the player typed, and joins
+with the ticket it gets back:
+
+```luau
+--!strict
+local NetworkService = game:GetService("NetworkService")
+
+local result = NetworkService:SignInAsync("realms.example.com", name, password)
+if result.Ok then
+    NetworkService:Join("realms.example.com", { Ticket = result.Ticket })
+elseif result.Reason == Enum.SignInFailure.Busy then
+    task.wait(result.RetryAfter) -- then try again
+else
+    print(result.Reason) -- WrongNameOrPassword, Taken, InvalidName, InvalidPassword, Refused, Unreachable
+end
+```
+
+- **The password crosses the network only encrypted**, to the front door this
+  machine met before at that address, and the manager never keeps it: it
+  keeps an Argon2id hash. It is in no log.
+- **With `[accounts]` on, the front door lets in only players it signed in.**
+  It checks the ticket itself, and every world after it knows the player by
+  the account: `Player.AccountId` is it in the entry world, after every trip
+  to another world or an instance, and after an update -- with no
+  `OnJoinRequest` of the game's. A game that has one finds
+  `joiner.AccountId` already set. One account is in one place at a time, and
+  `ban account:<id>` keeps it out of every world.
+- **A player's record is the account's** (see [A player's record](#a-players-record)):
+  the same level and inventory from any machine they sign in on.
+
+### Login names
+
+A login name is **3 to 20 of the letters A to Z, the digits, `_`, `.` and
+`-`** -- ASCII alone. `name_pattern` can narrow that, never widen it.
+**Accents and other scripts go in the game's own display name**, which the
+game keeps (in the player's record, say) and shows; the login name is only
+what the player types to sign in.
+
+Two names that look alike are one account: case does not count, and
+neither do `l`, `I` and `1`, or `o` and `0`. So once `Admin` has an account,
+`admin` and `Adm1n` answer `Taken`. A player signs in with the name in any
+case.
+
+### What an attacker gets
+
+Nothing that tells them which names have accounts: a wrong password and a
+name with no account are the same reason, `WrongNameOrPassword`, and take
+the same time to answer. **Five failures from one address in a minute** are
+refused for the rest of the minute without being checked. **Five failures
+on one name**, from any number of addresses, make each next try on it wait
+-- 1 second, then 2, 4 and so on to 32 -- and a right password clears the
+count, so nobody can shut an account's own player out.
+
+### Accounts at the console
+
+| Command | Does |
+|---|---|
+| `account create <name>` | Makes an account and shows the password made for it, once. |
+| `account password <name>` | Makes the account a new password, shown once. |
+| `account rename <name> <new name>` | Another login name, under the same rules. |
+| `account delete <name>` | Deletes it. What it owned stays where it is, and a ban of it stays. |
+
+The console makes passwords and never takes one: a line typed at it is
+logged with who typed it, and a password must be in no log.
+
+The manager hashes each password with libsodium's "interactive" settings
+(64 MiB, two passes) in a pool of its own -- half the machine's cores, four at
+most -- so its other work never waits. A machine of four cores signs in more
+than 20 players a second; past what the pool can take, a sign-in is answered
+`Busy` with the seconds to wait.
+
+A game with a backend of its own, or a platform's accounts, keeps issuing
+tickets as before (see [Who may join, and accounts](manual:guides/multiplayer#who-may-join-and-accounts)):
+everything here is off unless `[accounts]` says so.
 
 ## A player's record
 
@@ -777,7 +867,8 @@ yours to answer for.
 - Worlds on several machines: one manager runs every world on its own machine.
 - A second front door: while the one front door is down, no new player gets
   in, and those already in a world stay.
-- Accounts themselves: see [Who may join, and accounts](manual:guides/multiplayer).
+- Recovering an account by e-mail, and signing in in two steps: the engine
+  sends no mail, and a game's own backend does both.
 - A game's own backend in place of the database: the rest of the data
   service is still to come.
 - Copying backups to another machine: that is the operator's, with whatever

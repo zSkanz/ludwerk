@@ -7534,7 +7534,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setNetworkServiceMaxPlayers,
         },
     }};
-    static std::array<MethodDesc, 21> networkServiceMethods;
+    static std::array<MethodDesc, 23> networkServiceMethods;
     networkServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetLocalPlayers"),
@@ -7571,6 +7571,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Measures the round trip to a relay and returns what the relay reports, or nil if it did not answer. Use it before hosting or joining to choose among relays in several regions.\012\012`relay` is `host:port`; if omitted, the project's `[network] relay` is used. The method yields until the relay has answered three requests sent a tenth of a second apart, or until `timeout` seconds have passed (1.5 by default).\012\012The result has `Ping`, the shortest of the three round trips in milliseconds; `Matches`, the matches registered with the relay; `Relayed`, the players it is relaying; `BytesPerSecond`, its traffic; and `Uptime`, in seconds. It does not need a match and does not disturb one, and several relays can be pinged at once from separate tasks.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SignInAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Signs this player in to an account at an online game's servers, and returns a ticket to join with. Call it on the player's machine, then pass the ticket to `Join`: `NetworkService:Join(address, { Ticket = result.Ticket })`.\012\012`address` is the game's front door, `host` or `host:port`. The password crosses the network only encrypted, to the server this machine met before at that address, and is never kept. The method yields until the server answers, and never raises for a refusal: `Ok` is false and `Reason` says why. A wrong name and a wrong password are the same reason, `WrongNameOrPassword`, and take the same time, so nobody learns which names have accounts. A ticket is good for one join within 90 seconds.",
+        },
+        MethodDesc{
+            .name = atoms.intern("RegisterAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes an account at an online game's servers and signs this player in to it, as `SignInAsync` does. A login name is 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`; two names that differ only in case, or in `l`, `I` and `1` or `o` and `0`, are one name, and the second is `Taken`. A password is 8 to 128 bytes. What the game shows a player as, with accents or other scripts, is a display name of the game's own, not the login name.",
         },
         MethodDesc{
             .name = atoms.intern("DefineAction"),
@@ -11231,6 +11243,51 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     textInputKeyboardDesc.doc = "The on-screen keyboard a phone shows for a `TextInput`. A desktop input method also reads it as a hint. A masked field always shows the password keyboard.";
     textInputKeyboardDesc.items = textInputKeyboardItems;
     enums.registerEnum(textInputKeyboardDesc);
+
+    // --- SignInFailure ---
+    static std::array<EnumItemDesc, 7> signInFailureItems;
+    signInFailureItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("WrongNameOrPassword"),
+            .value = 1,
+            .doc = "No account has that name, or the password is not its own. One reason for both, so that nobody learns which names have accounts.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Taken"),
+            .value = 2,
+            .doc = "Another account has that name, or one that looks like it.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("InvalidName"),
+            .value = 3,
+            .doc = "Not a login name: 3 to 20 of the letters A to Z, the digits, `_`, `.` and `-`, and whatever the game's `name_pattern` allows of those.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("InvalidPassword"),
+            .value = 4,
+            .doc = "Shorter than 8 bytes or longer than 128.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Busy"),
+            .value = 5,
+            .doc = "The server is checking too many sign-ins at once. Try again after the result's `RetryAfter` seconds.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Refused"),
+            .value = 6,
+            .doc = "The server signs nobody in, makes no accounts here, or saw too many failures from this address. The result's `RetryAfter` says when to try again where it can.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Unreachable"),
+            .value = 7,
+            .doc = "The server did not answer.",
+        },
+    }};
+    EnumDescriptor signInFailureDesc;
+    signInFailureDesc.name = atoms.intern("SignInFailure");
+    signInFailureDesc.doc = "Why `NetworkService:SignInAsync` or `RegisterAsync` did not sign a player in.";
+    signInFailureDesc.items = signInFailureItems;
+    enums.registerEnum(signInFailureDesc);
 
     // --- SwipeDirection ---
     static std::array<EnumItemDesc, 4> swipeDirectionItems;

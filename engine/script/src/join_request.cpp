@@ -88,7 +88,7 @@ void start(lua_State* L, const scene::EngineState::JoinValidation& asked)
     if (state.joinRequestHandler < 0) {
         // Unset since it was asked: everybody is let in.
         world(L).engineState().joinVerdicts.push_back(
-            scene::EngineState::JoinVerdict{.id = asked.id, .admit = true, .reason = {}, .accountId = {}});
+            scene::EngineState::JoinVerdict{.id = asked.id, .admit = true, .reason = {}, .accountId = asked.accountId});
         return;
     }
     lua_State* co = lua_newthread(L);
@@ -101,6 +101,11 @@ void start(lua_State* L, const scene::EngineState::JoinValidation& asked)
     lua_setfield(L, -2, "Address");
     lua_pushlstring(L, asked.ticket.data(), asked.ticket.size());
     lua_setfield(L, -2, "Ticket");
+    // The account a manager's pass named, which the function may keep.
+    if (!asked.accountId.empty()) {
+        lua_pushlstring(L, asked.accountId.data(), asked.accountId.size());
+        lua_setfield(L, -2, "AccountId");
+    }
     const int requestRef = lua_ref(L, -1);
     lua_getref(L, state.joinRequestHandler);
     lua_xmove(L, co, 1);

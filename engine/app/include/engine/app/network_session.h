@@ -45,7 +45,8 @@ class IReplication;
 
 namespace engine::scene {
 class ICharacterReplay;
-}
+struct EngineState;
+} // namespace engine::scene
 
 namespace engine::render {
 class TransformHistory;
@@ -173,6 +174,15 @@ private:
     // What `RelayState` and `JoinCode` read, and `RelayStateChanged` when
     // either is another.
     void noteRelay(core::i32 relayState, const std::string& joinCode);
+    // **Who this machine takes a host's key from** (ADR 0224): the one a
+    // world named, the game's own server's, or the pinned one.
+    [[nodiscard]] std::function<bool(std::string_view, core::u16, const std::array<core::u8, 32>&)>
+    trustedHosts(std::string named) const;
+    // `SignInAsync` and `RegisterAsync` (ADR 0237): each a connection of its
+    // own to a front door, open until it answers.
+    struct SignIn;
+    void signIns(scene::EngineState& state);
+    std::vector<std::unique_ptr<SignIn>> m_signIns;
     void wire();
     void goSolo(std::string_view event, std::string_view reason, bool wasAuthority);
     void setState(core::i32 state);

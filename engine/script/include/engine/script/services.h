@@ -320,6 +320,8 @@ public:
     std::vector<InstanceWaiter> instanceWaiters;
     // `NetworkService:GetChannelsAsync` (ADR 0230), the same way.
     std::vector<InstanceWaiter> channelWaiters;
+    // `SignInAsync` and `RegisterAsync` (ADR 0237), by the ask's number.
+    std::vector<InstanceWaiter> signInWaiters;
     // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
     // headset's answer, each its thread's reference.
     std::vector<int> roomWaiters;

@@ -96,6 +96,13 @@ std::string hashPassword(std::string_view password)
     return std::string{out};
 }
 
+void wipe(std::string& secret)
+{
+    if (!secret.empty())
+        sodium_memzero(secret.data(), secret.size());
+    secret.clear();
+}
+
 bool verifyPassword(std::string_view hash, std::string_view password)
 {
     ready();

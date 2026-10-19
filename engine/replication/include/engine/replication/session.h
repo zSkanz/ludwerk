@@ -291,6 +291,28 @@ struct HelloFields
 // until its turn, none when nothing has measured it yet.
 inline constexpr u32 NoEstimate = 0xFFFFFFFFu;
 [[nodiscard]] std::vector<u8> queuedMessage(u32 position, u32 estimateSeconds);
+// **Signing in at the front door** (ADR 0237): what a player's machine sends
+// on a connection opened for it, and the door's answer. Nothing for bytes
+// that are not one.
+struct SignInFields
+{
+    bool registering = false;
+    std::string name;
+    std::string password;
+};
+inline constexpr usize MaxSignInNameBytes = 64;
+inline constexpr usize MaxSignInPasswordBytes = 128;
+[[nodiscard]] std::vector<u8> signInMessage(const SignInFields& fields);
+[[nodiscard]] std::optional<SignInFields> readSignIn(std::span<const u8> payload);
+struct SignedInFields
+{
+    // 0 signed in, else an `Enum.SignInFailure`'s value.
+    u8 failure = 0;
+    std::string ticket;
+    u32 retryAfter = 0;
+};
+[[nodiscard]] std::vector<u8> signedInMessage(const SignedInFields& fields);
+[[nodiscard]] std::optional<SignedInFields> readSignedIn(std::span<const u8> payload);
 // Players this authority remembers across connections (ADR 0085). Past it,
 // the longest-known one not connected now is forgotten: its next visit is a
 // new player, which is what an authority that restarted would say too.

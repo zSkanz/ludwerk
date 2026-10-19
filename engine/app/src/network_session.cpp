@@ -209,6 +209,27 @@ void NetworkSession::setSecurity(MatchSecurity security)
     m_pins = m_security.pins.empty() ? nullptr : std::make_unique<KeyPins>(m_security.pins);
 }
 
+// **A sign-in on its way** (ADR 0237): its own connection to the front door,
+// the message sent once the handshake is done, and how long it may take --
+// a minute, past a name's longest delay and the hash behind it.
+struct NetworkSession::SignIn
+{
+    core::u32 id = 0;
+    std::unique_ptr<net::ITransport> transport;
+    net::PeerId peer{};
+    std::vector<core::u8> message;
+    core::u64 deadlineNs = 0;
+    bool done = false;
+};
+
+namespace {
+
+[[maybe_unused]] constexpr core::u64 SignInWaitNs = 60ull * 1'000'000'000ull;
+// `Enum.SignInFailure.Unreachable`: said here, never by a door.
+constexpr core::u8 SignInUnreachable = 7;
+
+} // namespace
+
 NetworkSession::~NetworkSession()
 {
 #if ENG_ENABLE_REPLICATION
@@ -309,30 +330,7 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
         secure.identity = m_security.identity;
         secure.prologue = m_security.prologue;
         secure.plainRefusal = replication::refusalMessage(replication::RefusedInsecure);
-        KeyPins* pins = m_pins.get();
-        // The game's own server, where it names one with its key.
-        std::string ownServer;
-        if (std::string host; m_security.serverKey.has_value() && !m_security.server.empty()) {
-            core::u16 at = DefaultPort;
-            if (splitAddress(m_security.server, host, at))
-                ownServer = host + ":" + std::to_string(at);
-        }
-        // **A host is pinned by the address it was joined at**. A code names
-        // a match the relay found, not a machine, and is handed out again to
-        // another host later: pinned, it refused that one as a changed key.
-        secure.trust = [pins, ownServer, ownKey = m_security.serverKey, named = relay.serverKey](
-                           std::string_view host, core::u16 port, const std::array<core::u8, 32>& key) {
-            // **Sent here by a world that named this one's key** (ADR 0224
-            // §3): that key and no other, pinned or not.
-            if (!named.empty())
-                return core::toHex(key) == named;
-            if (port == 0)
-                return true;
-            const std::string where = std::string(host) + ":" + std::to_string(port);
-            if (!ownServer.empty() && where == ownServer)
-                return key == *ownKey;
-            return pins == nullptr || pins->trust(where, key);
-        };
+        secure.trust = trustedHosts(relay.serverKey);
         // **A host says its key**, for its players to be given and its
         // operator to check (ADR 0224 §3).
         if (topology != replication::Topology::Replica) {
@@ -359,12 +357,25 @@ std::optional<core::EngineError> NetworkSession::begin(replication::Topology top
                 }
             }
             WorldHost* host = m_host();
-            if (host == nullptr || !host->world().engineState().validateJoinSet) {
+            if (host == nullptr || (!host->world().engineState().validateJoinSet && ask.accountId.empty())) {
                 replica->answerJoin(ask.id, replication::JoinAnswer{});
                 return;
             }
-            host->world().engineState().joinValidations.push_back(scene::EngineState::JoinValidation{
-                .id = ask.id, .publicKey = ask.publicKey, .address = ask.address, .ticket = ask.ticket});
+            // **An account a manager's pass names**, with no function of the
+            // game's to ask: admitted as one a game named, through the same
+            // ban and the same one session an account.
+            if (!host->world().engineState().validateJoinSet) {
+                host->world().engineState().joinVerdicts.push_back(scene::EngineState::JoinVerdict{
+                    .id = ask.id, .admit = true, .reason = {}, .accountId = ask.accountId});
+                m_validating[ask.id] = (m_clock ? m_clock() : platform::nowNs()) + JoinRequestNs;
+                return;
+            }
+            host->world().engineState().joinValidations.push_back(
+                scene::EngineState::JoinValidation{.id = ask.id,
+                                                   .publicKey = ask.publicKey,
+                                                   .address = ask.address,
+                                                   .ticket = ask.ticket,
+                                                   .accountId = ask.accountId});
             m_validating[ask.id] = (m_clock ? m_clock() : platform::nowNs()) + JoinRequestNs;
         });
     }
@@ -600,6 +611,124 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     script::fireNetworkEvent(host->runtime().state(), event, reason);
 }
 
+std::function<bool(std::string_view, core::u16, const std::array<core::u8, 32>&)>
+NetworkSession::trustedHosts(std::string named) const
+{
+    KeyPins* pins = m_pins.get();
+    // The game's own server, where it names one with its key.
+    std::string ownServer;
+    if (std::string host; m_security.serverKey.has_value() && !m_security.server.empty()) {
+        core::u16 at = DefaultPort;
+        if (splitAddress(m_security.server, host, at))
+            ownServer = host + ":" + std::to_string(at);
+    }
+    // **A host is pinned by the address it was joined at**. A code names
+    // a match the relay found, not a machine, and is handed out again to
+    // another host later: pinned, it refused that one as a changed key.
+    return [pins, ownServer, ownKey = m_security.serverKey,
+            named = std::move(named)](std::string_view host, core::u16 port, const std::array<core::u8, 32>& key) {
+        // **Sent here by a world that named this one's key** (ADR 0224
+        // §3): that key and no other, pinned or not.
+        if (!named.empty())
+            return core::toHex(key) == named;
+        if (port == 0)
+            return true;
+        const std::string where = std::string(host) + ":" + std::to_string(port);
+        if (!ownServer.empty() && where == ownServer)
+            return key == *ownKey;
+        return pins == nullptr || pins->trust(where, key);
+    };
+}
+
+void NetworkSession::signIns(scene::EngineState& state)
+{
+    // When a sign-in gives up: a build with no network answers each at once.
+    [[maybe_unused]] const core::u64 now = m_clock ? m_clock() : platform::nowNs();
+    const auto answer = [&state](core::u32 id, core::u8 failure, std::string ticket, core::u32 retryAfter) {
+        state.signInAnswers.push_back(scene::EngineState::SignInAnswer{id, failure, std::move(ticket), retryAfter});
+    };
+    for (scene::EngineState::SignInAsk& ask : state.signInAsks) {
+#if ENG_ENABLE_REPLICATION
+        auto one = std::make_unique<SignIn>();
+        one->id = ask.id;
+        one->deadlineNs = now + SignInWaitNs;
+        std::string host;
+        core::u16 port = DefaultPort;
+        bool opened = splitAddress(ask.address, host, port);
+        one->transport = m_transports ? m_transports() : net::createEnetTransport();
+        // **The front door is met as a match's host is** (ADR 0224): its
+        // key pinned at that address, so the password goes to it alone.
+        if (m_security.encrypt) {
+            net::SecureConfig secure;
+            secure.identity = m_security.identity;
+            secure.prologue = m_security.prologue;
+            secure.plainRefusal = replication::refusalMessage(replication::RefusedInsecure);
+            secure.trust = trustedHosts({});
+            one->transport = net::createSecureTransport(std::move(one->transport), std::move(secure));
+        }
+        net::TransportConfig config;
+        config.port = 0;
+        config.maxPeers = 1;
+        config.channels = replication::transportChannels();
+        opened = opened && !one->transport->open(config).has_value() &&
+                 !one->transport->connect(host, port, one->peer).has_value();
+        one->message = replication::signInMessage(
+            replication::SignInFields{.registering = ask.registering, .name = ask.name, .password = ask.password});
+        core::wipe(ask.password);
+        if (!opened) {
+            core::wipe(ask.password);
+            answer(ask.id, SignInUnreachable, {}, 0);
+            continue;
+        }
+        m_signIns.push_back(std::move(one));
+#else
+        core::wipe(ask.password);
+        answer(ask.id, SignInUnreachable, {}, 0);
+#endif
+    }
+    state.signInAsks.clear();
+#if ENG_ENABLE_REPLICATION
+    std::vector<net::TransportEvent> events;
+    for (const std::unique_ptr<SignIn>& one : m_signIns) {
+        events.clear();
+        (void)one->transport->poll(events, 0);
+        for (const net::TransportEvent& event : events) {
+            if (one->done)
+                break;
+            if (event.kind == net::TransportEvent::Kind::Connected && !one->message.empty()) {
+                (void)one->transport->send(one->peer, one->message, net::Delivery::Reliable, 0);
+                one->transport->flush();
+                // The password's bytes, gone once they left.
+                std::fill(one->message.begin(), one->message.end(), core::u8{0});
+                one->message.clear();
+            }
+            else if (event.kind == net::TransportEvent::Kind::Message) {
+                if (const std::optional<replication::SignedInFields> signedIn =
+                        replication::readSignedIn(event.payload)) {
+                    answer(one->id, signedIn->failure, signedIn->ticket, signedIn->retryAfter);
+                    one->done = true;
+                }
+            }
+            else if (event.kind == net::TransportEvent::Kind::Disconnected) {
+                answer(one->id, SignInUnreachable, {}, 0);
+                one->done = true;
+            }
+        }
+        if (!one->done && now > one->deadlineNs) {
+            answer(one->id, SignInUnreachable, {}, 0);
+            one->done = true;
+        }
+        if (one->done) {
+            std::fill(one->message.begin(), one->message.end(), core::u8{0});
+            one->transport->disconnect(one->peer);
+            one->transport->flush();
+            one->transport->close();
+        }
+    }
+    std::erase_if(m_signIns, [](const std::unique_ptr<SignIn>& one) { return one->done; });
+#endif
+}
+
 void NetworkSession::update()
 {
     WorldHost* host = m_host();
@@ -617,6 +746,8 @@ void NetworkSession::update()
             m_pins->forget(where + ":" + std::to_string(port));
     }
     state.forgottenServerKeys.clear();
+    if (!state.signInAsks.empty() || !m_signIns.empty())
+        signIns(state);
     if (state.pendingNetwork.has_value()) {
         const scene::EngineState::NetworkRequest request = std::move(*state.pendingNetwork);
         state.pendingNetwork.reset();

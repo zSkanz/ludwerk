@@ -3996,6 +3996,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "SwitchChannel", networkServiceSwitchChannel},
     {"NetworkService", "TravelToPlayer", networkServiceTravelToPlayer},
     {"NetworkService", "GetChannelsAsync", networkServiceGetChannelsAsync},
+    {"NetworkService", "SignInAsync", networkServiceSignInAsync},
+    {"NetworkService", "RegisterAsync", networkServiceRegisterAsync},
     {"ConsoleService", "Register", serverConsoleRegister},
     {"ConsoleService", "Unregister", serverConsoleUnregister},
     {"ConsoleService", "ExecuteAsync", serverConsoleExecuteAsync},

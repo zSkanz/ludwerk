@@ -11,6 +11,18 @@ here.
 
 ### Added
 
+- An online game signs its players in at its own servers: `[accounts]` in
+  `servers.toml`, and `NetworkService:SignInAsync` and `RegisterAsync` on the
+  player's machine, which return a ticket to join with or an
+  `Enum.SignInFailure`. Passwords are hashed with Argon2id in a pool of their
+  own; a wrong name and a wrong password are one reason and take the same
+  time; an address's failures and a name's are slowed, never locked. Login
+  names are ASCII, and two that look alike are one account. With accounts
+  on, the front door lets in only the players it signed in, and every world
+  knows them by their account, after every trip too. The console's `account
+  create|password|rename|delete` makes the passwords it sets and takes none.
+  The wire protocol is 61.
+
 - The game's database at its operator's console: `data` says what it holds,
   `data backup [path]` copies it while the game runs -- a few pages a pass,
   so no world waits, and whole as of the moment it finished -- `moves` reads

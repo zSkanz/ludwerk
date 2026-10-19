@@ -10,10 +10,12 @@
 #include <string>
 #include <vector>
 
+#include "class_descriptors.gen.h"
 #include "engine/core/i18n.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
+#include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
 #include "engine/script/modules.h"
 #include "engine/script/save_service.h"
@@ -188,6 +190,44 @@ int networkServiceGetChannelsAsync(lua_State* L)
     return lua_yield(L, 0);
 }
 
+namespace {
+
+int signIn(lua_State* L, bool registering)
+{
+    (void)checkInstance(L, 1);
+    size_t addressLength = 0;
+    size_t nameLength = 0;
+    size_t passwordLength = 0;
+    const char* address = luaL_checklstring(L, 2, &addressLength);
+    const char* name = luaL_checklstring(L, 3, &nameLength);
+    const char* password = luaL_checklstring(L, 4, &passwordLength);
+    requireYieldable(L, registering ? "RegisterAsync" : "SignInAsync");
+    scene::EngineState& state = world(L).engineState();
+    scene::EngineState::SignInAsk ask;
+    ask.id = state.nextSignIn++;
+    ask.address.assign(address, addressLength);
+    ask.name.assign(name, nameLength);
+    ask.password.assign(password, passwordLength);
+    ask.registering = registering;
+    lua_pushthread(L);
+    services(L).signInWaiters.push_back(ServiceState::InstanceWaiter{ask.id, lua_ref(L, -1)});
+    lua_pop(L, 1);
+    state.signInAsks.push_back(std::move(ask));
+    return lua_yield(L, 0);
+}
+
+} // namespace
+
+int networkServiceSignInAsync(lua_State* L)
+{
+    return signIn(L, false);
+}
+
+int networkServiceRegisterAsync(lua_State* L)
+{
+    return signIn(L, true);
+}
+
 int networkServiceTravel(lua_State* L)
 {
     return travel(L, false);
@@ -232,6 +272,39 @@ void fireTravelEvents(lua_State* L)
         (void)lua_unref(L, threadRef);
     }
     state.channelAnswers.clear();
+    // **Signed in, or why not** (ADR 0237): `{ Ok, Ticket, Reason,
+    // RetryAfter }`, the ticket nil and the reason an `Enum.SignInFailure`.
+    for (const scene::EngineState::SignInAnswer& answer : state.signInAnswers) {
+        ServiceState& kept = services(L);
+        const auto waiter =
+            std::find_if(kept.signInWaiters.begin(), kept.signInWaiters.end(),
+                         [&](const ServiceState::InstanceWaiter& waiting) { return waiting.id == answer.id; });
+        if (waiter == kept.signInWaiters.end())
+            continue;
+        const int threadRef = waiter->threadRef;
+        kept.signInWaiters.erase(waiter);
+        lua_getref(L, threadRef);
+        if (lua_State* co = lua_tothread(L, -1); co != nullptr) {
+            lua_createtable(co, 0, 4);
+            lua_pushboolean(co, answer.failure == 0 ? 1 : 0);
+            lua_setfield(co, -2, "Ok");
+            if (answer.failure == 0) {
+                lua_pushlstring(co, answer.ticket.data(), answer.ticket.size());
+                lua_setfield(co, -2, "Ticket");
+            }
+            else {
+                pushEnumItem(co, scene::EnumValue{static_cast<core::u16>(scene::generated::SignInFailureEnumId),
+                                                  static_cast<core::i32>(answer.failure)});
+                lua_setfield(co, -2, "Reason");
+            }
+            lua_pushnumber(co, static_cast<double>(answer.retryAfter));
+            lua_setfield(co, -2, "RetryAfter");
+            (void)resumeScheduled(L, co, 1);
+        }
+        lua_pop(L, 1);
+        (void)lua_unref(L, threadRef);
+    }
+    state.signInAnswers.clear();
     // **In line at the front door** (ADR 0232): `Queued(position,
     // estimateSeconds)`, the estimate nil until the line has moved.
     if (!state.queueUpdates.empty()) {
