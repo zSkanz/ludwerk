@@ -32,6 +32,7 @@ TEST_CASE("the file properties come back out as they went in")
     info.version = "1.2.0";
     info.strings["ProductName"] = "Sky Hopper";
     info.strings["CompanyName"] = "Example Games";
+    info.strings["LegalCopyright"] = "Copyright 2026 Example Games";
     info.strings["FileDescription"] = "Sky Hopper \xE2\x80\x94 a game, caf\xC3\xA9 \xF0\x9F\x8E\xAE";
     info.strings["ProductVersion"] = "1.2.0";
     info.strings["FileVersion"] = "1.2.0";

@@ -21,7 +21,7 @@
 //   iconpatch replace <executable> <icon.ico>
 //   iconpatch verify  <executable> [--not <icon.ico>]
 //   iconpatch version <executable> --product <name> --version <X.Y.Z>
-//                     [--company <name>] [--description <text>]
+//                     [--company <name>] [--copyright <text>] [--description <text>]
 //   iconpatch info    <executable>
 //
 // `version` writes the VERSIONINFO resource Explorer's Details tab reads (ADR
@@ -64,7 +64,8 @@ void usage()
     std::fprintf(stderr, "usage: iconpatch replace <executable> <icon.ico>\n"
                          "       iconpatch verify  <executable> [--not <icon.ico>]\n"
                          "       iconpatch version <executable> --product <name> --version <X.Y.Z>\n"
-                         "                         [--company <name>] [--description <text>]\n"
+                         "                         [--company <name>] [--copyright <text>]\n"
+                         "                         [--description <text>]\n"
                          "       iconpatch info    <executable>\n");
 }
 
@@ -314,6 +315,8 @@ int main(int argc, char** argv)
                 info.strings["ProductName"] = value;
             else if (flag == "--company")
                 info.strings["CompanyName"] = value;
+            else if (flag == "--copyright")
+                info.strings["LegalCopyright"] = value;
             else if (flag == "--description")
                 info.strings["FileDescription"] = value;
             else if (flag == "--version")

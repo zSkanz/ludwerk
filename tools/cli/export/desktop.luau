@@ -28,7 +28,10 @@ export type Identity = {
     -- The same, safe as a file name.
     fileName: string,
     version: string?,
+    -- `[project] publisher`, or `company` without one.
     company: string?,
+    -- `[project] copyright`.
+    copyright: string?,
     -- The project's icon, resolved, when it names one that exists.
     icon: string?,
 }
@@ -122,6 +125,10 @@ local function stampWindows(executable: string, ico: string?, identity: Identity
     if identity.company ~= nil then
         table.insert(command, "--company")
         table.insert(command, identity.company)
+    end
+    if identity.copyright ~= nil then
+        table.insert(command, "--copyright")
+        table.insert(command, identity.copyright)
     end
     local versioned = process.run(command)
     if not versioned.ok then
