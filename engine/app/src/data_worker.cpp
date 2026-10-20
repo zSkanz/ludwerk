@@ -99,8 +99,7 @@ void DataWorker::run()
             m_jobs.pop_front();
         }
         Then then = next.job(*m_store);
-        const core::f64 tookMs =
-            std::chrono::duration<core::f64, std::milli>(Clock::now() - next.posted).count();
+        const core::f64 tookMs = std::chrono::duration<core::f64, std::milli>(Clock::now() - next.posted).count();
         const std::lock_guard<std::mutex> lock(m_mutex);
         ++m_doneCount;
         m_worstMs = std::max(m_worstMs, tookMs);

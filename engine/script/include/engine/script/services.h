@@ -349,6 +349,20 @@ public:
         Answer answer = Answer::Done;
     };
     std::vector<MatchWaiter> matchWaiters;
+    // **The game's Nakama, in real time** (ADR 0242): the socket its
+    // matchmaker needs, this machine's own, opened on the first
+    // `NakamaService:QueueAsync`; the threads waiting for its answers, by the
+    // id each request carried; and the front door a match is told to.
+    struct NakamaWaiter
+    {
+        std::string cid;
+        int threadRef = -1;
+        bool cancelling = false;
+    };
+    std::unique_ptr<net::WebSocketSession> nakamaSocket;
+    std::vector<NakamaWaiter> nakamaWaiters;
+    core::u32 nextNakamaCid = 1;
+    std::string nakamaDoor;
     // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
     // headset's answer, each its thread's reference.
     std::vector<int> roomWaiters;

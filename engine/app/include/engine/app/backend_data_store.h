@@ -38,8 +38,8 @@ struct BackendOptions
     core::u32 tries = 3;
     // What sends a request and answers its body, or none where it got no
     // answer: the HTTP client, or a test's.
-    std::function<std::optional<std::string>(const std::string& url, const std::string& body,
-                                             const std::string& token, core::u32 timeoutMs)>
+    std::function<std::optional<std::string>(const std::string& url, const std::string& body, const std::string& token,
+                                             core::u32 timeoutMs)>
         send;
 };
 
@@ -58,5 +58,14 @@ struct BackendOptions
 // none for one Nakama refuses or that did not answer.
 [[nodiscard]] std::string nakamaDataEndpoint(std::string_view url, std::string_view httpKey);
 [[nodiscard]] std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami(std::string url);
+// **A match Nakama's matchmaker made**, by the module's `engine_match_users`
+// with the server's HTTP key: its players and queue, or none.
+struct NakamaMatchRecord
+{
+    std::vector<std::string> users;
+    std::string queue;
+};
+[[nodiscard]] std::function<std::optional<NakamaMatchRecord>(const std::string& match)>
+nakamaMatchRecords(std::string url, std::string httpKey);
 
 } // namespace engine::app

@@ -439,7 +439,47 @@ local Classes: { Schema.Class } = {
                     .. "player not signed in to Nakama, or a session it no longer knows, is "
                     .. "`WrongNameOrPassword`.",
             },
+            {
+                Name = "QueueAsync",
+                Parameters = {
+                    { Name = "address", Type = "string" },
+                    { Name = "queue", Type = "string" },
+                    {
+                        Name = "options",
+                        Type = "{ Min: number?, Max: number?, Query: string?, Properties: {[string]: string}? }?",
+                        Default = "nil",
+                    },
+                },
+                Returns = { "string?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Puts this player in the game's Nakama matchmaker for `queue`, a queue the game's servers "
+                    .. "define with `MatchmakingService:DefineQueue`, and returns the ticket. The socket Nakama "
+                    .. "needs is this machine's and outlives a trip, so traveling keeps the ticket. Matched, "
+                    .. "`Matched` fires; the front door at `address` is told, asks Nakama itself, and sends every "
+                    .. "player of the match to its instance. `Min` and `Max` (2) are the match's players, `Query` "
+                    .. "Nakama's (players of the same queue by default), `Properties` more for it to match on. "
+                    .. "Returns nil and why: `IntegrationDisabled`, `NotSignedIn`, `InvalidArgument`, `Refused` or "
+                    .. "`Unreachable`.",
+            },
+            {
+                Name = "CancelQueueAsync",
+                Parameters = { { Name = "ticket", Type = "string" } },
+                Returns = { "boolean" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Takes this player's ticket out of the matchmaker. Returns whether Nakama did.",
+            },
         } :: { Schema.Method },
+        Events = {
+            {
+                Name = "Matched",
+                Parameters = { { Name = "match", Type = "string" } },
+                Doc = "Fires on this machine when Nakama's matchmaker puts this player in a match, with its id. "
+                    .. "The game's servers make the match's instance and send its players there; this is for "
+                    .. "what the player sees meanwhile.",
+            },
+        } :: { Schema.Event },
     },
     {
         Name = "XboxService",

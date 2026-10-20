@@ -68,8 +68,7 @@ namespace {
     const auto [a, b, c, d] = *address;
     (void)c;
     (void)d;
-    return a == 127 || a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) ||
-           (a == 169 && b == 254);
+    return a == 127 || a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 169 && b == 254);
 }
 
 // A request's id: 128 random bits, so two managers never share one.
@@ -264,8 +263,8 @@ public:
         if (!answer.has_value())
             return {};
         const core::JsonValue root = answer->root();
-        return SharedWrite{root["ok"].asBool(false), SharedDatum{std::string(root["value"].asString()),
-                                                                 whole(root["version"]).value_or(0)}};
+        return SharedWrite{root["ok"].asBool(false),
+                           SharedDatum{std::string(root["value"].asString()), whole(root["version"]).value_or(0)}};
     }
 
     // **The backend's own**: its log, its counts, its backups.
@@ -409,10 +408,40 @@ std::string nakamaDataEndpoint(std::string_view url, std::string_view httpKey)
     return trimmed(url) + "/v2/rpc/engine_data?unwrap&http_key=" + escaped(httpKey);
 }
 
+std::function<std::optional<NakamaMatchRecord>(const std::string& match)> nakamaMatchRecords(std::string url,
+                                                                                             std::string httpKey)
+{
+    return [endpoint = trimmed(url) + "/v2/rpc/engine_match_users?unwrap&http_key=" + escaped(httpKey)](
+               const std::string& match) -> std::optional<NakamaMatchRecord> {
+        core::JsonWriter body(core::JsonLayout::Compact);
+        body.beginObject();
+        body.field("match", std::string_view{match});
+        body.endObject();
+        net::HttpRequest request;
+        request.url = endpoint;
+        request.method = "POST";
+        request.body = body.text();
+        request.timeoutMs = 5000;
+        request.headers.push_back({"Content-Type", "application/json"});
+        net::HttpResponse response;
+        if (net::performHttp(request, response).has_value() || !response.ok || response.statusCode != 200)
+            return std::nullopt;
+        core::JsonDocument answer;
+        if (!answer.parse(response.body, "nakama") || !answer.root()["ok"].asBool(false))
+            return std::nullopt;
+        NakamaMatchRecord record;
+        const core::JsonValue users = answer.root()["users"];
+        for (core::usize at = 0; at < users.size(); ++at)
+            record.users.emplace_back(users.at(at).asString());
+        record.queue = std::string(answer.root()["queue"].asString());
+        return record;
+    };
+}
+
 std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami(std::string url)
 {
-    return [endpoint = trimmed(url) + "/v2/rpc/engine_whoami?unwrap"](
-               const std::string& session) -> std::optional<std::string> {
+    return [endpoint = trimmed(url) +
+                       "/v2/rpc/engine_whoami?unwrap"](const std::string& session) -> std::optional<std::string> {
         net::HttpRequest request;
         request.url = endpoint;
         request.method = "POST";

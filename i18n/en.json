@@ -732,6 +732,7 @@
   "account.done.deleted": "Account {name} ({id}) is deleted.",
   "manager.err.accounts_off": "This game's manager signs nobody in: turn [accounts] on in servers.toml.",
   "manager.err.sign_in_first": "Sign in first: this game lets in only the players its servers signed in.",
+  "manager.warn.nakama_no_queue": "Nakama matched players for {match} on queue \"{queue}\", which these servers do not define (MatchmakingService:DefineQueue): no instance is made.",
   "manager.warn.match_no_instance": "Match {match} found no instance to be played in ({why}); its players may queue again.",
   "manager.warn.world_restarting": "World {world} stopped without being asked to, and is starting again.",
   "manager.warn.world_silent": "World {world} has said nothing for too long, and is being ended and started again.",

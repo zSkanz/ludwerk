@@ -329,6 +329,25 @@ std::optional<core::EngineError> WorldManager::start()
                 accounts.whoami = m_options.nakamaWhoami;
             else
                 accounts.whoami = nakamaWhoami(m_options.config.nakamaUrl);
+            // And the matches its matchmaker made, with the server's key.
+            if (m_options.nakamaMatchUsers) {
+                accounts.matchUsers = m_options.nakamaMatchUsers;
+            }
+            else {
+                std::string key;
+                if (const std::string& name = m_options.config.nakamaHttpKeyEnv; !name.empty()) {
+                    if (const std::optional<std::string> value = platform::environmentValue(name.c_str()))
+                        key = *value;
+                }
+                accounts.matchUsers =
+                    [records = nakamaMatchRecords(m_options.config.nakamaUrl, key)](
+                        const std::string& match) -> std::optional<AccountDoor::Options::NakamaMatch> {
+                    std::optional<NakamaMatchRecord> found = records(match);
+                    if (!found.has_value())
+                        return std::nullopt;
+                    return AccountDoor::Options::NakamaMatch{std::move(found->users), std::move(found->queue)};
+                };
+            }
         }
         m_accountStore = openStore();
         m_accounts = std::make_unique<AccountDoor>(*m_accountStore, std::move(accounts));
@@ -1559,11 +1578,11 @@ void WorldManager::frame()
                 if (const std::size_t colon = address.rfind(':'); colon != std::string::npos)
                     address.resize(colon);
                 m_door->waiting.erase(event.peer.value);
-                const AccountDoor::Kind kind = signIn->kind == replication::SignInKind::NakamaSession
-                                                   ? AccountDoor::Kind::Session
-                                               : signIn->kind == replication::SignInKind::Register
-                                                   ? AccountDoor::Kind::Register
-                                                   : AccountDoor::Kind::SignIn;
+                const AccountDoor::Kind kind =
+                    signIn->kind == replication::SignInKind::NakamaMatch     ? AccountDoor::Kind::Match
+                    : signIn->kind == replication::SignInKind::NakamaSession ? AccountDoor::Kind::Session
+                    : signIn->kind == replication::SignInKind::Register      ? AccountDoor::Kind::Register
+                                                                             : AccountDoor::Kind::SignIn;
                 m_accounts->ask(event.peer.value, address, signIn->name, std::move(signIn->password), kind);
                 continue;
             }
@@ -1656,6 +1675,8 @@ void WorldManager::frame()
         }
         if (m_accounts != nullptr) {
             m_accounts->frame();
+            for (const AccountDoor::MatchFound& found : m_accounts->takeMatches())
+                nakamaMatched(found);
             for (const AccountDoor::Result& result : m_accounts->take()) {
                 (void)m_door->transport->send(
                     net::PeerId{result.peer},

@@ -2,10 +2,9 @@
 // worker does what it is asked in order, bounds what waits, and says how it
 // keeps up; a game's own backend is asked over HTTP with an id per request,
 // sent again on a lost answer, and refused in the clear beyond this network.
-#include <doctest/doctest.h>
-
 #include <atomic>
 #include <chrono>
+#include <doctest/doctest.h>
 #include <optional>
 #include <string>
 #include <thread>
@@ -124,8 +123,7 @@ TEST_CASE("backend > an answer lost is asked again with the same id; none at all
     };
     std::unique_ptr<IDataStore> store = engine::app::makeBackendDataStore(options);
     CHECK_FALSE(store->keepsItsLog());
-    const engine::app::DataTransaction done =
-        store->transact("town", {engine::app::DataMove{0, "Gold", 5, "", "ana"}});
+    const engine::app::DataTransaction done = store->transact("town", {engine::app::DataMove{0, "Gold", 5, "", "ana"}});
     CHECK(done.ok);
     CHECK(done.id == 41);
     CHECK_FALSE(store->unavailable());
@@ -160,13 +158,14 @@ TEST_CASE("backend > the game's Nakama: its storage by the module's RPC, and ser
     CHECK(engine::app::nakamaDataEndpoint("http://127.0.0.1:7350/", "a key&more") ==
           "http://127.0.0.1:7350/v2/rpc/engine_data?unwrap&http_key=a%20key%26more");
     std::optional<core::EngineError> error;
-    const std::string head = "[manager]\nport = 7777\nworld_ports = \"7800-7801\"\n[[world]]\nname = \"town\"\nentry = true\n";
+    const std::string head =
+        "[manager]\nport = 7777\nworld_ports = \"7800-7801\"\n[[world]]\nname = \"town\"\nentry = true\n";
     const auto read = [&](const std::string& extra) {
         error.reset();
         return engine::app::readServersConfig(head + extra, "servers.toml", error);
     };
-    const std::optional<engine::app::ServersConfig> nakama = read(
-        "[nakama]\nurl = \"https://nakama.example.com\"\nhttp_key_env = \"KEY\"\n[data]\nbackend = \"nakama\"\n");
+    const std::optional<engine::app::ServersConfig> nakama =
+        read("[nakama]\nurl = \"https://nakama.example.com\"\nhttp_key_env = \"KEY\"\n[data]\nbackend = \"nakama\"\n");
     REQUIRE(nakama.has_value());
     CHECK(nakama->backend == "nakama");
     CHECK(nakama->nakamaHttpKeyEnv == "KEY");

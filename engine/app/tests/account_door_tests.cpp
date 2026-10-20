@@ -350,6 +350,39 @@ TEST_CASE("account door > a session of the game's Nakama is asked of it, and sig
     CHECK(plain.answer().failure == Failure::Refused);
 }
 
+TEST_CASE("account door > a match of Nakama's matchmaker is believed of Nakama, never of the player")
+{
+    AccountDoor::Options options;
+    options.whoami = [](const std::string& session) -> std::optional<std::string> {
+        if (session == "ana-session")
+            return std::string("u-ana");
+        if (session == "cy-session")
+            return std::string("u-cy");
+        return std::nullopt;
+    };
+    // **Nakama's record of the match**: Ana and Bo, on the queue Duel.
+    options.matchUsers = [](const std::string& match) -> std::optional<AccountDoor::Options::NakamaMatch> {
+        if (match == "m1.nakama")
+            return AccountDoor::Options::NakamaMatch{{"u-ana", "u-bo"}, "Duel"};
+        return std::nullopt;
+    };
+    Door door(options);
+    door.door->ask(1, "10.0.0.1", "m1.nakama", "ana-session", AccountDoor::Kind::Match);
+    REQUIRE(door.answer().failure == Failure::None);
+    const std::vector<AccountDoor::MatchFound> found = door.door->takeMatches();
+    REQUIRE(found.size() == 1);
+    CHECK(found.front().match == "m1.nakama");
+    CHECK(found.front().queue == "Duel");
+    CHECK(found.front().accounts == std::vector<std::string>{"nakama:u-ana", "nakama:u-bo"});
+
+    // Cy says so too, and is in no such match; and a match Nakama never made.
+    door.door->ask(1, "10.0.0.2", "m1.nakama", "cy-session", AccountDoor::Kind::Match);
+    CHECK(door.answer().failure == Failure::WrongNameOrPassword);
+    door.door->ask(1, "10.0.0.3", "m9.nakama", "ana-session", AccountDoor::Kind::Match);
+    CHECK(door.answer().failure == Failure::WrongNameOrPassword);
+    CHECK(door.door->takeMatches().empty());
+}
+
 TEST_CASE("account door > a wrong name, a wrong password and a taken name take a right one's time" *
           doctest::skip(!engine::platform::environmentFlag("ENG_TIMED_TESTS")))
 {

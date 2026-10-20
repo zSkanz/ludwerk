@@ -27,8 +27,29 @@ This method yields: the calling thread waits until it completes.
 
 Signs in to the game's Nakama, making the account the first time. `kind` is `device` (`id` a device's id), `email` (`id` the address, with `password`) or `custom` (`id` the game's own). Returns whether it did, and why not: `IntegrationDisabled`, `NotConfigured`, `InvalidArgument`, `Refused` (Nakama said no) or `Unreachable`.
 
+### `CancelQueueAsync(ticket: string): boolean`
+
+This method yields: the calling thread waits until it completes.
+
+Takes this player's ticket out of the matchmaker. Returns whether Nakama did.
+
 ### `GetTicketAsync(address: string): { Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }`
 
 This method yields: the calling thread waits until it completes.
 
 Turns the session into a ticket at the game's front door `address`, as `NetworkService:SignInAsync` does a password: pass it to `NetworkService:Join`. The session crosses the network only encrypted, and the servers ask Nakama whose it is. A player not signed in to Nakama, or a session it no longer knows, is `WrongNameOrPassword`.
+
+### `QueueAsync(address: string, queue: string, options: { Min: number?, Max: number?, Query: string?, Properties: {[string]: string}? }? = nil): (string?, string?)`
+
+This method yields: the calling thread waits until it completes.
+
+Puts this player in the game's Nakama matchmaker for `queue`, a queue the game's servers define with `MatchmakingService:DefineQueue`, and returns the ticket. The socket Nakama needs is this machine's and outlives a trip, so traveling keeps the ticket. Matched, `Matched` fires; the front door at `address` is told, asks Nakama itself, and sends every player of the match to its instance. `Min` and `Max` (2) are the match's players, `Query` Nakama's (players of the same queue by default), `Properties` more for it to match on. Returns nil and why: `IntegrationDisabled`, `NotSignedIn`, `InvalidArgument`, `Refused` or `Unreachable`.
+
+## Events
+
+Signals are deferred: a handler runs at the next resumption point, not
+inside the call that fired the signal.
+
+### `Matched(match: string)`
+
+Fires on this machine when Nakama's matchmaker puts this player in a match, with its id. The game's servers make the match's instance and send its players there; this is for what the player sees meanwhile.

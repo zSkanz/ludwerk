@@ -4,7 +4,10 @@
 # worlds and a player who signs in to Nakama, turns the session into a ticket
 # and joins. The town makes a thousand trades, both worlds count a shared
 # value at once, and a record changed in one is loaded in the other -- all in
-# Nakama. Then the same transaction sent twice to the module: done once.
+# Nakama. Then both players, in the fields, queue in Nakama's matchmaker:
+# the front door believes Nakama's record of the match, not the players, and
+# sends them to its arena. Last, the same transaction sent twice to the
+# module: done once.
 cmake_minimum_required(VERSION 3.24)
 
 foreach(required HOST PROJECT WORKDIR PORT NAKAMA TWICE SOURCE)
@@ -25,23 +28,28 @@ file(MAKE_DIRECTORY "${WORKDIR}")
 set(game "${WORKDIR}/game")
 file(COPY "${PROJECT}/" DESTINATION "${game}" PATTERN ".engine" EXCLUDE)
 math(EXPR first "${PORT} + 1")
-math(EXPR last "${PORT} + 2")
+math(EXPR last "${PORT} + 3")
 file(WRITE "${WORKDIR}/servers.toml"
      "[manager]\nport = ${PORT}\nworld_ports = \"${first}-${last}\"\n\n"
      "[accounts]\nenabled = true\nregister = false\n\n"
      "[nakama]\nurl = \"${NAKAMA}\"\nhttp_key_env = \"ENG_NAKAMA_HTTP_KEY\"\n\n"
      "[data]\nbackend = \"nakama\"\n\n"
      "[[world]]\nname = \"town\"\nscene = \"scenes/town.scene.json\"\nentry = true\n\n"
-     "[[world]]\nname = \"fields\"\nscene = \"scenes/fields.scene.json\"\n")
-# A device of this run's own: an account Nakama has not seen.
+     "[[world]]\nname = \"fields\"\nscene = \"scenes/fields.scene.json\"\n\n"
+     "[[instance]]\ntemplate = \"arena\"\nscene = \"scenes/arena.scene.json\"\nmax_instances = 2\n")
+# Devices of this run's own: accounts Nakama has not seen.
 string(RANDOM LENGTH 16 ALPHABET "0123456789abcdef" device)
+string(RANDOM LENGTH 16 ALPHABET "0123456789abcdef" other)
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -DOUT=manager.out -P "${CMAKE_CURRENT_LIST_DIR}/../netcode/apart.cmake" --
             "${HOST}" "--manager=${WORKDIR}/servers.toml" "--exit-on-line=[nakama] done"
     COMMAND "${HOST}" --headless --rhi=null --pace=60 --frames=21600
             "--scene-data={\"door\":\"127.0.0.1:${PORT}\",\"device\":\"engine-test-${device}\"}"
-            "--exit-on-line=[nakama] client account=" "${game}"
+            "--exit-on-line=[nakama] client in arena" "${game}"
+    COMMAND "${HOST}" --headless --rhi=null --pace=60 --frames=21600
+            "--scene-data={\"door\":\"127.0.0.1:${PORT}\",\"device\":\"engine-test-${other}\"}"
+            "--exit-on-line=[nakama] client in arena" "${game}"
     WORKING_DIRECTORY "${WORKDIR}"
     TIMEOUT 420
     RESULT_VARIABLE results
@@ -69,6 +77,17 @@ endif()
 if(NOT fields MATCHES "\\[nakama\\] done level=7 count=100 swords=5 gold=1000")
     message(FATAL_ERROR "Nakama did not keep the count and the goods as they must be (${results}):\n${said}")
 endif()
+set(arena "")
+file(GLOB arenaLogs "${WORKDIR}/logs/i-*/i-*.log")
+foreach(one IN LISTS arenaLogs)
+    file(READ "${one}" text)
+    string(APPEND arena "${text}")
+endforeach()
+string(REGEX MATCHALL "\\[nakama\\] arena arrived=nakama:[0-9a-f-]+" arrivals "${arena}")
+list(LENGTH arrivals arrived)
+if(NOT arrived EQUAL 2 OR NOT output MATCHES "client queued=true")
+    message(FATAL_ERROR "Nakama's matchmaker did not bring both players to one arena (${results}):\n${said}\n--- the arena:\n${arena}")
+endif()
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E chdir "${SOURCE}" "${ENG_LUTE_EXECUTABLE}" "${TWICE}"
@@ -80,4 +99,5 @@ execute_process(
 if(NOT twiceOutput MATCHES "\\[twice\\] once:")
     message(FATAL_ERROR "the same transaction sent twice to Nakama was not done once (${twiceResults}):\n${twiceOutput}")
 endif()
-message("the game's Nakama signs its players in and keeps its records, trades and shared values, a request once")
+message("the game's Nakama signs its players in, keeps its records, trades and shared values, a request once, "
+        "and matches its players into one arena")

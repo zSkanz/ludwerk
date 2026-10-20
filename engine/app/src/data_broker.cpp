@@ -35,8 +35,7 @@ void DataBroker::give(std::string world, core::u32 id, std::string account)
         refused.world = std::move(world);
         refused.id = id;
         m_answers.push_back(std::move(refused));
-        const std::array<core::I18nArg, 1> args{
-            core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
         core::log(core::LogLevel::Error, ENG_TR("data.err.queue_full"), args);
     }
 }
@@ -49,8 +48,7 @@ bool DataBroker::ask(std::string world, std::string request, Answered done)
             return DataWorker::Then([done, answer = std::move(answer)]() { done(answer); });
         });
     if (!queued) {
-        const std::array<core::I18nArg, 1> args{
-            core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
         core::log(core::LogLevel::Error, ENG_TR("data.err.queue_full"), args);
     }
     return queued;
@@ -75,15 +73,14 @@ bool DataBroker::write(std::string_view world, std::string_view account, const S
         core::log(core::LogLevel::Warn, ENG_TR("data.warn.write_not_held"), args);
         return false;
     }
-    const bool queued =
-        m_worker.post([account = std::string(account), record](IDataStore& store) -> DataWorker::Then {
-            if (store.writeRecord(account, record))
-                return {};
-            return [account]() {
-                const std::array<core::I18nArg, 1> args{core::I18nArg{"account", std::string_view{account}}};
-                core::log(core::LogLevel::Error, ENG_TR("data.err.write_failed"), args);
-            };
-        });
+    const bool queued = m_worker.post([account = std::string(account), record](IDataStore& store) -> DataWorker::Then {
+        if (store.writeRecord(account, record))
+            return {};
+        return [account]() {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"account", std::string_view{account}}};
+            core::log(core::LogLevel::Error, ENG_TR("data.err.write_failed"), args);
+        };
+    });
     if (!queued) {
         const std::array<core::I18nArg, 1> args{core::I18nArg{"account", account}};
         core::log(core::LogLevel::Error, ENG_TR("data.err.write_failed"), args);

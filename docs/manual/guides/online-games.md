@@ -659,6 +659,31 @@ every world; no key is shared between Nakama and the game. With `[data]
 backend = "nakama"`, the data service's operations go to the module's
 `engine_data` as they would to [a game's own backend](#a-games-own-backend),
 each change one write of Nakama's storage, whole or not at all.
+**Nakama's matchmaker** fills a queue the game's servers define, as their own
+does (see [Matchmaking and lobbies](#matchmaking-and-lobbies)), with the
+tickets of players signed in to Nakama:
+
+```luau
+--!strict
+-- On the player's machine, signed in to Nakama:
+local ticket, why = NakamaService:QueueAsync("play.example.com", "Duel")
+NakamaService.Matched:Connect(function(match: string)
+    print("matched; the servers are making the arena")
+end)
+
+-- On every world's server, as for the manager's own queues:
+MatchmakingService:DefineQueue("Duel", { Template = "arena", Teams = 2, TeamSize = 1 })
+```
+
+Nakama takes a ticket only from a player's own socket, so `QueueAsync` opens
+it from the player's machine; it outlives a trip, so traveling keeps the
+ticket. When Nakama matches them, each player's machine tells the front door
+the match's id with its session, and the door asks Nakama itself -- the
+module keeps every match its matchmaker makes -- before it believes anyone:
+a player Nakama did not put in the match is refused. The instance is made
+once, of the queue's template, and every player of the match is sent there,
+as with a match of the manager's own.
+
 `scripts/localgate.ps1 -Only nakama` runs the game against a real Nakama in
 containers.
 

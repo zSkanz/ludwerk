@@ -26,6 +26,20 @@ if load.door ~= nil and load.device ~= nil then
             local level = if me ~= nil then me:GetAttribute("Level") else nil
             if me ~= nil and level ~= nil then
                 print(`[nakama] client account={me:GetAttribute("Account")} level={level}`)
+                break
+            end
+            task.wait()
+        end
+        -- **Into Nakama's matchmaker**, for two against... one each.
+        NakamaService.Matched:Connect(function(match: string)
+            print(`[nakama] client matched {#match > 0}`)
+        end)
+        local ticket, why = NakamaService:QueueAsync(door, "Duel")
+        print(`[nakama] client queued={ticket ~= nil} {why or ""}`)
+        while true do
+            local me = NetworkService.LocalPlayer
+            if me ~= nil and me:GetAttribute("InArena") == true then
+                print("[nakama] client in arena")
                 return
             end
             task.wait()

@@ -349,9 +349,7 @@ void DataConsole::frame(DataBroker& data, std::int64_t nowUnix)
     // **One job at a time**, answered before the next is asked.
     if (m_working)
         return;
-    const auto post = [&](DataWorker::Job job) {
-        m_working = data.post(std::move(job));
-    };
+    const auto post = [&](DataWorker::Job job) { m_working = data.post(std::move(job)); };
     if (m_copying) {
         post([this](IDataStore& store) -> DataWorker::Then {
             const DataBackupProgress progress = store.stepBackup(PagesAFrame);

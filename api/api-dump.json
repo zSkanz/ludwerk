@@ -5490,6 +5490,18 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "CancelQueueAsync",
+          "Parameters": [
+            {
+              "Name": "ticket",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetTicketAsync",
           "Parameters": [
             {
@@ -5500,9 +5512,40 @@
           "Returns": ["{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }"],
           "Yields": true,
           "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "QueueAsync",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string"
+            },
+            {
+              "Name": "queue",
+              "Type": "string"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Min: number?, Max: number?, Query: string?, Properties: {[string]: string}? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["string?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
         }
       ],
-      "Events": []
+      "Events": [
+        {
+          "Name": "Matched",
+          "Parameters": [
+            {
+              "Name": "match",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "NavigationAgent",

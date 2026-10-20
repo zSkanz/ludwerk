@@ -5391,7 +5391,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 2> nakamaServiceMethods;
+    static std::array<MethodDesc, 4> nakamaServiceMethods;
     nakamaServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("AuthenticateAsync"),
@@ -5405,6 +5405,26 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Turns the session into a ticket at the game's front door `address`, as `NetworkService:SignInAsync` does a password: pass it to `NetworkService:Join`. The session crosses the network only encrypted, and the servers ask Nakama whose it is. A player not signed in to Nakama, or a session it no longer knows, is `WrongNameOrPassword`.",
         },
+        MethodDesc{
+            .name = atoms.intern("QueueAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts this player in the game's Nakama matchmaker for `queue`, a queue the game's servers define with `MatchmakingService:DefineQueue`, and returns the ticket. The socket Nakama needs is this machine's and outlives a trip, so traveling keeps the ticket. Matched, `Matched` fires; the front door at `address` is told, asks Nakama itself, and sends every player of the match to its instance. `Min` and `Max` (2) are the match's players, `Query` Nakama's (players of the same queue by default), `Properties` more for it to match on. Returns nil and why: `IntegrationDisabled`, `NotSignedIn`, `InvalidArgument`, `Refused` or `Unreachable`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CancelQueueAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes this player's ticket out of the matchmaker. Returns whether Nakama did.",
+        },
+    }};
+    static std::array<EventDesc, 1> nakamaServiceEvents;
+    nakamaServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("Matched"),
+            .slot = 7,
+            .doc = "Fires on this machine when Nakama's matchmaker puts this player in a match, with its id. The game's servers make the match's instance and send its players there; this is for what the player sees meanwhile.",
+        },
     }};
     ClassDescriptor nakamaServiceDesc;
     nakamaServiceDesc.name = atoms.intern("NakamaService");
@@ -5415,6 +5435,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     nakamaServiceDesc.doc = "Signs this player in to the game's Nakama, and turns that session into a ticket to join the game's servers with. An optional integration: on with `[integrations] enabled = [\"nakama\"]` in `project.toml`, and `[integrations.nakama] configuration` the server's address with its client key, `http://defaultkey@127.0.0.1:7350`. No SDK: Nakama is asked over HTTP.\012\012The servers check the session with Nakama themselves (`[nakama] url` in `servers.toml`), and the account a player then has is `nakama:` and their Nakama user id. Call it on the player's machine.";
     nakamaServiceDesc.properties = nakamaServiceProperties;
     nakamaServiceDesc.methods = nakamaServiceMethods;
+    nakamaServiceDesc.events = nakamaServiceEvents;
     classes.registerClass(nakamaServiceDesc);
 
     // --- XboxService ---

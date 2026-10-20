@@ -970,18 +970,29 @@ Invoke-Stage 'nakama' {
             docker logs $server
             throw "Nakama did not answer its health check in two minutes"
         }
-        $env:ENG_NAKAMA_HTTP_KEY = $key
-        & cmake "-DHOST=$engineHost" "-DPROJECT=$repo/tests/data/nakama" `
-            "-DWORKDIR=$env:ENG_BUILD_ROOT/win-msvc-dev/nakama-test" -DPORT=47896 `
-            '-DNAKAMA=http://127.0.0.1:47350' "-DTWICE=$repo/tests/data/backend-twice/twice.luau" `
-            "-DSOURCE=$repo" -P "$repo/tests/data/run_data_nakama.cmake"
-        if ($LASTEXITCODE -ne 0) {
+        # CMake as the other Windows stages find it: in the Developer Shell.
+        $vcvars = Get-DeveloperShellEnv
+        $driver = @"
+chcp 65001 >nul
+call "$vcvars" >nul || exit /b 1
+set ENG_NAKAMA_HTTP_KEY=$key
+cmake "-DHOST=$engineHost" "-DPROJECT=$repo/tests/data/nakama" "-DWORKDIR=$env:ENG_BUILD_ROOT/win-msvc-dev/nakama-test" -DPORT=47896 "-DNAKAMA=http://127.0.0.1:47350" "-DTWICE=$repo/tests/data/backend-twice/twice.luau" "-DSOURCE=$repo" -P "$repo/tests/data/run_data_nakama.cmake" || exit /b 1
+"@
+        $driverTemp = Join-Path $env:TEMP "engine-localgate-nakama-$PID.cmd"
+        Set-Content -Path $driverTemp -Value $driver -Encoding ascii
+        try {
+            & cmd.exe /c $driverTemp
+            $failed = $LASTEXITCODE -ne 0
+        }
+        finally {
+            Remove-Item $driverTemp -ErrorAction SilentlyContinue
+        }
+        if ($failed) {
             docker logs --tail 80 $server
             throw "the game did not keep its data and its players in Nakama"
         }
     }
     finally {
-        Remove-Item Env:ENG_NAKAMA_HTTP_KEY -ErrorAction SilentlyContinue
         docker rm -f $server $database 2>&1 | Out-Null
         docker network rm $network 2>&1 | Out-Null
     }

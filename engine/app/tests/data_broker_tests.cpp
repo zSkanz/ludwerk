@@ -520,9 +520,12 @@ TEST_CASE("data console > data and moves are answered, and an undo refused says 
     CHECK_FALSE(console.run("data", data, now)->failed);
     CHECK_FALSE(console.run("moves", data, now)->failed);
 
-    const std::optional<engine::core::i64> sword = onStore(data, [&](engine::app::IDataStore& store) { return store.createItem("town", "ana", "Sword", ""); });
+    const std::optional<engine::core::i64> sword =
+        onStore(data, [&](engine::app::IDataStore& store) { return store.createItem("town", "ana", "Sword", ""); });
     REQUIRE(sword.has_value());
-    const engine::app::DataTransaction gift = onStore(data, [&](engine::app::IDataStore& store) { return store.transact("town", {DataMove{*sword, "", 0, "ana", "bo"}}); });
+    const engine::app::DataTransaction gift = onStore(data, [&](engine::app::IDataStore& store) {
+        return store.transact("town", {DataMove{*sword, "", 0, "ana", "bo"}});
+    });
     REQUIRE(gift.ok);
     const std::optional<engine::app::DataConsole::Answer> lines = console.run("moves bo", data, now);
     REQUIRE(lines.has_value());
@@ -546,7 +549,9 @@ TEST_CASE("data console > the move log's lines past their days are let go of by 
     using engine::app::DataMove;
     DataBroker data(engine::app::makeMemoryDataStore());
     engine::app::DataConsole console(consoleOptions({}, "game", 0.0, 7, 1));
-    REQUIRE(onStore(data, [&](engine::app::IDataStore& store) { return store.transact("town", {DataMove{0, "Gold", 5, "", "ana"}}); }).ok);
+    REQUIRE(onStore(data, [&](engine::app::IDataStore& store) {
+                return store.transact("town", {DataMove{0, "Gold", 5, "", "ana"}});
+            }).ok);
     const std::int64_t now = secondsNow();
     // Within its day: kept.
     frameOf(console, data, now);

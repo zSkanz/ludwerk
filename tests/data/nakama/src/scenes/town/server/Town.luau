@@ -3,12 +3,16 @@
 -- its price between two owners, a shared value counted from here and from
 -- the fields at once, and a player's record changed and carried away.
 local DataService = game:GetService("DataService")
+local MatchmakingService = game:GetService("MatchmakingService")
 local NetworkService = game:GetService("NetworkService")
 
 -- The player's own machine, before it joins, keeps nothing.
 if NetworkService.WorldName == "" then
     return
 end
+
+-- The queue Nakama's matchmaker fills, as every world of the game says it.
+MatchmakingService:DefineQueue("Duel", { Template = "arena", Teams = 2, TeamSize = 1 })
 
 local Owners = { "ana", "bo" }
 local Trades = 1000

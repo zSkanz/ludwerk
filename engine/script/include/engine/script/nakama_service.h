@@ -10,5 +10,11 @@ namespace engine::script {
 
 int nakamaServiceAuthenticateAsync(lua_State* L);
 int nakamaServiceGetTicketAsync(lua_State* L);
+int nakamaServiceQueueAsync(lua_State* L);
+int nakamaServiceCancelQueueAsync(lua_State* L);
+
+// Between ticks: Nakama's realtime answers resumed, a match told to the front
+// door and `Matched` fired.
+void pumpNakama(lua_State* L);
 
 } // namespace engine::script

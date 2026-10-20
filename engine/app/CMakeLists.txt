@@ -914,8 +914,8 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/backend
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-backend
-                    -DPORT=47886
-                    -DBACKEND_PORT=47889
+                    -DPORT=47900
+                    -DBACKEND_PORT=47904
                     -DBACKEND=${CMAKE_SOURCE_DIR}/examples/47-realms/backend/backend.luau
                     -DTWICE=${CMAKE_SOURCE_DIR}/tests/data/backend-twice/twice.luau
                     -DSOURCE=${CMAKE_SOURCE_DIR}

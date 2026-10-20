@@ -41,8 +41,8 @@
 #include "engine/script/join_request.h"
 #include "engine/script/json_module.h"
 #include "engine/script/matchmaking_service.h"
-#include "engine/script/nakama_service.h"
 #include "engine/script/modules.h"
+#include "engine/script/nakama_service.h"
 #include "engine/script/optional_service.h"
 #include "engine/script/party_service.h"
 #include "engine/script/platform_services.h"
@@ -4017,6 +4017,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"PartyService", "GetPartyAsync", partyServiceGetPartyAsync},
     {"NakamaService", "AuthenticateAsync", nakamaServiceAuthenticateAsync},
     {"NakamaService", "GetTicketAsync", nakamaServiceGetTicketAsync},
+    {"NakamaService", "QueueAsync", nakamaServiceQueueAsync},
+    {"NakamaService", "CancelQueueAsync", nakamaServiceCancelQueueAsync},
     {"MatchmakingService", "DefineQueue", matchmakingServiceDefineQueue},
     {"MatchmakingService", "QueueAsync", matchmakingServiceQueueAsync},
     {"MatchmakingService", "CancelAsync", matchmakingServiceCancelAsync},

@@ -323,6 +323,17 @@ MatchBook::Answer MatchBook::backfill(std::string_view matchId, core::u32 team)
     return answer;
 }
 
+void MatchBook::adopt(const Match& match)
+{
+    for (const std::vector<std::string>& team : match.teams) {
+        for (const std::string& member : team) {
+            dropTicketOf(member);
+            m_inMatch.insert_or_assign(member, match.id);
+        }
+    }
+    m_matches.insert_or_assign(match.id, match);
+}
+
 const Match* MatchBook::match(std::string_view id) const
 {
     const auto found = m_matches.find(id);

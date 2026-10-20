@@ -528,7 +528,8 @@ TEST_CASE("ADR 0242: a Nakama session is turned into the engine's ticket at the 
     auto wire = net::createMemoryNetwork();
     std::optional<core::EngineError> error;
     const std::optional<app::ServersConfig> config = app::readServersConfig(
-        std::string(Servers) + "\n[accounts]\nenabled = true\nregister = false\n\n[nakama]\nurl = \"http://127.0.0.1:7350\"\n",
+        std::string(Servers) +
+            "\n[accounts]\nenabled = true\nregister = false\n\n[nakama]\nurl = \"http://127.0.0.1:7350\"\n",
         "servers.toml", error);
     REQUIRE(config.has_value());
     CHECK(config->nakamaUrl == "http://127.0.0.1:7350");
@@ -601,6 +602,127 @@ TEST_CASE("ADR 0242: a Nakama session is turned into the engine's ticket at the 
     CHECK(log.contains("nakama-ticket:true:nil"));
     CHECK(log.contains("nakama-ticket:false:Enum.SignInFailure.WrongNameOrPassword"));
     CHECK(log.contains("town-account:nakama:4ec4f126-3f9d-11e7-84ef-b7c182b36521"));
+}
+
+TEST_CASE("ADR 0242: a match of Nakama's matchmaker is made once, for its players, and nobody else gets in")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(
+        R"([manager]
+public_address = "memory"
+port = 47940
+world_ports = "47941-47959"
+[accounts]
+enabled = true
+register = false
+[nakama]
+url = "http://127.0.0.1:7350"
+[[world]]
+name = "town"
+entry = true
+[[instance]]
+template = "arena"
+max_instances = 2
+)",
+        "servers.toml", error);
+    REQUIRE(config.has_value());
+    const std::string town = R"(
+        local MatchmakingService = game:GetService("MatchmakingService")
+        MatchmakingService:DefineQueue("Duel", { Template = "arena", Teams = 2, TeamSize = 1 })
+        MatchmakingService.Matched:Connect(function(match)
+            print(`town-matched:{#match.Teams[1]}:{#match.Teams[2]}:{match.Instance}`)
+        end)
+    )";
+    const std::string arena = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.TravelArrived:Connect(function(player)
+            print(`arena-arrived:{player.AccountId}`)
+        end)
+    )";
+    Project root;
+    std::vector<std::unique_ptr<WorldMachine>> machines;
+    core::u64 now = 1;
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = root.root;
+    options.projectId = "dev.ludwerk.nakama-test";
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    // **Nakama**, as the door asks it: three sessions, and one match of two.
+    options.nakamaWhoami = [](const std::string& session) -> std::optional<std::string> {
+        if (session.starts_with("session-"))
+            return session.substr(8);
+        return std::nullopt;
+    };
+    options.nakamaMatchUsers = [](const std::string& match) -> std::optional<app::AccountDoor::Options::NakamaMatch> {
+        if (match == "m1.nakama")
+            return app::AccountDoor::Options::NakamaMatch{{"ana", "bo"}, "Duel"};
+        return std::nullopt;
+    };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        machines.push_back(std::make_unique<WorldMachine>());
+        machines.back()->boot(wire, launch, launch.name == "town" ? town : arena);
+        return std::make_unique<FakeProcess>(*machines.back());
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+
+    // Each player signed in to Nakama and in the town with its ticket.
+    const std::string joiner = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local NakamaService = game:GetService("NakamaService")
+        task.wait(0.2)
+        local result = NakamaService:GetTicketAsync("memory:47940")
+        NetworkService:Join("memory:47940", { Ticket = result.Ticket })
+    )";
+    std::array<Client, 3> clients;
+    const std::array<std::string, 3> users{"ana", "bo", "cy"};
+    for (std::size_t at = 0; at < clients.size(); ++at) {
+        clients[at].boot(wire, joiner);
+        clients[at].host->world().engineState().enabledIntegrations.push_back("nakama");
+        clients[at].host->world().engineState().nakamaSession = "session-" + users[at];
+    }
+    const auto run = [&](int frames) {
+        for (int at = 0; at < frames; ++at) {
+            now += 16'000'000ull;
+            manager.frame();
+            for (std::size_t index = 0; index < machines.size(); ++index)
+                machines[index]->frame();
+            for (Client& client : clients)
+                client.frame();
+        }
+    };
+    run(240);
+    // **Matched, as Nakama would tell their machines**: Ana and Bo say so,
+    // and Cy, in no such match, says so too.
+    for (Client& client : clients) {
+        scene::EngineState& state = client.host->world().engineState();
+        scene::EngineState::SignInAsk told;
+        told.id = state.nextSignIn++;
+        told.address = "memory:47940";
+        told.name = "m1.nakama";
+        told.password = state.nakamaSession;
+        told.nakama = true;
+        told.nakamaMatch = true;
+        state.signInAsks.push_back(std::move(told));
+    }
+    run(480);
+    const auto count = [&](std::string_view needle) {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    // One instance, two teams of one, heard once in the town.
+    CHECK(count("town-matched:1:1:i-1") == 1);
+    CHECK(log.contains("arena-arrived:nakama:ana"));
+    CHECK(log.contains("arena-arrived:nakama:bo"));
+    CHECK_FALSE(log.contains("arena-arrived:nakama:cy"));
+    CHECK_FALSE(log.contains(":i-2"));
 }
 
 TEST_CASE("ADR 0240: a party crosses worlds -- invited where its member is, heard in each, and sent together")

@@ -199,7 +199,8 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
                     mean /= static_cast<core::f64>(members.size());
                 }
                 return [this, askerName, id, queueName, region, members = std::move(members), mean, nowNs]() mutable {
-                    const MatchBook::Answer done = m_matches->enqueue(queueName, std::move(members), mean, region, nowNs);
+                    const MatchBook::Answer done =
+                        m_matches->enqueue(queueName, std::move(members), mean, region, nowNs);
                     core::JsonWriter queued(core::JsonLayout::Compact);
                     queued.beginObject();
                     queued.field("ok", done.ok);
@@ -324,6 +325,32 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
     if (!deferred)
         matchAnswer(askerName, id, answer.text());
     matchNotices();
+}
+
+void WorldManager::nakamaMatched(const AccountDoor::MatchFound& result)
+{
+    // **Once a match**: the first of its players at the door is enough, as
+    // Nakama's record of it lists them all.
+    if (!m_nakamaMatches.insert(result.match).second)
+        return;
+    const MatchQueue* queue = m_matches->queue(result.queue);
+    if (queue == nullptr) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"match", std::string_view{result.match}},
+                                                core::I18nArg{"queue", std::string_view{result.queue}}};
+        core::log(core::LogLevel::Warn, ENG_TR("manager.warn.nakama_no_queue"), args);
+        return;
+    }
+    // Its players dealt into the queue's teams in Nakama's order, and played
+    // as a match of the manager's own (ADR 0243).
+    Match match;
+    match.id = "nakama-" + result.match;
+    match.queue = queue->name;
+    match.templateName = queue->templateName;
+    match.teams.resize(queue->teams);
+    for (core::usize at = 0; at < result.accounts.size(); ++at)
+        match.teams[at % match.teams.size()].push_back(result.accounts[at]);
+    m_matches->adopt(match);
+    (void)startMatch(match);
 }
 
 WorldManager::World* WorldManager::startMatch(const Match& match)

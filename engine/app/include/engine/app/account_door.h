@@ -68,6 +68,15 @@ public:
         // its user's id, or none for a session Nakama does not know. Asked
         // on the pool's threads; none here, and a session is refused.
         std::function<std::optional<std::string>(const std::string& session)> whoami;
+        // **A match Nakama's matchmaker made**, as Nakama kept it: its
+        // players' user ids and the queue they asked for; none for a match
+        // it does not know. Asked with the server's key, on the pool.
+        struct NakamaMatch
+        {
+            std::vector<std::string> users;
+            std::string queue;
+        };
+        std::function<std::optional<NakamaMatch>(const std::string& match)> matchUsers;
     };
 
     // What is asked: an account signed in to or made, or a session checked.
@@ -76,6 +85,9 @@ public:
         SignIn,
         Register,
         Session,
+        // A match of Nakama's matchmaker: the session in `password`, the
+        // match's id in `name`.
+        Match,
     };
 
     struct Result
@@ -87,6 +99,15 @@ public:
         // Seconds before another try is worth it: `Busy`, and `Refused` past
         // an address's failures.
         core::u32 retryAfter = 0;
+    };
+
+    // **A match Nakama made, a player in it at the door** (`Kind::Match`):
+    // its id, its players' accounts as the engine knows them, and its queue.
+    struct MatchFound
+    {
+        std::string match;
+        std::vector<std::string> accounts;
+        std::string queue;
     };
 
     // The limits (amendment G and §2): an address's failures in a minute,
@@ -114,6 +135,8 @@ public:
     // the pool finished turned into answers.
     void frame();
     [[nodiscard]] std::vector<Result> take();
+    // The matches answered since, each once its player's `Result` is.
+    [[nodiscard]] std::vector<MatchFound> takeMatches();
     // Nothing waiting, in the pool or delayed: for a test.
     [[nodiscard]] bool idle() const;
 
@@ -146,8 +169,10 @@ private:
     {
         core::u64 id = 0;
         bool hashing = false;
-        // A session's token in `password`, asked of Nakama.
+        // A session's token in `password`, asked of Nakama; and a match's id,
+        // where the session is to be found in it.
         bool session = false;
+        std::string match;
         std::string password;
         std::string hash;
     };
@@ -159,8 +184,10 @@ private:
         // The Argon2 evaluations made, and at what cost.
         core::u32 hashes = 0;
         std::string cost;
-        // A session's user, as Nakama said.
+        // A session's user, as Nakama said; and the match's players and queue.
         std::string user;
+        std::vector<std::string> users;
+        std::string queue;
     };
     // What waits for the pool, and what it is for.
     struct Asked
@@ -171,6 +198,7 @@ private:
         std::string skeleton;
         bool registering = false;
         bool session = false;
+        std::string match;
         // The account found by name for a sign-in; none, and the hash made at
         // start checked instead.
         std::optional<DataAccount> account;
@@ -202,6 +230,7 @@ private:
     std::map<core::u64, Asked> m_inPool;
     std::vector<Result> m_results;
     std::vector<Work> m_work;
+    std::vector<MatchFound> m_matched;
     std::map<std::string, std::deque<core::u64>, std::less<>> m_addressFailures;
     std::map<std::string, Failures, std::less<>> m_nameFailures;
 

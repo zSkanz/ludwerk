@@ -122,6 +122,7 @@ public:
         std::function<std::unique_ptr<IDataStore>()> dataStore;
         // Who a Nakama session is, for a test; none for the HTTP call.
         std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami;
+        std::function<std::optional<AccountDoor::Options::NakamaMatch>(const std::string& match)> nakamaMatchUsers;
         // **A test's kill in the middle of a trade** (ADR 0238 §3): the
         // process ends, as a kill ends it, at the Nth transaction a world
         // asks for -- before it runs, or once it is on the disk and before its
@@ -323,6 +324,10 @@ private:
     void matchFrame(core::u64 nowNs);
     void matchNotices();
     World* startMatch(const Match& match);
+    // **A match Nakama's matchmaker made** (ADR 0242), one of its players at
+    // the door with it: the instance made once, for all of them.
+    void nakamaMatched(const AccountDoor::MatchFound& found);
+    std::set<std::string> m_nakamaMatches;
     void matchReady(World& instance);
     void sendToMatch(const Match& match, const World& instance, const std::vector<std::string>& members);
     [[nodiscard]] std::vector<std::string> keysOf(const std::vector<std::string>& members) const;

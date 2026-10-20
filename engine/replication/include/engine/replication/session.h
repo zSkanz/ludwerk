@@ -301,6 +301,9 @@ enum class SignInKind : u8
     SignIn = 0,
     Register = 1,
     NakamaSession = 2,
+    // A match Nakama's matchmaker made: its id in `name`, the session in
+    // `password`, and the front door makes the match's instance (ADR 0242).
+    NakamaMatch = 3,
 };
 struct SignInFields
 {

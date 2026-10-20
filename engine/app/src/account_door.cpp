@@ -156,8 +156,7 @@ void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view
     ask(peer, address, name, std::move(password), registering ? Kind::Register : Kind::SignIn);
 }
 
-void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view name, std::string password,
-                      Kind kind)
+void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view name, std::string password, Kind kind)
 {
     const bool registering = kind == Kind::Register;
     const core::u64 now = nowNs();
@@ -180,9 +179,10 @@ void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view
         return;
     }
     // **A session of the game's Nakama** (ADR 0242): no name, no hash --
-    // Nakama is asked whose it is, on the pool, under the address's limit.
-    if (kind == Kind::Session) {
-        if (!m_options.whoami) {
+    // Nakama is asked whose it is, on the pool, under the address's limit;
+    // and for a match, whether Nakama put that player in it.
+    if (kind == Kind::Session || kind == Kind::Match) {
+        if (!m_options.whoami || (kind == Kind::Match && (!m_options.matchUsers || name.empty()))) {
             refuse(Failure::Refused, 0);
             return;
         }
@@ -202,6 +202,10 @@ void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view
         asked.job.id = m_nextJob++;
         asked.job.session = true;
         asked.job.password = std::move(password);
+        if (kind == Kind::Match) {
+            asked.match = std::string(name);
+            asked.job.match = std::string(name);
+        }
         m_delayed.push_back(std::move(asked));
         return;
     }
@@ -313,6 +317,18 @@ void AccountDoor::finish(Asked& asked, const Done& done)
         }
         DataAccount account;
         account.id = "nakama:" + done.user;
+        if (!asked.match.empty()) {
+            // **In the match Nakama made**: no ticket -- the player is in a
+            // world already -- and the match's players, by their accounts.
+            MatchFound found;
+            found.match = asked.match;
+            found.queue = done.queue;
+            for (const std::string& user : done.users)
+                found.accounts.push_back("nakama:" + user);
+            m_matched.push_back(std::move(found));
+            answer(Result{asked.peer, Failure::None, {}, account.id, 0}, done.hashes, done.cost);
+            return;
+        }
         answer(Result{asked.peer, Failure::None, ticketFor(account), account.id, 0}, done.hashes, done.cost);
         return;
     }
@@ -353,6 +369,13 @@ std::vector<AccountDoor::Work> AccountDoor::takeWork()
     return out;
 }
 
+std::vector<AccountDoor::MatchFound> AccountDoor::takeMatches()
+{
+    std::vector<MatchFound> out;
+    out.swap(m_matched);
+    return out;
+}
+
 std::vector<AccountDoor::Result> AccountDoor::take()
 {
     std::vector<Result> out;
@@ -387,6 +410,17 @@ void AccountDoor::work()
             done.ok = user.has_value() && !user->empty();
             if (done.ok)
                 done.user = *user;
+            // **Believed of Nakama, never of the machine**: the match as
+            // Nakama kept it, and this player in it.
+            if (done.ok && !job.match.empty()) {
+                const std::optional<Options::NakamaMatch> match = m_options.matchUsers(job.match);
+                done.ok = match.has_value() &&
+                          std::find(match->users.begin(), match->users.end(), done.user) != match->users.end();
+                if (done.ok) {
+                    done.users = match->users;
+                    done.queue = match->queue;
+                }
+            }
         }
         else if (job.hashing) {
             done.hash = core::hashPassword(job.password);

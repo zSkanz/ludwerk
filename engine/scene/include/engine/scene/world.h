@@ -1135,8 +1135,10 @@ struct EngineState
         std::string name;
         std::string password;
         bool registering = false;
-        // A session of the game's Nakama in `password` (ADR 0242).
+        // A session of the game's Nakama in `password` (ADR 0242); and with
+        // it a match of Nakama's matchmaker, its id in `name`.
         bool nakama = false;
+        bool nakamaMatch = false;
     };
     std::vector<SignInAsk> signInAsks;
     struct SignInAnswer

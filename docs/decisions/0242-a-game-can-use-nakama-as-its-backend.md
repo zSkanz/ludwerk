@@ -132,6 +132,35 @@ phase's last lot.
 - **`servers.toml`**: `[nakama] url`, under the same rule as a backend's for
   `http://`, and `http_key_env`; `[data] backend = "nakama"` is refused
   without a `[nakama] url`.
+- **Nakama's matchmaker** (C6c): `NakamaService:QueueAsync(address, queue,
+  options)` and `CancelQueueAsync` on Nakama's realtime socket, opened on the
+  player's machine with its session -- Nakama takes a ticket from a player's
+  own socket only, and a socket that closes cancels its tickets; this one
+  lives in the machine's VM, which a trip does not end. The ticket carries
+  the queue's name as a property, and is matched with tickets of the same
+  queue unless `options.Query` says otherwise. The module's
+  `matchmaker_matched` hook makes a match of `engine_match.lua`'s -- a
+  match that only names itself, joined by nobody -- and keeps its players
+  and queue under its id; `Matched` fires on each player's machine, which
+  tells the front door the id with its session (`SignIn` kind 3). The door
+  asks Nakama who the session is and what the match holds
+  (`engine_match_users`, with the server's HTTP key), refuses a player not in
+  it, and the manager makes the match's instance once, of the queue's
+  template, dealing its players into the queue's teams in Nakama's order,
+  then sends them there as ADR 0243 does its own. A match the manager keeps
+  so is one of its own after: leaving it, backfill, `ReportResultAsync`.
+- **Proved** without Nakama: the door believing a match of Nakama's for its
+  players and refusing another player, and a match it never made; under the
+  manager, three players saying they were matched and only the two Nakama
+  listed sent to one instance. With a real Nakama, in the stage: two players
+  queued in its matchmaker brought to one arena.
+- **Proved against a real Nakama** (the stage below, 2026-10-20): a device's
+  session turned into the front door's ticket for `nakama:<user id>`; a
+  thousand trades between two holders kept in Nakama's storage, the five
+  swords and the 1000 gold all still there after them; a shared value counted
+  to 100 by two worlds at once; a record changed in one world loaded in the
+  other; two players queued in Nakama's matchmaker and brought by the
+  manager to one arena; and a transaction sent twice to the module done once.
 - **The proof's Nakama** is `scripts/localgate.ps1 -Only nakama`, opt-in:
   `heroiclabs/nakama:3.41.0` and `postgres:16.10-alpine`, each pinned by
   digest, pulled and run on the machine for the test and shipped nowhere --

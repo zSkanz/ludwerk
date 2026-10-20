@@ -678,7 +678,8 @@ void NetworkSession::signIns(scene::EngineState& state)
         opened = opened && !one->transport->open(config).has_value() &&
                  !one->transport->connect(host, port, one->peer).has_value();
         one->message = replication::signInMessage(
-            replication::SignInFields{.kind = ask.nakama        ? replication::SignInKind::NakamaSession
+            replication::SignInFields{.kind = ask.nakamaMatch   ? replication::SignInKind::NakamaMatch
+                                              : ask.nakama      ? replication::SignInKind::NakamaSession
                                               : ask.registering ? replication::SignInKind::Register
                                                                 : replication::SignInKind::SignIn,
                                       .name = ask.name,

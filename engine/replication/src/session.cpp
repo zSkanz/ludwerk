@@ -7990,8 +7990,8 @@ std::vector<u8> signInMessage(const SignInFields& fields)
     said.u8v(static_cast<u8>(MessageType::SignIn));
     said.u8v(static_cast<u8>(fields.kind));
     said.text(std::string_view{fields.name}.substr(0, MaxSignInNameBytes));
-    said.text(std::string_view{fields.password}.substr(
-        0, fields.kind == SignInKind::NakamaSession ? MaxSignInSessionBytes : MaxSignInPasswordBytes));
+    const bool session = fields.kind == SignInKind::NakamaSession || fields.kind == SignInKind::NakamaMatch;
+    said.text(std::string_view{fields.password}.substr(0, session ? MaxSignInSessionBytes : MaxSignInPasswordBytes));
     return std::move(said.bytes);
 }
 
@@ -8003,12 +8003,12 @@ std::optional<SignInFields> readSignIn(std::span<const u8> payload)
     (void)reader.u8v();
     SignInFields fields;
     const u8 kind = reader.u8v();
-    if (kind > static_cast<u8>(SignInKind::NakamaSession))
+    if (kind > static_cast<u8>(SignInKind::NakamaMatch))
         return std::nullopt;
     fields.kind = static_cast<SignInKind>(kind);
+    const bool session = fields.kind == SignInKind::NakamaSession || fields.kind == SignInKind::NakamaMatch;
     fields.name.assign(reader.text().substr(0, MaxSignInNameBytes));
-    fields.password.assign(reader.text().substr(
-        0, fields.kind == SignInKind::NakamaSession ? MaxSignInSessionBytes : MaxSignInPasswordBytes));
+    fields.password.assign(reader.text().substr(0, session ? MaxSignInSessionBytes : MaxSignInPasswordBytes));
     if (!reader.ok())
         return std::nullopt;
     return fields;

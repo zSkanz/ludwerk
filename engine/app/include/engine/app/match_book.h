@@ -128,6 +128,9 @@ public:
     // A running match asks for one player for `team`, first in line.
     [[nodiscard]] Answer backfill(std::string_view match, core::u32 team);
     [[nodiscard]] const Match* match(std::string_view id) const;
+    // **A match made elsewhere** -- by the game's Nakama (ADR 0242) -- kept as
+    // one of the book's: its players in it, leaving it, a place backfilled.
+    void adopt(const Match& match);
     [[nodiscard]] std::optional<std::string> matchOf(std::string_view member) const;
     void leaveMatch(std::string_view member);
     void endMatch(std::string_view match);

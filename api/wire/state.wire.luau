@@ -5262,9 +5262,14 @@ local Messages: { Schema.Message } = {
                 Name = "kind",
                 Type = "u8",
                 Doc = "0 to sign in to an account, 1 to make the account first, 2 a session of the game's Nakama "
-                    .. "(protocol 62, ADR 0242) in `password`'s place.",
+                    .. "(protocol 62, ADR 0242) in `password`'s place, 3 a match of Nakama's matchmaker this "
+                    .. "player is in: its id in `name`, the session in `password`.",
             },
-            { Name = "name", Type = "text", Doc = "The login name, at most 64 bytes; empty for a session." },
+            {
+                Name = "name",
+                Type = "text",
+                Doc = "The login name, at most 64 bytes; empty for a session; a Nakama match's id.",
+            },
             {
                 Name = "password",
                 Type = "text",

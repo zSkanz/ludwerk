@@ -9,6 +9,12 @@
 	  answers whose it is. The front door signs the engine's own ticket for
 	  that user; no key is shared between Nakama and the game.
 
+	- `engine_match_users`, called by the game's manager with the server's
+	  HTTP key: a match Nakama's matchmaker made -- its players and the queue
+	  they asked for -- as this module's `matchmaker_matched` hook kept it.
+	  A player's machine says it was matched; the game's servers believe
+	  Nakama, never the machine.
+
 	- `engine_data`, called by the game's manager with the server's HTTP key
 	  (`?http_key=...&unwrap`): the data service's contract (ADR 0238 §5) --
 	  the same JSON the engine's own database reads and answers -- kept in
@@ -29,6 +35,7 @@ local Balances = "engine_balances"
 local Shared = "engine_shared"
 local Counters = "engine_counters"
 local Requests = "engine_requests"
+local Matches = "engine_matches"
 local Tries = 8
 
 -- --- engine_whoami -----------------------------------------------------------
@@ -349,3 +356,49 @@ local function data(context, payload)
     return nk.json_encode(op(request))
 end
 nk.register_rpc(data, "engine_data")
+
+-- --- Nakama's matchmaker -------------------------------------------------------
+
+-- **A match the matchmaker made**: a match of `engine_match.lua`'s, so it has
+-- an id to tell the players, and what it is kept in storage under that id --
+-- who was matched, and the `queue` their tickets asked for -- for the game's
+-- servers to read before they believe any player who says so.
+nk.register_matchmaker_matched(function(_context, matched_users)
+    local users = {}
+    local queue = ""
+    for _, matched in ipairs(matched_users) do
+        table.insert(users, matched.presence.user_id)
+        local properties = matched.properties or {}
+        if queue == "" and type(properties.queue) == "string" then
+            queue = properties.queue
+        end
+    end
+    local match = nk.match_create("engine_match", {})
+    nk.storage_write({
+        {
+            collection = Matches,
+            key = match,
+            value = { users = users, queue = queue },
+            version = "*",
+            permission_read = 0,
+            permission_write = 0,
+        },
+    })
+    return match
+end)
+
+local function matchUsers(context, payload)
+    if context.user_id ~= nil and context.user_id ~= "" then
+        error({ "engine_match_users is the game's servers', not a player's", 7 })
+    end
+    local request = nk.json_decode(payload)
+    if type(request.match) ~= "string" or request.match == "" then
+        return nk.json_encode(refused("Invalid"))
+    end
+    local found = nk.storage_read({ id(Matches, request.match) })
+    if #found == 0 then
+        return nk.json_encode(refused("NoMatch"))
+    end
+    return nk.json_encode({ ok = true, users = found[1].value.users, queue = found[1].value.queue })
+end
+nk.register_rpc(matchUsers, "engine_match_users")

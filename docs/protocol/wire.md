@@ -479,8 +479,8 @@ Type 39, on Control, ToAuthority. Sign this player in (ADR 0237): sent to a mana
 | Part | Type | |
 |---|---|---|
 | type | u8 | `39` |
-| kind | u8 | 0 to sign in to an account, 1 to make the account first, 2 a session of the game's Nakama (protocol 62, ADR 0242) in `password`'s place. |
-| name | text | The login name, at most 64 bytes; empty for a session. |
+| kind | u8 | 0 to sign in to an account, 1 to make the account first, 2 a session of the game's Nakama (protocol 62, ADR 0242) in `password`'s place, 3 a match of Nakama's matchmaker this player is in: its id in `name`, the session in `password`. |
+| name | text | The login name, at most 64 bytes; empty for a session; a Nakama match's id. |
 | password | text | At most 128 bytes, or a session's token of at most 4096. Crosses the network only inside the match's encryption, and is never kept: the front door hashes or checks it and lets it go. |
 
 ### SignedIn

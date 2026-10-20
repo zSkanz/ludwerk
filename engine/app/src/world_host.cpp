@@ -42,6 +42,7 @@
 #include "engine/script/instance_service.h"
 #include "engine/script/join_request.h"
 #include "engine/script/matchmaking_service.h"
+#include "engine/script/nakama_service.h"
 #include "engine/script/net_module.h"
 #include "engine/script/party_service.h"
 #include "engine/script/remote.h"
@@ -2453,6 +2454,7 @@ void WorldHost::publishNetworkResults()
     // there would put game code into the frame wherever the socket happened to
     // land it. Same rule and same reason as `resumeAreaWaiters` below (R10).
     script::resumeNetWaiters(m_runtime->state());
+    script::pumpNakama(m_runtime->state());
     script::pumpWebSockets(m_runtime->state());
     script::resumeRelayPings(m_runtime->state());
 }

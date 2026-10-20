@@ -159,7 +159,10 @@ public:
     [[nodiscard]] virtual std::optional<StoredRecord> loadRecord(std::string_view account) = 0;
     // The same, saying when the store could not be read: a database on this
     // machine always can, a game's backend may not answer.
-    [[nodiscard]] virtual RecordRead readRecord(std::string_view account) { return RecordRead{true, loadRecord(account)}; }
+    [[nodiscard]] virtual RecordRead readRecord(std::string_view account)
+    {
+        return RecordRead{true, loadRecord(account)};
+    }
     // **Whether the move log, backups and counts are this store's**: a game's
     // own backend keeps its own, and the console says so.
     [[nodiscard]] virtual bool keepsItsLog() const { return true; }

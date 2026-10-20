@@ -18,7 +18,10 @@ here.
   backend = "nakama"` the game's records, trades and shared values are kept in
   Nakama's storage, each change written whole. The integration is off unless a
   project turns it on, and needs no SDK: a Lua module for Nakama comes with
-  the engine. The wire protocol is 62.
+  the engine. Players signed in to Nakama can also queue in its matchmaker for
+  a queue the game's servers define: the servers believe Nakama's record of
+  the match, never a player's word, and send its players to its instance.
+  The wire protocol is 62.
 
 - A game's own backend can keep its data: `[data] backend` in
   `servers.toml` sends every operation of the data service -- records,
