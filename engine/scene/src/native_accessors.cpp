@@ -2431,6 +2431,20 @@ bool setXRServiceScreenEffects(World& world, core::InstanceId, const Value& valu
     return true;
 }
 
+Value getXRServiceSpaceWarp(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().headset.quality.spaceWarp};
+}
+
+bool setXRServiceSpaceWarp(World& world, core::InstanceId, const Value& value)
+{
+    const bool* on = std::get_if<bool>(&value);
+    if (on == nullptr)
+        return false;
+    world.engineState().headset.quality.spaceWarp = *on;
+    return true;
+}
+
 Value getXRServiceFoveation(const World& world, core::InstanceId)
 {
     return Value{EnumValue{generated::XRFoveationEnumId, world.engineState().headset.quality.foveation}};

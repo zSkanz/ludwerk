@@ -202,6 +202,9 @@ struct ProjectConfig
     bool xrDepth = true;
 #endif
     bool xrScreenEffects = false;
+    // `[xr] space_warp` (ADR 0252): "off", "auto" or "on" as 0, 1, 2; unset,
+    // the platform's default (`EngineOptions::xrSpaceWarp`).
+    std::optional<core::u8> xrSpaceWarp;
     // `[xr] foveation`: "off", "low", "medium" or "high"; unset, the
     // platform's default (`EngineOptions::xrFoveation`).
     std::optional<core::u32> xrFoveation;

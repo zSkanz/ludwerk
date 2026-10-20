@@ -16,6 +16,7 @@
 #include "engine/app/script_editor.h"
 #include "engine/app/server_console.h"
 #include "engine/app/simulated_headset.h"
+#include "engine/app/space_motion.h"
 #include "engine/core/base64.h"
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
@@ -121,6 +122,7 @@
 #include "engine/platform/window.h"
 #include "engine/render/debug_draw.h"
 #include "engine/render/debug_renderer.h"
+#include "engine/render/environment.h"
 #include "engine/render/foliage.h"
 #include "engine/render/lighting.h"
 #include "engine/render/mesh_loader.h"
@@ -2050,6 +2052,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // The render scale last asked of the headset (none yet), and whether it
     // makes its images that size (`IHeadset::setRenderScale`).
     core::f32 headsetScaleAsked = -1.0f;
+    // **Frames made between** (ADR 0252): what was last said of them, and
+    // where the player's space was the frame before.
+    std::optional<bool> headsetWarpSaid;
+    std::optional<core::CFrameD> headsetSpaceBefore;
+    SpaceMotion headsetSpaceMotion;
+    // A scene changed at run time since the last drawn frame: a cut.
+    bool headsetSceneCut = false;
     bool headsetScales = false;
     bool headsetUnsyncDue = false;
     // The editor's icons, built once from `content/icons` on the first frame
@@ -3025,9 +3034,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // A scene changed at run time lets every streamed cell go first, and
         // is then partitioned by the lambda above.
         .resetStreaming =
-            [&streaming, &fields] {
+            [&streaming, &fields, &headsetSceneCut] {
                 streaming.reset();
                 fields.reset();
+                headsetSceneCut = true;
             },
         // Where a stamp's text comes from. `contentRoot` is what the editor's
         // browser is rooted at too, so a scene names the same file whichever of
@@ -3215,6 +3225,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .shadowCascades = options.xrShadowCascades,
         .shadowFirstSplit = options.xrShadowFirstSplit,
         .screenEffects = options.xrScreenEffects,
+        .spaceWarp = options.xrSpaceWarp == 2,
         .foveation = static_cast<core::u8>(std::min(options.xrFoveation, 3u)),
         .refreshRate = options.xrRefreshRate,
     };
@@ -8085,6 +8096,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // **The room seen through** (ADR 0247 §1), where the headset can.
             seen.passthroughSupported = headset->supportsPassthrough();
             headset->setPassthrough(seen.passthrough);
+            // **Frames made between the drawn ones** (ADR 0252), where the
+            // runtime can, said in the log when that changes.
+            seen.spaceWarpSupported = headset->supportsSpaceWarp();
+            headset->setSpaceWarp(seen.quality.spaceWarp);
+            if (const bool warping = seen.quality.spaceWarp && seen.spaceWarpSupported;
+                headsetWarpSaid != warping && (warping || headsetWarpSaid.has_value() || seen.quality.spaceWarp)) {
+                headsetWarpSaid = warping;
+                core::log(core::LogLevel::Info, warping                  ? ENG_TR("engine.info.xr_space_warp_on")
+                                                : seen.quality.spaceWarp ? ENG_TR("engine.info.xr_space_warp_none")
+                                                                         : ENG_TR("engine.info.xr_space_warp_off"));
+            }
             // **The room** (ADR 0247 §2): asked for by a script, answered at a
             // later frame, and kept in the play space a script reads.
             if (seen.roomAsked) {
@@ -8911,6 +8933,35 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         // From the camera, through where `Recenter` put the
                         // play space's origin, to the head.
                         playSpace = headsetView->cframe;
+                        // **How the game moved the player's space** since
+                        // the frame before (ADR 0252 §6): the new space in
+                        // the old, and whether it is a cut -- said by a
+                        // script or a scene changed, or a jump against the
+                        // step before (`spaceMotionCut`).
+                        {
+                            scene::EngineState::Headset& xr = host->world().engineState().headset;
+                            const core::CFrameD space = *playSpace * xr.recenter;
+                            rhi::HeadsetPose moved;
+                            core::DVec3 step{};
+                            if (headsetSpaceBefore.has_value()) {
+                                const core::CFrameD delta = core::inverse(*headsetSpaceBefore) * space;
+                                moved.valid = true;
+                                moved.position = {static_cast<f32>(delta.position.x),
+                                                  static_cast<f32>(delta.position.y),
+                                                  static_cast<f32>(delta.position.z)};
+                                core::toQuaternion(delta.rotation, moved.orientation[0], moved.orientation[1],
+                                                   moved.orientation[2], moved.orientation[3]);
+                                step = space.position - headsetSpaceBefore->position;
+                            }
+                            else {
+                                headsetSpaceMotion = SpaceMotion{};
+                            }
+                            const bool cut = spaceMotionCut(headsetSpaceMotion, step, xr.cutAsked || headsetSceneCut);
+                            xr.cutAsked = false;
+                            headsetSceneCut = false;
+                            headsetSpaceBefore = space;
+                            headset->setSpaceMotion(moved, cut);
+                        }
                         headsetView->cframe =
                             headsetView->cframe * host->world().engineState().headset.recenter * headInSpace;
                         // Both eyes' edges, and a little more: each eye sits a few
@@ -10284,7 +10335,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 .height = headsetFrame.height,
                                 .view = EyeViewBase + index,
                                 .window = true,
-                                .colorReadable = !eyesDirect || headsetFrame.colorReadable};
+                                .colorReadable = !eyesDirect || headsetFrame.colorReadable,
+                                .motion = headsetFrame.motion[index],
+                                .motionDepth = headsetFrame.motionDepth[index],
+                                .motionWidth = headsetFrame.motionWidth,
+                                .motionHeight = headsetFrame.motionHeight,
+                                .motionDepthFormat = headsetFrame.motionDepthFormat};
                             // No jitter: an eye has no temporal anti-aliasing to
                             // gather it (`RenderWorld::headsetEye`).
                             const u64 eyeStarted = platform::nowNs();
@@ -10412,6 +10468,29 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 core::I18nArg{"left", std::string_view{written[0]}},
                                 core::I18nArg{"right", std::string_view{written[1]}}};
                             core::log(LogLevel::Info, ENG_TR("engine.info.xr_eyes_shot"), shotArgs);
+                            for (core::u32 index = 0; index < 2 && headsetFrame.motion[index].valid(); ++index) {
+                                const core::u32 width = headsetFrame.motionWidth;
+                                const core::u32 height = headsetFrame.motionHeight;
+                                std::vector<std::byte> halves(static_cast<core::usize>(width) * height * 8u);
+                                if (!device->readTexture(headsetFrame.motion[index], halves))
+                                    break;
+                                std::vector<std::byte> pixels(static_cast<core::usize>(width) * height * 4u);
+                                for (core::usize at = 0; at < static_cast<core::usize>(width) * height; ++at) {
+                                    for (core::usize channel = 0; channel < 3; ++channel) {
+                                        core::u16 half = 0;
+                                        std::memcpy(&half, halves.data() + at * 8u + channel * 2u, 2);
+                                        const f32 moved = render::halfToFloat(half);
+                                        pixels[at * 4u + channel] =
+                                            static_cast<std::byte>(std::clamp(128.0f + moved * 2560.0f, 0.0f, 255.0f));
+                                    }
+                                    pixels[at * 4u + 3] = std::byte{255};
+                                }
+                                std::filesystem::path shot = options.xrEyesShot;
+                                shot.replace_filename(options.xrEyesShot.stem().string() +
+                                                      (index == 0 ? "-motion-left" : "-motion-right") +
+                                                      options.xrEyesShot.extension().string());
+                                (void)writePng(shot, pixels, width, height);
+                            }
                         }
                         headset->setDepthRange(headCamera.nearPlane, headCamera.farPlane);
                         snapshot.camera = mainCamera;

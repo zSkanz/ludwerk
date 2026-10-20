@@ -410,6 +410,7 @@ engine_add_module_tests(app
         tests/frame_scheduler_tests.cpp
         tests/text_input_focus_tests.cpp
         tests/headset_hands_tests.cpp
+        tests/space_motion_tests.cpp
         tests/foliage_editor_tests.cpp
         tests/script_sides_tests.cpp
         tests/script_matrix_tests.cpp

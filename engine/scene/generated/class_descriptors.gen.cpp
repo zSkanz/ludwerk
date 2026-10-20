@@ -6654,7 +6654,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(graphicsServiceDesc);
 
     // --- XRService ---
-    static std::array<PropertyDesc, 20> xRServiceProperties;
+    static std::array<PropertyDesc, 21> xRServiceProperties;
     xRServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("Enabled"),
@@ -6786,6 +6786,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getXRServiceShadowResolution,
             .set = native::setXRServiceShadowResolution,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SpaceWarp"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether the headset's runtime makes every other frame from the one before. The game is drawn at half the display's rate, 36 frames a second at 72, and the runtime moves what it drew by the motion each eye hands it. About twice the GPU time a frame, for frames made between that get fast thin things, glass, smoke and sparks less right: those move with what is behind them. Turn it off for a moment that must be exact. `[xr] space_warp`; a standalone headset's runtime only, and nothing elsewhere. Set, it is applied at the next frame; `BindToRenderStep` and `PreRender` then run once a drawn frame.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getXRServiceSpaceWarp,
+            .set = native::setXRServiceSpaceWarp,
         },
         PropertyDesc{
             .name = atoms.intern("Passthrough"),
@@ -6922,7 +6935,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = nullptr,
         },
     }};
-    static std::array<MethodDesc, 14> xRServiceMethods;
+    static std::array<MethodDesc, 15> xRServiceMethods;
     xRServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("GetHeadCFrame"),
@@ -6983,6 +6996,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Makes where the head is now the play space's origin, facing where it faces. When `Space` is `Standing` the origin stays at the floor's height. The poses after it, and the picture, are measured from there. Nothing with no headset.",
+        },
+        MethodDesc{
+            .name = atoms.intern("MarkCut"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Says that the player's space jumps this frame, so that no frame is made from it. A teleport, a cut to another place and a seat changed are such jumps, and a headset that makes every other frame (`SpaceWarp`) would show them half made. Call it in the frame the camera is moved. Steady motion, however fast, needs none: a vehicle's is what the frames between are made from. `@engine/xrcomfort` calls it for its teleport and its snap turn, and a scene changed is one. Nothing elsewhere.",
         },
         MethodDesc{
             .name = atoms.intern("GetPlayAreaBounds"),
@@ -8336,7 +8355,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("BindToRenderStep"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Binds a function that runs as `fn(dt)` on every drawn frame, where `dt` is the time since the last frame. Use it for a camera that follows something: inside the function, `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set.\012\012Bound functions run in order of `priority`, lowest first, and in the order they were bound when priorities are equal. They run after the input that the frame reads for contexts with `Rate = Render`, and before `PreRender` fires. `Enum.RenderPriority` provides reference values: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.\012\012Binding a name that is already bound replaces the function. Nothing runs in a run without a window. A binding belongs to the script that made it and is removed with that script's scene.",
+            .doc = "Binds a function that runs as `fn(dt)` on every drawn frame, where `dt` is the time since the last frame. In a headset whose runtime makes every other frame (`XRService.SpaceWarp`), that is half the display's rate, with twice the `dt`. Use it for a camera that follows something: inside the function, `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set.\012\012Bound functions run in order of `priority`, lowest first, and in the order they were bound when priorities are equal. They run after the input that the frame reads for contexts with `Rate = Render`, and before `PreRender` fires. `Enum.RenderPriority` provides reference values: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.\012\012Binding a name that is already bound replaces the function. Nothing runs in a run without a window. A binding belongs to the script that made it and is removed with that script's scene.",
         },
         MethodDesc{
             .name = atoms.intern("BindToIntent"),
@@ -8409,7 +8428,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("PreRender"),
             .slot = 8,
-            .doc = "Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set. It never fires in a headless run.",
+            .doc = "Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set. It never fires in a headless run. In a headset whose runtime makes every other frame (`XRService.SpaceWarp`), it fires once a drawn frame: half the display's rate, with a `dt` twice as long.",
         },
         EventDesc{
             .name = atoms.intern("PreAnimation"),

@@ -1103,6 +1103,8 @@ Value getXRServiceShadowFirstSplit(const World& world, core::InstanceId id);
 bool setXRServiceShadowFirstSplit(World& world, core::InstanceId id, const Value& value);
 Value getXRServiceShadowResolution(const World& world, core::InstanceId id);
 bool setXRServiceShadowResolution(World& world, core::InstanceId id, const Value& value);
+Value getXRServiceSpaceWarp(const World& world, core::InstanceId id);
+bool setXRServiceSpaceWarp(World& world, core::InstanceId id, const Value& value);
 Value getXRServicePassthrough(const World& world, core::InstanceId id);
 bool setXRServicePassthrough(World& world, core::InstanceId id, const Value& value);
 Value getXRServiceSpectatorCamera(const World& world, core::InstanceId id);

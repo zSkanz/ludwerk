@@ -17,6 +17,7 @@ namespace {
 using core::f32;
 using core::f64;
 using core::u32;
+using core::u64;
 using core::Vec2;
 using core::Vec3;
 
@@ -99,11 +100,28 @@ struct FaceFrame
     return static_cast<core::u8>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
 }
 
+// The pointing hand's beam and dot, as keys no instance packs to: an
+// instance's generation is never all ones.
+constexpr u64 PointerBeamKey = ~u64{0};
+constexpr u64 PointerDotKey = ~u64{0} - 1u;
+
 // One tree's quads, placed and appended, and grouped into runs.
 void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 brightness, f32 lightInfluence,
                 bool onTop, std::span<const rhi::TextureHandle> textures, render::RenderWorld& out,
-                UiGradientRows* gradients)
+                UiGradientRows* gradients, u64 key)
 {
+    // The canvas into the world, for the run's motion (`WorldUiRun::placement`).
+    Vec3 facing = core::cross(placement.right, placement.down);
+    const f32 facingLength = core::length(facing);
+    facing = facingLength > 1e-9f ? facing * (1.0f / facingLength) : Vec3{0.0f, 0.0f, 1.0f};
+    core::Mat4 frame;
+    for (int row = 0; row < 3; ++row) {
+        frame.m[0][row] = (&placement.right.x)[row];
+        frame.m[1][row] = (&placement.down.x)[row];
+        frame.m[2][row] = (&facing.x)[row];
+        frame.m[3][row] = (&placement.topLeft.x)[row];
+    }
+    frame.m[3][3] = 1.0f;
     for (const ui::DrawQuad& quad : list.quads) {
         const f32 gradientRow = gradients != nullptr && quad.gradient != 0 && quad.gradient <= list.gradients.size()
                                     ? gradients->rowOf(list.gradients[quad.gradient - 1])
@@ -152,9 +170,10 @@ void emitCanvas(const ui::DrawList& list, const CanvasPlacement& placement, f32 
         const u32 firstVertex = static_cast<u32>(out.worldUiVertices.size());
         render::WorldUiRun* run = out.worldUiRuns.empty() ? nullptr : &out.worldUiRuns.back();
         if (run == nullptr || run->texture != texture || run->brightness != brightness ||
-            run->lightInfluence != lightInfluence || run->alwaysOnTop != onTop ||
+            run->lightInfluence != lightInfluence || run->alwaysOnTop != onTop || run->key != key ||
             run->firstVertex + run->vertexCount != firstVertex) {
-            out.worldUiRuns.push_back(render::WorldUiRun{firstVertex, 0, texture, brightness, lightInfluence, onTop});
+            out.worldUiRuns.push_back(
+                render::WorldUiRun{firstVertex, 0, texture, brightness, lightInfluence, onTop, key, frame});
             run = &out.worldUiRuns.back();
         }
 
@@ -501,7 +520,8 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
     for (const Tree& tree : trees) {
         ui::layoutCanvas(world, tree.id, tree.placement.canvas);
         ui::buildCanvasDrawList(world, tree.id, scratch);
-        emitCanvas(scratch, tree.placement, tree.brightness, tree.lightInfluence, tree.onTop, textures, out, gradients);
+        emitCanvas(scratch, tree.placement, tree.brightness, tree.lightInfluence, tree.onTop, textures, out, gradients,
+                   (static_cast<u64>(tree.id.generation) << 32) | static_cast<u64>(tree.id.index));
     }
 
     // **The pointing hand's beam** (ADR 0246 §2): from the hand to where it
@@ -533,7 +553,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
         placed.down = across * BeamWidth;
         placed.topLeft = from - across * (BeamWidth * 0.5f);
         placed.distance = core::length(from);
-        emitCanvas(beam, placed, 1.0f, 0.0f, true, textures, out, nullptr);
+        emitCanvas(beam, placed, 1.0f, 0.0f, true, textures, out, nullptr, PointerBeamKey);
         if (xr.pointerHit.has_value()) {
             // The dot: a round quad a centimetre across, facing the hand.
             const Vec3 up = core::cross(across, along);
@@ -553,7 +573,7 @@ void buildWorldUi(scene::World& world, core::InstanceId workspace, core::Instanc
             spot.down = up * -Dot;
             spot.topLeft = at - across * (Dot * 0.5f) + up * (Dot * 0.5f);
             spot.distance = core::length(at);
-            emitCanvas(dot, spot, 1.0f, 0.0f, true, textures, out, nullptr);
+            emitCanvas(dot, spot, 1.0f, 0.0f, true, textures, out, nullptr, PointerDotKey);
         }
     }
 }

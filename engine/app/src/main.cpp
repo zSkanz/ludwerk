@@ -777,6 +777,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrDepthFromFlag = true;
             continue;
         }
+        if (arg.starts_with("--xr-space-warp=")) {
+            const std::string_view mode = arg.substr(16);
+            options.xrSpaceWarp = mode == "on" ? 2 : mode == "auto" ? 1 : 0;
+            options.xrSpaceWarpFromFlag = true;
+            continue;
+        }
         if (arg.starts_with("--xr-foveation=")) {
             const std::string_view level = arg.substr(15);
             options.xrFoveation = level == "high" ? 3u : level == "medium" ? 2u : level == "low" ? 1u : 0u;
@@ -2109,6 +2115,8 @@ static int hostMain(int argc, char** argv)
         if (!options.xrDepthFromFlag)
             options.xrDepth = config.xrDepth;
         options.xrScreenEffects = config.xrScreenEffects;
+        if (config.xrSpaceWarp.has_value() && !options.xrSpaceWarpFromFlag)
+            options.xrSpaceWarp = *config.xrSpaceWarp;
         if (config.xrFoveation.has_value() && !options.xrFoveationFromFlag)
             options.xrFoveation = *config.xrFoveation;
         options.xrMsaa = config.xrMsaa.value_or(options.xrMsaa);

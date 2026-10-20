@@ -481,6 +481,10 @@ struct EngineOptions
     // reflections and bounce drawn in a headset's eyes, which by default
     // they are not.
     bool xrScreenEffects = false;
+    // `[xr] space_warp` (ADR 0252): 0 off, 1 auto, 2 on. Auto is off until
+    // the frames made between are measured on a headset (§8).
+    core::u8 xrSpaceWarp = 1;
+    bool xrSpaceWarpFromFlag = false;
     // `[xr] foveation`, or `--xr-foveation=off|low|medium|high` over it: how
     // much less a headset's eye is shaded away from where it looks, 0 to 3,
     // where the device has a fragment density map. Medium by default on a

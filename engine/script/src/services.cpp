@@ -3010,6 +3010,13 @@ int xrServiceRecenter(lua_State* L)
     return 0;
 }
 
+int xrServiceMarkCut(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    world(L).engineState().headset.cutAsked = true;
+    return 0;
+}
+
 int xrServiceGetPlayAreaBounds(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -4122,6 +4129,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"XRService", "IsHandTracked", xrServiceIsHandTracked},
     {"XRService", "GetHandJoints", xrServiceGetHandJoints},
     {"XRService", "Recenter", xrServiceRecenter},
+    {"XRService", "MarkCut", xrServiceMarkCut},
     {"XRService", "SupportsPassthrough", xrServiceSupportsPassthrough},
     {"XRService", "GetRoomAsync", xrServiceGetRoomAsync},
     {"XRService", "CreateRoomParts", xrServiceCreateRoomParts},

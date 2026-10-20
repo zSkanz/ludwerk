@@ -12503,6 +12503,12 @@
           "Transient": true
         },
         {
+          "Name": "SpaceWarp",
+          "Type": "boolean",
+          "Default": "false",
+          "Transient": true
+        },
+        {
           "Name": "SpectatorCamera",
           "Type": "Camera?",
           "Transient": true
@@ -12595,6 +12601,12 @@
           "Parameters": [],
           "Returns": ["{ XRAnchor }"],
           "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "MarkCut",
+          "Parameters": [],
+          "Returns": [],
           "ThreadSafety": "Unsafe"
         },
         {

@@ -795,6 +795,14 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
             config.xrShadowFirstSplit = static_cast<core::f32>(*value);
         if (const std::optional<bool> value = document.boolean(key("screen_effects")))
             config.xrScreenEffects = *value;
+        if (const std::optional<std::string_view> value = document.string(key("space_warp"))) {
+            if (*value == "off")
+                config.xrSpaceWarp = 0;
+            else if (*value == "auto")
+                config.xrSpaceWarp = 1;
+            else if (*value == "on")
+                config.xrSpaceWarp = 2;
+        }
         if (const std::optional<f64> value = document.number(key("refresh_rate"));
             value.has_value() && *value >= 0.0 && *value <= 240.0)
             config.xrRefreshRate = static_cast<core::f32>(*value);

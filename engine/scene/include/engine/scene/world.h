@@ -679,6 +679,11 @@ struct EngineState
         // asks for, and whether the headset can.
         bool passthrough = false;
         bool passthroughSupported = false;
+        // Whether the headset's runtime makes frames between (ADR 0252).
+        bool spaceWarpSupported = false;
+        // **A cut said** (`XRService:MarkCut`): the player's space moved in a
+        // way nothing is to be made from, this frame.
+        bool cutAsked = false;
         // **What the window shows while the headset draws**
         // (`XRService.SpectatorCamera`, ADR 0250): a camera of the game's, or
         // none for the left eye.
@@ -696,6 +701,8 @@ struct EngineState
             u32 shadowCascades = 0;
             f32 shadowFirstSplit = 2.0f;
             bool screenEffects = false;
+            // Frames made between the drawn ones (`XRService.SpaceWarp`, ADR 0252).
+            bool spaceWarp = false;
             u8 foveation = 0;
             f32 refreshRate = 0.0f;
         };

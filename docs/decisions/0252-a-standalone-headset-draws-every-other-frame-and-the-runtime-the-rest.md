@@ -58,10 +58,16 @@ space: a teleport, a snap turn, a vehicle.
    with, in the eye's own convention -- nought near, one far -- with the
    near and far planes the eye was drawn with.
 6. **The player's space moving**: how the game moved the space the eyes
-   are in since the frame before -- a teleport, a snap turn, a seat in a
-   vehicle -- goes with every frame. A cut (a teleport, a scene changed)
-   is a frame the runtime makes nothing from; it is marked so, and the
-   next frame starts again.
+   are in since the frame before -- a snap turn, a seat in a vehicle --
+   goes with every frame, and steady motion however fast is what the frames
+   between are made from. A cut is a frame the runtime makes nothing from,
+   and it is said, not guessed from how far the space went: a kart at 250
+   km/h steps seven metres a drawn frame, and a rule on the distance made
+   every one of its frames a teleport. `XRService:MarkCut()` says one;
+   `@engine/xrcomfort` calls it for its teleport and its snap turn, and a
+   scene changed is one. A game that moves the space abruptly and says
+   nothing is caught by the change in its step: a metre's change from one
+   frame's step to the next, which no vehicle makes.
 7. **A script's render step runs at the rate frames are drawn.**
    `RunService.RenderStepped` and `PreRender` fire once a drawn frame, so
    at half the display's rate while frames are made between, with a delta

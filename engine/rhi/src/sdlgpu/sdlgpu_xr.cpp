@@ -319,6 +319,14 @@ constexpr std::array<ProfileSpec, 4> Profiles{{
     return pose;
 }
 
+// No turn and no move.
+[[nodiscard]] XrPosef identityPose()
+{
+    XrPosef pose{};
+    pose.orientation.w = 1.0f;
+    return pose;
+}
+
 struct EyeSwapchain
 {
     XrSwapchain swapchain = XR_NULL_HANDLE;
@@ -331,11 +339,14 @@ class OpenXrHeadset final : public IHeadset
 {
 public:
     OpenXrHeadset(XrInstance instance, XrSystemId system, XrDeviceHooks hooks, bool handTracking, bool depthLayer,
-                  bool fbPassthrough, bool metrics, bool scene, bool anchors, bool refreshRates, f32 refreshRate)
+                  bool fbPassthrough, bool metrics, bool scene, bool anchors, bool refreshRates, f32 refreshRate,
+                  bool spaceWarp)
         : m_instance(instance), m_system(system), m_hooks(std::move(hooks)), m_scene(scene), m_anchors(anchors),
           m_metrics(metrics), m_refreshRates(refreshRates), m_refreshRate(refreshRate), m_fbPassthrough(fbPassthrough),
           m_depthLayer(depthLayer), m_handTracking(handTracking)
-    {}
+    {
+        m_spaceWarp = spaceWarp;
+    }
 
     ~OpenXrHeadset() override
     {
@@ -376,13 +387,21 @@ public:
             m_runtime = instance.runtimeName;
         auto system = made<XrSystemProperties>(XR_TYPE_SYSTEM_PROPERTIES);
         auto tracking = made<XrSystemHandTrackingPropertiesEXT>(XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT);
+        auto warp = made<XrSystemSpaceWarpPropertiesFB>(XR_TYPE_SYSTEM_SPACE_WARP_PROPERTIES_FB);
         if (m_handTracking)
             system.next = &tracking;
+        if (m_spaceWarp) {
+            warp.next = const_cast<void*>(system.next);
+            system.next = &warp;
+        }
         if (XR_SUCCEEDED(m_calls.getSystemProperties(m_instance, m_system, &system)))
             m_systemName = system.systemName;
         // The runtime knows the extension; this headset may still have no
         // cameras for hands.
         m_handTracking = m_handTracking && tracking.supportsHandTracking == XR_TRUE;
+        m_motionWidth = warp.recommendedMotionVectorImageRectWidth;
+        m_motionHeight = warp.recommendedMotionVectorImageRectHeight;
+        m_spaceWarp = m_spaceWarp && m_motionWidth > 0 && m_motionHeight > 0;
 
         // **Two eyes**, at the size the runtime recommends for each.
         u32 count = 0;
@@ -725,6 +744,35 @@ public:
             }
             frame.depthFormat = m_depthFormat;
         }
+        // **What the runtime makes the frames between from** (ADR 0252):
+        // the swapchains made the first frame they are asked for.
+        m_warping = false;
+        if (m_spaceWarpOn && supportsSpaceWarp() && (m_motionEyes[0].swapchain != XR_NULL_HANDLE || openSpaceWarp())) {
+            for (std::array<EyeSwapchain, 2>* set : {&m_motionEyes, &m_motionDepthEyes}) {
+                for (usize at = 0; at < 2; ++at) {
+                    EyeSwapchain& eye = (*set)[at];
+                    u32 index = 0;
+                    auto acquireInfo = made<XrSwapchainImageAcquireInfo>(XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
+                    if (XR_FAILED(m_calls.acquireSwapchainImage(eye.swapchain, &acquireInfo, &index)) ||
+                        index >= eye.handles.size()) {
+                        releaseImages();
+                        return true;
+                    }
+                    eye.acquired = true;
+                    auto waitImage = made<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);
+                    waitImage.timeout = XR_INFINITE_DURATION;
+                    if (XR_FAILED(m_calls.waitSwapchainImage(eye.swapchain, &waitImage))) {
+                        releaseImages();
+                        return true;
+                    }
+                    (set == &m_motionEyes ? frame.motion : frame.motionDepth)[at] = eye.handles[index];
+                }
+            }
+            frame.motionWidth = m_motionWidth;
+            frame.motionHeight = m_motionHeight;
+            frame.motionDepthFormat = m_motionDepthFormat;
+            m_warping = true;
+        }
         m_drawing = true;
         frame.draw = true;
         return true;
@@ -740,6 +788,7 @@ public:
         endInfo.displayTime = m_displayTime;
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         std::array<XrCompositionLayerDepthInfoKHR, 2> depths{};
+        std::array<XrCompositionLayerSpaceWarpInfoFB, 2> warps{};
         auto passthroughLayer = made<XrCompositionLayerPassthroughFB>(XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB);
         std::array<const XrCompositionLayerBaseHeader*, 2> twoLayers{};
         if (m_drawing) {
@@ -759,6 +808,30 @@ public:
                     depth.nearZ = m_near;
                     depth.farZ = m_far;
                     views[at].next = &depth;
+                }
+                if (m_warping) {
+                    XrCompositionLayerSpaceWarpInfoFB& warp = warps[at];
+                    warp.type = XR_TYPE_COMPOSITION_LAYER_SPACE_WARP_INFO_FB;
+                    warp.next = views[at].next;
+                    warp.layerFlags = m_spaceCut ? XR_COMPOSITION_LAYER_SPACE_WARP_INFO_FRAME_SKIP_BIT_FB : 0;
+                    const XrExtent2Di motionSize{static_cast<int32_t>(m_motionWidth),
+                                                 static_cast<int32_t>(m_motionHeight)};
+                    warp.motionVectorSubImage.swapchain = m_motionEyes[at].swapchain;
+                    warp.motionVectorSubImage.imageRect.extent = motionSize;
+                    warp.depthSubImage.swapchain = m_motionDepthEyes[at].swapchain;
+                    warp.depthSubImage.imageRect.extent = motionSize;
+                    warp.appSpaceDeltaPose = identityPose();
+                    if (m_spaceMoved.valid) {
+                        warp.appSpaceDeltaPose.position = {m_spaceMoved.position[0], m_spaceMoved.position[1],
+                                                           m_spaceMoved.position[2]};
+                        warp.appSpaceDeltaPose.orientation = {m_spaceMoved.orientation[0], m_spaceMoved.orientation[1],
+                                                              m_spaceMoved.orientation[2], m_spaceMoved.orientation[3]};
+                    }
+                    warp.minDepth = 0.0f;
+                    warp.maxDepth = 1.0f;
+                    warp.nearZ = m_near;
+                    warp.farZ = m_far;
+                    views[at].next = &warp;
                 }
             }
             layer.space = m_space;
@@ -789,6 +862,9 @@ public:
         if (XR_FAILED(result))
             logFailure("xrEndFrame", result);
         m_drawing = false;
+        m_warping = false;
+        m_spaceMoved = HeadsetPose{};
+        m_spaceCut = false;
     }
 
     void readInput(HeadsetInput& input) override
@@ -1053,6 +1129,13 @@ public:
     }
 
     [[nodiscard]] bool supportsPassthrough() const noexcept override { return m_alphaBlend || m_fbPassthrough; }
+    [[nodiscard]] bool supportsSpaceWarp() const noexcept override { return m_spaceWarp && !m_spaceWarpFailed; }
+    void setSpaceWarp(bool on) override { m_spaceWarpOn = on; }
+    void setSpaceMotion(const HeadsetPose& moved, bool cut) override
+    {
+        m_spaceMoved = moved;
+        m_spaceCut = m_spaceCut || cut;
+    }
 
     void setRefreshRate(f32 hertz) override
     {
@@ -1228,19 +1311,21 @@ private:
             (void)m_calls.releaseSwapchainImage(eye.swapchain, &releaseInfo);
             eye.acquired = false;
         }
-        for (EyeSwapchain& eye : m_depthEyes) {
-            if (!eye.acquired)
-                continue;
-            auto releaseInfo = made<XrSwapchainImageReleaseInfo>(XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
-            (void)m_calls.releaseSwapchainImage(eye.swapchain, &releaseInfo);
-            eye.acquired = false;
+        for (std::array<EyeSwapchain, 2>* set : {&m_depthEyes, &m_motionEyes, &m_motionDepthEyes}) {
+            for (EyeSwapchain& eye : *set) {
+                if (!eye.acquired)
+                    continue;
+                auto releaseInfo = made<XrSwapchainImageReleaseInfo>(XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
+                (void)m_calls.releaseSwapchainImage(eye.swapchain, &releaseInfo);
+                eye.acquired = false;
+            }
         }
     }
 
-    // **A depth swapchain for each eye**: in a depth format the runtime lists,
-    // as the backend SDL drew the session on names it -- SDL lists colour
-    // formats only.
-    [[nodiscard]] bool openDepth()
+    // **The depth format the runtime lists**, the best first, as the backend
+    // SDL drew the session on names it -- SDL lists colour formats only.
+    // False where it lists none of them.
+    [[nodiscard]] bool pickDepthFormat(SDL_GPUTextureFormat& sdl, TextureFormat& engine)
     {
         if (m_calls.enumerateSwapchainFormats == nullptr)
             return false;
@@ -1277,6 +1362,18 @@ private:
         }
         if (chosen == nullptr)
             return false;
+        sdl = chosen->sdl;
+        engine = chosen->engine;
+        return true;
+    }
+
+    // **A depth swapchain for each eye**, the size of its colour.
+    [[nodiscard]] bool openDepth()
+    {
+        SDL_GPUTextureFormat sdl = SDL_GPU_TEXTUREFORMAT_INVALID;
+        TextureFormat engine = TextureFormat::Undefined;
+        if (!pickDepthFormat(sdl, engine))
+            return false;
         for (EyeSwapchain& eye : m_depthEyes) {
             auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
             info.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
@@ -1287,7 +1384,7 @@ private:
             info.arraySize = 1;
             info.mipCount = 1;
             const XrResult result =
-                SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, chosen->sdl, &eye.swapchain, &eye.images);
+                SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, sdl, &eye.swapchain, &eye.images);
             if (XR_FAILED(result)) {
                 logFailure("SDL_CreateGPUXRSwapchain", result);
                 return false;
@@ -1295,9 +1392,65 @@ private:
             u32 images = 0;
             (void)m_calls.enumerateSwapchainImages(eye.swapchain, 0, &images, nullptr);
             for (u32 at = 0; at < images; ++at)
-                eye.handles.push_back(m_hooks.wrap(eye.images[at], chosen->engine, m_width, m_height));
+                eye.handles.push_back(m_hooks.wrap(eye.images[at], engine, m_width, m_height));
         }
-        m_depthFormat = chosen->engine;
+        m_depthFormat = engine;
+        return true;
+    }
+
+    // **Each eye's motion and the depth it is read with** (ADR 0252), at the
+    // size the runtime recommends: sixteen-bit floats, and the depth format
+    // the runtime lists. Made the first frame frames are made between; a
+    // runtime that refuses them is not asked again, and the game is drawn
+    // every frame.
+    [[nodiscard]] bool openSpaceWarp()
+    {
+        SDL_GPUTextureFormat depthSdl = SDL_GPU_TEXTUREFORMAT_INVALID;
+        TextureFormat depthEngine = TextureFormat::Undefined;
+        bool ok = pickDepthFormat(depthSdl, depthEngine);
+        for (usize at = 0; ok && at < 2; ++at) {
+            for (const bool depth : {false, true}) {
+                EyeSwapchain& eye = depth ? m_motionDepthEyes[at] : m_motionEyes[at];
+                auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
+                info.usageFlags =
+                    XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
+                    (depth ? XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT);
+                info.sampleCount = 1;
+                info.width = m_motionWidth;
+                info.height = m_motionHeight;
+                info.faceCount = 1;
+                info.arraySize = 1;
+                info.mipCount = 1;
+                const XrResult result = SDL_CreateGPUXRSwapchain(
+                    m_hooks.device, m_session, &info, depth ? depthSdl : SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+                    &eye.swapchain, &eye.images);
+                if (XR_FAILED(result)) {
+                    logFailure("SDL_CreateGPUXRSwapchain", result);
+                    ok = false;
+                    break;
+                }
+                u32 images = 0;
+                (void)m_calls.enumerateSwapchainImages(eye.swapchain, 0, &images, nullptr);
+                for (u32 index = 0; index < images; ++index)
+                    eye.handles.push_back(m_hooks.wrap(eye.images[index],
+                                                       depth ? depthEngine : TextureFormat::Rgba16Float, m_motionWidth,
+                                                       m_motionHeight));
+            }
+        }
+        if (!ok) {
+            for (std::array<EyeSwapchain, 2>* set : {&m_motionEyes, &m_motionDepthEyes}) {
+                for (EyeSwapchain& eye : *set) {
+                    for (const TextureHandle handle : eye.handles)
+                        m_hooks.unwrap(handle);
+                    if (eye.swapchain != XR_NULL_HANDLE)
+                        (void)SDL_DestroyGPUXRSwapchain(m_hooks.device, eye.swapchain, eye.images);
+                    eye = EyeSwapchain{};
+                }
+            }
+            m_spaceWarpFailed = true;
+            return false;
+        }
+        m_motionDepthFormat = depthEngine;
         return true;
     }
 
@@ -1341,7 +1494,7 @@ private:
     // Every eye's images, colour and depth, given back.
     void releaseSwapchains()
     {
-        for (std::array<EyeSwapchain, 2>* set : {&m_eyes, &m_depthEyes}) {
+        for (std::array<EyeSwapchain, 2>* set : {&m_eyes, &m_depthEyes, &m_motionEyes, &m_motionDepthEyes}) {
             for (EyeSwapchain& eye : *set) {
                 for (const TextureHandle handle : eye.handles)
                     m_hooks.unwrap(handle);
@@ -1650,6 +1803,21 @@ private:
     TextureFormat m_depthFormat = TextureFormat::Undefined;
     f32 m_near = 0.1f;
     f32 m_far = 5000.0f;
+    // **Frames made between** (ADR 0252): the runtime lists the extension and
+    // recommends a motion image size; the game has asked for it; its
+    // swapchains could not be made; this frame carries its motion.
+    bool m_spaceWarp = false;
+    bool m_spaceWarpOn = false;
+    bool m_spaceWarpFailed = false;
+    bool m_warping = false;
+    u32 m_motionWidth = 0;
+    u32 m_motionHeight = 0;
+    TextureFormat m_motionDepthFormat = TextureFormat::Undefined;
+    std::array<EyeSwapchain, 2> m_motionEyes{};
+    std::array<EyeSwapchain, 2> m_motionDepthEyes{};
+    // The player's space moved since the last frame, and whether it cut.
+    HeadsetPose m_spaceMoved{};
+    bool m_spaceCut = false;
     // Whether the runtime was asked for hand tracking and the headset has
     // it, and each hand's tracker.
     bool m_handTracking = false;
@@ -1691,6 +1859,7 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
     refreshRates = false;
     scene = false;
     anchors = false;
+    spaceWarp = false;
     bool storage = false;
     bool entity = false;
     bool query = false;
@@ -1727,6 +1896,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
                             sceneListed = true;
                         if (name == XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME)
                             storage = true;
+                        if (name == XR_FB_SPACE_WARP_EXTENSION_NAME)
+                            spaceWarp = true;
                     }
                 }
             }
@@ -1754,6 +1925,8 @@ void XrDeviceAsk::apply(SDL_PropertiesID props, const XrRequest& request)
         extensions.push_back(XR_FB_SCENE_EXTENSION_NAME);
     if (anchors)
         extensions.push_back(XR_FB_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME);
+    if (spaceWarp)
+        extensions.push_back(XR_FB_SPACE_WARP_EXTENSION_NAME);
     if (!extensions.empty()) {
         SDL_SetNumberProperty(props, SDL_PROP_GPU_DEVICE_CREATE_XR_EXTENSION_COUNT_NUMBER,
                               static_cast<Sint64>(extensions.size()));
@@ -1775,10 +1948,10 @@ std::unique_ptr<IHeadset> createOpenXrHeadset(const XrDeviceAsk& ask, XrDeviceHo
 {
     if (!ask.ready())
         return nullptr;
-    auto headset =
-        std::make_unique<OpenXrHeadset>(reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system),
-                                        std::move(hooks), ask.handTracking, ask.depthLayer, ask.fbPassthrough,
-                                        ask.metrics, ask.scene, ask.anchors, ask.refreshRates, ask.refreshRate);
+    auto headset = std::make_unique<OpenXrHeadset>(
+        reinterpret_cast<XrInstance>(ask.instance), static_cast<XrSystemId>(ask.system), std::move(hooks),
+        ask.handTracking, ask.depthLayer, ask.fbPassthrough, ask.metrics, ask.scene, ask.anchors, ask.refreshRates,
+        ask.refreshRate, ask.spaceWarp);
     if (!headset->open())
         return nullptr;
     return headset;

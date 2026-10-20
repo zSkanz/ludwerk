@@ -2038,6 +2038,21 @@ local Classes: { Schema.Class } = {
                 Doc = "Texels a cascade of the sun's shadows, 256 to 2048, or 0 for the quality level's: `[xr] shadow_resolution`. A change makes the shadow map again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame.",
             },
             {
+                Name = "SpaceWarp",
+                Type = "boolean",
+                Default = "false",
+                Transient = true,
+                HostFact = true,
+                Records = { "ADR 0252" },
+                Doc = "Whether the headset's runtime makes every other frame from the one before. The game is "
+                    .. "drawn at half the display's rate, 36 frames a second at 72, and the runtime moves what it "
+                    .. "drew by the motion each eye hands it. About twice the GPU time a frame, for frames made "
+                    .. "between that get fast thin things, glass, smoke and sparks less right: those move with "
+                    .. "what is behind them. Turn it off for a moment that must be exact. `[xr] space_warp`; a "
+                    .. "standalone headset's runtime only, and nothing elsewhere. Set, it is applied at the next "
+                    .. "frame; `BindToRenderStep` and `PreRender` then run once a drawn frame.",
+            },
+            {
                 Name = "Passthrough",
                 Type = "boolean",
                 Default = "false",
@@ -2247,6 +2262,19 @@ local Classes: { Schema.Class } = {
                 Doc = "Makes where the head is now the play space's origin, facing where it faces. When "
                     .. "`Space` is `Standing` the origin stays at the floor's height. The poses after it, and the "
                     .. "picture, are measured from there. Nothing with no headset.",
+            },
+            {
+                Name = "MarkCut",
+                Parameters = {},
+                Returns = {},
+                ThreadSafety = "Unsafe",
+                Records = { "ADR 0252" },
+                Doc = "Says that the player's space jumps this frame, so that no frame is made from it. A "
+                    .. "teleport, a cut to another place and a seat changed are such jumps, and a headset that "
+                    .. "makes every other frame (`SpaceWarp`) would show them half made. Call it in the frame the "
+                    .. "camera is moved. Steady motion, however fast, needs none: "
+                    .. "a vehicle's is what the frames between are made from. `@engine/xrcomfort` calls it for "
+                    .. "its teleport and its snap turn, and a scene changed is one. Nothing elsewhere.",
             },
             {
                 Name = "GetPlayAreaBounds",
@@ -4435,7 +4463,9 @@ local Classes: { Schema.Class } = {
                 ThreadSafety = "Unsafe",
                 Records = { "ADR 0136", "ADR 0124" },
                 Doc = "Binds a function that runs as `fn(dt)` on every drawn frame, where `dt` is the time since "
-                    .. "the last frame. Use it for a camera that follows something: inside the function, "
+                    .. "the last frame. In a headset whose runtime makes every other frame "
+                    .. "(`XRService.SpaceWarp`), that is half the display's rate, with twice the `dt`. Use it for a "
+                    .. "camera that follows something: inside the function, "
                     .. "`GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly "
                     .. "as set.\n\n"
                     .. "Bound functions run in order of `priority`, lowest first, and in the order they were "
@@ -4602,7 +4632,9 @@ local Classes: { Schema.Class } = {
                 Doc = "Fires every frame before the frame is drawn, after the functions bound with "
                     .. "`BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers "
                     .. "run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set "
-                    .. "there is drawn exactly as set. It never fires in a headless run.",
+                    .. "there is drawn exactly as set. It never fires in a headless run. In a headset whose "
+                    .. "runtime makes every other frame (`XRService.SpaceWarp`), it fires once a drawn frame: half "
+                    .. "the display's rate, with a `dt` twice as long.",
             },
             {
                 Name = "PreAnimation",

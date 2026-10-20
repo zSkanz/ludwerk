@@ -797,6 +797,12 @@ struct WorldUiRun
     f32 lightInfluence = 0.0f;
     // Drawn after everything else in the world and never hidden.
     bool alwaysOnTop = false;
+    // **Whose canvas, and where it is** (ADR 0252 §4): the instance it is
+    // found by again next frame, and its canvas into camera-relative world --
+    // across, down, its facing and its top-left corner -- so a headset's
+    // runtime is told how its quads moved. Zero for none.
+    u64 key = 0;
+    Mat4 placement{};
 };
 
 // One reflection probe a frame may read (ADR 0202): its box, and whose map.

@@ -38,6 +38,7 @@ listed on the page of the class that declares them.
 | `ShadowFirstSplit` | `number` | `2` | read/write | How many meters the sun's first cascade covers in the eyes: `[xr] shadow_first_split`. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame. |
 | `ShadowResolution` | `number` | `0` | read/write | Texels a cascade of the sun's shadows, 256 to 2048, or 0 for the quality level's: `[xr] shadow_resolution`. A change makes the shadow map again: a hitch at the switch. Read, what the session runs with: the project's `[xr]` value until a script sets it. Set, it is applied at the next frame. |
 | `Space` | `Enum.XRSpace` | `Enum.XRSpace.Standing` | read/write | Where the poses are measured from: the floor (`Standing`) or the head where the session began (`Seated`). A game that is played sitting down sets `Seated` once, at the start. The picture uses the same space, so the camera stands for the floor when standing and for the player's eyes when seated. |
+| `SpaceWarp` | `boolean` | `false` | read/write | Whether the headset's runtime makes every other frame from the one before. The game is drawn at half the display's rate, 36 frames a second at 72, and the runtime moves what it drew by the motion each eye hands it. About twice the GPU time a frame, for frames made between that get fast thin things, glass, smoke and sparks less right: those move with what is behind them. Turn it off for a moment that must be exact. `[xr] space_warp`; a standalone headset's runtime only, and nothing elsewhere. Set, it is applied at the next frame; `BindToRenderStep` and `PreRender` then run once a drawn frame. |
 | `SpectatorCamera` | `Camera?` | — | read/write | The camera the window on the computer shows while the headset draws, for whoever is watching or streaming. The game's world is seen through it, drawn at the window's size and the screen's graphics quality, after the headset's eyes. With nil, the window shows the left eye. `[xr] spectator = false` in `project.toml` keeps the left eye whatever this is. A standalone headset has no window, and nothing more is drawn there. |
 
 ## Methods
@@ -87,6 +88,10 @@ Whether the headset knows where this hand is now: false when its controller is p
 This method yields: the calling thread waits until it completes.
 
 Returns every anchor this game saved on the headset with `XRAnchor:SaveAsync`. An anchor saved in another room is returned too, and is not `Tracked` until the player is back in it. It waits for the headset. Empty with no headset.
+
+### `MarkCut()`
+
+Says that the player's space jumps this frame, so that no frame is made from it. A teleport, a cut to another place and a seat changed are such jumps, and a headset that makes every other frame (`SpaceWarp`) would show them half made. Call it in the frame the camera is moved. Steady motion, however fast, needs none: a vehicle's is what the frames between are made from. `@engine/xrcomfort` calls it for its teleport and its snap turn, and a scene changed is one. Nothing elsewhere.
 
 ### `Recenter()`
 

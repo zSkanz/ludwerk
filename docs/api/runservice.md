@@ -41,7 +41,7 @@ The function must not yield; `task.wait` inside it raises an error. Functions ru
 
 ### `BindToRenderStep(name: string, priority: number, fn: (dt: number) -> ())`
 
-Binds a function that runs as `fn(dt)` on every drawn frame, where `dt` is the time since the last frame. Use it for a camera that follows something: inside the function, `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set.
+Binds a function that runs as `fn(dt)` on every drawn frame, where `dt` is the time since the last frame. In a headset whose runtime makes every other frame (`XRService.SpaceWarp`), that is half the display's rate, with twice the `dt`. Use it for a camera that follows something: inside the function, `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set.
 
 Bound functions run in order of `priority`, lowest first, and in the order they were bound when priorities are equal. They run after the input that the frame reads for contexts with `Rate = Render`, and before `PreRender` fires. `Enum.RenderPriority` provides reference values: `Enum.RenderPriority.Camera.Value + 1` runs just after the camera.
 
@@ -114,7 +114,7 @@ Fires at the start of each simulation tick, before animation is evaluated. Passe
 
 ### `PreRender(dt: number)`
 
-Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set. It never fires in a headless run.
+Fires every frame before the frame is drawn, after the functions bound with `BindToRenderStep`. Passes the time since the previous frame, in seconds. Its handlers run in a render step: `GetRenderCFrame` returns where things are drawn, and a camera set there is drawn exactly as set. It never fires in a headless run. In a headset whose runtime makes every other frame (`XRService.SpaceWarp`), it fires once a drawn frame: half the display's rate, with a `dt` twice as long.
 
 ### `PreSimulation(dt: number)`
 

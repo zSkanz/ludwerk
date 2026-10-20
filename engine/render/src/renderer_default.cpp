@@ -818,6 +818,13 @@ struct ViewState
     };
     std::unordered_map<u64, Placed> placed_;
     std::unordered_map<u64, Placed> placing_;
+    // The same for a headset eye's motion for its runtime (ADR 0252), kept
+    // apart: an eye has no temporal pass to keep the others.
+    std::unordered_map<u64, Placed> warpPlaced_;
+    std::unordered_map<u64, Placed> warpPlacing_;
+    // And each canvas of the world's interface, by its run's key.
+    std::unordered_map<u64, Placed> warpUiPlaced_;
+    std::unordered_map<u64, Placed> warpUiPlacing_;
     // Which of the sample positions this view's next temporal frame takes.
     // The view's own (ADR 0205): one count for every view gave each of four
     // views two of the eight positions, by turns.
@@ -1728,6 +1735,15 @@ private:
     // What moves, drawn with where it was: plain and skinned.
     rhi::PipelineHandle motionPipeline_{};
     rhi::PipelineHandle motionSkinnedPipeline_{};
+    // A headset eye's motion for its runtime (ADR 0252), against the depth
+    // format of the runtime's images.
+    rhi::PipelineHandle warpMotionPipeline_{};
+    rhi::PipelineHandle warpMotionSkinnedPipeline_{};
+    // The world's interface as solid quads (ADR 0252 §4): in the scene, and
+    // over it.
+    rhi::PipelineHandle warpMotionUiPipeline_{};
+    rhi::PipelineHandle warpMotionUiOnTopPipeline_{};
+    rhi::TextureFormat warpMotionDepthFormat_ = rhi::TextureFormat::Undefined;
     bool motionTried_ = false;
     // SMAA's two tables, uploaded once.
     rhi::TextureHandle smaaArea_{};
@@ -1914,6 +1930,10 @@ private:
     LookPipeline motionViewWindow_;
     void showMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderTarget& target);
     [[nodiscard]] bool ensureMotionPipelines(rhi::IDevice& device);
+    [[nodiscard]] bool ensureWarpMotionPipelines(rhi::IDevice& device, rhi::TextureFormat depthFormat);
+    // **A headset eye's motion and depth for its runtime** (ADR 0252).
+    void drawWarpMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world, const MeshCache& meshes,
+                        const RenderTarget& target);
     [[nodiscard]] bool ensureSmaaTables(rhi::IDevice& device, rhi::ICmdList& cmd);
     [[nodiscard]] static bool aaTexture(rhi::IDevice& device, rhi::TextureHandle& slot, u32 width, u32 height,
                                         rhi::TextureFormat format, const char* name);
@@ -3602,7 +3622,9 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
             device.destroy(look->handle);
         *look = {};
     }
-    for (rhi::PipelineHandle* pipeline : {&motionPipeline_, &motionSkinnedPipeline_}) {
+    for (rhi::PipelineHandle* pipeline :
+         {&motionPipeline_, &motionSkinnedPipeline_, &warpMotionPipeline_, &warpMotionSkinnedPipeline_,
+          &warpMotionUiPipeline_, &warpMotionUiOnTopPipeline_}) {
         if (pipeline->valid())
             device.destroy(*pipeline);
         *pipeline = {};
@@ -5745,6 +5767,231 @@ bool DefaultRenderer::ensureMotionPipelines(rhi::IDevice& device)
         }
     }
     return motionPipeline_.valid() && motionSkinnedPipeline_.valid();
+}
+
+bool DefaultRenderer::ensureWarpMotionPipelines(rhi::IDevice& device, rhi::TextureFormat depthFormat)
+{
+    if (warpMotionDepthFormat_ == depthFormat)
+        return warpMotionPipeline_.valid() && warpMotionSkinnedPipeline_.valid();
+    for (rhi::PipelineHandle* pipeline :
+         {&warpMotionPipeline_, &warpMotionSkinnedPipeline_, &warpMotionUiPipeline_, &warpMotionUiOnTopPipeline_}) {
+        if (pipeline->valid())
+            device.destroy(*pipeline);
+        *pipeline = {};
+    }
+    warpMotionDepthFormat_ = depthFormat;
+    if (shaderLibrary_ == nullptr)
+        return false;
+    core::EngineError error;
+    const auto load = [&](const char* name, rhi::ShaderStage stage) {
+        const rhi::ShaderHandle handle = shaderLibrary_->create(device, name, stage, &error);
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+        return handle;
+    };
+    const rhi::ShaderHandle vertex = load("warp_motion", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle fragment = load("warp_motion", rhi::ShaderStage::Fragment);
+    const rhi::ShaderHandle skinnedVertex = load("warp_motion_skinned", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle skinnedFragment = load("warp_motion_skinned", rhi::ShaderStage::Fragment);
+    if (!vertex.valid() || !fragment.valid() || !skinnedVertex.valid() || !skinnedFragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+    const std::array<rhi::VertexBufferLayout, 1> buffers{rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48}};
+    const std::array<rhi::VertexAttribute, 1> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0}};
+    const std::array<rhi::VertexBufferLayout, 2> skinnedBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = 48},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = 32},
+    };
+    const std::array<rhi::VertexAttribute, 3> skinnedAttributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+    };
+    // **Its own depth, written**: the runtime reads the motion with the
+    // depth beside it, and the nearer surface's motion is the one it needs.
+    const std::array<rhi::ColorTargetDesc, 1> target{rhi::ColorTargetDesc{.format = rhi::TextureFormat::Rgba16Float}};
+    const rhi::DepthStencilState depth{
+        .depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual};
+    warpMotionPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = vertex,
+        .fragmentShader = fragment,
+        .vertexBuffers = buffers,
+        .vertexAttributes = attributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .depthStencil = depth,
+        .colorTargets = target,
+        .depthStencilFormat = depthFormat,
+        .debugName = "warp_motion",
+    });
+    warpMotionSkinnedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = skinnedVertex,
+        .fragmentShader = skinnedFragment,
+        .vertexBuffers = skinnedBuffers,
+        .vertexAttributes = skinnedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back},
+        .depthStencil = depth,
+        .colorTargets = target,
+        .depthStencilFormat = depthFormat,
+        .debugName = "warp_motion_skinned",
+    });
+    // **The world's interface**: its vertices' positions, already in the
+    // world, both faces, and -- over the scene -- with no test of the depth.
+    const std::array<rhi::VertexBufferLayout, 1> uiBuffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(WorldUiVertex)}};
+    for (const bool onTop : {false, true}) {
+        (onTop ? warpMotionUiOnTopPipeline_ : warpMotionUiPipeline_) = device.createGraphicsPipeline({
+            .vertexShader = vertex,
+            .fragmentShader = fragment,
+            .vertexBuffers = uiBuffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::None},
+            .depthStencil = onTop ? rhi::DepthStencilState{.depthTest = false, .depthWrite = true} : depth,
+            .colorTargets = target,
+            .depthStencilFormat = depthFormat,
+            .debugName = onTop ? "warp_motion_ui_on_top" : "warp_motion_ui",
+        });
+    }
+    for (const auto& [pipeline, name] : {std::pair{warpMotionPipeline_, "warp_motion"},
+                                         std::pair{warpMotionSkinnedPipeline_, "warp_motion_skinned"}}) {
+        if (!pipeline.valid()) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{name}}};
+            core::log(core::LogLevel::Warn, ENG_TR("render.warn.pipeline_failed"), args);
+        }
+    }
+    return warpMotionPipeline_.valid() && warpMotionSkinnedPipeline_.valid();
+}
+
+// **A headset eye's motion for its runtime** (ADR 0252): every opaque draw,
+// with where it is and where it was, through this frame's view at both ends
+// (`warp_motion.hlsl` says why), into the runtime's motion image; and its
+// depth beside it. What does not move on its own is drawn as still. What
+// blends, and what is cut out, is not drawn: the runtime moves it with what
+// is behind it.
+void DefaultRenderer::drawWarpMotion(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
+                                     const MeshCache& meshes, const RenderTarget& target)
+{
+    if (!target.motionDepth.valid() || target.motionWidth == 0 || target.motionHeight == 0 ||
+        !ensureWarpMotionPipelines(device, target.motionDepthFormat))
+        return;
+    const RenderCamera& camera = world.camera;
+    const Mat4 view = camera.unjitteredViewProjection;
+    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnit(camera, height_) : 0.0f;
+    warpPlacing_.clear();
+    cmd.pushDebugGroup("space-warp");
+    cmd.beginRenderPass({
+        .colorAttachments = std::array<rhi::ColorAttachment, 1>{rhi::ColorAttachment{
+            .texture = target.motion,
+            .loadOp = rhi::LoadOp::Clear,
+            .storeOp = rhi::StoreOp::Store,
+            .clearColor = {0.0f, 0.0f, 0.0f, 0.0f},
+        }},
+        .depthStencil = {.texture = target.motionDepth, .loadOp = rhi::LoadOp::Clear, .storeOp = rhi::StoreOp::Store},
+        .debugName = "warp-motion",
+    });
+    cmd.setViewport({.width = static_cast<f32>(target.motionWidth), .height = static_cast<f32>(target.motionHeight)});
+    cmd.setScissor(
+        {.width = static_cast<core::i32>(target.motionWidth), .height = static_cast<core::i32>(target.motionHeight)});
+    rhi::PipelineHandle bound{};
+    for (const DrawItem& draw : world.draws) {
+        if (draw.transparent || draw.cutout || !draw.inCameraFrustum)
+            continue;
+        const MeshCache::Resolved* resolved = meshes.resolve(draw.mesh);
+        if (resolved == nullptr || resolved->lods.empty())
+            continue;
+        const u32 lod = selectMeshLod(*resolved, draw.transform, pixelsPerUnit);
+        const MeshLodRange& level = resolved->lods[lod];
+        if (draw.section >= level.sectionCount || level.firstSection + draw.section >= resolved->sections.size())
+            continue;
+        const MeshSection& section = resolved->sections[level.firstSection + draw.section];
+        if (section.indexCount == 0)
+            continue;
+        // Where it was, in this frame's camera space: still, where it has no
+        // place a frame ago.
+        Mat4 before = draw.transform;
+        if (draw.motionKey != 0) {
+            warpPlacing_[draw.motionKey] = Placed{draw.transform, camera.origin};
+            if (const auto found = warpPlaced_.find(draw.motionKey); found != warpPlaced_.end()) {
+                const core::DVec3 shift = found->second.origin - camera.origin;
+                before = core::translation(
+                             Vec3{static_cast<f32>(shift.x), static_cast<f32>(shift.y), static_cast<f32>(shift.z)}) *
+                         found->second.transform;
+            }
+        }
+        const bool skinned = draw.boneCount > 0 && resolved->skin.valid();
+        const rhi::PipelineHandle pipeline = skinned ? warpMotionSkinnedPipeline_ : warpMotionPipeline_;
+        if (!(pipeline == bound)) {
+            cmd.setPipeline(pipeline);
+            bound = pipeline;
+        }
+        GpuMotionUniforms motion;
+        motion.viewProjection = view;
+        motion.model = draw.transform;
+        motion.current = view * draw.transform;
+        motion.previous = view * before;
+        cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
+        if (skinned) {
+            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
+            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
+            if (count > 0) {
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
+                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
+            }
+            else {
+                static const GpuSkinUniforms Rest{};
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
+            }
+            const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+        }
+        else {
+            const std::array<rhi::BufferHandle, 1> vertexBuffers{resolved->vertices};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+        }
+        cmd.bindIndexBuffer(resolved->indices, rhi::IndexType::U32);
+        cmd.drawIndexed(section.indexCount, 1, resolved->firstIndex + section.firstIndex, resolved->vertexOffset, 0);
+        countDraw(DrawKind::Velocity);
+    }
+    // **The world's interface, solid** (ADR 0252 §4): blended as it is in
+    // the eye, the runtime would move it with what is behind it, and smear
+    // the text the player reads -- a panel following the head the worst of
+    // all. Each canvas's quads, moved by where its canvas was.
+    warpUiPlacing_.clear();
+    if (worldUiVertexCount_ > 0 && worldUiBuffer_.valid() && warpMotionUiPipeline_.valid() &&
+        warpMotionUiOnTopPipeline_.valid()) {
+        const std::array<rhi::BufferHandle, 1> uiBuffers{worldUiBuffer_};
+        cmd.bindVertexBuffers(0, uiBuffers);
+        for (const bool onTop : {false, true}) {
+            cmd.setPipeline(onTop ? warpMotionUiOnTopPipeline_ : warpMotionUiPipeline_);
+            for (const WorldUiRun& run : world.worldUiRuns) {
+                if (run.vertexCount == 0 || run.alwaysOnTop != onTop ||
+                    run.firstVertex + run.vertexCount > worldUiVertexCount_)
+                    continue;
+                Mat4 before = Mat4{};
+                if (run.key != 0) {
+                    warpUiPlacing_[run.key] = Placed{run.placement, camera.origin};
+                    if (const auto found = warpUiPlaced_.find(run.key); found != warpUiPlaced_.end()) {
+                        const core::DVec3 shift = found->second.origin - camera.origin;
+                        before = core::translation(Vec3{static_cast<f32>(shift.x), static_cast<f32>(shift.y),
+                                                        static_cast<f32>(shift.z)}) *
+                                 found->second.transform * core::inverse(run.placement);
+                    }
+                }
+                GpuMotionUniforms motion;
+                motion.viewProjection = view;
+                motion.model = Mat4{};
+                motion.current = view;
+                motion.previous = view * before;
+                cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
+                cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
+            }
+        }
+    }
+    cmd.endRenderPass();
+    cmd.popDebugGroup();
+    warpPlaced_.swap(warpPlacing_);
+    warpUiPlaced_.swap(warpUiPlacing_);
 }
 
 void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderWorld& world,
@@ -11568,6 +11815,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // This frame, lit and blended and nothing else yet, kept for the next
     // one's rays (ADR 0209) -- where anything reads the screen.
     keepSceneBefore(device, cmd, world);
+
+    // What the headset's runtime makes the frames between from (ADR 0252).
+    if (target.motion.valid())
+        drawWarpMotion(device, cmd, world, meshes, target);
 
     // --- The look's scene passes (ADR 0096) ------------------------------------
     ENG_PROFILE_NEXT(passes, "render.look");

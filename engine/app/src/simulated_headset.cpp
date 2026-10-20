@@ -51,7 +51,7 @@ void SimulatedHeadset::makeImages()
 
 void SimulatedHeadset::releaseImages()
 {
-    for (std::array<rhi::TextureHandle, 2>* set : {&m_images, &m_depthImages}) {
+    for (std::array<rhi::TextureHandle, 2>* set : {&m_images, &m_depthImages, &m_motionImages, &m_motionDepthImages}) {
         for (rhi::TextureHandle& image : *set) {
             if (image.valid())
                 m_device.destroy(image);
@@ -163,6 +163,36 @@ bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
         frame.depthFormat = rhi::TextureFormat::D32Float;
     else
         frame.depth = {};
+    if (m_warp) {
+        const core::u32 motionWidth = (m_width + 3u) / 4u;
+        const core::u32 motionHeight = (m_height + 3u) / 4u;
+        for (core::u32 index = 0; index < 2; ++index) {
+            if (!m_motionImages[index].valid())
+                m_motionImages[index] = m_device.createTexture({
+                    .format = rhi::TextureFormat::Rgba16Float,
+                    .usage = rhi::TextureUsage::ColorTarget | rhi::TextureUsage::Sampled,
+                    .width = motionWidth,
+                    .height = motionHeight,
+                    .debugName = "simulated-eye-motion",
+                });
+            if (!m_motionDepthImages[index].valid())
+                m_motionDepthImages[index] = m_device.createTexture({
+                    .format = rhi::TextureFormat::D32Float,
+                    .usage = rhi::TextureUsage::DepthStencilTarget | rhi::TextureUsage::Sampled,
+                    .width = motionWidth,
+                    .height = motionHeight,
+                    .debugName = "simulated-eye-motion-depth",
+                });
+        }
+        if (m_motionImages[0].valid() && m_motionImages[1].valid() && m_motionDepthImages[0].valid() &&
+            m_motionDepthImages[1].valid()) {
+            frame.motion = m_motionImages;
+            frame.motionDepth = m_motionDepthImages;
+            frame.motionWidth = motionWidth;
+            frame.motionHeight = motionHeight;
+            frame.motionDepthFormat = rhi::TextureFormat::D32Float;
+        }
+    }
     frame.draw = true;
     return true;
 }

@@ -66,6 +66,15 @@ struct RenderTarget
     // colorReadable`): a headset's eye is drawn with the tonemap folded in
     // only where its meter can read what the eye showed.
     bool colorReadable = false;
+    // **What a headset's runtime makes the frames between from** (ADR 0252,
+    // `rhi::HeadsetFrame::motion`): this eye's motion and its depth,
+    // `motionWidth` by `motionHeight`, written after the eye is drawn. None
+    // where frames are not made between.
+    rhi::TextureHandle motion{};
+    rhi::TextureHandle motionDepth{};
+    core::u32 motionWidth = 0;
+    core::u32 motionHeight = 0;
+    rhi::TextureFormat motionDepthFormat = rhi::TextureFormat::Undefined;
 };
 
 // **One player's view and where it goes in the window** (ADR 0205): a picture

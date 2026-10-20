@@ -277,6 +277,7 @@ function XrComfort.start(options: Options?): Session
                 snapped = true
                 local angle = math.rad(snapDegrees) * (if turnValue.X > 0 then -1 else 1)
                 self.Origin = turnAbout(self.Origin, head.Position, angle)
+                XRService:MarkCut()
             elseif snapped and math.abs(turnValue.X) <= StickOff then
                 snapped = false
             end
@@ -314,6 +315,7 @@ function XrComfort.start(options: Options?): Session
                     -- The play space moves so the head stands over the target.
                     local shift = target - vector.create(head.Position.x, self.Origin.Position.y, head.Position.z)
                     self.Origin = CFrame.new(shift.x, shift.y, shift.z) * self.Origin
+                    XRService:MarkCut()
                     fading = FadeSeconds
                 end
                 target = nil

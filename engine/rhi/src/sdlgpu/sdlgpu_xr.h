@@ -44,6 +44,8 @@ struct XrDeviceAsk
     bool scene = false;
     // XR_FB_spatial_entity, its query and its storage, all listed: anchors.
     bool anchors = false;
+    // XR_FB_space_warp, listed: frames made between the drawn ones (ADR 0252).
+    bool spaceWarp = false;
     void apply(SDL_PropertiesID props, const XrRequest& request);
     [[nodiscard]] bool ready() const noexcept { return instance != 0 && system != 0; }
 };

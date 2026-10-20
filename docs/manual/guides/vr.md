@@ -39,6 +39,7 @@ and under `[xr.android]` for a standalone headset, where its values replace
 | `foveation` | `"off"`, `"low"`, `"medium"`, `"high"` | `"off"` | `"medium"` |
 | `refresh_rate` | hertz, the nearest the headset offers | the headset's | 72 |
 | `depth` | each eye's depth given to the headset | true | false |
+| `space_warp` | `"off"`, `"auto"`, `"on"`: every other frame made by the headset | `"auto"` (off) | `"auto"` (off) |
 
 ```toml
 [xr]
@@ -418,6 +419,31 @@ with the OpenXR loader beside the game and a manifest that starts it in the
 headset rather than in a flat window. Install it with `adb install -r` with
 the Quest connected and in developer mode; it appears among the headset's
 apps. A game needs `[xr] enabled = true` to be built for the Quest.
+
+### Half the frames, and the headset makes the rest
+
+A Quest can draw every other frame itself. The game is drawn at half the
+display's rate -- 36 frames a second at 72 -- and the headset moves what it
+drew into the frames between, by how each thing was moving. That is about
+twice the GPU time for each frame the game draws:
+
+```toml
+[xr]
+space_warp = "on"
+```
+
+or `XRService.SpaceWarp = true` in play. Each eye then hands the headset the
+motion of what is solid and of the interface, and its depth. What the frames
+between get less right is what moves fast and is thin, and what blends --
+glass, smoke and sparks move with what is behind them. For a moment that
+must be exact, turn it off with `XRService.SpaceWarp = false` and on again
+after. `BindToRenderStep` and `PreRender` run once for each drawn frame,
+with a `dt` twice as long.
+
+`"auto"` is off until the frames made between are measured on a Quest. A
+PC headset has no such frames; the simulated headset writes each eye's
+motion beside its picture with `--xr-eyes-shot`, to check what a game hands
+over.
 
 ## Testing without a headset
 

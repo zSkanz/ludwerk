@@ -103,6 +103,18 @@ struct HeadsetFrame
     // each written before it ends, as `setDepthRange` says it is.
     std::array<TextureHandle, 2> depth{};
     TextureFormat depthFormat = TextureFormat::Undefined;
+    // **What the runtime makes the frames between from** (ADR 0252), where
+    // frames are made between this frame and the next: each eye's motion
+    // (`Rgba16Float`, where each surface moved in normalized device
+    // coordinates since the frame before, through this frame's view) and its
+    // depth, `motionWidth` by `motionHeight` -- the size the runtime asks
+    // for, smaller than the eye. None otherwise. A frame that has them has
+    // both written before it ends.
+    std::array<TextureHandle, 2> motion{};
+    std::array<TextureHandle, 2> motionDepth{};
+    u32 motionWidth = 0;
+    u32 motionHeight = 0;
+    TextureFormat motionDepthFormat = TextureFormat::Undefined;
 };
 
 // **How the headset's frames have gone** since the last time it was asked
@@ -316,6 +328,21 @@ public:
     // **The space the poses and the eyes are in from the next frame**
     // (ADR 0245 §1). Standing until asked.
     virtual void setSpace(HeadsetSpace space) { (void)space; }
+    // **Frames made between the drawn ones** (ADR 0252): whether the
+    // runtime can, and, from the next frame, whether it does. The game is
+    // then paced to half the display's rate, and each frame carries its
+    // motion and depth (`HeadsetFrame::motion`).
+    [[nodiscard]] virtual bool supportsSpaceWarp() const noexcept { return false; }
+    virtual void setSpaceWarp(bool on) { (void)on; }
+    // **How the game moved the player's space since the last frame** -- a
+    // snap turn, a seat in a vehicle -- as a pose of the new space in the
+    // old, and whether this frame is a cut (a teleport, a scene changed)
+    // that nothing is to be made from. Before `endFrame`.
+    virtual void setSpaceMotion(const HeadsetPose& moved, bool cut)
+    {
+        (void)moved;
+        (void)cut;
+    }
     // **The floor's play area**: the width and depth, in metres, of the
     // rectangle the player set up around the standing space's origin, or
     // nothing where the runtime knows none.

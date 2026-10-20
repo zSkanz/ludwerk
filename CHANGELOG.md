@@ -53,6 +53,11 @@ here.
   `servers.toml` schedules backups (`backup_every_hours`, `backup_keep`)
   and keeps the move log `moves_keep_days`, 90 by default. A dedicated
   server with no manager answers the same at its own console.
+- A standalone headset can draw every other frame and have its runtime
+  make the rest (`[xr] space_warp`, `XRService.SpaceWarp`, off until
+  measured on a Quest): each eye hands over the motion of what is solid and
+  of the interface, and its depth, and the player's space moving goes with
+  every frame.
 - Shapes drawn on a part: `BoxHandleAdornment`, `SphereHandleAdornment`,
   `CylinderHandleAdornment`, `ConeHandleAdornment`, `LineHandleAdornment` and
   `ImageHandleAdornment`, placed by a `CFrame` on their adornee, and the

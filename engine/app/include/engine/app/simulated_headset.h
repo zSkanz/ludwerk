@@ -67,6 +67,20 @@ public:
     // the head stands at rest -- 1.6 m over the floor -- as OpenXR's local
     // space is from the head's start.
     void setSpace(rhi::HeadsetSpace space) override { m_seated = space == rhi::HeadsetSpace::Seated; }
+    // **Frames made between** (ADR 0252), as a standalone runtime offers
+    // them: a motion image and its depth a quarter of the eye each way,
+    // written as a runtime's would be -- for the PC to check what the eyes
+    // hand over. Nothing is made between: the frames go on at the PC's rate.
+    [[nodiscard]] bool supportsSpaceWarp() const noexcept override { return true; }
+    void setSpaceWarp(bool on) override { m_warp = on; }
+    void setSpaceMotion(const rhi::HeadsetPose& moved, bool cut) override
+    {
+        m_spaceMoved = moved;
+        m_spaceCut = cut;
+    }
+    // What the last frame said of the player's space moving, for a test.
+    [[nodiscard]] const rhi::HeadsetPose& spaceMoved() const noexcept { return m_spaceMoved; }
+    [[nodiscard]] bool spaceCut() const noexcept { return m_spaceCut; }
     // A room three metres by three.
     [[nodiscard]] std::optional<std::array<core::f32, 2>> playArea() const override
     {
@@ -91,6 +105,7 @@ public:
     // The eyes' images as the last frame left them, for a test to read back.
     [[nodiscard]] rhi::TextureHandle image(core::u32 eye) const noexcept { return m_images[eye]; }
     [[nodiscard]] rhi::TextureHandle depthImage(core::u32 eye) const noexcept { return m_depthImages[eye]; }
+    [[nodiscard]] rhi::TextureHandle motionImage(core::u32 eye) const noexcept { return m_motionImages[eye]; }
     // **A recorded room** (ADR 0247 §2), as the Quest's scene gives one: a
     // floor three metres by three, the ceiling at 2.5, four walls, and a table
     // whose top is 0.75 up -- answered at the frame after it is asked for.
@@ -147,6 +162,12 @@ private:
     core::u32 m_height = 0;
     std::array<rhi::TextureHandle, 2> m_images{};
     std::array<rhi::TextureHandle, 2> m_depthImages{};
+    // Each eye's motion and its depth, made the first frame they are asked for.
+    std::array<rhi::TextureHandle, 2> m_motionImages{};
+    std::array<rhi::TextureHandle, 2> m_motionDepthImages{};
+    bool m_warp = false;
+    rhi::HeadsetPose m_spaceMoved{};
+    bool m_spaceCut = false;
     bool m_passthrough = false;
     core::f32 m_refreshRate = 0.0f;
     core::u64 m_framesTaken = 0;
