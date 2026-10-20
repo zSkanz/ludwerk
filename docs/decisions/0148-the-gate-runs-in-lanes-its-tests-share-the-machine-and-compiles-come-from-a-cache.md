@@ -114,11 +114,11 @@ leave them out, and the `perf` stage runs them last and alone.
 
 ## Amended 2026-10-20: `quiet`, what only a quiet machine can measure
 
-Some timed claims are a ratio on one machine and hold on a shared runner:
-the sign-in pool's rate against one thread's, measured beside it. Others are
-a tolerance no neighbour may move, and those do not: a wrong password's
-answer within a tenth of a right one's failed on all three hosted runners,
-where four tests run at once on four cores beside other people's jobs.
+A timed claim on a shared runner is a measure of its neighbours: a wrong
+password's answer within a tenth of a right one's failed on all three hosted
+runners, where four tests run at once beside other people's jobs, and even a
+ratio taken on the same machine, the sign-in pool's rate against one
+thread's, failed on the hosted macOS runner, four tests on three cores.
 
 A test labelled `quiet` as well as `perf` runs **only in the `perf` stage,
 by itself**: the full run's `perf` stage and `-Only perf`. Every other
@@ -127,7 +127,15 @@ nightly's Tier-2 run (`ENG_GATE_PERF=with`), and a stage run by itself even
 with `-Perf`. A `quiet` claim is never the only proof of its property: what
 it measures is also shown without a clock, in a test that runs everywhere
 -- for the sign-ins, each way an ask can go counted at one Argon2
-evaluation of one cost.
+evaluation of one cost, and the pool's threads counted hashing at once.
+
+**The engine's guard of its performance is the local `perf` stage, not the
+workflow.** `perf_budget`, the bench held to its budgets, is `quiet` as
+well: a terrain bench sat at 16.03 ms against its 16 even on a local machine
+with other work beside it, and on a shared runner the next red would be the
+neighbours'. Every full local run measures it last and alone. What stays in
+the workflow that reads a clock is a bound on liveness -- an answer long
+before the timeout a fault would wait out, with ten times the room or more.
 
 ## Amended 2026-10-20: a block of ports for each checkout
 

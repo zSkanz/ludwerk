@@ -153,6 +153,10 @@ public:
     };
     // With `Options::keepWork`, one for each answer `take` gave, in order.
     [[nodiscard]] std::vector<Work> takeWork();
+    // **The most Argon2 evaluations the pool has had in flight at once**: a
+    // pool of four asked many at once reaches four -- its parallelism shown
+    // without a clock, which a shared machine cannot be trusted with.
+    [[nodiscard]] core::u32 mostAtOnce() const;
 
     // **The console's `account`** (§3): `create <name> <password>`, `rename
     // <name> <new name>`, `password <name> <password>`, `delete <name>`. A
@@ -240,6 +244,9 @@ private:
     std::deque<Job> m_jobs;
     std::vector<Done> m_done;
     bool m_stopping = false;
+    // Evaluations in flight now, and the most there have been.
+    core::u32 m_hashing = 0;
+    core::u32 m_mostHashing = 0;
     std::vector<std::thread> m_threads;
 };
 

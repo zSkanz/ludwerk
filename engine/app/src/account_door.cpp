@@ -422,20 +422,35 @@ void AccountDoor::work()
                 }
             }
         }
-        else if (job.hashing) {
-            done.hash = core::hashPassword(job.password);
-            done.ok = !done.hash.empty();
-            done.cost = core::passwordCost(done.hash);
-        }
         else {
-            done.ok = core::verifyPassword(job.hash, job.password);
-            done.cost = core::passwordCost(job.hash);
+            {
+                const std::lock_guard guard(m_lock);
+                m_hashing += 1;
+                m_mostHashing = std::max(m_mostHashing, m_hashing);
+            }
+            if (job.hashing) {
+                done.hash = core::hashPassword(job.password);
+                done.ok = !done.hash.empty();
+                done.cost = core::passwordCost(done.hash);
+            }
+            else {
+                done.ok = core::verifyPassword(job.hash, job.password);
+                done.cost = core::passwordCost(job.hash);
+            }
+            const std::lock_guard guard(m_lock);
+            m_hashing -= 1;
         }
         done.hashes = done.cost.empty() ? 0 : 1;
         core::wipe(job.password);
         const std::lock_guard guard(m_lock);
         m_done.push_back(std::move(done));
     }
+}
+
+core::u32 AccountDoor::mostAtOnce() const
+{
+    const std::lock_guard guard(m_lock);
+    return m_mostHashing;
 }
 
 std::string AccountDoor::run(std::string_view line)

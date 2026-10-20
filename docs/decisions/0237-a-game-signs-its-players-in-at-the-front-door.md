@@ -253,8 +253,13 @@ the account's own player and never shut them out.
   taken name at exactly one evaluation each, all of the same cost, and an
   answer refused before the pool at none. That runs everywhere. The time
   itself is `accounts_clock`, labelled `quiet` (ADR 0148): only the local
-  gate's `perf` stage, alone, runs it; `accounts_timed` keeps the pool's
-  rate and stays in the workflow.
+  gate's `perf` stage, alone, runs it. The pool's rate, `accounts_timed`, is
+  `quiet` as well: half again one thread's rate failed on the hosted macOS
+  runner, four tests on three cores, at 13 sign-ins a second against 11. The
+  door counts the most evaluations it has had in flight at once
+  (`mostAtOnce`), and a case of the suite holds a pool of four asked many
+  sign-ins at once at four and a pool of one at one: the parallelism the
+  rate showed, shown everywhere without a clock.
 - **The limits** (§2, amendment G): five failures from an address in a
   minute refuse the next with no hash and the seconds left; five on a
   skeleton in fifteen minutes make each next try on it wait 1, 2, 4 ... 32

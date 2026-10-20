@@ -383,6 +383,35 @@ TEST_CASE("account door > a match of Nakama's matchmaker is believed of Nakama, 
     CHECK(door.door->takeMatches().empty());
 }
 
+TEST_CASE("account door > a pool of four hashes four at once, and a pool of one one")
+{
+    // **The pool's parallelism without a clock** (amendment A): its rate is a
+    // quiet machine's to measure, and a hosted runner with four tests on
+    // three cores made 13 sign-ins a second on four threads against 11 on
+    // one. What the rate shows is that the pool's threads hash at once; this
+    // counts them doing so, everywhere.
+    for (const unsigned threads : {4u, 1u}) {
+        CAPTURE(threads);
+        AccountDoor::Options options;
+        options.threads = threads;
+        options.most = 256;
+        Door door(options);
+        REQUIRE(door.ask("ana_1", "correct horse battery", true).failure == Failure::None);
+        constexpr int Asked = 32;
+        for (int at = 0; at < Asked; ++at)
+            door.door->ask(static_cast<engine::core::u32>(at + 2), "10.4.0." + std::to_string(at), "ana_1",
+                           "correct horse battery", false);
+        int answered = 0;
+        for (int at = 0; at < 4000 && answered < Asked; ++at) {
+            door.door->frame();
+            answered += static_cast<int>(door.door->take().size());
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK(answered == Asked);
+        CHECK(door.door->mostAtOnce() == threads);
+    }
+}
+
 TEST_CASE("account door > a wrong name, a wrong password and a taken name take a right one's time" *
           doctest::skip(!engine::platform::environmentFlag("ENG_TIMED_TESTS")))
 {

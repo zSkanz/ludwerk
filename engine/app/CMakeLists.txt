@@ -607,14 +607,16 @@ if(ENG_BUILD_TESTS)
     add_test(NAME editor_shell COMMAND engine_app_tests "--test-case=*F3 flips*")
     # **The sign-ins' times** (ADR 0237 amendment A). They measure time, so
     # they run with the other timed tests; in the suite they are skipped.
-    # The pool of four against one thread's rate is a ratio on one machine
-    # and holds on a shared runner. A wrong name, a wrong password and a taken
-    # one within a tenth of a right one's time does not: neighbours on a
-    # hosted runner move a tenth easily. That one is `quiet` (ADR 0148), run
-    # where nothing else is -- the local gate's perf stage -- and left out of
-    # the workflow; the same work without a clock is a case of the suite.
+    # Both are `quiet` (ADR 0148), run where nothing else is -- the local
+    # gate's perf stage -- and left out of the workflow: a wrong name, a wrong
+    # password and a taken one within a tenth of a right one's time failed on
+    # every hosted runner, and the pool of four at half again one thread's
+    # rate failed on macOS's, four tests on three cores. What each shows is
+    # proved without a clock by a case of the suite: the same work every way
+    # an ask goes, and the pool's threads hashing at once.
     add_test(NAME accounts_timed COMMAND engine_app_tests "--test-case=*a pool of four signs in*")
-    set_tests_properties(accounts_timed PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300 LABELS perf)
+    set_tests_properties(accounts_timed PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300
+        LABELS "perf;quiet")
     add_test(NAME accounts_clock COMMAND engine_app_tests "--test-case=*take a right one's time*")
     set_tests_properties(accounts_clock PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300
         LABELS "perf;quiet")
@@ -1426,7 +1428,11 @@ if(ENG_BUILD_TESTS)
 
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)
-    set_tests_properties(perf_budget PROPERTIES TIMEOUT 600 LABELS perf)
+    # `quiet` (ADR 0148): the bench's budgets are the local gate's perf
+    # stage's to hold, alone on the machine. On a shared runner they measure
+    # the neighbours: a terrain bench sat at 16.03 ms against its 16 even here
+    # with other work running.
+    set_tests_properties(perf_budget PROPERTIES TIMEOUT 600 LABELS "perf;quiet")
 
     # The blocking render-regression gate (architecture.md §9): record the
     # command stream and diff it byte-for-byte against a golden. No GPU, no
