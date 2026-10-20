@@ -268,6 +268,16 @@ std::optional<core::EngineError> WorldManager::start()
     dataOptions.movesKeepDays = m_options.config.movesKeepDays;
     m_dataConsole = std::make_unique<DataConsole>(std::move(dataOptions));
     m_parties = std::make_unique<PartyBook>(m_options.config.partySize);
+    // **Ids and lobby codes** of random letters: a code is read aloud, and
+    // one is never guessed from the last.
+    m_matches = std::make_unique<MatchBook>([](core::usize count) {
+        std::vector<core::u8> bytes(count);
+        core::secureRandom(bytes);
+        std::string letters(count, 'A');
+        for (core::usize at = 0; at < count; ++at)
+            letters[at] = static_cast<char>('A' + bytes[at] % 26u);
+        return letters;
+    });
     if (m_options.config.accounts) {
         AccountDoor::Options accounts;
         accounts.secret = m_signing.secret;
@@ -575,6 +585,12 @@ void WorldManager::reply(World& asker, core::u32 id, std::string_view instance, 
 
 void WorldManager::closed(World& instance, std::string_view reason)
 {
+    // **Its match is over**, however it ended (ADR 0243).
+    if (!instance.match.empty() && m_matches != nullptr) {
+        m_matches->endMatch(instance.match);
+        instance.match.clear();
+        instance.matchArrived.clear();
+    }
     // **The world that made it learns it is gone** (ADR 0221).
     if (instance.creator == nullptr || instance.creator->process == nullptr)
         return;
@@ -600,25 +616,27 @@ void WorldManager::allocate(World& instance)
     allocate.field("type", "allocate");
     allocate.field("scene", std::string_view{instance.config.scene});
     allocate.field("data", std::string_view{instance.askedData});
+    // A match's instance makes its load data of the match itself (ADR 0243).
+    if (!instance.askedMatch.empty())
+        allocate.field("match", std::string_view{instance.askedMatch});
     allocate.endObject();
     send(instance, allocate);
     if (instance.asker != nullptr)
         reply(*instance.asker, instance.askedId, instance.config.name, {});
     instance.asker = nullptr;
+    if (!instance.match.empty())
+        matchReady(instance);
     const std::array<core::I18nArg, 2> args{core::I18nArg{"instance", std::string_view{instance.config.name}},
                                             core::I18nArg{"template", std::string_view{instance.templateName}}};
     core::log(core::LogLevel::Info, ENG_TR("manager.info.instance_allocated"), args);
 }
 
-void WorldManager::createInstance(World& asker, const ManagerMessage& message)
+WorldManager::World* WorldManager::openInstance(const std::string& templateName, std::string& why)
 {
-    const core::JsonValue root = message.root();
-    const core::u32 id = static_cast<core::u32>(root["id"].asInteger(0));
-    const std::string templateName(root["template"].asString());
     const ServersConfig::Instance* config = m_options.config.instance(templateName);
     if (config == nullptr) {
-        reply(asker, id, {}, phrase(ENG_TR("manager.err.no_such_template")));
-        return;
+        why = phrase(ENG_TR("manager.err.no_such_template"));
+        return nullptr;
     }
     // **Bounded**: the template's own limit, and the machine's memory.
     const auto running = static_cast<core::u32>(std::count_if(m_worlds.begin(), m_worlds.end(), [&](const auto& w) {
@@ -626,9 +644,9 @@ void WorldManager::createInstance(World& asker, const ManagerMessage& message)
                w->state != State::Stopped;
     }));
     if (running >= config->maxInstances) {
-        reply(asker, id, {}, phrase(ENG_TR("manager.err.instances_full")));
-        say(phrase(ENG_TR("manager.err.instances_full")));
-        return;
+        why = phrase(ENG_TR("manager.err.instances_full"));
+        say(why);
+        return nullptr;
     }
     // **And the machine's own limit** where one is set: the editor's.
     if (m_options.mostWorlds != 0) {
@@ -638,20 +656,20 @@ void WorldManager::createInstance(World& asker, const ManagerMessage& message)
         if (alive >= m_options.mostWorlds) {
             const std::array<core::I18nArg, 1> most{
                 core::I18nArg{"count", static_cast<core::i64>(m_options.mostWorlds)}};
-            reply(asker, id, {}, phrase(ENG_TR("manager.err.most_worlds"), most));
-            say(phrase(ENG_TR("manager.err.most_worlds"), most));
-            return;
+            why = phrase(ENG_TR("manager.err.most_worlds"), most);
+            say(why);
+            return nullptr;
         }
     }
     if (const core::u64 free = platform::freeMemoryBytes();
         free != 0 && free < static_cast<core::u64>(m_options.config.minFreeMegabytes) * 1024u * 1024u) {
-        reply(asker, id, {}, phrase(ENG_TR("manager.err.memory_low")));
-        return;
+        why = phrase(ENG_TR("manager.err.memory_low"));
+        return nullptr;
     }
     World* instance = nullptr;
     for (const std::unique_ptr<World>& world : m_worlds) {
         if (world->instance && world->warm && world->templateName == templateName && world->state == State::Ready &&
-            world->asker == nullptr) {
+            world->asker == nullptr && world->match.empty()) {
             instance = world.get();
             break;
         }
@@ -659,24 +677,39 @@ void WorldManager::createInstance(World& asker, const ManagerMessage& message)
     if (instance == nullptr)
         instance = &startInstance(*config, false);
     instance->warm = false;
+    instance->asker = nullptr;
+    instance->creator = nullptr;
+    instance->askedId = 0;
+    instance->askedData.clear();
+    instance->askedKeys.clear();
+    instance->match.clear();
+    instance->askedMatch.clear();
+    instance->matchArrived.clear();
+    return instance;
+}
+
+void WorldManager::createInstance(World& asker, const ManagerMessage& message)
+{
+    const core::JsonValue root = message.root();
+    const core::u32 id = static_cast<core::u32>(root["id"].asInteger(0));
+    std::string why;
+    World* instance = openInstance(std::string(root["template"].asString()), why);
+    if (instance == nullptr) {
+        reply(asker, id, {}, why);
+        return;
+    }
     instance->asker = &asker;
     instance->creator = &asker;
     instance->askedId = id;
     instance->askedData = std::string(root["data"].asString());
-    instance->askedKeys.clear();
     for (core::usize at = 0; at < root["players"].size(); ++at)
         instance->askedKeys.emplace_back(root["players"].at(at).asString());
     // **For a party** (ADR 0240 §1): its members online, in any world.
     if (const std::string_view partyId = root["party"].asString(); !partyId.empty() && m_parties != nullptr) {
         if (const std::optional<Party> party = m_parties->find(partyId); party.has_value()) {
-            for (const std::unique_ptr<World>& world : m_worlds) {
-                for (const auto& [key, account] : world->present) {
-                    const std::string who = memberOf(key, account);
-                    if (std::find(party->members.begin(), party->members.end(), who) != party->members.end() &&
-                        std::find(instance->askedKeys.begin(), instance->askedKeys.end(), key) ==
-                            instance->askedKeys.end())
-                        instance->askedKeys.push_back(key);
-                }
+            for (const std::string& key : keysOf(party->members)) {
+                if (std::find(instance->askedKeys.begin(), instance->askedKeys.end(), key) == instance->askedKeys.end())
+                    instance->askedKeys.push_back(key);
             }
         }
     }
@@ -1097,7 +1130,7 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
         const std::array<core::I18nArg, 2> args{core::I18nArg{"world", std::string_view{world.config.name}},
                                                 core::I18nArg{"port", static_cast<core::i64>(world.port)}};
         core::log(core::LogLevel::Info, ENG_TR("manager.info.world_ready"), args);
-        if (world.instance && world.asker != nullptr)
+        if (world.instance && (world.asker != nullptr || !world.match.empty()))
             allocate(world);
         return;
     }
@@ -1207,6 +1240,10 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
     }
     if (type == "party-travel" && m_parties != nullptr) {
         partyTravel(message);
+        return;
+    }
+    if (type == "match-op" && m_matches != nullptr) {
+        matchOp(world, message, now);
         return;
     }
     if (type == "data-load" && m_data != nullptr) {
@@ -1629,6 +1666,8 @@ void WorldManager::frame()
         m_parties->setOnline(online, now);
         partyNotices();
     }
+    if (m_matches != nullptr)
+        matchFrame(now);
     if (m_dataConsole != nullptr && m_data != nullptr && m_options.unixClock)
         m_dataConsole->frame(*m_data, m_options.unixClock());
     // Drained: stopped once empty, or after a while whatever it holds.

@@ -38,6 +38,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`LeaderboardService`](leaderboardservice.md) | [`Instance`](instance.md) | Reads and writes the platform's leaderboards. |
 | [`Lighting`](lighting.md) | [`Instance`](instance.md) | Controls the time of day, the sun and the ambient light of the world. |
 | [`LocalizationService`](localizationservice.md) | [`Instance`](instance.md) | Returns the game's text by key, in the player's language. |
+| [`MatchmakingService`](matchmakingservice.md) | [`Instance`](instance.md) | Matches the players of an online game into instances by mode, rating and region, and keeps lobbies where players gather by a code for a custom game. |
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Finds where agents can walk and computes paths. |
 | [`NetworkService`](networkservice.md) | [`Instance`](instance.md) | Reports the role of this process in a networked game, and joins, hosts and leaves matches. |
 | [`PartyService`](partyservice.md) | [`Instance`](instance.md) | Keeps the parties of an online game: players who play together across its worlds, channels and instances. |

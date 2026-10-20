@@ -3,9 +3,20 @@
 // hears what changed.
 #pragma once
 
+#include <string>
+
 struct lua_State;
 
+namespace engine::scene {
+struct PlayerComponent;
+}
+
 namespace engine::script {
+
+// **Who a player is in a party**, and in a queue: their account, else their
+// key; a player of a match with neither -- one machine, nothing encrypted --
+// by their number.
+[[nodiscard]] std::string partyMemberOf(const scene::PlayerComponent& player);
 
 int partyServiceMemberIdOf(lua_State* L);
 int partyServiceCreateAsync(lua_State* L);

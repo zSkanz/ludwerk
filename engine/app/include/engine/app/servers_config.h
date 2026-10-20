@@ -61,6 +61,9 @@ struct ServersConfig
 
     // `[parties] size` (ADR 0240 §1): the most members a party has.
     core::u32 partySize = 8;
+    // `[manager] region` (ADR 0243 §1): the region its players are matched
+    // in, where a script names none.
+    std::string region;
 
     // `[[world]]`: a world that runs while the manager does.
     struct World

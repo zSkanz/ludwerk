@@ -107,6 +107,53 @@ instance and sends them, as a match does. An empty lobby is gone.
 - A match is an instance, so everything instances have -- a warm pool, a
   reconnect, a closed instance sending its players back -- a match has.
 
+## As built (2026-10-19)
+
+- **The book** is the manager's (`MatchBook`): queues as each world says
+  them, tickets in the order they were made, and the matches and lobbies
+  being played and waited in. Each frame it makes every match it can, for
+  the oldest ticket first: the tickets within its window -- `Step` at first,
+  `Step` more every `After` seconds, `Most` at most -- and, with `Regions`,
+  in its region until the window is widest; then a bounded search that fills
+  the teams, each ticket whole on one team.
+- **A match is an instance**: the manager opens one of the template, lets in
+  exactly its players, and once it is ready sends each world with any of them
+  `Matched` and the hop, as a party's `TravelGroup` is sent. The instance
+  reads `SceneService:GetLoadData().Match` (`Id`, `Queue`, `Teams`): the
+  manager sends the match with the instance's scene, and the instance makes
+  the load data of it itself, as a `RemoteEvent` carries it -- a template
+  needs a `scene` for that. One it could not open (its limit, the machine's
+  memory) lets the match go, its players free to queue again, and the
+  operator is told.
+- **A player who leaves** the instance, once in it, has left the match. A
+  match ends when its instance closes.
+- **Backfill** puts a place before every ticket of the queue, filled by the
+  first lone ticket within the window of the match's mean rating.
+- **Ratings** are the data service's shared values, scope `rating`, key
+  `<rating>:<member>`, a number as a script writes one; written only by the
+  manager's thread. `ReportResultAsync(match, winningTeam)` takes the winning
+  team's number (1-based) rather than a table: a game with draws or places
+  writes the numbers itself with `SetRatingAsync`.
+- **Lobbies**: `StartLobbyAsync(lobby, by)` takes the player starting it, who
+  must be its owner; a lobby started is a match of one team, with no queue
+  and so no rating. `LobbyChanged` fires once more with no `Members` when a
+  lobby is gone.
+- **Ids and codes** are random letters (`m-`, `t-`, `l-` and a count before
+  them); a code is six capitals, joined in any case.
+- **Proved**: in the book's own tests, 200 players in mixed parties -- 40
+  solos and 30 pairs for 2v2, 40 solos, 20 pairs and 5 fours for 4v4,
+  ratings from 1,200 to 1,800 -- queued at once: 25 and 12 matches, every
+  one full, no party split, nobody in two, the last at 50 seconds, when the
+  window is widest; the window's widening, regions, backfill, lobbies and
+  Elo's numbers. Under the manager, with worlds and players: a party and
+  three players queued in the town, two teams of two sent to one instance
+  that read its match from its load data, two wins taking a rating from
+  1,500 to 1,530.53 (and the loser's to 1,469.47) in the data service, a
+  player who left replaced by the one who waited; and eight players in a
+  lobby by its code, refused to start until all were ready and by anyone
+  but its owner, then all eight in one instance. `[matchmaking] provider` is
+  C6's (ADR 0242).
+
 ## Not decided here
 
 Matching across several managers (regions on several machines need a shared

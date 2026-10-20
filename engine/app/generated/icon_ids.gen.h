@@ -202,6 +202,7 @@ inline constexpr std::string_view ClassLinearVelocity = "class.LinearVelocity";
 inline constexpr std::string_view ClassLipSync = "class.LipSync";
 inline constexpr std::string_view ClassLocalizationService = "class.LocalizationService";
 inline constexpr std::string_view ClassLowPassSoundEffect = "class.LowPassSoundEffect";
+inline constexpr std::string_view ClassMatchmakingService = "class.MatchmakingService";
 inline constexpr std::string_view ClassMaterial = "class.Material";
 inline constexpr std::string_view ClassMeshPart = "class.MeshPart";
 inline constexpr std::string_view ClassModel = "class.Model";

@@ -7182,6 +7182,111 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     partyServiceDesc.events = partyServiceEvents;
     classes.registerClass(partyServiceDesc);
 
+    // --- MatchmakingService ---
+    static std::array<MethodDesc, 13> matchmakingServiceMethods;
+    matchmakingServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("DefineQueue"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Says what a queue is: the template a match is played in, `Teams` teams of `TeamSize` (2 of 1 by default), and the rating kept for it, if any. Tickets fit when their ratings are within `Widen.Step` points (100) of the one that has waited longest, a window that widens by `Step` every `Widen.After` seconds (10) up to `Widen.Most` (600). With `Regions` (true), players are matched within their region until the window is widest. Every world of the game says the same; a queue said again replaces the one before.",
+        },
+        MethodDesc{
+            .name = atoms.intern("QueueAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Queues a player, or a party by its id with every member online on one ticket, and returns the ticket's id. Queueing again cancels the ticket before. Returns nil and the reason, `NoQueue`, `InMatch`, `InLobby`, `TooMany` (a party bigger than a team) or `NoParty`; each of these methods answers a refusal so, and never raises for one. The region is the manager's (`[manager] region`) unless `options.Region` says another.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CancelAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes a ticket out of its queue. Returns false and `NoTicket` for one already matched or gone.",
+        },
+        MethodDesc{
+            .name = atoms.intern("BackfillAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Asks for one player for team `team` (1-based) of a running match whose player left. The place goes before every ticket in the queue and is filled by the first lone player who fits, who is sent into the running instance; `Matched` fires in their world. Returns the place's ticket, or nil and `NoMatch`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ReportResultAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Says which team (1-based) won a match, and moves the ratings of its players by Elo (K = 32): each team against the others' mean. Ratings start at 1,500 and are kept in the data service, scope `rating`, under `<rating>:<member>`. Returns false and `NoMatch`, or `NoRating` for a queue that keeps none.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetRatingAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "A player's rating, or a member id's, under a rating's name; 1,500 for one never rated.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetRatingAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Writes a rating, for a game that rates its players another way.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CreateLobbyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes a lobby for a custom game of `Template`, at most `Size` players (8), listed for everyone when `Public`. Its `Code`, six letters, is what its maker gives their friends. Refused with `InMatch` or `InLobby`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("JoinLobbyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts a player in the lobby with this code, in any case. Refused with `NoLobby`, `Full`, `InLobby` or `InMatch`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("LeaveLobbyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes a player out of their lobby. An owner who leaves hands it to the member who joined first after them; the last one leaving ends it, when it returns nil and no reason.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetReadyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Says whether a player in a lobby is ready. Refused with `NotMember`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("ListLobbiesAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The public lobbies, of one template where `filter.Template` names it.",
+        },
+        MethodDesc{
+            .name = atoms.intern("StartLobbyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Starts a lobby, on behalf of its owner: an instance of its template is made for its members, `Matched` fires in their worlds, and they are sent there as one team. The lobby is gone. Refused with `NotOwner`, or `NotReady` until every member is ready.",
+        },
+    }};
+    static std::array<EventDesc, 2> matchmakingServiceEvents;
+    matchmakingServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("Matched"),
+            .slot = 7,
+            .doc = "Fires in every world one of a match's players is in, as they are sent to its instance: `Instance` is its id, and `Teams` each team's members by `MemberIdOf`. Also for a player who fills a place in a running match.",
+        },
+        EventDesc{
+            .name = atoms.intern("LobbyChanged"),
+            .slot = 8,
+            .doc = "Fires in every world one of a lobby's members is in when it changes: a player joins, leaves or is ready. When it is gone, emptied or started, it fires once more with no `Members`.",
+        },
+    }};
+    ClassDescriptor matchmakingServiceDesc;
+    matchmakingServiceDesc.name = atoms.intern("MatchmakingService");
+    matchmakingServiceDesc.super = instanceClass;
+    matchmakingServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    matchmakingServiceDesc.defaultName = atoms.intern("MatchmakingService");
+    matchmakingServiceDesc.doc = "Matches the players of an online game into instances by mode, rating and region, and keeps lobbies where players gather by a code for a custom game. The queues are the manager's, so a player in any world is matched with players in any other.\012\012A match is an instance (`InstanceService`) of its queue's template, made for exactly the matched players: the manager makes it, fires `Matched` in each of their worlds and sends them there. The instance reads the match from `SceneService:GetLoadData()`, as `{ Match = info }`. A party queues as one ticket and is never split. A player is in one queue, one lobby and one match at a time. A member is who `PartyService:MemberIdOf` says a player is. Server side only, and only in a world a manager started: elsewhere every method but `DefineQueue` raises.";
+    matchmakingServiceDesc.methods = matchmakingServiceMethods;
+    matchmakingServiceDesc.events = matchmakingServiceEvents;
+    classes.registerClass(matchmakingServiceDesc);
+
     // --- InstanceService ---
     static std::array<PropertyDesc, 1> instanceServiceProperties;
     instanceServiceProperties = {{

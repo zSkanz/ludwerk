@@ -1168,6 +1168,34 @@ struct EngineState
         std::string data;
     };
     std::vector<PartyTravel> partyTravels;
+    // **Matchmaking and lobbies** (ADR 0243): what a script asked of the
+    // manager's queues, as text, and the answers; and what the manager said
+    // since -- a match its players here are in, a lobby that changed or is
+    // gone -- as the JSON it sent, for `Matched` and `LobbyChanged`.
+    struct MatchOp
+    {
+        u32 id = 0;
+        std::string request;
+    };
+    std::vector<MatchOp> matchOps;
+    struct MatchResult
+    {
+        u32 id = 0;
+        std::string answer;
+    };
+    std::vector<MatchResult> matchResults;
+    u32 nextMatchOp = 1;
+    std::vector<std::string> matchesMade;
+    std::vector<std::string> lobbiesChanged;
+    // **An instance given to a match**: its scene, and the match as the
+    // manager sent it, made into the scene's load data -- `{ Match = info }`
+    // as a `RemoteEvent` carries it -- where there is Luau to make it with.
+    struct MatchLoad
+    {
+        std::string scene;
+        std::string match;
+    };
+    std::optional<MatchLoad> pendingMatchLoad;
     std::vector<f64> channelMerging;
     // **In line at the front door** (ADR 0232): each place this machine was
     // told, with the seconds until its turn, below 0 for none.

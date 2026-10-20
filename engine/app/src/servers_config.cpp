@@ -73,6 +73,8 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
         config.publicAddress = std::string(*address);
     if (const std::optional<std::string_view> logs = document.string("manager.logs"))
         config.logs = std::string(*logs);
+    if (const std::optional<std::string_view> region = document.string("manager.region"))
+        config.region = std::string(*region);
     core::u32 port = config.port;
     count("manager.port", 1, 65535, port);
     config.port = static_cast<core::u16>(port);

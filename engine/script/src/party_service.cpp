@@ -39,24 +39,13 @@ void requireServer(lua_State* L)
         raise(L, ENG_TR("script.err.party_client"));
 }
 
-// **Who a player is in a party**: their account, else their key; a player of
-// a match with neither -- one machine, nothing encrypted -- by their number.
-[[nodiscard]] std::string memberOf(const scene::PlayerComponent& player)
-{
-    if (!player.accountId.empty())
-        return player.accountId;
-    if (!player.publicKey.empty())
-        return player.publicKey;
-    return "user:" + std::to_string(player.userId);
-}
-
 [[nodiscard]] std::string checkMember(lua_State* L, int index)
 {
     const core::InstanceId id = checkInstance(L, index);
     const scene::PlayerComponent* player = world(L).players().find(id);
     if (player == nullptr)
         raise(L, ENG_TR("script.err.party_not_a_player"));
-    return memberOf(*player);
+    return partyMemberOf(*player);
 }
 
 [[nodiscard]] std::string checkText(lua_State* L, int index)
@@ -130,6 +119,15 @@ void remember(scene::EngineState& state, const core::JsonValue& party)
 }
 
 } // namespace
+
+std::string partyMemberOf(const scene::PlayerComponent& player)
+{
+    if (!player.accountId.empty())
+        return player.accountId;
+    if (!player.publicKey.empty())
+        return player.publicKey;
+    return "user:" + std::to_string(player.userId);
+}
 
 int partyServiceMemberIdOf(lua_State* L)
 {
@@ -273,7 +271,7 @@ void firePartyEvents(lua_State* L)
         for (core::InstanceId child = network.valid() ? w.firstChild(network) : core::InstanceId{}; child.valid();
              child = w.nextSibling(child)) {
             const scene::PlayerComponent* player = w.players().find(child);
-            if (player == nullptr || memberOf(*player) != invite.member)
+            if (player == nullptr || partyMemberOf(*player) != invite.member)
                 continue;
             const int top = lua_gettop(L);
             pushInstance(L, child);

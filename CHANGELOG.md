@@ -11,6 +11,17 @@ here.
 
 ### Added
 
+- Matchmaking and lobbies for an online game. `MatchmakingService` keeps a
+  game's queues in its manager: a player or a whole party queues from any
+  world, teams fill from tickets whose ratings are close -- a window that
+  widens the longer one waits -- a party is never split, and each match is
+  an instance made for exactly its players, who are sent there. The instance
+  reads its match from its load data, reports who won to move the players'
+  ratings by Elo, kept in the game's database, and asks for a player to fill
+  a place one left. Lobbies gather friends by a six-letter code, list the
+  public ones, and start once everyone is ready. `region` under `[manager]`
+  matches players within their region first.
+
 - Parties, guilds and chat for an online game. `PartyService` keeps a game's
   parties in its manager, across every world, channel and instance: invite,
   accept, leave, kick, a new leader, `Changed` in each world a member is in

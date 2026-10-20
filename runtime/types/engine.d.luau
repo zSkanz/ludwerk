@@ -4843,6 +4843,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CrossWorldService"): CrossWorldService
     function GetService(self, name: "PartyService"): PartyService
+    function GetService(self, name: "MatchmakingService"): MatchmakingService
     function GetService(self, name: "InstanceService"): InstanceService
     function GetService(self, name: "ConsoleService"): ConsoleService
     function GetService(self, name: "CryptoService"): CryptoService
@@ -5580,6 +5581,63 @@ declare extern type PartyService extends Instance with
     function SetLeaderAsync(self, party: string, member: string): ({ Id: string, Leader: string, Members: {string} }?, string?)
     --- The party `player` is in, or nil.
     function GetPartyAsync(self, player: Player): { Id: string, Leader: string, Members: {string} }?
+end
+
+declare extern type MatchmakingService extends Instance with
+    --- Fires in every world one of a match's players is in, as they are sent to its instance:
+    --- `Instance` is its id, and `Teams` each team's members by `MemberIdOf`. Also for a player who
+    --- fills a place in a running match.
+    read Matched: Signal<{ Id: string, Queue: string, Instance: string, Teams: {{string}} }>
+    --- Fires in every world one of a lobby's members is in when it changes: a player joins, leaves or
+    --- is ready. When it is gone, emptied or started, it fires once more with no `Members`.
+    read LobbyChanged: Signal<{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }>
+    --- Says what a queue is: the template a match is played in, `Teams` teams of `TeamSize` (2 of 1 by
+    --- default), and the rating kept for it, if any. Tickets fit when their ratings are within
+    --- `Widen.Step` points (100) of the one that has waited longest, a window that widens by `Step`
+    --- every `Widen.After` seconds (10) up to `Widen.Most` (600). With `Regions` (true), players are
+    --- matched within their region until the window is widest. Every world of the game says the same; a
+    --- queue said again replaces the one before.
+    function DefineQueue(self, name: string, options: { Template: string, Teams: number?, TeamSize: number?, Rating: string?, Widen: { After: number?, Step: number?, Most: number? }?, Regions: boolean? }): ()
+    --- Queues a player, or a party by its id with every member online on one ticket, and returns the
+    --- ticket's id. Queueing again cancels the ticket before. Returns nil and the reason, `NoQueue`,
+    --- `InMatch`, `InLobby`, `TooMany` (a party bigger than a team) or `NoParty`; each of these methods
+    --- answers a refusal so, and never raises for one. The region is the manager's (`[manager] region`)
+    --- unless `options.Region` says another.
+    function QueueAsync(self, who: Player | string, queue: string, options: { Region: string? }?): (string?, string?)
+    --- Takes a ticket out of its queue. Returns false and `NoTicket` for one already matched or gone.
+    function CancelAsync(self, ticket: string): (boolean, string?)
+    --- Asks for one player for team `team` (1-based) of a running match whose player left. The place
+    --- goes before every ticket in the queue and is filled by the first lone player who fits, who is
+    --- sent into the running instance; `Matched` fires in their world. Returns the place's ticket, or
+    --- nil and `NoMatch`.
+    function BackfillAsync(self, match: string, team: number): (string?, string?)
+    --- Says which team (1-based) won a match, and moves the ratings of its players by Elo (K = 32):
+    --- each team against the others' mean. Ratings start at 1,500 and are kept in the data service,
+    --- scope `rating`, under `<rating>:<member>`. Returns false and `NoMatch`, or `NoRating` for a
+    --- queue that keeps none.
+    function ReportResultAsync(self, match: string, winningTeam: number): (boolean, string?)
+    --- A player's rating, or a member id's, under a rating's name; 1,500 for one never rated.
+    function GetRatingAsync(self, who: Player | string, rating: string): number
+    --- Writes a rating, for a game that rates its players another way.
+    function SetRatingAsync(self, who: Player | string, rating: string, value: number): ()
+    --- Makes a lobby for a custom game of `Template`, at most `Size` players (8), listed for everyone
+    --- when `Public`. Its `Code`, six letters, is what its maker gives their friends. Refused with
+    --- `InMatch` or `InLobby`.
+    function CreateLobbyAsync(self, owner: Player, options: { Template: string, Size: number?, Public: boolean? }): ({ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?, string?)
+    --- Puts a player in the lobby with this code, in any case. Refused with `NoLobby`, `Full`,
+    --- `InLobby` or `InMatch`.
+    function JoinLobbyAsync(self, player: Player, code: string): ({ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?, string?)
+    --- Takes a player out of their lobby. An owner who leaves hands it to the member who joined first
+    --- after them; the last one leaving ends it, when it returns nil and no reason.
+    function LeaveLobbyAsync(self, player: Player): ({ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?, string?)
+    --- Says whether a player in a lobby is ready. Refused with `NotMember`.
+    function SetReadyAsync(self, player: Player, ready: boolean): ({ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?, string?)
+    --- The public lobbies, of one template where `filter.Template` names it.
+    function ListLobbiesAsync(self, filter: { Template: string? }?): {{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }}
+    --- Starts a lobby, on behalf of its owner: an instance of its template is made for its members,
+    --- `Matched` fires in their worlds, and they are sent there as one team. The lobby is gone. Refused
+    --- with `NotOwner`, or `NotReady` until every member is ready.
+    function StartLobbyAsync(self, lobby: string, by: Player): ({ Id: string, Queue: string, Instance: string, Teams: {{string}} }?, string?)
 end
 
 declare extern type InstanceService extends Instance with

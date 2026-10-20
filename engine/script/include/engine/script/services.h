@@ -331,6 +331,24 @@ public:
         bool partyOnly = false;
     };
     std::vector<PartyWaiter> partyWaiters;
+    // `MatchmakingService`'s asks (ADR 0243), and what each is given back.
+    struct MatchWaiter
+    {
+        enum class Answer : core::u8
+        {
+            Ticket,
+            Done,
+            Rating,
+            Nothing,
+            Lobby,
+            Lobbies,
+            Match,
+        };
+        core::u32 id = 0;
+        int threadRef = -1;
+        Answer answer = Answer::Done;
+    };
+    std::vector<MatchWaiter> matchWaiters;
     // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
     // headset's answer, each its thread's reference.
     std::vector<int> roomWaiters;

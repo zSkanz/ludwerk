@@ -155,7 +155,9 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         // The template's scene again, with the group's `Data`.
         const std::optional<std::vector<core::u8>> data = core::base64Decode(root["data"].asString());
         const std::string scene(root["scene"].asString());
-        if (data.has_value() && !data->empty() && !scene.empty())
+        if (const std::string_view match = root["match"].asString(); !match.empty() && !scene.empty())
+            state.pendingMatchLoad = scene::EngineState::MatchLoad{scene, std::string(match)};
+        else if (data.has_value() && !data->empty() && !scene.empty())
             state.pendingSceneLoad = scene::EngineState::PendingSceneLoad{scene, *data};
         return;
     }
@@ -241,6 +243,17 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         state.partyInvites.push_back(scene::EngineState::PartyInvite{std::string(root["member"].asString()),
                                                                      std::string(root["party"].asString()),
                                                                      std::string(root["by"].asString())});
+        return;
+    }
+    // **Matchmaking** (ADR 0243): the manager's answers, a match some of this
+    // world's players are in, and a lobby that changed.
+    if (type == "match-result") {
+        state.matchResults.push_back(scene::EngineState::MatchResult{static_cast<core::u32>(root["id"].asInteger(0)),
+                                                                     std::string(root["answer"].asString())});
+        return;
+    }
+    if (type == "match-made" || type == "lobby-changed") {
+        (type == "match-made" ? state.matchesMade : state.lobbiesChanged).emplace_back(root["body"].asString());
         return;
     }
     if (type == "party-travel") {
@@ -533,6 +546,17 @@ void ManagedWorld::sendData(scene::EngineState& state) const
         core::JsonWriter asked(core::JsonLayout::Compact);
         asked.beginObject();
         asked.field("type", "party-op");
+        asked.field("id", static_cast<core::i64>(op.id));
+        asked.field("request", std::string_view{op.request});
+        asked.endObject();
+        send(asked);
+    }
+    std::vector<scene::EngineState::MatchOp> matchOps;
+    matchOps.swap(state.matchOps);
+    for (const scene::EngineState::MatchOp& op : matchOps) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "match-op");
         asked.field("id", static_cast<core::i64>(op.id));
         asked.field("request", std::string_view{op.request});
         asked.endObject();

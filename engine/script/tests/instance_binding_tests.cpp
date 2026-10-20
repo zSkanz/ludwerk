@@ -626,9 +626,11 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // and `CreateRoomParts`; 378: `CreateAnchorAsync`, `LoadAnchorsAsync`
     // and `XRAnchor:SaveAsync`; 379: `DataService:LoadAsync` (ADR 0238); 384:
     // its items, money and transactions; 387: its shared values; 389:
-    // `NetworkService:SignInAsync` and `RegisterAsync` (ADR 0237).
-    CHECK(coverage.declared == 389);
-    CHECK(coverage.bound == 389);
+    // `NetworkService:SignInAsync` and `RegisterAsync` (ADR 0237); 398:
+    // `PartyService`'s nine (ADR 0240); 411: `MatchmakingService`'s thirteen
+    // (ADR 0243).
+    CHECK(coverage.declared == 411);
+    CHECK(coverage.bound == 411);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

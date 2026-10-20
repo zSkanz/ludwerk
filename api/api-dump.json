@@ -5113,6 +5113,239 @@
       "Events": []
     },
     {
+      "Name": "MatchmakingService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "BackfillAsync",
+          "Parameters": [
+            {
+              "Name": "match",
+              "Type": "string"
+            },
+            {
+              "Name": "team",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["string?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "CancelAsync",
+          "Parameters": [
+            {
+              "Name": "ticket",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "CreateLobbyAsync",
+          "Parameters": [
+            {
+              "Name": "owner",
+              "Type": "Player"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Template: string, Size: number?, Public: boolean? }"
+            }
+          ],
+          "Returns": ["{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DefineQueue",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Template: string, Teams: number?, TeamSize: number?, Rating: string?, Widen: { After: number?, Step: number?, Most: number? }?, Regions: boolean? }"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetRatingAsync",
+          "Parameters": [
+            {
+              "Name": "who",
+              "Type": "Player | string"
+            },
+            {
+              "Name": "rating",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["number"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "JoinLobbyAsync",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "code",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LeaveLobbyAsync",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ListLobbiesAsync",
+          "Parameters": [
+            {
+              "Name": "filter",
+              "Type": "{ Template: string? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["{{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }}"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "QueueAsync",
+          "Parameters": [
+            {
+              "Name": "who",
+              "Type": "Player | string"
+            },
+            {
+              "Name": "queue",
+              "Type": "string"
+            },
+            {
+              "Name": "options",
+              "Type": "{ Region: string? }?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["string?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "ReportResultAsync",
+          "Parameters": [
+            {
+              "Name": "match",
+              "Type": "string"
+            },
+            {
+              "Name": "winningTeam",
+              "Type": "number"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetRatingAsync",
+          "Parameters": [
+            {
+              "Name": "who",
+              "Type": "Player | string"
+            },
+            {
+              "Name": "rating",
+              "Type": "string"
+            },
+            {
+              "Name": "value",
+              "Type": "number"
+            }
+          ],
+          "Returns": [],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetReadyAsync",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "ready",
+              "Type": "boolean"
+            }
+          ],
+          "Returns": ["{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "StartLobbyAsync",
+          "Parameters": [
+            {
+              "Name": "lobby",
+              "Type": "string"
+            },
+            {
+              "Name": "by",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Queue: string, Instance: string, Teams: {{string}} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "LobbyChanged",
+          "Parameters": [
+            {
+              "Name": "lobby",
+              "Type": "{ Id: string, Code: string, Owner: string, Template: string, Size: number, Public: boolean, Members: {string}, Ready: {string} }"
+            }
+          ]
+        },
+        {
+          "Name": "Matched",
+          "Parameters": [
+            {
+              "Name": "match",
+              "Type": "{ Id: string, Queue: string, Instance: string, Teams: {{string}} }"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "Name": "MeshPart",
       "Extends": "BasePart",
       "Tags": [],

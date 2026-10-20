@@ -645,6 +645,85 @@ who joins a world is sent its last 50 lines of `world` chat, and of their
 party's and guild's. The engine draws nothing: `47-realms` shows the lines
 and a box to type them in, `/w name` to whisper.
 
+## Matchmaking and lobbies
+
+`MatchmakingService` brings players together into an instance (see [Worlds
+and instances](#worlds-and-instances)): by queue, by rating and by region, a
+party kept together. The queues are the manager's, so a player in the town
+and one in the fields are matched with each other. Every world says what the
+queues are, the same way:
+
+```luau
+--!strict
+local MatchmakingService = game:GetService("MatchmakingService")
+
+MatchmakingService:DefineQueue("Arena2v2", {
+    Template = "arena",          -- an [[instance]] in servers.toml
+    Teams = 2,
+    TeamSize = 2,
+    Rating = "Arena",            -- nil for a queue that keeps no rating
+    Widen = { After = 10, Step = 100, Most = 600 },
+})
+
+local ticket = MatchmakingService:QueueAsync(player, "Arena2v2") -- or a party's id
+MatchmakingService.Matched:Connect(function(match)
+    print(`{match.Id} in {match.Instance}`)
+end)
+```
+
+**A match is made as soon as one can be**: teams filled from tickets whose
+ratings are within a window of the one that has waited longest -- 100 points
+at first, 100 more every ten seconds, 600 at most -- and a party is one
+ticket, always on one team. The manager makes an instance of the queue's
+template for exactly those players, fires `Matched` in each of their worlds
+and sends them there. A player is in one queue, one lobby and one match at a
+time: queueing again cancels the ticket before, and `CancelAsync` takes one
+back. With `region` under `[manager]`, players are matched within their
+region until the window is at its widest; a script may name another with
+`QueueAsync(player, queue, { Region = "us" })`.
+
+The instance reads its match from `SceneService:GetLoadData().Match` -- its
+`Id`, its `Queue` and its `Teams`, each a list of `MemberIdOf`s -- and says
+who won:
+
+```luau
+--!strict
+local MatchmakingService = game:GetService("MatchmakingService")
+local SceneService = game:GetService("SceneService")
+
+local match = SceneService:GetLoadData().Match
+-- ...when the round ends:
+MatchmakingService:ReportResultAsync(match.Id, 1) -- the first team won
+-- ...and when a player has left, a place for another:
+MatchmakingService:BackfillAsync(match.Id, 2)
+```
+
+`ReportResultAsync` moves the ratings of the match's players by Elo (K = 32),
+each team against the others' mean. A rating starts at 1,500 and is kept in
+the data service, scope `rating`, key `<rating>:<member>`; `GetRatingAsync`
+reads one and `SetRatingAsync` writes one, for a game that rates another way.
+A player who leaves the instance has left the match. `BackfillAsync` puts a
+place before every ticket in the queue: the first player queued alone who
+fits is sent into the running instance, and `Matched` fires in their world.
+
+**A lobby** is for a custom game, where friends gather by a code:
+
+```luau
+--!strict
+local lobby = MatchmakingService:CreateLobbyAsync(owner, { Template = "arena", Size = 8, Public = true })
+print(lobby.Code)                                    -- six letters
+MatchmakingService:JoinLobbyAsync(friend, "QXWBRT")  -- in any case
+MatchmakingService:SetReadyAsync(friend, true)
+local open = MatchmakingService:ListLobbiesAsync({ Template = "arena" })
+MatchmakingService:StartLobbyAsync(lobby.Id, owner)  -- refused until everyone is ready
+```
+
+Its members wait in whatever world they are in; `LobbyChanged` fires in each
+of those worlds when one joins, leaves or is ready, and once more with no
+`Members` when it is gone. Starting it makes the instance and sends them all
+there, as one team. An owner who leaves hands the lobby to the next member,
+and an empty lobby is gone.
+
 ## Trying it in the editor
 
 With a `servers.toml` in the project, the Run view has **This game's worlds**.

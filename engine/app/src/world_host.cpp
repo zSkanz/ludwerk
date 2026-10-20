@@ -41,6 +41,7 @@
 #include "engine/script/instance_binding.h"
 #include "engine/script/instance_service.h"
 #include "engine/script/join_request.h"
+#include "engine/script/matchmaking_service.h"
 #include "engine/script/net_module.h"
 #include "engine/script/party_service.h"
 #include "engine/script/remote.h"
@@ -1630,6 +1631,7 @@ void WorldHost::tick()
         script::fireTravelEvents(m_runtime->state());
         // And parties: the book's answers, and what changed (ADR 0240).
         script::firePartyEvents(m_runtime->state());
+        script::fireMatchmakingEvents(m_runtime->state());
         // And instances: the manager's answers, and one closing (ADR 0221).
         script::runInstanceEvents(m_runtime->state());
         // And events from the game's other worlds (ADR 0223).

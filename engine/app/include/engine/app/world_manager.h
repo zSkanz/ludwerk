@@ -30,6 +30,7 @@
 #include "engine/app/data_broker.h"
 #include "engine/app/data_console.h"
 #include "engine/app/manager_link.h"
+#include "engine/app/match_book.h"
 #include "engine/app/party_book.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/crypto.h"
@@ -246,6 +247,11 @@ private:
         core::u32 askedId = 0;
         std::vector<std::string> askedKeys;
         std::string askedData;
+        // **The match it is played for** (ADR 0243), and those of its players
+        // who have been in it -- one of them gone again has left the match.
+        std::string match;
+        std::string askedMatch;
+        std::set<std::string> matchArrived;
     };
 
     struct Door;
@@ -266,6 +272,9 @@ private:
     void updateFailed();
     void moveAll(World& from, World& to);
     void createInstance(World& asker, const ManagerMessage& message);
+    // An instance of `templateName` given to nobody yet -- a warm one, or one
+    // started -- within every limit; or none, and why.
+    World* openInstance(const std::string& templateName, std::string& why);
     void allocate(World& instance);
     World& startInstance(const ServersConfig::Instance& config, bool warm);
     void topUpWarm();
@@ -301,6 +310,18 @@ private:
     // **Parties** (ADR 0240 §1): the book, and what it says sent to the
     // worlds its members are in.
     std::unique_ptr<PartyBook> m_parties;
+    // **Matchmaking and lobbies** (ADR 0243): the book, what a world asked
+    // of it, and each frame's matches made, places filled and players gone.
+    std::unique_ptr<MatchBook> m_matches;
+    void matchOp(World& asker, const ManagerMessage& message, core::u64 nowNs);
+    void matchFrame(core::u64 nowNs);
+    void matchNotices();
+    World* startMatch(const Match& match);
+    void matchReady(World& instance);
+    void sendToMatch(const Match& match, const World& instance, const std::vector<std::string>& members);
+    [[nodiscard]] std::vector<std::string> keysOf(const std::vector<std::string>& members) const;
+    [[nodiscard]] core::f64 rating(std::string_view name, std::string_view member);
+    void setRating(std::string_view name, std::string_view member, core::f64 value);
     void partyOp(World& asker, const ManagerMessage& message, core::u64 nowNs);
     void partyNotices();
     void partyTravel(const ManagerMessage& message);

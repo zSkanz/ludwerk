@@ -40,6 +40,7 @@
 #include "engine/script/instance_service.h"
 #include "engine/script/join_request.h"
 #include "engine/script/json_module.h"
+#include "engine/script/matchmaking_service.h"
 #include "engine/script/modules.h"
 #include "engine/script/optional_service.h"
 #include "engine/script/party_service.h"
@@ -4006,6 +4007,19 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"PartyService", "KickAsync", partyServiceKickAsync},
     {"PartyService", "SetLeaderAsync", partyServiceSetLeaderAsync},
     {"PartyService", "GetPartyAsync", partyServiceGetPartyAsync},
+    {"MatchmakingService", "DefineQueue", matchmakingServiceDefineQueue},
+    {"MatchmakingService", "QueueAsync", matchmakingServiceQueueAsync},
+    {"MatchmakingService", "CancelAsync", matchmakingServiceCancelAsync},
+    {"MatchmakingService", "BackfillAsync", matchmakingServiceBackfillAsync},
+    {"MatchmakingService", "ReportResultAsync", matchmakingServiceReportResultAsync},
+    {"MatchmakingService", "GetRatingAsync", matchmakingServiceGetRatingAsync},
+    {"MatchmakingService", "SetRatingAsync", matchmakingServiceSetRatingAsync},
+    {"MatchmakingService", "CreateLobbyAsync", matchmakingServiceCreateLobbyAsync},
+    {"MatchmakingService", "JoinLobbyAsync", matchmakingServiceJoinLobbyAsync},
+    {"MatchmakingService", "LeaveLobbyAsync", matchmakingServiceLeaveLobbyAsync},
+    {"MatchmakingService", "SetReadyAsync", matchmakingServiceSetReadyAsync},
+    {"MatchmakingService", "ListLobbiesAsync", matchmakingServiceListLobbiesAsync},
+    {"MatchmakingService", "StartLobbyAsync", matchmakingServiceStartLobbyAsync},
     {"NetworkService", "SignInAsync", networkServiceSignInAsync},
     {"NetworkService", "RegisterAsync", networkServiceRegisterAsync},
     {"ConsoleService", "Register", serverConsoleRegister},

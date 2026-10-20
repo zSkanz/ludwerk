@@ -729,6 +729,258 @@ max_instances = 2
     CHECK(log.contains("town-stayed:false:false:true"));
 }
 
+// An instance's scene, empty: what a match's is loaded again with is the
+// match.
+constexpr std::string_view ArenaScene = R"json({"format":"scene","version":2,"root":{"children":[]}})json";
+
+TEST_CASE("ADR 0243: a queue matches a party and two players into an instance, rates the winners, and fills "
+          "a place a player left")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(
+        R"([manager]
+public_address = "memory"
+port = 47940
+world_ports = "47941-47959"
+region = "eu"
+[[world]]
+name = "town"
+entry = true
+[[instance]]
+template = "arena"
+scene = "scenes/arena.scene.json"
+max_instances = 2
+)",
+        "servers.toml", error);
+    REQUIRE(config.has_value());
+    REQUIRE(config->region == "eu");
+    Project managerRoot;
+    std::vector<std::unique_ptr<WorldMachine>> machines;
+    // **The town**: a party of its first two players and the next three on
+    // their own queue for two against two; the fifth waits.
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local MatchmakingService = game:GetService("MatchmakingService")
+        local PartyService = game:GetService("PartyService")
+        MatchmakingService:DefineQueue("Duel", { Template = "arena", Teams = 2, TeamSize = 2, Rating = "Arena" })
+        MatchmakingService.Matched:Connect(function(match)
+            print(`town-matched:{#match.Teams[1]}:{#match.Teams[2]}:{match.Instance}`)
+        end)
+        local here = {}
+        NetworkService.PlayerAdded:Connect(function(player)
+            table.insert(here, player)
+            if #here ~= 5 then
+                return
+            end
+            local party = PartyService:CreateAsync(here[1])
+            PartyService:InviteAsync(party.Id, here[1], here[2])
+            PartyService:AcceptAsync(party.Id, here[2])
+            print(`town-no-queue:{select(2, MatchmakingService:QueueAsync(here[3], "Nothing"))}`)
+            local ticket = MatchmakingService:QueueAsync(party.Id, "Duel")
+            print(`town-party-ticket:{ticket ~= nil}`)
+            for at = 3, 5 do
+                MatchmakingService:QueueAsync(here[at], "Duel")
+            end
+        end)
+    )";
+    // **The arena**: the match from its load data; two wins for the first
+    // team once all four are in; then one of the second team sent home, and
+    // their place asked filled.
+    const std::string arena = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local MatchmakingService = game:GetService("MatchmakingService")
+        local PartyService = game:GetService("PartyService")
+        local DataService = game:GetService("DataService")
+        local SceneService = game:GetService("SceneService")
+        local arrived = 0
+        NetworkService.TravelArrived:Connect(function(player)
+            arrived += 1
+            print(`arena-arrived:{arrived}`)
+            if arrived ~= 4 then
+                return
+            end
+            local match = SceneService:GetLoadData().Match
+            print(`arena-match:{#match.Teams}:{typeof(match.Id)}`)
+            MatchmakingService:ReportResultAsync(match.Id, 1)
+            MatchmakingService:ReportResultAsync(match.Id, 1)
+            local winner = match.Teams[1][1]
+            local loser = match.Teams[2][1]
+            local rated = MatchmakingService:GetRatingAsync(winner, "Arena")
+            print(`arena-winner:{string.format("%.2f", rated)}`)
+            print(`arena-loser:{string.format("%.2f", MatchmakingService:GetRatingAsync(loser, "Arena"))}`)
+            print(`arena-kept:{string.format("%.2f", DataService:GetAsync("rating", "Arena:" .. winner))}`)
+            for _, one in NetworkService:GetPlayers() do
+                if PartyService:MemberIdOf(one) == loser then
+                    NetworkService:Travel(one, "town")
+                end
+            end
+            task.wait(1)
+            local place = MatchmakingService:BackfillAsync(match.Id, 2)
+            print(`arena-place:{place ~= nil}`)
+        end)
+    )";
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        machines.push_back(std::make_unique<WorldMachine>());
+        machines.back()->project.write("content/scenes/arena.scene.json", ArenaScene);
+        machines.back()->boot(wire, launch, launch.name == "town" ? town : arena);
+        return std::make_unique<FakeProcess>(*machines.back());
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+    std::array<Client, 5> clients;
+    for (std::size_t index = 0; index < clients.size(); ++index) {
+        // A player's copy of the game has the scene they travel into.
+        clients[index].project.write("content/scenes/arena.scene.json", ArenaScene);
+        clients[index].boot(wire, R"(
+            local NetworkService = game:GetService("NetworkService")
+            task.wait()" + std::to_string(0.2 + 0.2 * static_cast<double>(index)) +
+                                      R"()
+            NetworkService:Join("memory:47940")
+        )");
+    }
+    for (int at = 0; at < 20 * 60; ++at) {
+        now += 16'000'000ull;
+        manager.frame();
+        for (std::size_t index = 0; index < machines.size(); ++index)
+            machines[index]->frame();
+        for (Client& client : clients)
+            client.frame();
+    }
+    const auto count = [&](std::string_view needle) {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("town-no-queue:NoQueue"));
+    CHECK(log.contains("town-party-ticket:true"));
+    // **Matched**: two teams of two, heard in the town where the four were,
+    // and all four in the arena.
+    CHECK(log.contains("town-matched:2:2:i-1"));
+    CHECK(log.contains("arena-match:2:string"));
+    // Two wins from 1,500, by Elo's numbers, kept in the data service.
+    CHECK(log.contains("arena-winner:1530.53"));
+    CHECK(log.contains("arena-loser:1469.47"));
+    CHECK(log.contains("arena-kept:1530.53"));
+    // **The place a player left**, filled by the one who waited.
+    CHECK(log.contains("arena-place:true"));
+    CHECK(count("town-matched:2:2:i-1") == 2);
+    CHECK(log.contains("arena-arrived:5"));
+}
+
+TEST_CASE("ADR 0243: eight players gather in a lobby by its code, and start once all are ready, in one instance")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(
+        R"([manager]
+public_address = "memory"
+port = 47940
+world_ports = "47941-47959"
+[[world]]
+name = "town"
+entry = true
+[[instance]]
+template = "arena"
+max_instances = 2
+)",
+        "servers.toml", error);
+    REQUIRE(config.has_value());
+    Project managerRoot;
+    std::vector<std::unique_ptr<WorldMachine>> machines;
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local MatchmakingService = game:GetService("MatchmakingService")
+        local changes = 0
+        MatchmakingService.LobbyChanged:Connect(function(lobby)
+            changes += 1
+            if #lobby.Members == 0 then
+                print(`town-lobby-gone:{changes > 8}`)
+            end
+        end)
+        local here = {}
+        NetworkService.PlayerAdded:Connect(function(player)
+            table.insert(here, player)
+            if #here ~= 8 then
+                return
+            end
+            local lobby = MatchmakingService:CreateLobbyAsync(here[1], { Template = "arena", Size = 8, Public = true })
+            print(`town-code:{#lobby.Code}`)
+            for at = 2, 8 do
+                MatchmakingService:JoinLobbyAsync(here[at], string.lower(lobby.Code))
+            end
+            local listed = MatchmakingService:ListLobbiesAsync({ Template = "arena" })
+            print(`town-listed:{#listed}:{#listed[1].Members}`)
+            for at = 1, 7 do
+                MatchmakingService:SetReadyAsync(here[at], true)
+            end
+            print(`town-early:{select(2, MatchmakingService:StartLobbyAsync(lobby.Id, here[1]))}`)
+            print(`town-not-owner:{select(2, MatchmakingService:StartLobbyAsync(lobby.Id, here[2]))}`)
+            MatchmakingService:SetReadyAsync(here[8], true)
+            local match = MatchmakingService:StartLobbyAsync(lobby.Id, here[1])
+            print(`town-started:{#match.Teams[1]}:{match.Instance}`)
+        end)
+    )";
+    const std::string arena = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local arrived = 0
+        NetworkService.TravelArrived:Connect(function()
+            arrived += 1
+            print(`arena-arrived:{arrived}`)
+        end)
+    )";
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.prologue = std::vector<core::u8>{};
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        machines.push_back(std::make_unique<WorldMachine>());
+        machines.back()->boot(wire, launch, launch.name == "town" ? town : arena);
+        return std::make_unique<FakeProcess>(*machines.back());
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+    std::array<Client, 8> clients;
+    for (std::size_t index = 0; index < clients.size(); ++index)
+        clients[index].boot(wire, R"(
+            local NetworkService = game:GetService("NetworkService")
+            task.wait()" + std::to_string(0.2 + 0.1 * static_cast<double>(index)) +
+                                      R"()
+            NetworkService:Join("memory:47940")
+        )");
+    for (int at = 0; at < 12 * 60; ++at) {
+        now += 16'000'000ull;
+        manager.frame();
+        for (std::size_t index = 0; index < machines.size(); ++index)
+            machines[index]->frame();
+        for (Client& client : clients)
+            client.frame();
+    }
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("town-code:6"));
+    CHECK(log.contains("town-listed:1:8"));
+    CHECK(log.contains("town-early:NotReady"));
+    CHECK(log.contains("town-not-owner:NotOwner"));
+    CHECK(log.contains("town-started:8:i-1"));
+    CHECK(log.contains("town-lobby-gone:true"));
+    CHECK(log.contains("arena-arrived:8"));
+}
+
 TEST_CASE("ADR 0239 and 0240: a guild across worlds, its chat heard once in each, whispers, the rate, the filter, a "
           "mute and the history")
 {
