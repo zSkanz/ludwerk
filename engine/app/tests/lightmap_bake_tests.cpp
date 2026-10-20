@@ -340,21 +340,27 @@ struct Scene
         return id;
     }
 
+    // One frame of the indirect light, baking or not.
+    void step(bool baking)
+    {
+        engine::app::IndirectLight::Frame asked;
+        asked.world = &*world;
+        asked.physics = &*physics;
+        asked.renderer = &renderer;
+        asked.snapshot = &snapshot;
+        asked.workspace = workspace;
+        asked.meshes = &meshes;
+        asked.tick = tick++;
+        asked.bakingLightmaps = baking;
+        light.update(asked);
+    }
+
     // Frames until the bake is whole, and what it made.
     [[nodiscard]] engine::app::LightmapBakeResult bake()
     {
         engine::app::LightmapBakeResult out;
         for (int frame = 0; frame < 2000; ++frame) {
-            engine::app::IndirectLight::Frame asked;
-            asked.world = &*world;
-            asked.physics = &*physics;
-            asked.renderer = &renderer;
-            asked.snapshot = &snapshot;
-            asked.workspace = workspace;
-            asked.meshes = &meshes;
-            asked.tick = tick++;
-            asked.bakingLightmaps = true;
-            light.update(asked);
+            step(true);
             if (light.takeLightmapBake(out))
                 return out;
         }
@@ -363,14 +369,22 @@ struct Scene
     }
 };
 
-// How many texels of a page see the whole sun.
-[[nodiscard]] usize sunlit(const engine::app::LightmapBakeResult& baked)
+// How many texels of one baked part's rectangles see the whole sun.
+[[nodiscard]] usize sunlit(const engine::app::LightmapBakeResult& baked, engine::core::InstanceId id)
 {
     usize count = 0;
-    for (const engine::app::LightmapPage& page : baked.pages) {
-        for (usize at = 0; at < page.mask.size(); ++at) {
-            if (page.light[at * 4 + 3] > 0.0f && page.mask[at] >= 1.0f)
-                ++count;
+    for (const engine::app::LightmapBakeResult::Part& part : baked.parts) {
+        if (!(part.id == id))
+            continue;
+        for (const LightmapRect& rect : part.rects) {
+            const engine::app::LightmapPage& page = baked.pages[rect.page];
+            for (u32 y = rect.y; y < rect.y + rect.height; ++y) {
+                for (u32 x = rect.x; x < rect.x + rect.width; ++x) {
+                    const usize at = static_cast<usize>(y) * page.size + x;
+                    if (page.light[at * 4 + 3] > 0.0f && page.mask[at] >= 1.0f)
+                        ++count;
+                }
+            }
         }
     }
     return count;
@@ -378,7 +392,7 @@ struct Scene
 
 } // namespace
 
-TEST_CASE("the parts set to be baked are laid out and baked, and a roof over half of one shades that half")
+TEST_CASE("the parts set to be baked are laid out and baked, and only a baked roof shades the floor")
 {
     Scene open;
     const engine::core::InstanceId floor = open.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
@@ -406,41 +420,75 @@ TEST_CASE("the parts set to be baked are laid out and baked, and a roof over hal
     CHECK(whole.texels > 0);
     CHECK(whole.sunDirection.y > 0.99f);
     // The floor's top, four metres by four at sixteen texels a metre.
-    const usize lit = sunlit(whole);
+    const usize lit = sunlit(whole, floor);
     CHECK(lit > 3000);
 
+    // **What is not baked casts nothing the bake keeps**: a roof over half
+    // the floor that is not set to be baked leaves the floor's mask whole.
+    Scene unbakedRoof;
+    const engine::core::InstanceId floorTwo = unbakedRoof.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    (void)unbakedRoof.block(DVec3{-1.0, 1.5, 0.0}, Vec3{2.0f, 0.2f, 6.0f}, false);
+    CHECK(sunlit(unbakedRoof.bake(), floorTwo) == lit);
+
+    // Baked, it shades the half of the floor it is over, a metre up.
     Scene shaded;
-    (void)shaded.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
-    // Over the half of it where x is below nought, a metre up.
-    (void)shaded.block(DVec3{-1.0, 1.5, 0.0}, Vec3{2.0f, 0.2f, 6.0f}, false);
-    const usize under = sunlit(shaded.bake());
+    const engine::core::InstanceId floorThree = shaded.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    (void)shaded.block(DVec3{-1.0, 1.5, 0.0}, Vec3{2.0f, 0.2f, 6.0f}, true);
+    const usize under = sunlit(shaded.bake(), floorThree);
     CHECK(under < lit * 3 / 4);
     CHECK(under > lit / 4);
 }
 
-TEST_CASE("each face of a stretched block is as long each way as the block is stretched")
+// **A frame draws a baked part with its light** (ADR 0253): its draws are
+// given its rows, every other draw none; the mask holds while the sun is
+// within three degrees of where it was baked; and a part that moves is drawn
+// as a moving one from then on.
+TEST_CASE("a baked part is drawn with its light until it moves, and with its mask until the sun turns")
 {
-    const engine::asset::Mesh block = engine::asset::makePrimitive(engine::asset::PrimitiveShape::Block);
-    std::vector<Vec3> positions;
-    for (const engine::asset::Vertex& vertex : block.vertices)
-        positions.push_back(vertex.position);
-    std::vector<Vec2> uvs;
-    for (const engine::asset::LightmapUv& uv : block.lightmapUvs)
-        uvs.push_back(Vec2{uv.u, uv.v});
-    REQUIRE(block.lightmapColumns * block.lightmapRows == 6);
-    const std::vector<Vec2> sizes = engine::app::chartSizes(positions, uvs, block.indices, Vec3{4.0f, 3.0f, 0.2f},
-                                                            block.lightmapColumns, block.lightmapRows);
-    REQUIRE(sizes.size() == 6);
-    // Each face's two sides are two of the block's three, the cell's margin
-    // and all: a 4 by 3 face twice, a 4 by 0.2 twice and a 3 by 0.2 twice.
-    const f32 cell = 1.0f / (1.0f - 2.0f * engine::asset::kPrimitiveChartMargin);
-    u32 broad = 0;
-    for (const Vec2 size : sizes) {
-        const f32 longer = std::max(size.x, size.y) / cell;
-        const f32 shorter = std::min(size.x, size.y) / cell;
-        if (nearly(longer, 4.0f, 1.0e-3f) && nearly(shorter, 3.0f, 1.0e-3f))
-            ++broad;
-        CHECK(shorter > 0.19f);
-    }
-    CHECK(broad == 2);
+    Scene scene;
+    const engine::core::InstanceId floor = scene.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    const engine::core::InstanceId crate = scene.block(DVec3{0.0, 1.0, 0.0}, Vec3{1.0f, 1.0f, 1.0f}, false);
+    const engine::app::LightmapBakeResult baked = scene.bake();
+    REQUIRE(baked.parts.size() == 1);
+    scene.light.giveLightmap(baked);
+
+    const auto keyOf = [](engine::core::InstanceId id) {
+        return (static_cast<engine::core::u64>(id.generation) << 32) | static_cast<engine::core::u64>(id.index);
+    };
+    const auto drawn = [&]() {
+        scene.step(false);
+        engine::render::RenderWorld out;
+        out.camera.valid = true;
+        engine::render::DrawItem floorDraw;
+        floorDraw.motionKey = keyOf(floor);
+        engine::render::DrawItem crateDraw;
+        crateDraw.motionKey = keyOf(crate);
+        out.draws = {floorDraw, crateDraw};
+        scene.light.append(out);
+        return out;
+    };
+
+    const engine::render::RenderWorld lit = drawn();
+    CHECK(lit.lightmap.stamp != 0);
+    REQUIRE(lit.lightmap.pages != nullptr);
+    CHECK(lit.lightmap.pages->count == 1);
+    CHECK(lit.lightmap.maskHolds);
+    // Its grid -- a block's three by two -- and a rectangle a face.
+    REQUIRE(lit.lightmap.rects.size() == 4u * 7u);
+    CHECK(lit.lightmap.rects[0] == 3.0f);
+    CHECK(lit.lightmap.rects[1] == 2.0f);
+    CHECK(lit.draws[0].lightmap == 0u);
+    CHECK(lit.draws[1].lightmap == engine::render::NoLightmap);
+
+    // Ten degrees off: the mask is set aside, the light kept.
+    const f32 turn = 10.0f * 3.14159265f / 180.0f;
+    scene.snapshot.environment.sunDirection = Vec3{std::sin(turn), std::cos(turn), 0.0f};
+    const engine::render::RenderWorld turned = drawn();
+    CHECK_FALSE(turned.lightmap.maskHolds);
+    CHECK(turned.draws[0].lightmap == 0u);
+
+    // Moved: lit as a moving part from then on.
+    scene.world->parts().find(floor)->cframe.position = DVec3{0.0, 0.5, 0.0};
+    const engine::render::RenderWorld moved = drawn();
+    CHECK(moved.draws[0].lightmap == engine::render::NoLightmap);
 }

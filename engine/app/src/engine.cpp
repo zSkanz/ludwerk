@@ -78,6 +78,7 @@
 #include "engine/app/inspector.h"
 #include "engine/app/language_packs.h"
 #include "engine/app/launcher.h"
+#include "engine/app/lightmap_bake.h"
 #include "engine/app/partition_cache.h"
 #include "engine/app/picking.h"
 #include "engine/app/pointer_ownership.h"
@@ -2311,6 +2312,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // What a room reflects and the light it gives back (ADRs 0202, 0203):
     // whose pictures are taken this frame, and the volumes' light worked out.
     IndirectLight indirectLight;
+    // `--bake-lighting` (ADR 0253): whether this run's bake is done.
+    bool lightingBaked = false;
     // **Volumes whose light is being worked out to be kept** (ADR 0207): the
     // one the editor's Bake asked for, and under `--bake-irradiance` every
     // one that names a file. And what a bake that could not be done says.
@@ -9181,7 +9184,25 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         .development = ENG_DEBUG_UI != 0,
                         .baking = options.bakeIrradiance || bakeAsked.valid(),
                         .bakingOne = options.bakeIrradiance ? core::InstanceId{} : bakeAsked,
+                        // Once what a script builds as it starts is there.
+                        .bakingLightmaps = options.bakeLighting && !lightingBaked && lit.engineState().tick >= 4,
                     });
+                    // **The bake of what stands still, once whole** (ADR 0253):
+                    // drawn with from the next frame on.
+                    if (options.bakeLighting && !lightingBaked) {
+                        LightmapBakeResult baked;
+                        if (indirectLight.takeLightmapBake(baked)) {
+                            lightingBaked = true;
+                            const std::array<core::I18nArg, 5> args{
+                                core::I18nArg{"parts", static_cast<core::i64>(baked.parts.size())},
+                                core::I18nArg{"pages", static_cast<core::i64>(baked.pages.size())},
+                                core::I18nArg{"density", static_cast<f64>(baked.density)},
+                                core::I18nArg{"texels", static_cast<core::i64>(baked.texels)},
+                                core::I18nArg{"unmapped", static_cast<core::i64>(baked.unmapped.size())}};
+                            core::log(core::LogLevel::Info, ENG_TR("engine.info.lighting_baked"), args);
+                            indirectLight.giveLightmap(baked);
+                        }
+                    }
                     indirectLight.append(snapshot);
                     // **A bake the editor asked for** (ADR 0207): written the
                     // frame its volume is whole.

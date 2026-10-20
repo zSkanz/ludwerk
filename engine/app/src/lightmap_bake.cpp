@@ -4,6 +4,7 @@
 #include <cmath>
 #include <numeric>
 
+#include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
 #include "engine/platform/platform.h"
 
@@ -31,9 +32,12 @@ constexpr u32 kMaskRays = 16;
 constexpr f32 kSunRadius = 0.0047f;
 // The cells a pass's light is kept by for the next to read, in metres.
 constexpr f32 kCellSize = 0.25f;
-// Texels a piece of work, between two looks at the clock.
-constexpr usize kChunk = 2048;
-constexpr usize kGrain = 32;
+// Texels a piece of work, between two looks at the clock. A texel's rays
+// and the shadow rays from where they land are a hundred and more, so a
+// piece is small: two thousand of them were two hundred milliseconds of a
+// frame asked for twelve.
+constexpr usize kChunk = 256;
+constexpr usize kGrain = 8;
 
 [[nodiscard]] Color3 operator*(Color3 a, f32 b) noexcept
 {
@@ -253,6 +257,7 @@ LightmapLayout layOutLightmaps(std::span<const Vec2> sizes, std::span<const f32>
 
 void LightmapBake::begin(std::span<const LightmapSurface> surfaces, u32 pageSize, u32 pages, u32 bounces)
 {
+    ENG_PROFILE_SCOPE("lightmap.begin");
     *this = LightmapBake{};
     m_pageSize = pageSize;
     m_bounces = bounces;
@@ -522,6 +527,7 @@ void LightmapBake::passEnd()
 
 void LightmapBake::finish()
 {
+    ENG_PROFILE_SCOPE("lightmap.finish");
     m_insideCount = static_cast<u32>(std::count(m_inside.begin(), m_inside.end(), core::u8{1}));
     const usize side = m_pageSize;
     // Each page's texels by place: one more than the texel's index.
@@ -542,92 +548,109 @@ void LightmapBake::finish()
         // within two texels that are the same surface facing the same way
         // and lying where it lies -- noise is evened out, and a corner's two
         // sides stay two.
-        for (usize y = 0; y < side; ++y) {
-            for (usize x = 0; x < side; ++x) {
-                const u32 here = slot[y * side + x];
-                if (here == 0)
-                    continue;
-                const Texel& texel = m_texels[here - 1];
-                const f32 reach = 2.5f * std::max(core::length(texel.across), core::length(texel.down));
-                Color3 sum{0.0f, 0.0f, 0.0f};
-                f32 weights = 0.0f;
-                for (int dy = -2; dy <= 2; ++dy) {
-                    for (int dx = -2; dx <= 2; ++dx) {
-                        const auto nx = static_cast<core::i64>(x) + dx;
-                        const auto ny = static_cast<core::i64>(y) + dy;
-                        if (nx < 0 || ny < 0 || nx >= static_cast<core::i64>(side) ||
-                            ny >= static_cast<core::i64>(side))
+        // A row at a time on the workers: each texel is written by its own
+        // row's work alone, and read from what the rays left.
+        jobs::parallelFor(
+            "lightmap.filter", jobs::Domain::Tooling, 0, side, 16, [&](usize first, usize last, u32) noexcept {
+                for (usize y = first; y < last; ++y) {
+                    for (usize x = 0; x < side; ++x) {
+                        const u32 here = slot[y * side + x];
+                        if (here == 0)
                             continue;
-                        const u32 there = slot[static_cast<usize>(ny) * side + static_cast<usize>(nx)];
-                        if (there == 0)
-                            continue;
-                        const Texel& other = m_texels[there - 1];
-                        if (other.surface != texel.surface || core::dot(other.normal, texel.normal) < 0.9f ||
-                            core::length(core::toVec3(other.place - texel.place)) > reach)
-                            continue;
-                        const f32 weight = std::exp(-0.5f * static_cast<f32>(dx * dx + dy * dy) / 1.5f);
-                        sum = sum + m_indirect[there - 1] * weight;
-                        weights += weight;
+                        const Texel& texel = m_texels[here - 1];
+                        const f32 reach = 2.5f * std::max(core::length(texel.across), core::length(texel.down));
+                        Color3 sum{0.0f, 0.0f, 0.0f};
+                        f32 weights = 0.0f;
+                        for (int dy = -2; dy <= 2; ++dy) {
+                            for (int dx = -2; dx <= 2; ++dx) {
+                                const auto nx = static_cast<core::i64>(x) + dx;
+                                const auto ny = static_cast<core::i64>(y) + dy;
+                                if (nx < 0 || ny < 0 || nx >= static_cast<core::i64>(side) ||
+                                    ny >= static_cast<core::i64>(side))
+                                    continue;
+                                const u32 there = slot[static_cast<usize>(ny) * side + static_cast<usize>(nx)];
+                                if (there == 0)
+                                    continue;
+                                const Texel& other = m_texels[there - 1];
+                                if (other.surface != texel.surface || core::dot(other.normal, texel.normal) < 0.9f ||
+                                    core::length(core::toVec3(other.place - texel.place)) > reach)
+                                    continue;
+                                const f32 weight = std::exp(-0.5f * static_cast<f32>(dx * dx + dy * dy) / 1.5f);
+                                sum = sum + m_indirect[there - 1] * weight;
+                                weights += weight;
+                            }
+                        }
+                        const Color3 light = weights > 0.0f ? sum * (1.0f / weights) : m_indirect[here - 1];
+                        f32* at = &out.light[(y * side + x) * 4];
+                        at[0] = light.r;
+                        at[1] = light.g;
+                        at[2] = light.b;
+                        at[3] = 1.0f;
+                        out.mask[y * side + x] = m_mask[here - 1];
                     }
                 }
-                const Color3 light = weights > 0.0f ? sum * (1.0f / weights) : m_indirect[here - 1];
-                f32* at = &out.light[(y * side + x) * 4];
-                at[0] = light.r;
-                at[1] = light.g;
-                at[2] = light.b;
-                at[3] = 1.0f;
-                out.mask[y * side + x] = m_mask[here - 1];
-            }
-        }
+            });
 
         // **The charts' borders filled outward**, each texel with none from
         // the texels round it that have: first inside each rectangle, where a
         // texel at a seam is half a surface, then one texel past it into the
         // padding, which is what a bilinear tap at the edge reads.
         const std::vector<u32>& owner = m_owner[page];
+        // Each round's fills are gathered a row at a time on the workers and
+        // written after, so a round reads only what the round before left --
+        // and the page is never copied whole.
+        struct Fill
+        {
+            usize at = 0;
+            f32 value[5]{};
+        };
+        std::vector<std::vector<Fill>> fills(side);
         const auto grow = [&](bool intoPadding) {
-            std::vector<f32> light = out.light;
-            std::vector<f32> mask = out.mask;
-            bool grew = false;
-            for (usize y = 0; y < side; ++y) {
-                for (usize x = 0; x < side; ++x) {
-                    const usize at = y * side + x;
-                    if (out.light[at * 4 + 3] > 0.0f || (owner[at] == 0) != intoPadding)
-                        continue;
-                    f32 sum[4]{};
-                    f32 count = 0.0f;
-                    for (int dy = -1; dy <= 1; ++dy) {
-                        for (int dx = -1; dx <= 1; ++dx) {
-                            const auto nx = static_cast<core::i64>(x) + dx;
-                            const auto ny = static_cast<core::i64>(y) + dy;
-                            if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= static_cast<core::i64>(side) ||
-                                ny >= static_cast<core::i64>(side))
+            jobs::parallelFor(
+                "lightmap.fill", jobs::Domain::Tooling, 0, side, 16, [&](usize first, usize last, u32) noexcept {
+                    for (usize y = first; y < last; ++y) {
+                        fills[y].clear();
+                        for (usize x = 0; x < side; ++x) {
+                            const usize at = y * side + x;
+                            if (out.light[at * 4 + 3] > 0.0f || (owner[at] == 0) != intoPadding)
                                 continue;
-                            const usize beside = static_cast<usize>(ny) * side + static_cast<usize>(nx);
-                            if (out.light[beside * 4 + 3] <= 0.0f)
+                            f32 sum[4]{};
+                            f32 count = 0.0f;
+                            for (int dy = -1; dy <= 1; ++dy) {
+                                for (int dx = -1; dx <= 1; ++dx) {
+                                    const auto nx = static_cast<core::i64>(x) + dx;
+                                    const auto ny = static_cast<core::i64>(y) + dy;
+                                    if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 ||
+                                        nx >= static_cast<core::i64>(side) || ny >= static_cast<core::i64>(side))
+                                        continue;
+                                    const usize beside = static_cast<usize>(ny) * side + static_cast<usize>(nx);
+                                    if (out.light[beside * 4 + 3] <= 0.0f)
+                                        continue;
+                                    // Within a rectangle, only from its own texels.
+                                    if (!intoPadding && owner[beside] != owner[at])
+                                        continue;
+                                    sum[0] += out.light[beside * 4];
+                                    sum[1] += out.light[beside * 4 + 1];
+                                    sum[2] += out.light[beside * 4 + 2];
+                                    sum[3] += out.mask[beside];
+                                    count += 1.0f;
+                                }
+                            }
+                            if (count == 0.0f)
                                 continue;
-                            // Within a rectangle, only from its own texels.
-                            if (!intoPadding && owner[beside] != owner[at])
-                                continue;
-                            sum[0] += out.light[beside * 4];
-                            sum[1] += out.light[beside * 4 + 1];
-                            sum[2] += out.light[beside * 4 + 2];
-                            sum[3] += out.mask[beside];
-                            count += 1.0f;
+                            fills[y].push_back(
+                                Fill{at, {sum[0] / count, sum[1] / count, sum[2] / count, 1.0f, sum[3] / count}});
                         }
                     }
-                    if (count == 0.0f)
-                        continue;
-                    light[at * 4] = sum[0] / count;
-                    light[at * 4 + 1] = sum[1] / count;
-                    light[at * 4 + 2] = sum[2] / count;
-                    light[at * 4 + 3] = 1.0f;
-                    mask[at] = sum[3] / count;
+                });
+            bool grew = false;
+            for (const std::vector<Fill>& row : fills) {
+                for (const Fill& fill : row) {
+                    std::copy_n(fill.value, 4, &out.light[fill.at * 4]);
+                    out.mask[fill.at] = fill.value[4];
                     grew = true;
                 }
             }
-            out.light = std::move(light);
-            out.mask = std::move(mask);
             return grew;
         };
         for (u32 round = 0; round < 8 && grow(false); ++round) {

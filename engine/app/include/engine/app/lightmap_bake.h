@@ -115,6 +115,10 @@ struct LightmapBakeResult
     struct Part
     {
         core::InstanceId id;
+        // Where it stood and how large it was: a part found anywhere else
+        // since is drawn unbaked until the next bake.
+        core::CFrameD place;
+        core::Vec3 size{1.0f, 1.0f, 1.0f};
         // The grid the charts stand in, nought for one chart.
         core::u32 columns = 0;
         core::u32 rows = 0;

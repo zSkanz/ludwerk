@@ -195,6 +195,12 @@ public:
         // pipelines. Invalid for a static mesh, which is most of them -- and an
         // unskinned draw is byte-identical to the first renderer's because of it.
         rhi::BufferHandle skin{};
+        // **A lightmap's coordinates** (ADR 0253), two floats a vertex, bound
+        // at the last vertex slot by the pipelines that draw a baked part and
+        // by no other. Invalid for a mesh without them and for a pooled one,
+        // whose vertices are a slice of a page this stream has no page of: a
+        // baked part on such a mesh is drawn as an unbaked one.
+        rhi::BufferHandle lightmap{};
         // The mesh's morph targets as a table the vertex stage reads (ADR
         // 0196, `engine/render/morph.h`): `morphTargetCount` rows of
         // `morphVertexCount` deltas, for the vertices from `morphFirstVertex`.

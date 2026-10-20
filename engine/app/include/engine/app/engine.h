@@ -317,6 +317,11 @@ struct EngineOptions
     // light is the frame's, and a run with none draws no frame.
     bool bakeIrradiance = false;
 
+    // **Bake the light of what stands still and draw with it** (ADR 0253,
+    // `--bake-lighting`): every anchored part with `BakedLight` on is baked
+    // once the scene has started, and the run goes on drawn with the bake.
+    bool bakeLighting = false;
+
     // **Check every script of the scene as the editor's script pane would, and
     // exit** (ADR 0093): `--check-scripts`, which `ludwerk check` runs so that
     // what the command says is what the editor shows. The scene as the editor

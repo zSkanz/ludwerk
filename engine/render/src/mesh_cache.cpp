@@ -213,6 +213,8 @@ void MeshCache::destroy(rhi::IDevice& device)
             device.destroy(entry.resolved.indices);
             if (entry.resolved.skin.valid())
                 device.destroy(entry.resolved.skin);
+            if (entry.resolved.lightmap.valid())
+                device.destroy(entry.resolved.lightmap);
             if (entry.resolved.morph.valid())
                 device.destroy(entry.resolved.morph);
         }
@@ -404,6 +406,17 @@ MeshHandle MeshCache::create(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
             cmd.upload(resolved.vertices, asBytes(mesh), 0);
             if (indexCount > 0)
                 cmd.upload(resolved.indices, indexBytes(mesh), 0);
+            if (mesh.lightmapUvs.size() == mesh.vertices.size()) {
+                resolved.lightmap = device.createBuffer({
+                    .usage = rhi::BufferUsage::Vertex,
+                    .sizeBytes = static_cast<u32>(vertexCount * sizeof(asset::LightmapUv)),
+                    .debugName = "mesh-lightmap",
+                });
+                // A stream that could not be made leaves the mesh drawn as it
+                // is everywhere else: unbaked.
+                if (resolved.lightmap.valid())
+                    cmd.upload(resolved.lightmap, std::as_bytes(std::span(mesh.lightmapUvs)), 0);
+            }
         }
     }
     else {
@@ -510,6 +523,8 @@ void MeshCache::release(rhi::IDevice& device, MeshHandle handle)
             device.destroy(entry.resolved.indices);
         if (entry.resolved.skin.valid())
             device.destroy(entry.resolved.skin);
+        if (entry.resolved.lightmap.valid())
+            device.destroy(entry.resolved.lightmap);
         if (entry.resolved.morph.valid()) {
             device.destroy(entry.resolved.morph);
             morphMeshes_ -= morphMeshes_ > 0 ? 1u : 0u;

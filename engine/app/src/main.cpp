@@ -1086,6 +1086,11 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.headless = true;
             continue;
         }
+        if (arg == "--bake-lighting") {
+            // The light of what stands still, baked as the game starts.
+            options.bakeLighting = true;
+            continue;
+        }
         if (arg == "--print-luau-flags") {
             // The project's Luau flags, as the tools that check scripts take
             // them (ADR 0217), printed and gone.

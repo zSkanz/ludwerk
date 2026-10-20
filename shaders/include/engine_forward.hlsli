@@ -170,6 +170,24 @@ SamplerState ContactShadowSampler : register(s12, space2);
 // it: every other shader is lit as it was.
 static float4 EngineSurfaceReflection = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
+// **The light baked into the surface** (ADR 0253): rgb what reaches it over
+// pi, as a volume's light is, and a 1 where there is one. The bake took in
+// the sky, what bounced and what it saw of every lamp's bounce, so it stands
+// for all of the diffuse light from around -- the sky's, the volumes' and the
+// flat ambient -- and the specular lobe stays the environment's. And how much
+// of the sun it sees past what stands still, while the sun is within three
+// degrees of where it was baked: 1 otherwise. Set by `shadeForward` in a
+// baked draw and nowhere else.
+static float4 EngineBakedLight = float4(0.0f, 0.0f, 0.0f, 0.0f);
+static float EngineBakedSun = 1.0f;
+
+#if defined(ENG_BAKED)
+// The pages, one a layer: rgb the light, a the mask. The stage's sixteenth
+// and last texture.
+Texture2DArray LightmapPages : register(t15, space2);
+SamplerState LightmapSampler : register(s15, space2);
+#endif
+
 // **How flat the surface is where it is shaded smooth** (ADR 0209): 1 on a
 // floor, a wall, a box's face; 0 on a ball, a pillar, a character. The pass
 // that marches the screen rebuilds a normal from depth, and depth is the
@@ -364,6 +382,11 @@ struct Interpolants
     // one object unit, that is where on the face in metres -- what a material's
     // tile size divides (`EmissiveFactor.w`).
     float2 UvMetres : TEXCOORD7;
+#if defined(ENG_BAKED)
+    // Its place in the lightmap: u, v and the page.
+    float3 LightmapPlace : TEXCOORD8;
+    nointerpolation float MaskHolds : TEXCOORD9;
+#endif
     float4 Position : SV_Position;
 };
 
@@ -808,7 +831,8 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
         {
             contact = ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
         }
-        const float sunShadow = min(min(shadow, contact), nearbySunShadow(shadingPosition, sunDirection));
+        const float sunShadow =
+            min(min(min(shadow, contact), nearbySunShadow(shadingPosition, sunDirection)), EngineBakedSun);
         const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
         color = shadeDirect(surface, sunDirection, sunRadiance);
     }
@@ -863,7 +887,7 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     const float screenLight = 0.0f;
 #endif
     [branch]
-    if (IndirectParams.x + IndirectParams.y + screenLight + EngineSurfaceReflection.a > 0.0f)
+    if (IndirectParams.x + IndirectParams.y + screenLight + EngineSurfaceReflection.a + EngineBakedLight.a > 0.0f)
     {
         const IndirectLight indirect = gatherIndirect(surface, shadingPosition, normal);
         ambientShare = indirect.SkyShare * (1.0f - indirect.BouncedShare);
@@ -884,6 +908,10 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
             const float3 skyDiffuse = evaluateIrradiance(IrradianceSh, surface.Normal) * (sky * indirect.SkyShare);
             float3 diffuse = (skyDiffuse + indirect.Diffuse) * (1.0f - indirect.BouncedShare) +
                              indirect.Bounced + indirect.BouncedAdded;
+            // **Baked, the bake is all of it**: taken out here, and added on
+            // its own below at the scale it was baked at.
+            diffuse *= 1.0f - EngineBakedLight.a;
+            ambientShare *= 1.0f - EngineBakedLight.a;
 #if !defined(ENG_NO_SCREEN_LIGHT)
             // What bounces off the screen takes the place of that share of
             // everything above and of the flat ambient below: the light from
@@ -939,6 +967,7 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
     // term, which zeroed it in exactly the places a stand-in for bounced light
     // exists for, and a cave came out black wherever a lamp did not reach (the
     // terrain report). The screen-space occlusion still darkens it.
+    color += surface.DiffuseColor * EngineBakedLight.rgb * screenOcclusion;
     if ((skipped & EngineSkipAmbient) == 0u)
     {
         const float3 ambient = lerp(Ambient.rgb, OutdoorAmbient.rgb, sky);
@@ -1024,6 +1053,11 @@ float4 shadeForward(Interpolants input)
     surface.Alpha = antiAliasedAlpha(surface.Alpha, geometricNormal);
     EngineScreenFlatness = screenFlatness(geometricNormal, input.ShadingPosition);
     EngineGeometricNormal = geometricNormal;
+#if defined(ENG_BAKED)
+    const float4 baked = LightmapPages.SampleLevel(LightmapSampler, input.LightmapPlace, 0.0f);
+    EngineBakedLight = float4(baked.rgb, 1.0f);
+    EngineBakedSun = input.MaskHolds > 0.5f ? baked.a : 1.0f;
+#endif
 
     // The sun. Its direction already points from the world towards it, so the
     // dot against a normal needs no negation. Its COLOUR is new with the lighting work: the

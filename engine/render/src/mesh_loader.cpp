@@ -1089,6 +1089,9 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             asset::Mesh geometry;
             geometry.vertices = std::move(compiled.vertices);
             geometry.bounds = compiled.bounds;
+            // What a baked part draws it by (ADR 0253); kept below for the
+            // bake as well, so copied rather than moved.
+            geometry.lightmapUvs = compiled.lightmapUvs;
 
             std::vector<MeshLodRange> lods;
             lods.reserve(compiled.lods.size());

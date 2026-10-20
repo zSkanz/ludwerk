@@ -562,3 +562,29 @@ TEST_CASE("a distant instance draws a coarser level, placed by the renderer's ow
     CHECK(selectMeshLod(fixture.resolved, near, PixelsPerUnit) == 0);
     CHECK(selectMeshLod(fixture.resolved, far, PixelsPerUnit) > 0);
 }
+
+// **A lightmap's coordinates are a stream of their own** (ADR 0253): made for
+// a static mesh that has them, and for no other -- a mesh with none, and a
+// pooled one, whose page that stream has no page of, draw as they always did.
+TEST_CASE_FIXTURE(DeviceFixture,
+                  "MeshCache: a static mesh with lightmap coordinates gets their stream, and no other does")
+{
+    MeshCache cache;
+    REQUIRE_FALSE(cache.create(*device).has_value());
+
+    Mesh baked = makeMesh(8, 12);
+    baked.lightmapUvs.resize(baked.vertices.size(), engine::asset::LightmapUv{0.25f, 0.75f});
+    const MeshHandle withStream = cache.create(*device, *cmd, baked, MeshUsage::Static);
+    const MeshHandle without = cache.create(*device, *cmd, makeMesh(8, 12), MeshUsage::Static);
+    const MeshHandle pooled = cache.create(*device, *cmd, baked, MeshUsage::Pooled);
+    REQUIRE(cache.resolve(withStream) != nullptr);
+    REQUIRE(cache.resolve(without) != nullptr);
+    REQUIRE(cache.resolve(pooled) != nullptr);
+    CHECK(cache.resolve(withStream)->lightmap.valid());
+    CHECK_FALSE(cache.resolve(without)->lightmap.valid());
+    CHECK_FALSE(cache.resolve(pooled)->lightmap.valid());
+
+    cache.release(*device, withStream);
+    CHECK(cache.resolve(withStream) == nullptr);
+    cache.destroy(*device);
+}

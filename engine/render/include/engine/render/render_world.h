@@ -18,6 +18,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -288,6 +289,8 @@ inline constexpr core::u32 NoTerrainMorph = 0xFFFFFFFFu;
 inline constexpr core::u32 NoMorph = 0xFFFFFFFFu;
 // A draw that is no cloth's (ADR 0214).
 inline constexpr core::u32 NoCloth = 0xFFFFFFFFu;
+// A draw lit as everything is, with no light baked into it (ADR 0253).
+inline constexpr core::u32 NoLightmap = 0xFFFFFFFFu;
 
 // **A cloth's vertices, as one draw reads them** (ADR 0214): a run of rows in
 // `RenderWorld::clothRows`, one a vertex of its mesh, each how far that vertex
@@ -399,6 +402,10 @@ struct DrawItem
     // or `NoCloth`. A cloth's draw is drawn on its own, through the morph
     // pipelines, with its vertices where the cloth has them.
     u32 cloth = NoCloth;
+    // **The light baked into it** (ADR 0253): where its part's rows begin in
+    // `RenderWorld::lightmap.rects`, or `NoLightmap` for a draw lit as every
+    // other is.
+    u32 lightmap = NoLightmap;
     // **Which thing this draw is, for its motion** (ADR 0158): the instance,
     // packed, for a part a frame can find again in the next; zero for what
     // never moves on its own -- the ground, the blocks, the water -- whose
@@ -427,6 +434,34 @@ struct DrawItem
 
 // One terrain, as the renderer needs it beyond its meshes: the palette its
 // shader reads (ADR 0082). Filled by `TerrainLoader::appendRenderTerrains`.
+// **A scene's baked pages** (ADR 0253): `count` pages of `size` by `size`
+// texels, rows from the top, four numbers a texel -- the light that reaches
+// it over pi, as a volume's is, and how much of the sun's disc it sees. Made
+// once by a bake and never changed after: a frame carries a pointer to it,
+// and the renderer uploads it when its `stamp` is new.
+struct LightmapPages
+{
+    u32 size = 0;
+    u32 count = 0;
+    std::vector<f32> texels;
+};
+
+struct RenderLightmap
+{
+    // Nought: no bake.
+    u64 stamp = 0;
+    std::shared_ptr<const LightmapPages> pages;
+    // Four numbers a row. A baked part's first row is its grid of charts --
+    // columns, rows, nought, nought; nought columns is one chart -- and each
+    // after it one chart's rectangle, row by row: its page plus its left
+    // edge, its top, its width and its height, all as fractions of a page.
+    std::vector<f32> rects;
+    // **The mask is true for the sun as it is**: within three degrees of the
+    // direction it was baked for. Past that a baked surface is shadowed by
+    // the map alone.
+    bool maskHolds = false;
+};
+
 struct RenderTerrainLayer
 {
     f32 flat[4]{};
@@ -1048,6 +1083,10 @@ struct RenderWorld
     // probe's pictures and works a volume's light out.
     std::vector<RenderReflectionProbe> reflectionProbes;
     std::vector<RenderIrradianceVolume> irradianceVolumes;
+    // **The light baked into what stands still** (ADR 0253), placed by the
+    // host after extraction as the volumes are, with each baked draw's
+    // `lightmap` row.
+    RenderLightmap lightmap;
     // **A picture for a reflection probe** (ADR 0202): the frame as it is lit,
     // linear, into an `Rgba16Float` target -- none of the passes that are a
     // camera's own (the look, exposure, bloom, the tone curve, anti-aliasing).
@@ -1116,6 +1155,10 @@ struct RenderWorld
         decals.clear();
         reflectionProbes.clear();
         irradianceVolumes.clear();
+        lightmap.stamp = 0;
+        lightmap.pages.reset();
+        lightmap.rects.clear();
+        lightmap.maskHolds = false;
         capture = false;
         sprites.clear();
         worldUiVertices.clear();

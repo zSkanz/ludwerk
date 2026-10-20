@@ -36,6 +36,9 @@ constexpr f32 kPi = 3.14159265358979f;
 // behind the loading curtain, which still has to turn its own picture, and a
 // sliver of it while the game is watched.
 constexpr u64 kCurtainBudgetNs = 12'000'000;
+// The cosine of three degrees: how near the sun must be to where a bake's
+// mask was made for the mask to be its shadow (ADR 0253).
+constexpr f32 kLightmapMaskCos = 0.99862953f;
 // How many points a worker takes at a time, and how many are handed out
 // between two looks at the clock.
 constexpr usize kGrain = 4;
@@ -1234,6 +1237,31 @@ void IndirectLight::update(const Frame& frame)
         stepVolumes(frame);
         stepLightmaps(frame);
     }
+    if (m_lightmapStamp != 0) {
+        // **Within three degrees of the sun it was baked for**, the mask is
+        // the sun's shadow; past that it is set aside, and said so once.
+        const bool holds = core::dot(m_light.sunDirection, m_lightmapSun) >= kLightmapMaskCos;
+        if (!holds && m_lightmapMaskHolds) {
+            const f32 apart = std::acos(std::clamp(core::dot(m_light.sunDirection, m_lightmapSun), -1.0f, 1.0f));
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"degrees", static_cast<f64>(apart * 180.0f / kPi)}};
+            core::log(core::LogLevel::Info, ENG_TR("app.info.lightmap_mask_set_aside"), args);
+        }
+        m_lightmapMaskHolds = holds;
+        // **A baked part found anywhere else** is drawn as a moving thing is
+        // until the next bake, and its light stays where it was.
+        for (LightmapPart& part : m_lightmapLit) {
+            if (part.stale)
+                continue;
+            const InstanceId id{static_cast<u32>(part.key & 0xFFFFFFFFu), static_cast<u32>(part.key >> 32)};
+            const scene::PartComponent* now = world.parts().find(id);
+            if (now != nullptr && now->cframe == part.place && now->size == part.size)
+                continue;
+            part.stale = true;
+            const std::array<core::I18nArg, 1> args{
+                core::I18nArg{"name", now != nullptr ? world.atoms().text(world.name(id)) : std::string_view{}}};
+            core::log(core::LogLevel::Info, ENG_TR("app.info.lightmap_part_moved"), args);
+        }
+    }
     else if (!frame.bakingLightmaps) {
         m_lightmap.reset();
     }
@@ -1806,6 +1834,33 @@ void IndirectLight::beginLightmaps(const Frame& frame)
 {
     const scene::World& world = *frame.world;
     readSurfaces(frame);
+    // **Only what is baked casts what the bake keeps**: every part that is
+    // not is a ray's to go on past, whether the physics world holds it or
+    // its own triangles do.
+    m_bakedSurfaces = m_surfaces;
+    world.parts().forEach([&](InstanceId id, const scene::PartComponent& part) {
+        if (!part.bakedLight && id.index < m_bakedSurfaces.size() &&
+            m_bakedSurfaces[id.index].generation == id.generation && m_bakedSurfaces[id.index].kind != 0)
+            m_bakedSurfaces[id.index].kind = 2;
+    });
+    m_bakedTraced.clear();
+    m_bakedBodies.clear();
+    std::vector<DVec3> lows;
+    std::vector<DVec3> highs;
+    for (const TracedMesh& traced : m_traced) {
+        const scene::PartComponent* part = world.parts().find(traced.id);
+        if (part == nullptr || !part->bakedLight)
+            continue;
+        m_bakedTraced.push_back(traced);
+        lows.push_back(traced.low);
+        highs.push_back(traced.high);
+        if (frame.physics != nullptr) {
+            if (const u64 body = frame.physics->userDataOf(traced.id); body != 0)
+                m_bakedBodies.push_back(body);
+        }
+    }
+    m_bakedBoxes = BoxTree{};
+    m_bakedBoxes.build(lows, highs);
     f32 density = kLightmapDensity;
     world.lighting().forEach(
         [&](InstanceId, const scene::LightingComponent& lighting) { density = lighting.lightmapDensity; });
@@ -1871,8 +1926,11 @@ void IndirectLight::beginLightmaps(const Frame& frame)
         surface.rects.assign(layout.rects.begin() + static_cast<std::ptrdiff_t>(next),
                              layout.rects.begin() + static_cast<std::ptrdiff_t>(next + charts));
         next += charts;
+        const scene::PartComponent* stood = world.parts().find(m_lightmapParts[index]);
         done->parts.push_back(LightmapBakeResult::Part{
             .id = m_lightmapParts[index],
+            .place = stood != nullptr ? stood->cframe : core::CFrameD{},
+            .size = stood != nullptr ? stood->size : Vec3{1.0f, 1.0f, 1.0f},
             .columns = surface.columns,
             .rows = surface.rows,
             .rects = surface.rects,
@@ -1901,8 +1959,8 @@ void IndirectLight::stepLightmaps(const Frame& frame)
     }
     if (m_lightmap->whole())
         return;
-    const BakeTrace trace =
-        traceOf(*frame.world, *frame.physics, m_surfaces, m_traced, m_tracedBoxes, m_tracedBodies, frame.textures);
+    const BakeTrace trace = traceOf(*frame.world, *frame.physics, m_bakedSurfaces, m_bakedTraced, m_bakedBoxes,
+                                    m_bakedBodies, frame.textures);
     if (!m_lightmap->step(trace, m_light, kCurtainBudgetNs))
         return;
     LightmapBakeResult& done = *m_lightmapDone;
@@ -1913,6 +1971,66 @@ void IndirectLight::stepLightmaps(const Frame& frame)
     // A scene with nothing to bake still finishes: with no pages.
     if (done.pages.empty())
         done.pages.push_back(LightmapPage{});
+}
+
+void IndirectLight::giveLightmap(const LightmapBakeResult& baked)
+{
+    forgetLightmap();
+    if (baked.pages.empty())
+        return;
+    auto pages = std::make_shared<render::LightmapPages>();
+    pages->size = baked.pages.front().size;
+    pages->count = static_cast<u32>(baked.pages.size());
+    const usize perPage = static_cast<usize>(pages->size) * pages->size;
+    pages->texels.assign(perPage * 4 * pages->count, 0.0f);
+    for (usize page = 0; page < baked.pages.size(); ++page) {
+        const LightmapPage& from = baked.pages[page];
+        if (from.size != pages->size || from.light.size() != perPage * 4 || from.mask.size() != perPage)
+            return;
+        f32* into = &pages->texels[page * perPage * 4];
+        for (usize texel = 0; texel < perPage; ++texel) {
+            into[texel * 4] = from.light[texel * 4];
+            into[texel * 4 + 1] = from.light[texel * 4 + 1];
+            into[texel * 4 + 2] = from.light[texel * 4 + 2];
+            // Where the bake left a gap the sun is the map's to say.
+            into[texel * 4 + 3] = from.light[texel * 4 + 3] > 0.0f ? from.mask[texel] : 1.0f;
+        }
+    }
+    for (const LightmapBakeResult::Part& part : baked.parts) {
+        const u32 charts = part.columns == 0 ? 1u : part.columns * part.rows;
+        if (part.rects.size() != charts)
+            continue;
+        LightmapPart lit;
+        lit.key = (static_cast<u64>(part.id.generation) << 32) | static_cast<u64>(part.id.index);
+        lit.row = static_cast<u32>(m_lightmapRects.size() / 4);
+        lit.place = part.place;
+        lit.size = part.size;
+        const auto side = static_cast<f32>(pages->size);
+        m_lightmapRects.insert(m_lightmapRects.end(),
+                               {static_cast<f32>(part.columns), static_cast<f32>(part.rows), 0.0f, 0.0f});
+        for (const LightmapRect& rect : part.rects) {
+            m_lightmapRects.insert(m_lightmapRects.end(),
+                                   {static_cast<f32>(rect.page) + static_cast<f32>(rect.x) / side,
+                                    static_cast<f32>(rect.y) / side, static_cast<f32>(rect.width) / side,
+                                    static_cast<f32>(rect.height) / side});
+        }
+        m_lightmapLit.push_back(lit);
+    }
+    std::sort(m_lightmapLit.begin(), m_lightmapLit.end(),
+              [](const LightmapPart& a, const LightmapPart& b) { return a.key < b.key; });
+    m_lightmapPages = std::move(pages);
+    m_lightmapSun = baked.sunDirection;
+    static u64 stamps = 0;
+    m_lightmapStamp = ++stamps;
+}
+
+void IndirectLight::forgetLightmap() noexcept
+{
+    m_lightmapPages.reset();
+    m_lightmapRects.clear();
+    m_lightmapLit.clear();
+    m_lightmapStamp = 0;
+    m_lightmapMaskHolds = false;
 }
 
 bool IndirectLight::takeLightmapBake(LightmapBakeResult& out)
@@ -2070,6 +2188,20 @@ void IndirectLight::append(render::RenderWorld& out, bool whole) const
 {
     if (!out.camera.valid)
         return;
+    if (m_lightmapStamp != 0 && m_lightmapPages) {
+        out.lightmap.stamp = m_lightmapStamp;
+        out.lightmap.pages = m_lightmapPages;
+        out.lightmap.rects = m_lightmapRects;
+        out.lightmap.maskHolds = m_lightmapMaskHolds;
+        for (render::DrawItem& draw : out.draws) {
+            if (draw.motionKey == 0 || draw.transparent)
+                continue;
+            const auto found = std::lower_bound(m_lightmapLit.begin(), m_lightmapLit.end(), draw.motionKey,
+                                                [](const LightmapPart& part, core::u64 key) { return part.key < key; });
+            if (found != m_lightmapLit.end() && found->key == draw.motionKey && !found->stale)
+                draw.lightmap = found->row;
+        }
+    }
     for (const Probe& probe : m_probes) {
         const ProbeState* state = nullptr;
         for (const ProbeState& candidate : m_probeStates) {

@@ -475,6 +475,9 @@ struct InstanceBatch
     // A run of skinned draws: its instances are `GpuSkinnedInstance`s,
     // each posed by its own palette.
     bool skinned = false;
+    // **A run of baked parts** (ADR 0253): drawn by the pipeline that reads
+    // their lightmap, each instance's rows in the parallel baked stream.
+    bool baked = false;
 };
 
 // The prefiltered environment's freshness, and the policy that keeps a
@@ -1352,6 +1355,26 @@ private:
 
     rhi::BufferHandle instanceBuffer_{};
     std::vector<GpuInstance> instanceStaging_;
+    // **The light baked into what stands still** (ADR 0253). A float4 an
+    // instance, parallel to `instanceStaging_` -- where its part's rows
+    // begin, and whether the mask holds -- read by a baked run alone; the
+    // pages, one a layer, the mask in alpha, uploaded when the bake is
+    // another; and every baked part's rows, which the vertex stage reads.
+    void uploadLightmap(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderLightmap& lightmap);
+    void releaseLightmap(rhi::IDevice& device);
+    rhi::BufferHandle bakedInstanceBuffer_{};
+    std::vector<std::array<f32, 4>> bakedInstanceStaging_;
+    bool anyBakedRun_ = false;
+    rhi::TextureHandle lightmapPages_{};
+    rhi::TextureHandle lightmapScratch_{};
+    rhi::BufferHandle lightmapRects_{};
+    u32 lightmapPageSize_ = 0;
+    u32 lightmapPageCount_ = 0;
+    u32 lightmapRectsBytes_ = 0;
+    u64 lightmapStamp_ = 0;
+    std::vector<core::u16> lightmapPixels_;
+    rhi::PipelineHandle pbrBakedInstancedPipeline_{};
+    rhi::PipelineHandle pbrBakedInstancedPrepassedPipeline_{};
     // Every run's members' bounds, in the order staged (ADR 0182), and the
     // scratch a run is put in order with.
     std::vector<ShadowCasterBounds> batchBounds_;
@@ -2054,6 +2077,8 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
     const rhi::ShaderHandle shadowInstancedFragment = load("shadow_instanced", rhi::ShaderStage::Fragment);
     const rhi::ShaderHandle pbrInstancedVertex = load("pbr_instanced", rhi::ShaderStage::Vertex);
     const rhi::ShaderHandle pbrInstancedFragment = load("pbr_instanced", rhi::ShaderStage::Fragment);
+    const rhi::ShaderHandle pbrBakedInstancedVertex = load("pbr_baked_instanced", rhi::ShaderStage::Vertex);
+    const rhi::ShaderHandle pbrBakedInstancedFragment = load("pbr_baked_instanced", rhi::ShaderStage::Fragment);
     const rhi::ShaderHandle ssaoVertex = load("ssao", rhi::ShaderStage::Vertex);
     const rhi::ShaderHandle ssaoFragment = load("ssao", rhi::ShaderStage::Fragment);
     const rhi::ShaderHandle ssaoBlurVertex = load("ssao_blur", rhi::ShaderStage::Vertex);
@@ -2449,6 +2474,43 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .depthStencilFormat = kDepthFormat,
         .debugName = "pbr_instanced_blend",
     });
+    // **A baked run** (ADR 0253): what an instanced run reads, and after it
+    // each instance's rows at slot 2 and each vertex's place in its lightmap
+    // at slot 3 -- the mesh's own stream, which only these pipelines bind.
+    const std::array<rhi::VertexBufferLayout, 4> bakedBuffers{
+        instancedBuffers[0],
+        instancedBuffers[1],
+        rhi::VertexBufferLayout{.slot = 2, .strideBytes = 16, .perInstance = true},
+        rhi::VertexBufferLayout{.slot = 3, .strideBytes = 8},
+    };
+    std::array<rhi::VertexAttribute, 11> bakedAttributes{};
+    std::copy(instancedAttributes.begin(), instancedAttributes.end(), bakedAttributes.begin());
+    bakedAttributes[9] =
+        rhi::VertexAttribute{.location = 9, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 0};
+    bakedAttributes[10] =
+        rhi::VertexAttribute{.location = 10, .bufferSlot = 3, .format = rhi::VertexFormat::Float2, .offsetBytes = 0};
+    pbrBakedInstancedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrBakedInstancedVertex,
+        .fragmentShader = pbrBakedInstancedFragment,
+        .vertexBuffers = bakedBuffers,
+        .vertexAttributes = bakedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_baked_instanced",
+    });
+    pbrBakedInstancedPrepassedPipeline_ = device.createGraphicsPipeline({
+        .vertexShader = pbrBakedInstancedVertex,
+        .fragmentShader = pbrBakedInstancedFragment,
+        .vertexBuffers = bakedBuffers,
+        .vertexAttributes = bakedAttributes,
+        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+        .colorTargets = hdrTarget,
+        .depthStencilFormat = kDepthFormat,
+        .debugName = "pbr_baked_instanced_prepassed",
+    });
 
     ssaoPipeline_ = fullscreen(ssaoVertex, ssaoFragment, occlusionTarget, "ssao");
     ssaoBlurPipeline_ = fullscreen(ssaoBlurVertex, ssaoBlurFragment, occlusionTarget, "ssao_blur");
@@ -2613,6 +2675,12 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         destroy(device);
         return core::makeError(ENG_TR("render.err.target_create_failed"));
     }
+    // Without it a baked part is drawn as any other is.
+    bakedInstanceBuffer_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Vertex,
+        .sizeBytes = kMaxInstances * 16u,
+        .debugName = "baked-instances",
+    });
 
     clusterGrid_ = device.createTexture({
         .format = rhi::TextureFormat::R32Float,
@@ -2738,7 +2806,8 @@ void DefaultRenderer::warmEyes(rhi::IDevice& device, u32 samples, u32 foveation,
     // made by then; the rest are made at their first use, as they were.
     const MorphPipelines& morph = morphPipelines_[0];
     const MorphPipelines& morphSkinned = morphPipelines_[1];
-    const std::array<rhi::PipelineHandle, 16> folding{
+    const std::array<rhi::PipelineHandle, 17> folding{
+        pbrBakedInstancedPipeline_,
         pbrPipeline_,
         pbrBlendPipeline_,
         pbrSkinnedPipeline_,
@@ -3390,6 +3459,8 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &pbrSkinnedPrepassedPipeline_,
                                           &pbrInstancedPrepassedPipeline_,
                                           &pbrInstancedBlendPipeline_,
+                                          &pbrBakedInstancedPipeline_,
+                                          &pbrBakedInstancedPrepassedPipeline_,
                                           &pbrBlendPipeline_,
                                           &skyPipeline_,
                                           &tonemapPipeline_,
@@ -3471,6 +3542,10 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (instanceBuffer_.valid())
         device.destroy(instanceBuffer_);
     instanceBuffer_ = {};
+    if (bakedInstanceBuffer_.valid())
+        device.destroy(bakedInstanceBuffer_);
+    bakedInstanceBuffer_ = {};
+    releaseLightmap(device);
     if (voxelBlockBuffer_.valid())
         device.destroy(voxelBlockBuffer_);
     voxelBlockBuffer_ = {};
@@ -4127,11 +4202,97 @@ void DefaultRenderer::copySceneForSurfaces(rhi::IDevice& device, rhi::ICmdList& 
     cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&frame, sizeof(frame)));
 }
 
+void DefaultRenderer::releaseLightmap(rhi::IDevice& device)
+{
+    for (rhi::TextureHandle* texture : {&lightmapPages_, &lightmapScratch_}) {
+        if (texture->valid())
+            device.destroy(*texture);
+        *texture = {};
+    }
+    if (lightmapRects_.valid())
+        device.destroy(lightmapRects_);
+    lightmapRects_ = {};
+    lightmapPageSize_ = 0;
+    lightmapPageCount_ = 0;
+    lightmapRectsBytes_ = 0;
+    lightmapStamp_ = 0;
+}
+
+void DefaultRenderer::uploadLightmap(rhi::IDevice& device, rhi::ICmdList& cmd, const RenderLightmap& lightmap)
+{
+    ENG_PROFILE_SCOPE("render.lightmap_upload");
+    lightmapStamp_ = lightmap.stamp;
+    const LightmapPages* pages = lightmap.pages.get();
+    if (lightmap.stamp == 0 || pages == nullptr || pages->size == 0 || pages->count == 0 || lightmap.rects.empty() ||
+        pages->texels.size() != static_cast<core::usize>(pages->size) * pages->size * 4 * pages->count) {
+        // **No bake, or none whole**: every part is drawn as it was.
+        releaseLightmap(device);
+        lightmapStamp_ = lightmap.stamp;
+        return;
+    }
+    // The pages: another size or count makes the array again.
+    if (pages->size != lightmapPageSize_ || pages->count != lightmapPageCount_ || !lightmapPages_.valid()) {
+        for (rhi::TextureHandle* texture : {&lightmapPages_, &lightmapScratch_}) {
+            if (texture->valid())
+                device.destroy(*texture);
+            *texture = {};
+        }
+        lightmapPages_ = device.createTexture({
+            .format = kHdrFormat,
+            .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget,
+            .width = pages->size,
+            .height = pages->size,
+            .layers = std::max(pages->count, 2u),
+            .debugName = "lightmap-pages",
+        });
+        lightmapScratch_ = device.createTexture({
+            .format = kHdrFormat,
+            .usage = rhi::TextureUsage::Sampled,
+            .width = pages->size,
+            .height = pages->size,
+            .debugName = "lightmap-scratch",
+        });
+        lightmapPageSize_ = pages->size;
+        lightmapPageCount_ = pages->count;
+    }
+    if (!lightmapPages_.valid() || !lightmapScratch_.valid()) {
+        releaseLightmap(device);
+        lightmapStamp_ = lightmap.stamp;
+        return;
+    }
+    // A page at a time, as half floats, through the scratch into its layer.
+    const core::usize perPage = static_cast<core::usize>(pages->size) * pages->size * 4;
+    lightmapPixels_.resize(perPage);
+    for (u32 page = 0; page < pages->count; ++page) {
+        const f32* from = pages->texels.data() + page * perPage;
+        for (core::usize at = 0; at < perPage; ++at)
+            lightmapPixels_[at] = floatToHalf(from[at]);
+        cmd.uploadTexture(lightmapScratch_, asBytes(lightmapPixels_.data(), perPage * sizeof(core::u16)), 0);
+        cmd.blitTexture(lightmapScratch_, lightmapPages_, page);
+    }
+    // The rows: a buffer as large as they are, kept while it is large enough.
+    const auto bytes = static_cast<u32>(lightmap.rects.size() * sizeof(f32));
+    if (bytes > lightmapRectsBytes_ || !lightmapRects_.valid()) {
+        if (lightmapRects_.valid())
+            device.destroy(lightmapRects_);
+        lightmapRects_ = device.createBuffer({
+            .usage = rhi::BufferUsage::GraphicsStorageRead,
+            .sizeBytes = bytes,
+            .debugName = "lightmap-rects",
+        });
+        lightmapRectsBytes_ = lightmapRects_.valid() ? bytes : 0;
+    }
+    if (lightmapRects_.valid())
+        cmd.upload(lightmapRects_, asBytes(lightmap.rects.data(), bytes), 0);
+}
+
 void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshCache& meshes)
 {
     ENG_PROFILE_SCOPE("render.batches");
     batches_.clear();
     instanceStaging_.clear();
+    bakedInstanceStaging_.clear();
+    anyBakedRun_ = false;
     skinnedInstanceStaging_.clear();
     batchBounds_.clear();
     batchOf_.assign(world.draws.size(), kNoBatch);
@@ -4239,6 +4400,9 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             // (`BasePart.ReceivesDecals`).
             if (next.receivesDecals != first.receivesDecals)
                 break;
+            // A baked part and one that is not are drawn by two pipelines.
+            if ((next.lightmap != NoLightmap) != (first.lightmap != NoLightmap))
+                break;
             // A surface's colour is in its block, not in the instance's tint:
             // one material per run.
             const bool surfaced = first.material < materialSurface_.size() && materialSurface_[first.material] != 0;
@@ -4252,7 +4416,13 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         const auto count = static_cast<u32>(last - index);
         const core::usize staged = skinned ? skinnedInstanceStaging_.size() : instanceStaging_.size();
         const core::usize room = skinned ? kMaxSkinnedInstances : kMaxInstances;
-        if (count < kMinInstanceBatch || staged + count > room) {
+        // **A baked part is drawn as a run of its own however few there
+        // are** (ADR 0253): its light is read by the instanced pipeline alone.
+        const bool baked = first.lightmap != NoLightmap && !skinned && !first.transparent &&
+                           resolved->lightmap.valid() && pbrBakedInstancedPipeline_.valid() &&
+                           bakedInstanceBuffer_.valid() && lightmapPages_.valid() && lightmapRects_.valid() &&
+                           world.lightmap.stamp == lightmapStamp_ && lightmapStamp_ != 0;
+        if ((count < kMinInstanceBatch && !baked) || staged + count > room) {
             index = last;
             continue;
         }
@@ -4263,6 +4433,8 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
         batch.count = count;
         batch.lod = lod;
         batch.skinned = skinned;
+        batch.baked = baked;
+        anyBakedRun_ = anyBakedRun_ || baked;
 
         // The union sphere, grown one member at a time. Conservative in the
         // direction that never drops geometry, which is the only direction a
@@ -4325,6 +4497,10 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             }
             else {
                 instanceStaging_.push_back(instance);
+                bakedInstanceStaging_.push_back(baked ? std::array<f32, 4>{static_cast<f32>(draw.lightmap),
+                                                                           world.lightmap.maskHolds ? 1.0f : 0.0f, 0.0f,
+                                                                           0.0f}
+                                                      : std::array<f32, 4>{});
             }
         }
 
@@ -4661,6 +4837,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                                   ? materialSurface_[draw.material]
                                   : 0u;
         const SurfaceSet* surface = surfaceId != 0 ? &surfaces_[surfaceId - 1] : nullptr;
+        // **A run of baked parts in the lit pass** (ADR 0253); in every other
+        // pass it is an instanced run like any.
+        const bool bakedRun = batch != nullptr && batch->baked && selection == Selection::Opaque && surface == nullptr;
         // A masked surface cuts itself in its fragment, which its depth pass
         // does not run: left in the prepass, its holes would show whatever the
         // prepass depth hid -- the sky -- instead of what is behind them.
@@ -4691,6 +4870,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         const rhi::PipelineHandle wanted =
             surfacePipeline.valid() ? surfacePipeline
             : skinnedRun            ? unlessPrepassed(skinnedInstancedPipeline, pbrSkinnedInstancedPrepassedPipeline_)
+            : bakedRun              ? unlessPrepassed(pbrBakedInstancedPipeline_, pbrBakedInstancedPrepassedPipeline_)
             : batch != nullptr      ? unlessPrepassed(instancedPipeline, pbrInstancedPrepassedPipeline_)
             : morphDraw             ? morphPipeline
             : skinnedDraw           ? unlessPrepassed(skinnedPipeline, pbrSkinnedPrepassedPipeline_)
@@ -4928,6 +5108,15 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             cmd.bindVertexBuffers(0, vertexBuffers);
             const std::array<rhi::BufferHandle, 1> palettes{paletteBuffer_};
             cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, palettes);
+        }
+        else if (bakedRun) {
+            const std::array<rhi::BufferHandle, 4> vertexBuffers{resolved->vertices, instanceBuffer_,
+                                                                 bakedInstanceBuffer_, resolved->lightmap};
+            cmd.bindVertexBuffers(0, vertexBuffers);
+            const std::array<rhi::BufferHandle, 1> rows{lightmapRects_};
+            cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, rows);
+            const std::array<rhi::TextureBinding, 1> pages{rhi::TextureBinding{lightmapPages_, environmentSampler_}};
+            cmd.bindTextures(rhi::ShaderStage::Fragment, 15, pages);
         }
         else if (batch != nullptr) {
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, instanceBuffer_};
@@ -9948,7 +10137,18 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                                std::min<usize>(world.clothRows.size(), kMaxClothRows) * sizeof(GpuMorphDelta)),
                        0);
     }
+    // The bake's pages and rows when the bake is another (ADR 0253): before
+    // the runs, which are baked only against the pages this frame holds.
+    // A view that carries none -- a picture of something else -- leaves the
+    // pages as they are for the views that do.
+    if (world.lightmap.stamp != 0 && world.lightmap.stamp != lightmapStamp_)
+        uploadLightmap(device, cmd, world.lightmap);
     buildInstanceBatches(world, meshes);
+    if (anyBakedRun_ && !bakedInstanceStaging_.empty()) {
+        cmd.upload(
+            bakedInstanceBuffer_,
+            asBytes(bakedInstanceStaging_.data(), bakedInstanceStaging_.size() * sizeof(bakedInstanceStaging_[0])), 0);
+    }
     if (!instanceStaging_.empty()) {
         cmd.upload(instanceBuffer_, asBytes(instanceStaging_.data(), instanceStaging_.size() * sizeof(GpuInstance)), 0);
     }

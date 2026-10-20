@@ -383,6 +383,12 @@ public:
     // with none.
     [[nodiscard]] bool takeLightmapBake(LightmapBakeResult& out);
     [[nodiscard]] core::f32 lightmapProgress() const noexcept;
+    // **The scene drawn with a bake** (ADR 0253): every part it baked that
+    // still stands where it stood is drawn with its light, and its mask while
+    // the sun is within three degrees of where it was baked. A bake with no
+    // pages draws nothing with one.
+    void giveLightmap(const LightmapBakeResult& baked);
+    void forgetLightmap() noexcept;
     // **What stands in a volume's box, as one number**: every part that does
     // not move and is in or against the box -- where it stands in the box's
     // own space, how it is turned and how large it is, to the millimetre. The
@@ -610,6 +616,13 @@ private:
     // each is a hull the ray would otherwise meet, step past and be cast
     // again for. The first few; past them a body is stepped past as it is met.
     std::vector<core::u64> m_tracedBodies;
+    // **What a lightmap's rays meet** (ADR 0253): the same, less every part
+    // that is not baked -- a door a script swings, a ball set down, is in no
+    // shadow a bake keeps. Copied when a bake begins, and kept for it.
+    std::vector<Surface> m_bakedSurfaces;
+    std::vector<TracedMesh> m_bakedTraced;
+    BoxTree m_bakedBoxes;
+    std::vector<core::u64> m_bakedBodies;
 
     [[nodiscard]] ProbeState& probeState(core::u64 key);
     [[nodiscard]] VolumeState& volumeState(core::u64 key);
@@ -660,6 +673,24 @@ private:
     std::shared_ptr<LightmapBake> m_lightmap;
     std::shared_ptr<LightmapBakeResult> m_lightmapDone;
     std::vector<core::InstanceId> m_lightmapParts;
+
+    // The bake the scene is drawn with (ADR 0253): its pages, as the frame
+    // carries them; each baked part by its packed id, sorted, with where its
+    // rows begin and where it stood; and whether the mask holds this frame.
+    struct LightmapPart
+    {
+        core::u64 key = 0;
+        core::u32 row = 0;
+        core::CFrameD place;
+        core::Vec3 size{1.0f, 1.0f, 1.0f};
+        bool stale = false;
+    };
+    std::shared_ptr<const render::LightmapPages> m_lightmapPages;
+    std::vector<core::f32> m_lightmapRects;
+    std::vector<LightmapPart> m_lightmapLit;
+    core::Vec3 m_lightmapSun{0.0f, 1.0f, 0.0f};
+    core::u64 m_lightmapStamp = 0;
+    bool m_lightmapMaskHolds = false;
 };
 
 } // namespace engine::app
