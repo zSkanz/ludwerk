@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,6 +46,7 @@ struct LocalizationIndex;
 namespace engine::scene {
 class SoundMeter;
 class World;
+struct EngineState;
 } // namespace engine::scene
 
 namespace engine::audio {
@@ -148,11 +150,32 @@ struct AudioStats
     // length -- which is the point: the tick reads a header, never a decode.
     u32 tickDecodes = 0;
     bool deviceOpen = false;
+    // **Occlusion on the last frame** (ADR 0255): the rays cast, the sounds
+    // muffled at all, and the time it took on the calling thread.
+    u32 occlusionRays = 0;
+    u32 occludedSounds = 0;
+    f64 occlusionMs = 0.0;
 };
 
 // The mixer and the timeline. Held by `app` beside the physics mirror and the
 // input system, and for the same reasons: `scene` cannot own it without L3
 // depending on a device, and a process-global would make two worlds share one.
+// **What stands between an ear and a sound** (ADR 0255): one ray, from an
+// ear to a point at a sound, through the host's physics world, in at most
+// `most` casts. `walls` is how many parts it met before the point, and
+// `casts` how many casts that took. The sound's own part and the model it is
+// in are the host's to leave out; this module has no physics to ask.
+struct OcclusionCast
+{
+    u32 walls = 0;
+    u32 casts = 0;
+};
+using OcclusionProbe = std::function<OcclusionCast(core::DVec3 from, core::DVec3 to, core::InstanceId part, u32 most)>;
+
+// `AudioService.OcclusionRays` in force: what a script wrote, or the quality
+// level's -- 20 at `Low`, 64 above.
+[[nodiscard]] u32 occlusionRayBudget(const scene::EngineState& state) noexcept;
+
 class AudioSystem
 {
 public:
@@ -330,6 +353,14 @@ public:
     // belongs to the game. It is a HOST decision, and no script can reach it:
     // `SoundService.Volume` is the game's control and this is the tool's.
     void setSuspended(bool suspended) noexcept { m_suspended = suspended; }
+
+    // **How this machine looks for walls** (ADR 0255): the host's, set once
+    // it has a physics world, and empty -- no sound muffled -- until then and
+    // wherever there is none.
+    void setOcclusionProbe(OcclusionProbe probe);
+    // How muffled a sound was on the last frame: 0 open, 1 behind one wall,
+    // 1.5 behind two or more. What a test and the overlay read.
+    [[nodiscard]] f32 occlusionOf(core::InstanceId sound) const noexcept;
     [[nodiscard]] bool suspended() const noexcept { return m_suspended; }
 
     [[nodiscard]] AudioStats stats() const noexcept;

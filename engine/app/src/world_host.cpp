@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -19,6 +20,7 @@
 #include "engine/asset/gltf.h"
 #include "engine/asset/mesh_format.h"
 #include "engine/asset/seal.h"
+#include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
 #include "engine/core/build_info.h"
 #include "engine/core/content_path.h"
@@ -506,6 +508,53 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_audio.setLocalized(&m_localized);
     m_audio.setVoiceLocale(m_world->engineState().voiceLocale);
     m_world->setSoundMeter(m_audio.meter());
+    // **What stands between an ear and a sound** (ADR 0255): a ray through
+    // this host's physics world, which a frame only reads, in at most `most`
+    // casts. The sound's own part is left out of the query, and the rest of
+    // the model it is in is passed when met -- a car's engine is not muffled
+    // by the car; characters it never meets. It counts the parts it meets
+    // before the point.
+    m_audio.setOcclusionProbe(
+        [this, model = m_classes.findId(m_atoms.lookup("Model"))](
+            core::DVec3 from, core::DVec3 to, core::InstanceId part, core::u32 most) -> audio::OcclusionCast {
+            audio::OcclusionCast out;
+            const scene::PhysicsSync* physics = this->physics();
+            if (physics == nullptr)
+                return out;
+            const scene::World& world = *m_world;
+            core::InstanceId own = part;
+            for (core::InstanceId up = world.parentOf(part); up.valid(); up = world.parentOf(up)) {
+                if (world.isA(up, model)) {
+                    own = up;
+                    break;
+                }
+            }
+            const core::Vec3 delta{static_cast<core::f32>(to.x - from.x), static_cast<core::f32>(to.y - from.y),
+                                   static_cast<core::f32>(to.z - from.z)};
+            const core::f32 length = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+            std::array<core::u64, 8> passed{};
+            core::usize passes = 0;
+            if (const core::u64 self = physics->userDataOf(part); self != 0)
+                passed[passes++] = self;
+            while (out.casts < most && passes < passed.size()) {
+                physics::QueryFilter filter;
+                filter.characters = false;
+                filter.userData = std::span<const core::u64>(passed.data(), passes);
+                physics::RayHit hit;
+                out.casts += 1;
+                if (!physics->backend().raycast(physics->worldHandle(), physics::RayD{from, delta}, filter, hit))
+                    break;
+                // What is at the point itself is not between.
+                if (hit.distance >= length - 0.05f)
+                    break;
+                passed[passes++] = hit.userData;
+                const core::InstanceId met = physics->instanceOf(hit.userData);
+                if (met == part || (own != part && world.isAncestorOf(own, met)))
+                    continue;
+                out.walls += 1;
+            }
+            return out;
+        });
 
     // Animation is created unconditionally, unlike the physics mirror: there is
     // no backend to be missing. A world whose meshes carry no skeleton simply

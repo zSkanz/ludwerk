@@ -75,6 +75,39 @@ Two consequences:
   camera's right is in the right speaker — see [Sounds](manual:audio/sounds).
 - **With `CurrentCamera` set to `nil`, the ear sits at the world origin.**
 
+## A sound behind a wall
+
+A sound on a part is muffled by what stands between it and the listener: the
+parts, terrain and blocks a ray meets on the way. Behind one wall it loses its
+brightness and half its level; behind two or more, more of both; partly
+hidden, part of that. Characters do not muffle it, and neither does the part
+it is on or the model that part is in -- an engine is not muffled by its own
+car.
+
+```luau
+--!strict
+local AudioService = game:GetService("AudioService")
+
+AudioService.OcclusionMuffle = 600 -- hertz a wall cuts above: lower is duller
+AudioService.OcclusionVolume = 0.4 -- how loud through one wall
+AudioService.OcclusionRays = 32    -- how many rays a frame looks with
+```
+
+- **Each sound is looked at in turn.** A sound takes five rays, and a frame
+  casts at most `OcclusionRays` -- 20 at the `Low` quality level and 64 above
+  until you set it. The loudest sounds are looked at most often, and the
+  amount a sound is muffled changes over about a tenth of a second, so one
+  looked at every few frames does not step.
+- **It is each machine's.** What this machine hears is muffled by its own
+  listeners; nothing of it is sent or saved. Set the four properties from a
+  client script.
+- **`OcclusionEnabled = false`** turns it off. A sound with no part, music or
+  an interface click, is never muffled.
+
+The F3 overlay's Audio rows say how many rays the last frame cast, how many
+sounds are muffled and what it cost, and `[debug] frame_report_seconds`
+writes the same to the log every few seconds, on a phone too.
+
 ## Fire and forget
 
 ```luau

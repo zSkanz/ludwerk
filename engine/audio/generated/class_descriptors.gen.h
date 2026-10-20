@@ -315,6 +315,14 @@ scene::Value getAudioServiceVoiceVolume(const scene::World& world, core::Instanc
 bool setAudioServiceVoiceVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId id);
 bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceOcclusionEnabled(const scene::World& world, core::InstanceId id);
+bool setAudioServiceOcclusionEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceOcclusionMuffle(const scene::World& world, core::InstanceId id);
+bool setAudioServiceOcclusionMuffle(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceOcclusionVolume(const scene::World& world, core::InstanceId id);
+bool setAudioServiceOcclusionVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceOcclusionRays(const scene::World& world, core::InstanceId id);
+bool setAudioServiceOcclusionRays(scene::World& world, core::InstanceId id, const scene::Value& value);
 
 // DialogueService
 scene::Value getDialogueServiceSubtitles(const scene::World& world, core::InstanceId id);

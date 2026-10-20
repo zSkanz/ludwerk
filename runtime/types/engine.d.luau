@@ -6952,6 +6952,21 @@ declare extern type AudioService extends Instance with
     --- when it is playing, in range and not muted by the player. The value belongs to the game, like
     --- `MasterVolume`. The fade happens in each machine's mixer, and scripts cannot read it.
     MusicUnderVoice: number
+    --- Whether a sound behind a wall is muffled. A sound on a part is muffled by the parts, terrain and
+    --- blocks between it and the listener, not by characters, and not by its own part or the model that
+    --- part is in. Each machine muffles what it hears, so set it on the client.
+    OcclusionEnabled: boolean
+    --- How muffled a sound behind one wall is: the frequency, in hertz, from 60 to 20000, above which
+    --- it is cut. A sound half hidden is cut higher, and one behind two walls or more lower.
+    OcclusionMuffle: number
+    --- How loud a sound behind one wall is, as a factor from 0 to 1 of its volume. Behind two walls or
+    --- more it is quieter again.
+    OcclusionVolume: number
+    --- How many rays a frame casts to find what stands between the listener and its sounds, a whole
+    --- number from 0 to 1024. Each sound looked at takes five, and the sounds are looked at in turn,
+    --- the loudest most often, so 64 looks at about twelve a frame. Until a script sets it, it follows
+    --- the quality level: 20 at `Low` and 64 above. At 0 no sound is muffled.
+    OcclusionRays: number
     --- Creates a `Sound` that is not positional, parents it to this service, plays it and returns it.
     --- Use it for a one-shot sound such as a click or a pickup. The sound is destroyed shortly after it
     --- ends, after handlers of its `Ended` event have run. Use the returned sound to set its volume or

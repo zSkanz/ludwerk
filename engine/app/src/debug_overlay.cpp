@@ -19774,8 +19774,37 @@ void drawNetwork(const scene::World& world)
     }
 }
 
+// **What the mixer is doing**: the voices it sums, and what looking for
+// walls cost this frame (ADR 0255) -- the rays cast, the sounds muffled, the
+// time on this thread.
+void drawAudio(const audio::AudioSystem& audio)
+{
+    const audio::AudioStats stats = audio.stats();
+    if (ImGui::BeginTable("##audio", 2, ImGuiTableFlags_SizingStretchProp)) {
+        const auto row = [](const char* name, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextDisabled("%s", name);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(value.c_str());
+        };
+        const auto number = [](double value, int decimals, const char* unit) {
+            char text[64];
+            (void)std::snprintf(text, sizeof(text), "%.*f%s", decimals, value, unit);
+            return std::string(text);
+        };
+        row(core::tr(ENG_TR("engine.editor.audio.voices")), number(static_cast<double>(stats.activeVoices), 0, ""));
+        row(core::tr(ENG_TR("engine.editor.audio.occlusion_rays")),
+            number(static_cast<double>(stats.occlusionRays), 0, ""));
+        row(core::tr(ENG_TR("engine.editor.audio.occluded")), number(static_cast<double>(stats.occludedSounds), 0, ""));
+        row(core::tr(ENG_TR("engine.editor.audio.occlusion_time")), number(stats.occlusionMs, 3, " ms"));
+        ImGui::EndTable();
+    }
+}
+
 void drawShell(const Frame& frame, scene::World* world, core::InstanceId root, Inspector* inspector,
-               script::ScriptRuntime* runtime, const StreamingHost* streaming, const RenderCounters& counters)
+               script::ScriptRuntime* runtime, const StreamingHost* streaming, const RenderCounters& counters,
+               const audio::AudioSystem* audio)
 {
     ImGui::SetNextWindowBgAlpha(0.85f);
     ImGui::SetNextWindowSize(ImVec2(420.0f, 520.0f), ImGuiCond_FirstUseEver);
@@ -19810,6 +19839,11 @@ void drawShell(const Frame& frame, scene::World* world, core::InstanceId root, I
         if (world != nullptr && world->engineState().networkTopology != scene::NetworkTopology::Solo) {
             ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.shell.network")));
             drawNetwork(*world);
+        }
+
+        if (audio != nullptr) {
+            ImGui::SeparatorText(core::tr(ENG_TR("engine.editor.shell.audio")));
+            drawAudio(*audio);
         }
 
         // Only for a project that streams. A panel of zeroes on every example
@@ -20179,7 +20213,7 @@ void DebugOverlay::render(rhi::ICmdList& cmd, rhi::TextureHandle target, const F
                         panels_, dialogs_, icons_, scripts_, scriptCommands_, debugView_, audio_, streaming_, visible_,
                         counters_);
     else
-        drawShell(frame, world_, root_, inspector_, runtime_, streaming_, counters_);
+        drawShell(frame, world_, root_, inspector_, runtime_, streaming_, counters_, audio_);
     ImGui::Render();
     forwardInterfaceErrors();
 

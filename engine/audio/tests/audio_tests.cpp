@@ -2002,3 +2002,199 @@ TEST_CASE("a sound made to be played once is gone a couple of ticks after it end
     // One that nobody said was to be played once stays.
     CHECK_FALSE(fixture.world->destroyed(kept));
 }
+
+// --- A sound behind a wall (ADR 0255) --------------------------------------------
+
+namespace {
+
+// Sounds on parts in front of a listener at the origin facing -Z, heard
+// through whatever probe a case gives.
+struct WallRig
+{
+    Fixture fixture;
+    engine::core::CFrameD ear = listenerAt({0.0, 0.0, 0.0}, {0.0, 0.0, -10.0});
+
+    InstanceId sound(engine::core::DVec3 at, float volume = 0.25f)
+    {
+        const InstanceId part = fixture.make("Part");
+        fixture.world->parts().find(part)->cframe.position = at;
+        const InstanceId id = fixture.make("Sound");
+        REQUIRE_FALSE(fixture.world->setParent(id, part).has_value());
+        fixture.sound(id).playing = true;
+        fixture.sound(id).volume = volume;
+        fixture.sound(id).rollOffMaxDistance = 100.0f;
+        return id;
+    }
+
+    // How loud the next `seconds` are.
+    double hear(double seconds)
+    {
+        fixture.system.update(*fixture.world, InstanceId{}, &ear);
+        std::vector<float> samples(static_cast<std::size_t>(seconds * 48000.0) * 2, 0.0f);
+        fixture.system.renderInto(samples);
+        return measure(std::move(samples)).rms;
+    }
+};
+
+[[nodiscard]] audio::OcclusionProbe walls(engine::core::u32 count)
+{
+    return [count](engine::core::DVec3, engine::core::DVec3, InstanceId, engine::core::u32 most) {
+        return audio::OcclusionCast{std::min(count, most), std::min(count + 1, most)};
+    };
+}
+
+} // namespace
+
+TEST_CASE("ADR 0255: a sound behind a wall loses its brightness and its level; one in the open is as it was")
+{
+    WallRig open;
+    const InstanceId heardOpen = open.sound({0.0, 0.0, -5.0});
+    open.fixture.system.setOcclusionProbe(walls(0));
+    (void)open.hear(0.1);
+    const double clear = open.hear(0.4);
+    CHECK(open.fixture.system.occlusionOf(heardOpen) == 0.0f);
+
+    // And with no probe at all -- a host with no physics -- the same.
+    WallRig bare;
+    (void)bare.sound({0.0, 0.0, -5.0});
+    (void)bare.hear(0.1);
+    CHECK(bare.hear(0.4) == doctest::Approx(clear).epsilon(0.01));
+
+    // The brightness: cut at 60 Hz, the placeholder tone is gone.
+    WallRig dark;
+    const InstanceId heardDark = dark.sound({0.0, 0.0, -5.0});
+    dark.fixture.world->engineState().occlusionMuffle = 60.0f;
+    dark.fixture.world->engineState().occlusionVolume = 1.0f;
+    dark.fixture.system.setOcclusionProbe(walls(1));
+    (void)dark.hear(0.1);
+    CHECK(dark.hear(0.4) < clear * 0.3);
+    CHECK(static_cast<double>(dark.fixture.system.occlusionOf(heardDark)) == doctest::Approx(1.0));
+
+    // The level: let through at 20 kHz, half as loud.
+    WallRig quiet;
+    (void)quiet.sound({0.0, 0.0, -5.0});
+    quiet.fixture.world->engineState().occlusionMuffle = 20000.0f;
+    quiet.fixture.world->engineState().occlusionVolume = 0.5f;
+    quiet.fixture.system.setOcclusionProbe(walls(1));
+    (void)quiet.hear(0.1);
+    CHECK(quiet.hear(0.4) == doctest::Approx(clear * 0.5).epsilon(0.05));
+
+    // Turned off for the game, a wall changes nothing.
+    WallRig off;
+    (void)off.sound({0.0, 0.0, -5.0});
+    off.fixture.world->engineState().occlusionEnabled = false;
+    off.fixture.system.setOcclusionProbe(walls(1));
+    (void)off.hear(0.1);
+    CHECK(off.hear(0.4) == doctest::Approx(clear).epsilon(0.01));
+}
+
+TEST_CASE("ADR 0255: five rays say how much of a sound is hidden, and a second wall muffles half again")
+{
+    WallRig rig;
+    const InstanceId id = rig.sound({0.0, 0.0, -5.0});
+    // The four points across the line lie to its right, left, below and
+    // above: a wall on the right of the sound hides one ray in five.
+    rig.fixture.system.setOcclusionProbe(
+        [](engine::core::DVec3, engine::core::DVec3 to, InstanceId, engine::core::u32) {
+            return audio::OcclusionCast{to.x > 0.01 ? 1u : 0u, 1u};
+        });
+    (void)rig.hear(0.01);
+    CHECK(static_cast<double>(rig.fixture.system.occlusionOf(id)) == doctest::Approx(0.2));
+
+    WallRig two;
+    const InstanceId behind = two.sound({0.0, 0.0, -5.0});
+    two.fixture.system.setOcclusionProbe(walls(2));
+    (void)two.hear(0.01);
+    CHECK(static_cast<double>(two.fixture.system.occlusionOf(behind)) == doctest::Approx(1.5));
+
+    // A sound at the ear has nothing between, and nothing is cast for it.
+    WallRig close;
+    const InstanceId atEar = close.sound({0.0, 0.0, -0.1});
+    int casts = 0;
+    close.fixture.system.setOcclusionProbe(
+        [&casts](engine::core::DVec3, engine::core::DVec3, InstanceId, engine::core::u32) {
+            casts += 1;
+            return audio::OcclusionCast{1u, 1u};
+        });
+    (void)close.hear(0.01);
+    CHECK(close.fixture.system.occlusionOf(atEar) == 0.0f);
+    CHECK(casts == 0);
+}
+
+TEST_CASE("ADR 0255: a frame casts no more rays than its budget, every sound is looked at, the loudest most often")
+{
+    WallRig rig;
+    std::vector<InstanceId> parts;
+    // One loud sound and nineteen quiet ones, all in front.
+    for (int at = 0; at < 20; ++at) {
+        const InstanceId id = rig.sound({static_cast<double>(at) - 10.0, 0.0, -8.0}, at == 0 ? 1.0f : 0.05f);
+        parts.push_back(rig.fixture.world->parentOf(id));
+    }
+    rig.fixture.world->engineState().occlusionRays = 25;
+    std::vector<int> looked(parts.size(), 0);
+    int frameCasts = 0;
+    rig.fixture.system.setOcclusionProbe(
+        [&](engine::core::DVec3, engine::core::DVec3, InstanceId part, engine::core::u32) {
+            frameCasts += 1;
+            for (std::size_t index = 0; index < parts.size(); ++index) {
+                if (parts[index] == part)
+                    looked[index] += 1;
+            }
+            return audio::OcclusionCast{0u, 1u};
+        });
+    int most = 0;
+    for (int frame = 0; frame < 40; ++frame) {
+        frameCasts = 0;
+        (void)rig.hear(0.001);
+        most = std::max(most, frameCasts);
+        CHECK(rig.fixture.system.stats().occlusionRays == static_cast<engine::core::u32>(frameCasts));
+    }
+    CHECK(most <= 25);
+    for (std::size_t index = 0; index < looked.size(); ++index) {
+        CAPTURE(index);
+        CHECK(looked[index] >= 5);
+    }
+    // Twenty times louder is looked at more often than any of the others.
+    for (std::size_t index = 1; index < looked.size(); ++index)
+        CHECK(looked[0] > looked[index]);
+
+    // None at all: nothing cast, nothing muffled.
+    rig.fixture.world->engineState().occlusionRays = 0;
+    frameCasts = 0;
+    (void)rig.hear(0.001);
+    CHECK(frameCasts == 0);
+    CHECK(rig.fixture.system.stats().occludedSounds == 0);
+}
+
+TEST_CASE("ADR 0255: until a game sets it, the budget is the quality level's")
+{
+    WallRig rig;
+    engine::scene::EngineState& state = rig.fixture.world->engineState();
+    CHECK(audio::occlusionRayBudget(state) == 64);
+    state.graphics.applyPreset(engine::scene::kQualityLow);
+    CHECK(audio::occlusionRayBudget(state) == 20);
+    state.occlusionRays = 100;
+    CHECK(audio::occlusionRayBudget(state) == 100);
+}
+
+TEST_CASE("ADR 0255: a wall that comes between closes over about a tenth of a second, not at once")
+{
+    WallRig rig;
+    const InstanceId id = rig.sound({0.0, 0.0, -5.0});
+    bool wall = false;
+    rig.fixture.system.setOcclusionProbe(
+        [&wall](engine::core::DVec3, engine::core::DVec3, InstanceId, engine::core::u32) {
+            return audio::OcclusionCast{wall ? 1u : 0u, 1u};
+        });
+    (void)rig.hear(0.001);
+    CHECK(rig.fixture.system.occlusionOf(id) == 0.0f);
+    wall = true;
+    // The ease reads the wall clock: what passes between two frames here is
+    // at least this, and at most the quarter of a second the ease takes in
+    // one step, so the amount is on its way and not there.
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    (void)rig.hear(0.001);
+    const float between = rig.fixture.system.occlusionOf(id);
+    CHECK(between > 0.05f);
+    CHECK(between < 0.95f);
+}

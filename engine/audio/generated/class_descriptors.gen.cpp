@@ -867,7 +867,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(captionDesc);
 
     // --- AudioService ---
-    static std::array<scene::PropertyDesc, 6> audioServiceProperties;
+    static std::array<scene::PropertyDesc, 10> audioServiceProperties;
     audioServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("MasterVolume"),
@@ -942,6 +942,54 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
             .get = native::getAudioServiceMusicUnderVoice,
             .set = native::setAudioServiceMusicUnderVoice,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("OcclusionEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether a sound behind a wall is muffled. A sound on a part is muffled by the parts, terrain and blocks between it and the listener, not by characters, and not by its own part or the model that part is in. Each machine muffles what it hears, so set it on the client.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAudioServiceOcclusionEnabled,
+            .set = native::setAudioServiceOcclusionEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("OcclusionMuffle"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How muffled a sound behind one wall is: the frequency, in hertz, from 60 to 20000, above which it is cut. A sound half hidden is cut higher, and one behind two walls or more lower.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceOcclusionMuffle,
+            .set = native::setAudioServiceOcclusionMuffle,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("OcclusionVolume"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How loud a sound behind one wall is, as a factor from 0 to 1 of its volume. Behind two walls or more it is quieter again.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getAudioServiceOcclusionVolume,
+            .set = native::setAudioServiceOcclusionVolume,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("OcclusionRays"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How many rays a frame casts to find what stands between the listener and its sounds, a whole number from 0 to 1024. Each sound looked at takes five, and the sounds are looked at in turn, the loudest most often, so 64 looks at about twelve a frame. Until a script sets it, it follows the quality level: 20 at `Low` and 64 above. At 0 no sound is muffled.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceOcclusionRays,
+            .set = native::setAudioServiceOcclusionRays,
         },
     }};
     static std::array<scene::MethodDesc, 2> audioServiceMethods;

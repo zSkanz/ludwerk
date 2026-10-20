@@ -2178,6 +2178,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     core::u64 reportStartNs = 0;
     core::u32 reportRenderWidth = 0;
     core::u32 reportRenderHeight = 0;
+    // And what looking for walls between the ears and the sounds cost over
+    // those frames (ADR 0255): a phone's number is only in its log.
+    f64 reportOcclusionMs = 0.0;
+    f64 reportOcclusionWorstMs = 0.0;
+    core::u64 reportOcclusionRays = 0;
+    core::u64 reportOcclusionFrames = 0;
+    core::u32 reportOcclusionMuffled = 0;
     // **Where each frame went**: the simulation, and the time spent
     // waiting on the GPU and the display -- a command buffer, a swapchain
     // image, the present -- with what is left the CPU drawing. Measured on the
@@ -4361,6 +4368,20 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     const std::array<I18nArg, 1> keyArgs{I18nArg{"keys", debugKeys}};
                     core::log(LogLevel::Info, ENG_TR("engine.debug.info.keys"), keyArgs);
                 }
+                if (reportOcclusionRays != 0 && reportOcclusionFrames != 0) {
+                    const auto frames = static_cast<f64>(reportOcclusionFrames);
+                    const std::array<I18nArg, 4> occlusion{
+                        I18nArg{"rays", std::round(static_cast<f64>(reportOcclusionRays) / frames * 10.0) / 10.0},
+                        I18nArg{"mean", std::round(reportOcclusionMs / frames * 1000.0) / 1000.0},
+                        I18nArg{"worst", std::round(reportOcclusionWorstMs * 1000.0) / 1000.0},
+                        I18nArg{"muffled", static_cast<core::i64>(reportOcclusionMuffled)},
+                    };
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.occlusion"), occlusion);
+                }
+                reportOcclusionMs = 0.0;
+                reportOcclusionWorstMs = 0.0;
+                reportOcclusionRays = 0;
+                reportOcclusionFrames = 0;
                 reportFrameMs.clear();
                 reportStartNs = reportNs;
             }
@@ -7531,6 +7552,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                 : nullptr,
                              std::span<const core::CFrameD>{viewEars.data() + (viewEarCount > 0 ? 1 : 0),
                                                             viewEarCount > 0 ? viewEarCount - 1 : 0});
+        {
+            const audio::AudioStats heard = host->audio().stats();
+            reportOcclusionMs += heard.occlusionMs;
+            reportOcclusionWorstMs = std::max(reportOcclusionWorstMs, heard.occlusionMs);
+            reportOcclusionRays += heard.occlusionRays;
+            reportOcclusionFrames += 1;
+            reportOcclusionMuffled = heard.occludedSounds;
+        }
         // What is being said, from what that frame can hear (ADR 0200), and
         // the mouths that say it.
         host->stepCaptions();

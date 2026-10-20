@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "../generated/class_descriptors.gen.h"
+#include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
 #include "engine/scene/world.h"
 
@@ -437,6 +438,57 @@ Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId
 bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId, const Value& value)
 {
     return takeBetween(value, 0.0f, 1.0f, world.engineState().musicUnderVoice);
+}
+
+// --- Occlusion (ADR 0255) ---------------------------------------------------------
+
+Value getAudioServiceOcclusionEnabled(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().occlusionEnabled};
+}
+
+bool setAudioServiceOcclusionEnabled(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr)
+        return false;
+    world.engineState().occlusionEnabled = *next;
+    return true;
+}
+
+Value getAudioServiceOcclusionMuffle(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().occlusionMuffle)};
+}
+
+bool setAudioServiceOcclusionMuffle(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, 60.0f, 20000.0f, world.engineState().occlusionMuffle);
+}
+
+Value getAudioServiceOcclusionVolume(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().occlusionVolume)};
+}
+
+bool setAudioServiceOcclusionVolume(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, 0.0f, 1.0f, world.engineState().occlusionVolume);
+}
+
+// What is in force: what a script wrote, or the quality level's.
+Value getAudioServiceOcclusionRays(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(occlusionRayBudget(world.engineState()))};
+}
+
+bool setAudioServiceOcclusionRays(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !isFinite(*number) || *number < 0.0 || *number > 1024.0 || std::floor(*number) != *number)
+        return false;
+    world.engineState().occlusionRays = static_cast<core::i32>(*number);
+    return true;
 }
 
 // --- DialogueService (ADR 0200) -----------------------------------------------------

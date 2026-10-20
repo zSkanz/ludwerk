@@ -11,10 +11,16 @@ here.
 
 ### Added
 
+- A sound behind a wall is muffled: a sound on a part loses its brightness
+  and some of its level by the parts, terrain and blocks between it and the
+  listener, and a sound partly hidden by part of that. Characters do not
+  muffle it, nor the model the sound is in. `AudioService.OcclusionEnabled`,
+  `OcclusionMuffle`, `OcclusionVolume` and `OcclusionRays` set it for each
+  machine; the rays a frame follow the quality level until a game sets them.
+  The F3 overlay has Audio rows, and the frame report an occlusion line.
 - `JoinFailed`, `HostFailed` and `Disconnected` pass an `Enum.NetworkFailure`
   and the catalog key of their text after the text itself, so a game decides
   by a value that does not change with the language or the version.
-
 - `RunService.Exported` says whether a game runs as an exported game -- true
   in a package `ludwerk build` made, false in the editor, under `ludwerk dev`
   and in tests -- so a game can leave out what is for its developers only.

@@ -428,6 +428,7 @@ engine_add_module_tests(app
         tests/world_host_tests.cpp
         tests/gamepad_tests.cpp
         tests/draw_poses_tests.cpp
+        tests/sound_occlusion_tests.cpp
         tests/script_files_tests.cpp
         tests/external_changes_tests.cpp
         tests/admin_server_tests.cpp

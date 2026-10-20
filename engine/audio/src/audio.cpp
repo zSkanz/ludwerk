@@ -210,6 +210,84 @@ struct Stream
     }
 };
 
+constexpr core::usize kBlockFrames = 4096;
+constexpr f32 kTwoPi = 6.28318530717958f;
+
+// One second-order filter over both channels.
+struct Biquad
+{
+    f32 b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+    f32 z1[kChannels] = {};
+    f32 z2[kChannels] = {};
+
+    void process(f32* samples, core::usize frames) noexcept
+    {
+        for (core::usize frame = 0; frame < frames; ++frame) {
+            for (u32 channel = 0; channel < kChannels; ++channel) {
+                const f32 in = samples[frame * kChannels + channel];
+                const f32 out = b0 * in + z1[channel];
+                z1[channel] = b1 * in - a1 * out + z2[channel];
+                z2[channel] = b2 * in - a2 * out;
+                samples[frame * kChannels + channel] = out;
+            }
+        }
+    }
+
+    void set(f32 nb0, f32 nb1, f32 nb2, f32 a0, f32 na1, f32 na2) noexcept
+    {
+        const f32 inverse = 1.0f / a0;
+        b0 = nb0 * inverse;
+        b1 = nb1 * inverse;
+        b2 = nb2 * inverse;
+        a1 = na1 * inverse;
+        a2 = na2 * inverse;
+    }
+
+    // The cookbook's five, at this mixer's rate.
+    void lowPass(f32 hertz, f32 q) noexcept
+    {
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set((1.0f - c) * 0.5f, 1.0f - c, (1.0f - c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
+    }
+    void highPass(f32 hertz, f32 q) noexcept
+    {
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set((1.0f + c) * 0.5f, -(1.0f + c), (1.0f + c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
+    }
+    void lowShelf(f32 hertz, f32 decibels) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 c = std::cos(w);
+        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
+        set(a * ((a + 1.0f) - (a - 1.0f) * c + beta), 2.0f * a * ((a - 1.0f) - (a + 1.0f) * c),
+            a * ((a + 1.0f) - (a - 1.0f) * c - beta), (a + 1.0f) + (a - 1.0f) * c + beta,
+            -2.0f * ((a - 1.0f) + (a + 1.0f) * c), (a + 1.0f) + (a - 1.0f) * c - beta);
+    }
+    void highShelf(f32 hertz, f32 decibels) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 c = std::cos(w);
+        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
+        set(a * ((a + 1.0f) + (a - 1.0f) * c + beta), -2.0f * a * ((a - 1.0f) + (a + 1.0f) * c),
+            a * ((a + 1.0f) + (a - 1.0f) * c - beta), (a + 1.0f) - (a - 1.0f) * c + beta,
+            2.0f * ((a - 1.0f) - (a + 1.0f) * c), (a + 1.0f) - (a - 1.0f) * c - beta);
+    }
+    void peak(f32 hertz, f32 decibels, f32 q) noexcept
+    {
+        const f32 a = std::pow(10.0f, decibels / 40.0f);
+        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
+        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
+        const f32 c = std::cos(w);
+        set(1.0f + alpha * a, -2.0f * c, 1.0f - alpha * a, 1.0f + alpha / a, -2.0f * c, 1.0f - alpha / a);
+    }
+};
+
 struct Voice
 {
     // **Which sound this is.** Voices used to be matched between frames by
@@ -284,6 +362,14 @@ struct Voice
     u64 slot = 0;
     // Music is what lowers itself under a voice.
     bool music = false;
+
+    // **Behind a wall** (ADR 0255): the frequency it is cut above, 0 for a
+    // voice that is not muffled, and the filter that cuts it -- its memory
+    // kept from the frame before, as a continuing voice's cursor is, and
+    // made again only when the frequency moved.
+    f32 muffleHz = 0.0f;
+    f32 muffleMadeHz = 0.0f;
+    Biquad muffle;
 };
 
 // A stable pitch per content id, so two different sounds are audibly different
@@ -416,84 +502,6 @@ struct Voice
 // line, a compressor's envelope. `update` hands each effect the state it had
 // (by its instance), so changing a number never clicks, and nothing here
 // allocates on the audio thread.
-
-constexpr core::usize kBlockFrames = 4096;
-constexpr f32 kTwoPi = 6.28318530717958f;
-
-// One second-order filter over both channels.
-struct Biquad
-{
-    f32 b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-    f32 z1[kChannels] = {};
-    f32 z2[kChannels] = {};
-
-    void process(f32* samples, core::usize frames) noexcept
-    {
-        for (core::usize frame = 0; frame < frames; ++frame) {
-            for (u32 channel = 0; channel < kChannels; ++channel) {
-                const f32 in = samples[frame * kChannels + channel];
-                const f32 out = b0 * in + z1[channel];
-                z1[channel] = b1 * in - a1 * out + z2[channel];
-                z2[channel] = b2 * in - a2 * out;
-                samples[frame * kChannels + channel] = out;
-            }
-        }
-    }
-
-    void set(f32 nb0, f32 nb1, f32 nb2, f32 a0, f32 na1, f32 na2) noexcept
-    {
-        const f32 inverse = 1.0f / a0;
-        b0 = nb0 * inverse;
-        b1 = nb1 * inverse;
-        b2 = nb2 * inverse;
-        a1 = na1 * inverse;
-        a2 = na2 * inverse;
-    }
-
-    // The cookbook's five, at this mixer's rate.
-    void lowPass(f32 hertz, f32 q) noexcept
-    {
-        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
-        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
-        const f32 c = std::cos(w);
-        set((1.0f - c) * 0.5f, 1.0f - c, (1.0f - c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
-    }
-    void highPass(f32 hertz, f32 q) noexcept
-    {
-        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
-        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
-        const f32 c = std::cos(w);
-        set((1.0f + c) * 0.5f, -(1.0f + c), (1.0f + c) * 0.5f, 1.0f + alpha, -2.0f * c, 1.0f - alpha);
-    }
-    void lowShelf(f32 hertz, f32 decibels) noexcept
-    {
-        const f32 a = std::pow(10.0f, decibels / 40.0f);
-        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
-        const f32 c = std::cos(w);
-        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
-        set(a * ((a + 1.0f) - (a - 1.0f) * c + beta), 2.0f * a * ((a - 1.0f) - (a + 1.0f) * c),
-            a * ((a + 1.0f) - (a - 1.0f) * c - beta), (a + 1.0f) + (a - 1.0f) * c + beta,
-            -2.0f * ((a - 1.0f) + (a + 1.0f) * c), (a + 1.0f) + (a - 1.0f) * c - beta);
-    }
-    void highShelf(f32 hertz, f32 decibels) noexcept
-    {
-        const f32 a = std::pow(10.0f, decibels / 40.0f);
-        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
-        const f32 c = std::cos(w);
-        const f32 beta = 2.0f * std::sqrt(a) * std::sin(w) * 0.70710678f;
-        set(a * ((a + 1.0f) + (a - 1.0f) * c + beta), -2.0f * a * ((a - 1.0f) + (a + 1.0f) * c),
-            a * ((a + 1.0f) + (a - 1.0f) * c - beta), (a + 1.0f) - (a - 1.0f) * c + beta,
-            2.0f * ((a - 1.0f) - (a + 1.0f) * c), (a + 1.0f) - (a - 1.0f) * c - beta);
-    }
-    void peak(f32 hertz, f32 decibels, f32 q) noexcept
-    {
-        const f32 a = std::pow(10.0f, decibels / 40.0f);
-        const f32 w = kTwoPi * std::clamp(hertz, 10.0f, 22000.0f) / static_cast<f32>(kSampleRate);
-        const f32 alpha = std::sin(w) / (2.0f * std::max(q, 0.05f));
-        const f32 c = std::cos(w);
-        set(1.0f + alpha * a, -2.0f * c, 1.0f - alpha * a, 1.0f + alpha / a, -2.0f * c, 1.0f - alpha / a);
-    }
-};
 
 // What one effect remembers between blocks.
 struct EffectState
@@ -897,6 +905,45 @@ struct AudioSystem::Impl
     std::atomic<u32> clipsStreamed{0};
     std::atomic<u32> tickDecodes{0};
 
+    // **What stands between the ears and each sound** (ADR 0255). The probe
+    // is the host's; each positional sound heard has a place here while it
+    // is heard: how muffled its rays last said it is, how muffled it is now,
+    // and the frame it was last looked at -- 0 for never.
+    OcclusionProbe probe;
+    struct Occluded
+    {
+        core::InstanceId id;
+        f32 target = 0.0f;
+        f32 now = 0.0f;
+        u64 visited = 0;
+        u64 seen = 0;
+    };
+    std::vector<Occluded> occluded;
+    // Each positional sound heard this frame: where it is, how big, which
+    // ear hears it and how loud it is there.
+    struct Candidate
+    {
+        core::InstanceId id;
+        core::InstanceId part;
+        core::DVec3 at;
+        core::DVec3 ear;
+        f32 reach = 0.1f;
+        f32 loudness = 0.0f;
+    };
+    void occlude(const scene::EngineState& state, const std::vector<Candidate>& candidates, std::vector<Voice>& next);
+    std::chrono::steady_clock::time_point occludedAt{};
+    std::atomic<u32> occlusionRays{0};
+    std::atomic<u32> occludedSounds{0};
+    std::atomic<u64> occlusionNs{0};
+    [[nodiscard]] Occluded* occludedOf(core::InstanceId id) noexcept
+    {
+        for (Occluded& entry : occluded) {
+            if (entry.id == id)
+                return &entry;
+        }
+        return nullptr;
+    }
+
     // Where `Sound.Content` is resolved from, and what has been decoded.
     //
     // Sorted by URN and never evicted while the system lives. Never evicted is
@@ -1162,6 +1209,165 @@ void AudioSystem::Impl::mix(float* samples, ma_uint32 frameCount) noexcept
         samples[index] = std::clamp(samples[index], -1.0f, 1.0f);
 }
 
+// **What stands between the ears and each sound** (ADR 0255), once a frame:
+// the sounds looked at in turn within the frame's rays, each one's amount
+// eased towards what its rays last said, and that put on its voice.
+void AudioSystem::Impl::occlude(const scene::EngineState& state, const std::vector<Candidate>& candidates,
+                                std::vector<Voice>& next)
+{
+    const auto started = std::chrono::steady_clock::now();
+    // The wall clock, which the simulation may not read (R10) and this may:
+    // it eases what the speakers do, and nothing here is read back.
+    const f64 seconds = occludedAt == std::chrono::steady_clock::time_point{}
+                            ? 0.0
+                            : std::chrono::duration<f64>(started - occludedAt).count();
+    occludedAt = started;
+    const u32 budget = probe && state.occlusionEnabled ? occlusionRayBudget(state) : 0u;
+    const auto finish = [&](u32 rays, u32 muffled) {
+        occlusionRays.store(rays, std::memory_order_relaxed);
+        occludedSounds.store(muffled, std::memory_order_relaxed);
+        occlusionNs.store(static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - started)
+                                               .count()),
+                          std::memory_order_relaxed);
+    };
+    if (budget == 0 || candidates.empty()) {
+        occluded.clear();
+        finish(0, 0);
+        return;
+    }
+
+    // A place for each sound heard now, in the candidates' order: what it
+    // had, or a new one never looked at.
+    std::vector<Occluded> places;
+    places.reserve(candidates.size());
+    for (const Candidate& candidate : candidates) {
+        const Occluded* had = occludedOf(candidate.id);
+        Occluded entry;
+        if (had != nullptr)
+            entry = *had;
+        entry.id = candidate.id;
+        places.push_back(entry);
+        places.back().seen = serial;
+    }
+    occluded.swap(places);
+
+    // **The order they are looked at in**: a sound never looked at first,
+    // the loudest of those first; then the loudness here times the frames
+    // since it was last looked at, so the near and loud come round most
+    // often and a quiet one is not left out. Ties by instance, so two runs
+    // look in one order.
+    std::vector<u32> order(candidates.size());
+    for (u32 index = 0; index < order.size(); ++index)
+        order[index] = index;
+    const auto score = [&](u32 index) {
+        const Occluded& entry = occluded[index];
+        const f64 loud = static_cast<f64>(candidates[index].loudness);
+        return entry.visited == 0 ? loud : loud * static_cast<f64>(serial - entry.visited);
+    };
+    std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
+        const bool neverA = occluded[a].visited == 0;
+        const bool neverB = occluded[b].visited == 0;
+        if (neverA != neverB)
+            return neverA;
+        const f64 scoreA = score(a);
+        const f64 scoreB = score(b);
+        if (scoreA != scoreB)
+            return scoreA > scoreB;
+        const core::InstanceId idA = candidates[a].id;
+        const core::InstanceId idB = candidates[b].id;
+        return idA.index != idB.index ? idA.index < idB.index : idA.generation < idB.generation;
+    });
+
+    constexpr u32 kRaysPerSound = 5;
+    std::vector<bool> taken(candidates.size(), false);
+    u32 used = 0;
+    for (const u32 index : order) {
+        if (used + kRaysPerSound > budget)
+            break;
+        const Candidate& candidate = candidates[index];
+        Occluded& entry = occluded[index];
+        const f64 dx = candidate.at.x - candidate.ear.x;
+        const f64 dy = candidate.at.y - candidate.ear.y;
+        const f64 dz = candidate.at.z - candidate.ear.z;
+        const f64 length = std::sqrt(dx * dx + dy * dy + dz * dz);
+        f32 amount = 0.0f;
+        // A sound at the ear has nothing between.
+        if (length > 0.25) {
+            const f64 fx = dx / length;
+            const f64 fy = dy / length;
+            const f64 fz = dz / length;
+            // Two directions across the line: from a helper not along it.
+            const bool upright = std::fabs(fy) > 0.9;
+            const f64 hx = upright ? 1.0 : 0.0;
+            const f64 hy = upright ? 0.0 : 1.0;
+            f64 ux = -fz * hy;
+            f64 uy = fz * hx;
+            f64 uz = fx * hy - fy * hx;
+            const f64 across = std::sqrt(ux * ux + uy * uy + uz * uz);
+            ux /= across;
+            uy /= across;
+            uz /= across;
+            const f64 vx = fy * uz - fz * uy;
+            const f64 vy = fz * ux - fx * uz;
+            const f64 vz = fx * uy - fy * ux;
+            const auto reach = static_cast<f64>(candidate.reach);
+            const std::array<core::DVec3, kRaysPerSound> points{
+                candidate.at,
+                core::DVec3{candidate.at.x + ux * reach, candidate.at.y + uy * reach, candidate.at.z + uz * reach},
+                core::DVec3{candidate.at.x - ux * reach, candidate.at.y - uy * reach, candidate.at.z - uz * reach},
+                core::DVec3{candidate.at.x + vx * reach, candidate.at.y + vy * reach, candidate.at.z + vz * reach},
+                core::DVec3{candidate.at.x - vx * reach, candidate.at.y - vy * reach, candidate.at.z - vz * reach},
+            };
+            f32 sum = 0.0f;
+            for (u32 ray = 0; ray < kRaysPerSound; ++ray) {
+                // A second cast -- a second wall, or past the sound's own
+                // model -- while the budget leaves one for every ray still
+                // to come.
+                const u32 left = kRaysPerSound - ray;
+                const u32 most = budget - used > left ? 2u : 1u;
+                const OcclusionCast cast = probe(candidate.ear, points[ray], candidate.part, most);
+                used += std::clamp(cast.casts, 1u, most);
+                sum += cast.walls == 0 ? 0.0f : (cast.walls == 1 ? 1.0f : 1.5f);
+            }
+            amount = sum / static_cast<f32>(kRaysPerSound);
+        }
+        // A sound looked at for the first time is as muffled as it is at
+        // once: one that starts behind a wall starts muffled.
+        if (entry.visited == 0) {
+            entry.now = amount;
+            taken[index] = true;
+        }
+        entry.target = amount;
+        entry.visited = serial;
+    }
+
+    // About a tenth of a second to close or open, whatever the frame rate.
+    const auto ease = static_cast<f32>(1.0 - std::exp(-std::clamp(seconds, 0.0, 0.25) / 0.1));
+    u32 muffled = 0;
+    for (u32 index = 0; index < occluded.size(); ++index) {
+        Occluded& entry = occluded[index];
+        if (!taken[index])
+            entry.now += (entry.target - entry.now) * ease;
+        if (entry.now > 0.05f)
+            muffled += 1;
+    }
+
+    // What a wall does to a voice: its brightness and its level.
+    const f32 muffle = std::clamp(state.occlusionMuffle, 60.0f, 20000.0f);
+    const f32 volume = std::clamp(state.occlusionVolume, 0.0f, 1.0f);
+    for (Voice& voice : next) {
+        if (!voice.positional)
+            continue;
+        const Occluded* entry = occludedOf(voice.id);
+        if (entry == nullptr || entry->now < 0.001f)
+            continue;
+        voice.amplitude *= std::pow(volume, entry->now);
+        voice.muffleHz = std::clamp(20000.0f * std::pow(muffle / 20000.0f, entry->now), 60.0f, 20000.0f);
+    }
+    finish(used, muffled);
+}
+
 void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
 {
     const core::usize floats = static_cast<core::usize>(frameCount) * kChannels;
@@ -1192,8 +1398,9 @@ void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
         // of its group's -- into a block of its own first.
         const bool own = voice.bus >= 0 && static_cast<core::usize>(voice.bus) < buses.size();
         const bool grouped = voice.groupBus >= 0 && static_cast<core::usize>(voice.groupBus) < buses.size();
+        const bool muffled = voice.muffleHz > 0.0f;
         float* target = samples;
-        if (own) {
+        if (own || muffled) {
             std::memset(voiceScratch.data(), 0, floats * sizeof(float));
             target = voiceScratch.data();
         }
@@ -1230,10 +1437,21 @@ void AudioSystem::Impl::mixBlock(float* samples, ma_uint32 frameCount) noexcept
             }
         }
 
-        if (own) {
+        if (muffled) {
+            // Behind a wall first, as the ear hears it, and then what the
+            // sound's own effects do.
+            if (voice.muffleMadeHz != voice.muffleHz) {
+                voice.muffle.lowPass(voice.muffleHz, 0.70710678f);
+                voice.muffleMadeHz = voice.muffleHz;
+            }
+            voice.muffle.process(voiceScratch.data(), frameCount);
+        }
+        if (own || muffled) {
             // Its own effects, then on to its group's block or to the output.
-            for (EffectNode& effect : buses[static_cast<core::usize>(voice.bus)].effects)
-                runEffect(effect, voiceScratch.data(), frameCount);
+            if (own) {
+                for (EffectNode& effect : buses[static_cast<core::usize>(voice.bus)].effects)
+                    runEffect(effect, voiceScratch.data(), frameCount);
+            }
             float* onward = grouped ? buses[static_cast<core::usize>(voice.groupBus)].buffer.data() : samples;
             for (core::usize index = 0; index < floats; ++index)
                 onward[index] += voiceScratch[index];
@@ -1477,6 +1695,9 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
     std::vector<Voice> next;
     next.reserve(kMaxVoices);
 
+    // The sounds there may be a wall in front of (ADR 0255).
+    std::vector<Impl::Candidate> candidates;
+
     // **The effects of the frame** (ADR 0131): each enabled one under a
     // `Sound` or an `AudioGroup`, gathered by parent and put in the order of
     // its `Priority` -- and, between equals, of when it was made. Each keeps
@@ -1586,6 +1807,11 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
             // left, so turning around changed nothing at all.
             positional = true;
             detail::panGains(detail::panOf(*heardBy, part->cframe.position), panLeft, panRight);
+            if (gain > 0.0001f) {
+                const f32 largest = std::fmax(part->size.x, std::fmax(part->size.y, part->size.z));
+                candidates.push_back(Impl::Candidate{id, world.parentOf(id), part->cframe.position, heardBy->position,
+                                                     std::clamp(largest * 0.5f, 0.1f, 1.5f), gain});
+            }
         }
 
         // **Heard here**, whatever the player's own volumes are: a line the
@@ -1658,6 +1884,8 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
         next.push_back(voice);
     });
 
+    m_impl->occlude(world.engineState(), candidates, next);
+
     if (next.size() > kMaxVoices) {
         // The quietest go, not the newest: a footstep lost under an explosion is
         // the right thing to lose.
@@ -1704,8 +1932,10 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
                 continue;
 
             // The tone's phase, so a continuing placeholder does not click once
-            // a frame.
+            // a frame; and the memory of the filter a wall puts it through.
             fresh.phase = previous->phase;
+            fresh.muffle = previous->muffle;
+            fresh.muffleMadeHz = previous->muffleMadeHz;
 
             // A voice that changed clip -- somebody edited `Content` -- starts
             // where the timeline says and nowhere else. There is no continuity
@@ -2439,7 +2669,31 @@ AudioStats AudioSystem::stats() const noexcept
     out.droppedCommands = m_impl->dropped.load(std::memory_order_relaxed);
     out.activeVoices = m_impl->activeVoices.load(std::memory_order_relaxed);
     out.deviceOpen = m_impl->deviceStarted;
+    out.occlusionRays = m_impl->occlusionRays.load(std::memory_order_relaxed);
+    out.occludedSounds = m_impl->occludedSounds.load(std::memory_order_relaxed);
+    out.occlusionMs = static_cast<f64>(m_impl->occlusionNs.load(std::memory_order_relaxed)) / 1.0e6;
     return out;
+}
+
+void AudioSystem::setOcclusionProbe(OcclusionProbe probe)
+{
+    if (m_impl != nullptr)
+        m_impl->probe = std::move(probe);
+}
+
+f32 AudioSystem::occlusionOf(core::InstanceId sound) const noexcept
+{
+    if (m_impl == nullptr)
+        return 0.0f;
+    const Impl::Occluded* entry = m_impl->occludedOf(sound);
+    return entry != nullptr ? entry->now : 0.0f;
+}
+
+u32 occlusionRayBudget(const scene::EngineState& state) noexcept
+{
+    if (state.occlusionRays >= 0)
+        return static_cast<u32>(state.occlusionRays);
+    return state.graphics.preset() == scene::kQualityLow ? 20u : 64u;
 }
 
 void AudioSystem::renderInto(std::span<f32> interleaved)

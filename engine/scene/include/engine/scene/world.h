@@ -520,6 +520,15 @@ struct EngineState
     // `AudioService.MusicUnderVoice` (ADR 0200): what music is multiplied by
     // while a voice is heard. The game's, as the master is.
     f32 musicUnderVoice = 0.4f;
+    // **`AudioService`'s occlusion** (ADR 0255): whether a sound behind a
+    // wall is muffled, how much, and how many rays a frame looks with. Each
+    // machine's, as what it hears is: none of it is hashed or sent.
+    // `occlusionRays` is -1 until a script writes it, and reads as the
+    // quality level's then.
+    bool occlusionEnabled = true;
+    f32 occlusionMuffle = 900.0f;
+    f32 occlusionVolume = 0.5f;
+    i32 occlusionRays = -1;
 
     // **How the player hears and reads** (ADR 0200): the voice language, the
     // four volumes, the subtitles. Each machine's own, as `locale` is -- the

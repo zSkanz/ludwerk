@@ -459,6 +459,26 @@
           "Transient": true
         },
         {
+          "Name": "OcclusionEnabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "OcclusionMuffle",
+          "Type": "number",
+          "Default": "900"
+        },
+        {
+          "Name": "OcclusionRays",
+          "Type": "number",
+          "Default": "64"
+        },
+        {
+          "Name": "OcclusionVolume",
+          "Type": "number",
+          "Default": "0.5"
+        },
+        {
           "Name": "PlayerVolume",
           "Type": "number",
           "Default": "1",
