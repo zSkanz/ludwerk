@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -136,6 +137,13 @@ struct CompileOptions
     // hide it.
     std::filesystem::path shadercross;
     std::filesystem::path surfaceInclude;
+
+    // **The meshes given a lightmap's coordinates** (ADR 0253), by URN: the
+    // file's `TEXCOORD_1` where it has a set that does not overlap, charted by
+    // the unwrapper where it has none. Only a mesh a baked part draws is in
+    // it, because charting splits vertices along the seams -- a mesh no bake
+    // reads compiles to the bytes it always did.
+    std::set<std::string> lightmapped;
 };
 
 // What one run actually did, as counts rather than as a duration.

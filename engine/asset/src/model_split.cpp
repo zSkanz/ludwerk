@@ -103,6 +103,8 @@ std::vector<ModelPiece> splitByPrimitive(const Model& model)
             // seen this", never "what do you hold".
             remap.emplace(source, fresh);
             piece.model.mesh.vertices.push_back(model.mesh.vertices[source]);
+            if (model.mesh.lightmapUvs.size() == model.mesh.vertices.size())
+                piece.model.mesh.lightmapUvs.push_back(model.mesh.lightmapUvs[source]);
             piece.model.mesh.indices.push_back(fresh);
         }
 

@@ -70,6 +70,12 @@ struct GltfImportOptions
     // vertex. The streaming work's asset pipeline is where a file becomes one artefact both
     // halves read.
     bool skeletonOnly = false;
+
+    // Read `TEXCOORD_1`, a lightmap's coordinates (ADR 0253), into
+    // `Mesh::lightmapUvs`. Off unless the mesh is drawn by a baked part: a
+    // second set keeps two vertices apart that the optimizer would otherwise
+    // weld, so reading it changes the mesh of a game that bakes nothing.
+    bool readLightmapUvs = false;
 };
 
 // Imports one file's mesh, materials and images into `out`.

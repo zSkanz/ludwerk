@@ -20,6 +20,7 @@
 #include "engine/asset/surface_build.h"
 #include "engine/asset/surface_graph.h"
 #include "engine/assetc/exotic.h"
+#include "engine/assetc/lightmap_unwrap.h"
 #include "engine/core/json.h"
 #include "engine/core/json_writer.h"
 #include "engine/jobs/jobs.h"
@@ -212,7 +213,7 @@ void hashPinned(core::ContentHasher& hasher, const CompileOptions& options)
 // The key for one source. Everything that could change the answer goes in, and
 // nothing that could not.
 [[nodiscard]] ContentHash cacheKey(std::span<const std::byte> sourceBytes, std::string_view urn,
-                                   const CompileOptions& options, SourceKind kind, bool colourData)
+                                   const CompileOptions& options, SourceKind kind, bool colourData, bool lightmapped)
 {
     core::ContentHasher hasher;
     hasher.update(sourceBytes);
@@ -233,6 +234,13 @@ void hashPinned(core::ContentHasher& hasher, const CompileOptions& options)
     // it does -- a cache that is wrong rather than slow.
     const core::u32 colourValue = colourData ? 1u : 0u;
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&colourValue, 1}));
+    // **A mesh given a lightmap's coordinates is another answer** (ADR 0253).
+    // Hashed only when it is, so every key a game that bakes nothing had is
+    // the key it still has.
+    if (lightmapped) {
+        const core::u32 lightmapValue = 1u;
+        hasher.update(std::as_bytes(std::span<const core::u32, 1>{&lightmapValue, 1}));
+    }
     return hasher.finish();
 }
 
@@ -735,12 +743,19 @@ struct PreparedMesh
     const std::string named = source.relative.generic_string();
     asset::Model model;
     asset::GltfImportOptions importOptions;
+    const bool lightmapped = options.lightmapped.contains(urnFor(source.relative));
+    importOptions.readLightmapUvs = lightmapped;
     const std::string extension = lowercase(source.path.extension().string());
     const auto imported = isExoticMesh(extension)
                               ? importExotic(bytes, source.path.parent_path(), extension, model)
                               : asset::importGltf(bytes, source.path.parent_path(), importOptions, model);
     if (imported)
         return named + ": " + imported->message;
+    // **A lightmap's coordinates** (ADR 0253), for a mesh a baked part draws
+    // and where the file has none: before anything is cut into pieces, which
+    // carry them.
+    if (lightmapped)
+        unwrapLightmap(model);
 
     // Every image the file carries becomes its own blob, named by what it
     // contains -- so a texture shared by forty meshes is one blob rather than
@@ -914,7 +929,7 @@ CompileResult compile(const CompileOptions& options)
                             // saved is the encode, which was the whole cost of an
                             // open that had nothing new to compile.
                             if (!options.cacheRoot.empty()) {
-                                const ContentHash key = cacheKey(raw, urn, options, SourceKind::Texture, colour);
+                                const ContentHash key = cacheKey(raw, urn, options, SourceKind::Texture, colour, false);
                                 std::error_code ec;
                                 if (std::filesystem::is_regular_file(cachePathFor(options.cacheRoot, key), ec))
                                     continue;
@@ -974,7 +989,8 @@ CompileResult compile(const CompileOptions& options)
                                 const ContentHash key =
                                     cacheKey(withCompanions.empty() ? std::span<const std::byte>(raw)
                                                                     : std::span<const std::byte>(withCompanions),
-                                             urnFor(source.relative), options, SourceKind::Mesh, true);
+                                             urnFor(source.relative), options, SourceKind::Mesh, true,
+                                             options.lightmapped.contains(urnFor(source.relative)));
                                 std::error_code ec;
                                 if (std::filesystem::is_regular_file(cachePathFor(options.cacheRoot, key), ec))
                                     continue;
@@ -1045,7 +1061,9 @@ CompileResult compile(const CompileOptions& options)
                                                           : std::vector<std::byte>{};
         const std::span<const std::byte> keyed =
             withCompanions.empty() ? std::span<const std::byte>(bytes) : std::span<const std::byte>(withCompanions);
-        const ContentHash key = cacheable ? cacheKey(keyed, urn, options, source.kind, textureIsColour) : ContentHash{};
+        const ContentHash key =
+            cacheable ? cacheKey(keyed, urn, options, source.kind, textureIsColour, options.lightmapped.contains(urn))
+                      : ContentHash{};
         if (cacheable) {
             std::vector<std::byte> cachedBytes;
             CachedSource cached;

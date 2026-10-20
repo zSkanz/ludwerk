@@ -1,6 +1,6 @@
 # 0253 — Light baked into what stands still, and shadows drawn only for what moves
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-19
 - Builds on: [0203](0203-light-that-bounces-irradiance-volumes.md) (the rays, and
   why lightmaps were left), [0207](0207-a-volume-kept-baked-to-a-file-and-its-mean.md)

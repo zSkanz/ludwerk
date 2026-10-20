@@ -169,6 +169,34 @@ TEST_CASE("a compiled mesh round-trips through the format")
     CHECK(decoded.meshlets.triangles == compiled.meshlets.triangles);
 }
 
+TEST_CASE("a lightmap's coordinates round-trip through the format, and a mesh with none writes none")
+{
+    seedRealCatalog();
+
+    Model model = gridModel(8, 1);
+    CompiledMesh plain;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, plain).has_value());
+    CHECK(plain.lightmapUvs.empty());
+    CompiledMesh plainDecoded;
+    REQUIRE_FALSE(decodeMesh(encodeMesh(plain), plainDecoded).has_value());
+    CHECK(plainDecoded.lightmapUvs.empty());
+
+    for (usize i = 0; i < model.mesh.vertices.size(); ++i) {
+        model.mesh.lightmapUvs.push_back(
+            engine::asset::LightmapUv{model.mesh.vertices[i].uv[0] * 0.5f, model.mesh.vertices[i].uv[1] * 0.25f});
+    }
+    CompiledMesh baked;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, baked).has_value());
+    REQUIRE(baked.lightmapUvs.size() == baked.vertices.size());
+    CompiledMesh decoded;
+    REQUIRE_FALSE(decodeMesh(encodeMesh(baked), decoded).has_value());
+    REQUIRE(decoded.lightmapUvs.size() == baked.lightmapUvs.size());
+    for (usize i = 0; i < baked.lightmapUvs.size(); ++i) {
+        CHECK(decoded.lightmapUvs[i].u == baked.lightmapUvs[i].u);
+        CHECK(decoded.lightmapUvs[i].v == baked.lightmapUvs[i].v);
+    }
+}
+
 TEST_CASE("the LOD chain shrinks and stops when it stops paying")
 {
     const Model model = gridModel(24);

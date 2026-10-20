@@ -1,7 +1,9 @@
 #include "engine/asset/primitives.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <vector>
 
 namespace engine::asset {
 namespace {
@@ -15,9 +17,26 @@ constexpr f32 kTwoPi = 2.0f * kPi;
 struct Builder
 {
     Mesh mesh;
+    // **A lightmap's charts** (ADR 0253): each face or surface of a shape is
+    // one, its own texture coordinates in [0, 1] across it, and `finish` lays
+    // them out side by side, none over another.
+    std::vector<u32> charts;
+    u32 chart = 0;
+    usize chartStart = 0;
+
+    // The vertices after this are another chart -- unless the one open has
+    // none yet.
+    void nextChart()
+    {
+        if (mesh.vertices.size() > chartStart) {
+            ++chart;
+            chartStart = mesh.vertices.size();
+        }
+    }
 
     u32 add(Vec3 position, Vec3 normal, Vec3 tangent, f32 handedness, f32 u, f32 v)
     {
+        charts.push_back(chart);
         Vertex vertex;
         vertex.position = position;
         vertex.normal = normal;
@@ -46,6 +65,29 @@ struct Builder
         triangle(a, c, d);
     }
 
+    // **The charts in a grid**, as square as their count allows, each its
+    // cell less a margin of a twenty-fifth a side, so the filtering of one
+    // chart's texels never reaches into another's. A part is given one
+    // rectangle of a page for all of them (ADR 0253 §5).
+    void layOutCharts()
+    {
+        const u32 count = chart + 1;
+        const u32 columns = static_cast<u32>(std::ceil(std::sqrt(static_cast<f32>(count))));
+        const u32 rows = (count + columns - 1) / columns;
+        constexpr f32 Margin = 0.04f;
+        mesh.lightmapUvs.resize(mesh.vertices.size());
+        for (usize at = 0; at < mesh.vertices.size(); ++at) {
+            const u32 cell = charts[at];
+            const f32 column = static_cast<f32>(cell % columns);
+            const f32 row = static_cast<f32>(cell / columns);
+            const f32 u = std::clamp(mesh.vertices[at].uv[0], 0.0f, 1.0f);
+            const f32 v = std::clamp(mesh.vertices[at].uv[1], 0.0f, 1.0f);
+            mesh.lightmapUvs[at] =
+                LightmapUv{(column + Margin + u * (1.0f - 2.0f * Margin)) / static_cast<f32>(columns),
+                           (row + Margin + v * (1.0f - 2.0f * Margin)) / static_cast<f32>(rows)};
+        }
+    }
+
     void finish()
     {
         // One submesh over everything, material 0. A `Part`'s look is its own
@@ -68,6 +110,7 @@ struct Builder
             bounds.max.z = std::fmax(bounds.max.z, vertex.position.z);
         }
         mesh.bounds = bounds;
+        layOutCharts();
         mesh.submeshes.push_back(Submesh{
             .firstIndex = 0,
             .indexCount = static_cast<u32>(mesh.indices.size()),
@@ -83,6 +126,7 @@ struct Builder
 // with rounded-looking lighting is the classic symptom of exactly that.
 void boxFace(Builder& out, Vec3 origin, Vec3 across, Vec3 up, Vec3 normal)
 {
+    out.nextChart();
     const Vec3 tangent = core::normalize(across);
     const u32 a = out.add(origin, normal, tangent, 1.0f, 0.0f, 0.0f);
     const u32 b =
@@ -150,6 +194,7 @@ Mesh makeBall()
 // radius. Returns nothing; the caller owns the caps.
 void revolvedSide(Builder& out, f32 radius, f32 bottomY, f32 topY)
 {
+    out.nextChart();
     const u32 first = static_cast<u32>(out.mesh.vertices.size());
     for (u32 segment = 0; segment <= kPrimitiveSegments; ++segment) {
         const f32 u = static_cast<f32>(segment) / static_cast<f32>(kPrimitiveSegments);
@@ -170,6 +215,7 @@ void revolvedSide(Builder& out, f32 radius, f32 bottomY, f32 topY)
 // A flat disc facing `up` (+1) or down (-1), as a fan around a centre vertex.
 void disc(Builder& out, f32 radius, f32 y, f32 facing)
 {
+    out.nextChart();
     const Vec3 normal{0.0f, facing, 0.0f};
     const Vec3 tangent{1.0f, 0.0f, 0.0f};
     const u32 centre = out.add(Vec3{0.0f, y, 0.0f}, normal, tangent, 1.0f, 0.5f, 0.5f);
@@ -205,6 +251,7 @@ Mesh makeCylinder()
 // `sign` is +1 for the top cap and -1 for the bottom.
 void hemisphere(Builder& out, f32 radius, f32 centreY, f32 sign)
 {
+    out.nextChart();
     const u32 first = static_cast<u32>(out.mesh.vertices.size());
     for (u32 ring = 0; ring <= kCapsuleCapRings; ++ring) {
         const f32 t = static_cast<f32>(ring) / static_cast<f32>(kCapsuleCapRings);
@@ -265,6 +312,7 @@ Mesh makeWedge()
     const f32 diagonal = 1.0f / std::sqrt(2.0f);
     const Vec3 slopeNormal{0.0f, diagonal, diagonal};
     const Vec3 slopeTangent{1.0f, 0.0f, 0.0f};
+    out.nextChart();
     const u32 s0 = out.add(Vec3{-h, h, -h}, slopeNormal, slopeTangent, 1.0f, 0.0f, 1.0f);
     const u32 s1 = out.add(Vec3{h, h, -h}, slopeNormal, slopeTangent, 1.0f, 1.0f, 1.0f);
     const u32 s2 = out.add(Vec3{h, -h, h}, slopeNormal, slopeTangent, 1.0f, 1.0f, 0.0f);
@@ -274,6 +322,7 @@ Mesh makeWedge()
     // The two triangular sides.
     const Vec3 rightNormal{1.0f, 0.0f, 0.0f};
     const Vec3 rightTangent{0.0f, 0.0f, -1.0f};
+    out.nextChart();
     const u32 r0 = out.add(Vec3{h, -h, -h}, rightNormal, rightTangent, 1.0f, 0.0f, 0.0f);
     const u32 r1 = out.add(Vec3{h, -h, h}, rightNormal, rightTangent, 1.0f, 1.0f, 0.0f);
     const u32 r2 = out.add(Vec3{h, h, -h}, rightNormal, rightTangent, 1.0f, 0.0f, 1.0f);
@@ -281,6 +330,7 @@ Mesh makeWedge()
 
     const Vec3 leftNormal{-1.0f, 0.0f, 0.0f};
     const Vec3 leftTangent{0.0f, 0.0f, 1.0f};
+    out.nextChart();
     const u32 l0 = out.add(Vec3{-h, -h, -h}, leftNormal, leftTangent, 1.0f, 0.0f, 0.0f);
     const u32 l1 = out.add(Vec3{-h, h, -h}, leftNormal, leftTangent, 1.0f, 0.0f, 1.0f);
     const u32 l2 = out.add(Vec3{-h, -h, h}, leftNormal, leftTangent, 1.0f, 1.0f, 0.0f);

@@ -12,6 +12,7 @@
 
 add_library(engine_assetc_lib STATIC
     src/compiler.cpp
+    src/lightmap_unwrap.cpp
     src/texture.cpp
     src/exotic.cpp
     src/l10n.cpp
@@ -29,7 +30,7 @@ target_link_libraries(engine_assetc_lib
     # engine reads from the same file in a dev run, so it is the engine's own
     # measure that is called and not a second one written here. A downward
     # edge: `audio` is at 4 and this is at 5.
-    PRIVATE engine::warnings engine::platform engine::jobs engine::audio basis::encoder)
+    PRIVATE engine::warnings engine::platform engine::jobs engine::audio basis::encoder xatlas::xatlas)
 
 # assimp, and ONLY here (ADR 0010). The engine reads `.lmesh`, a format assimp
 # has never heard of, and the layering gate reading real `#include` edges is what
@@ -78,6 +79,7 @@ if(ENG_BUILD_TESTS)
         tests/compiler_tests.cpp
         tests/texture_tests.cpp
         tests/l10n_tests.cpp
+        tests/lightmap_unwrap_tests.cpp
     )
     target_link_libraries(engine_assetc_tests PRIVATE
         engine::warnings

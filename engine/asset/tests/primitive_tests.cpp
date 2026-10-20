@@ -7,6 +7,7 @@
 // off -- which is how that bug survives a visual check.
 #include <cmath>
 #include <doctest/doctest.h>
+#include <vector>
 
 #include "engine/asset/primitives.h"
 
@@ -149,4 +150,49 @@ TEST_CASE("an out-of-range shape draws as a block rather than as nothing")
     // should be visible and wrong, not invisible and correct.
     const Mesh fallback = makePrimitive(static_cast<PrimitiveShape>(99));
     CHECK(fallback.indices.size() == 36);
+}
+
+// **A lightmap's coordinates** (ADR 0253): every solid carries a second set,
+// one for each vertex, inside the unit square, and no two of its triangles
+// over the same texel -- read off a grid of texel centres, each inside at
+// most one triangle.
+TEST_CASE("every solid's lightmap coordinates are inside the square and no two triangles share a texel")
+{
+    for (const PrimitiveShape shape : {PrimitiveShape::Block, PrimitiveShape::Ball, PrimitiveShape::Cylinder,
+                                       PrimitiveShape::Capsule, PrimitiveShape::Wedge}) {
+        const Mesh mesh = makePrimitive(shape);
+        REQUIRE(mesh.lightmapUvs.size() == mesh.vertices.size());
+        for (const engine::asset::LightmapUv& uv : mesh.lightmapUvs) {
+            CHECK(uv.u >= 0.0f);
+            CHECK(uv.u <= 1.0f);
+            CHECK(uv.v >= 0.0f);
+            CHECK(uv.v <= 1.0f);
+        }
+        constexpr int Side = 256;
+        std::vector<int> covered(static_cast<std::size_t>(Side * Side), 0);
+        for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
+            const engine::asset::LightmapUv& a = mesh.lightmapUvs[mesh.indices[index]];
+            const engine::asset::LightmapUv& b = mesh.lightmapUvs[mesh.indices[index + 1]];
+            const engine::asset::LightmapUv& c = mesh.lightmapUvs[mesh.indices[index + 2]];
+            const f32 area = (b.u - a.u) * (c.v - a.v) - (c.u - a.u) * (b.v - a.v);
+            if (std::fabs(area) < 1e-9f)
+                continue;
+            for (int y = 0; y < Side; ++y) {
+                for (int x = 0; x < Side; ++x) {
+                    const f32 px = (static_cast<f32>(x) + 0.5f) / Side;
+                    const f32 py = (static_cast<f32>(y) + 0.5f) / Side;
+                    const f32 w0 = ((b.u - px) * (c.v - py) - (c.u - px) * (b.v - py)) / area;
+                    const f32 w1 = ((c.u - px) * (a.v - py) - (a.u - px) * (c.v - py)) / area;
+                    const f32 w2 = 1.0f - w0 - w1;
+                    if (w0 > 1e-4f && w1 > 1e-4f && w2 > 1e-4f)
+                        covered[static_cast<std::size_t>(y * Side + x)] += 1;
+                }
+            }
+        }
+        int shared = 0;
+        for (const int count : covered)
+            shared += count > 1 ? 1 : 0;
+        INFO("shape ", static_cast<int>(shape));
+        CHECK(shared == 0);
+    }
 }

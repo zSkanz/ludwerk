@@ -1326,3 +1326,56 @@ TEST_CASE("the pieces a model splits into are the same on every build")
     CHECK(a == b);
     CHECK_FALSE(a.empty());
 }
+
+// **A lightmap's coordinates only where a bake reads them** (ADR 0253): a
+// mesh no baked part draws compiles to the blob it always did, and naming one
+// recompiles that one alone -- charted, with a key of its own.
+TEST_CASE("a mesh is given a lightmap's coordinates only when a bake reads it")
+{
+    seedRealCatalog();
+    const Fixture fixture;
+
+    CompileOptions options;
+    options.inputRoot = fixture.root;
+    options.cacheRoot = fixture.root / ".cache";
+    const CompileResult plain = compile(options);
+    REQUIRE_MESSAGE(plain.ok, plain.diagnostic);
+    const ManifestEntry* const plainEntry = findUrn(plain, "asset://models/two_materials.gltf");
+    REQUIRE(plainEntry != nullptr);
+    engine::asset::Pack plainPack;
+    REQUIRE_FALSE(engine::asset::Pack::open(plain.pack, plainPack).has_value());
+    engine::asset::CompiledMesh plainMesh;
+    REQUIRE_FALSE(engine::asset::decodeMesh(plainPack.blob(plainEntry->hash), plainMesh).has_value());
+    CHECK(plainMesh.lightmapUvs.empty());
+
+    CompileOptions baked = options;
+    baked.lightmapped.insert("asset://models/two_materials.gltf");
+    const CompileResult charted = compile(baked);
+    REQUIRE_MESSAGE(charted.ok, charted.diagnostic);
+    // One source missed the cache: the whole model and its two pieces.
+    CHECK(charted.stats.cacheMisses == 1);
+    const ManifestEntry* const chartedEntry = findUrn(charted, "asset://models/two_materials.gltf");
+    REQUIRE(chartedEntry != nullptr);
+    CHECK(chartedEntry->hash != plainEntry->hash);
+    engine::asset::Pack chartedPack;
+    REQUIRE_FALSE(engine::asset::Pack::open(charted.pack, chartedPack).has_value());
+    engine::asset::CompiledMesh chartedMesh;
+    REQUIRE_FALSE(engine::asset::decodeMesh(chartedPack.blob(chartedEntry->hash), chartedMesh).has_value());
+    CHECK(chartedMesh.lightmapUvs.size() == chartedMesh.vertices.size());
+    CHECK(chartedMesh.vertices.size() >= plainMesh.vertices.size());
+    for (const char* other : {"asset://models/quad.gltf", "asset://models/textured.gltf"}) {
+        const ManifestEntry* const before = findUrn(plain, other);
+        const ManifestEntry* const after = findUrn(charted, other);
+        REQUIRE(before != nullptr);
+        REQUIRE(after != nullptr);
+        CHECK(before->hash == after->hash);
+    }
+
+    // And taken off it, the mesh is the one it was.
+    const CompileResult again = compile(options);
+    REQUIRE_MESSAGE(again.ok, again.diagnostic);
+    CHECK(again.stats.meshesCompiled == 0);
+    const ManifestEntry* const againEntry = findUrn(again, "asset://models/two_materials.gltf");
+    REQUIRE(againEntry != nullptr);
+    CHECK(againEntry->hash == plainEntry->hash);
+}

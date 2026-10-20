@@ -983,6 +983,20 @@ endif()
 # surface in a tool whose whole job is to read files somebody else made. glTF
 # stays OFF because fastgltf is the runtime pipeline's importer and the first renderer proved
 # it -- two importers for one format is two behaviours for one format.
+# **xatlas, the lightmap unwrapper** (ADR 0253), for `assetc` alone: it gives a
+# mesh with no second set of texture coordinates one, and the runtime never
+# links it -- the layering gate's include edges keep that so. One thread
+# (`XA_MULTITHREADED=0`): its packing is then the same on every machine, and an
+# asset built twice is the same bytes.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/xatlas/source/xatlas/xatlas.cpp")
+    add_library(engine_xatlas STATIC xatlas/source/xatlas/xatlas.cpp)
+    target_include_directories(engine_xatlas SYSTEM PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/xatlas/source/xatlas>)
+    target_compile_definitions(engine_xatlas PRIVATE XA_MULTITHREADED=0)
+    target_compile_features(engine_xatlas PUBLIC cxx_std_17)
+    add_library(xatlas::xatlas ALIAS engine_xatlas)
+endif()
+
 if(ENG_ASSETC_ASSIMP)
     set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)

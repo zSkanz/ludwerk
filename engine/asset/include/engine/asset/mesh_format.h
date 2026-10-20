@@ -130,6 +130,8 @@ struct CompiledMesh
     std::vector<Vertex> vertices;
     // Empty for a static mesh; otherwise one entry per vertex.
     std::vector<SkinVertex> skin;
+    // A lightmap's coordinates (ADR 0253), parallel to `vertices`, or none.
+    std::vector<LightmapUv> lightmapUvs;
     // At least one. `lods[0]` is the full-detail mesh.
     std::vector<MeshLod> lods;
     std::vector<MaterialDef> materials;

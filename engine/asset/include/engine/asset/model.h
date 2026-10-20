@@ -127,12 +127,25 @@ struct Submesh
 // Indices are always u32. A 16-bit path would halve the index buffer for small
 // meshes and is worth having when something measures it; until then one width
 // is one code path in the importer, the uploader and every backend.
+// **A lightmap's coordinates** (ADR 0253): a second set, in [0, 1] and
+// with no two triangles over the same texel, for the light baked into what
+// stands still. A stream of its own beside `Mesh::vertices`, as the skin is
+// beside a model's: a mesh that is never baked carries none, and its vertex
+// stays the forty-eight bytes the shaders read.
+struct LightmapUv
+{
+    f32 u = 0.0f;
+    f32 v = 0.0f;
+};
+
 struct Mesh
 {
     std::vector<Vertex> vertices;
     std::vector<u32> indices;
     std::vector<Submesh> submeshes;
     AABB bounds;
+    // One a vertex, parallel to `vertices`, or none.
+    std::vector<LightmapUv> lightmapUvs;
 };
 
 // What an importer produces from one file: the mesh, the materials it names,

@@ -88,6 +88,9 @@ constexpr u32 TagMorphs = tag("MRPH");
 constexpr u32 TagMorphDeltas = tag("MRPD");
 constexpr u32 TagWeightChannels = tag("WCHN");
 constexpr u32 TagWeightClips = tag("WCLP");
+// **A lightmap's coordinates** (ADR 0253), optional as the morphs are: a file
+// with none is the file it was, and a reader from before skips it.
+constexpr u32 TagLightmapUvs = tag("LMUV");
 
 // --- writing ---------------------------------------------------------------
 
@@ -391,6 +394,8 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
 
     out.vertices = model.mesh.vertices;
     out.skin = model.skin;
+    if (model.mesh.lightmapUvs.size() == model.mesh.vertices.size())
+        out.lightmapUvs = model.mesh.lightmapUvs;
     out.materials = model.materials;
     out.images.assign(images.begin(), images.end());
     out.joints = model.joints;
@@ -575,6 +580,10 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
     Writer skin;
     if (!mesh.skin.empty()) {
         skin.raw(encodeVertexStream(mesh.skin.data(), mesh.skin.size(), sizeof(SkinVertex)));
+    }
+    Writer lightmapUvs;
+    if (!mesh.lightmapUvs.empty()) {
+        lightmapUvs.raw(encodeVertexStream(mesh.lightmapUvs.data(), mesh.lightmapUvs.size(), sizeof(LightmapUv)));
     }
 
     Writer indexData;
@@ -769,6 +778,7 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
         {TagMorphDeltas, &morphDeltas.bytes(), deltaCursor},
         {TagWeightChannels, &weightChannels.bytes(), weightCursor},
         {TagWeightClips, &weightClips.bytes(), anyWeights ? static_cast<u32>(mesh.clips.size()) : 0u},
+        {TagLightmapUvs, &lightmapUvs.bytes(), static_cast<u32>(mesh.lightmapUvs.size())},
     };
 
     // An empty section is simply absent, so a static mesh's file has no `SKIN`
@@ -905,6 +915,19 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
         out.skin.resize(skinSection->count);
         const std::span<const std::byte> encoded = sectionSpan(*skinSection);
         if (meshopt_decodeVertexBuffer(out.skin.data(), out.skin.size(), sizeof(SkinVertex),
+                                       reinterpret_cast<const unsigned char*>(encoded.data()), encoded.size()) != 0) {
+            return malformed();
+        }
+    }
+
+    if (const Section* const lightmapSection = findSection(sections, TagLightmapUvs); lightmapSection != nullptr) {
+        // Parallel to the vertex stream, as the skin is.
+        if (lightmapSection->count != vertexSection->count) {
+            return malformed();
+        }
+        out.lightmapUvs.resize(lightmapSection->count);
+        const std::span<const std::byte> encoded = sectionSpan(*lightmapSection);
+        if (meshopt_decodeVertexBuffer(out.lightmapUvs.data(), out.lightmapUvs.size(), sizeof(LightmapUv),
                                        reinterpret_cast<const unsigned char*>(encoded.data()), encoded.size()) != 0) {
             return malformed();
         }

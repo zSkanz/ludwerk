@@ -77,6 +77,8 @@ struct Staging
     std::vector<Vec3> normals;
     std::vector<std::array<f32, 4>> tangents;
     std::vector<std::array<f32, 2>> uvs;
+    // TEXCOORD_1: a lightmap's coordinates (ADR 0253), where the file has them.
+    std::vector<LightmapUv> lightmapUvs;
     std::vector<u32> indices;
     std::vector<SkinVertex> skin;
     // One list a target of the primitive, each as long as `positions` -- or
@@ -86,6 +88,7 @@ struct Staging
     bool hasNormals = false;
     bool hasTangents = false;
     bool hasUvs = false;
+    bool hasLightmapUvs = false;
     bool hasSkin = false;
 };
 
@@ -381,6 +384,9 @@ private:
     // Whether the material a primitive uses samples a normal map, which is the
     // condition for generating tangents it does not carry.
     bool materialWantsTangents_ = false;
+    // Whether any primitive carried a lightmap's coordinates: the mesh keeps
+    // the stream only then.
+    bool anyLightmapUvs_ = false;
     std::vector<bool> visitedNodes_;
     // Which nodes the file's skin lists as joints; empty for a file with none.
     std::vector<bool> jointNodes_;
@@ -449,6 +455,8 @@ std::optional<core::EngineError> Importer::run()
     if (auto error = bakeBindPose())
         return error;
 
+    if (!anyLightmapUvs_)
+        out_.mesh.lightmapUvs.clear();
     optimize();
 
     for (const Submesh& submesh : out_.mesh.submeshes)
@@ -933,8 +941,8 @@ std::optional<core::EngineError> Importer::readAttributes(const fg::Primitive& p
         staging.hasTangents = true;
     }
 
-    // TEXCOORD_0 only: `Vertex` carries one UV set (model.h), so a second one
-    // has nowhere to go.
+    // TEXCOORD_0 into the vertex: `Vertex` carries one UV set (model.h). A
+    // second set is a lightmap's (ADR 0253), its own stream, below.
     if (const auto* uv = primitive.findAttribute("TEXCOORD_0"); uv != primitive.attributes.cend()) {
         const fg::Accessor& accessor = asset_.accessors[uv->accessorIndex];
         if (accessor.count != vertexCount)
@@ -947,6 +955,21 @@ std::optional<core::EngineError> Importer::readAttributes(const fg::Primitive& p
             staging.uvs[index] = {value.x(), value.y()};
         });
         staging.hasUvs = true;
+    }
+    if (const auto* second = primitive.findAttribute("TEXCOORD_1");
+        options_.readLightmapUvs && second != primitive.attributes.cend()) {
+        const fg::Accessor& accessor = asset_.accessors[second->accessorIndex];
+        if (accessor.count != vertexCount)
+            return core::makeError(ENG_TR("asset.gltf.err.attribute_count_mismatch"), {}, "TEXCOORD_1");
+        if (!accessorFits(asset_, accessor))
+            return core::makeError(ENG_TR("asset.gltf.err.accessor_out_of_range"), {}, "TEXCOORD_1");
+
+        staging.lightmapUvs.resize(vertexCount);
+        fg::iterateAccessorWithIndex<fg::math::fvec2>(asset_, accessor, [&](fg::math::fvec2 value, std::size_t index) {
+            staging.lightmapUvs[index] = LightmapUv{value.x(), value.y()};
+        });
+        staging.hasLightmapUvs = true;
+        anyLightmapUvs_ = true;
     }
 
     // JOINTS_0 and WEIGHTS_0, and only the first set. glTF allows JOINTS_1 for
@@ -1065,6 +1088,12 @@ void Importer::generateFlatNormals(Staging& staging) const
     // numbers: a corner took another corner's bones, and one past the old
     // count took whatever lay after the list. A skinned model exported
     // without normals was weighted wrongly, with nothing to say so.
+    if (staging.hasLightmapUvs) {
+        std::vector<LightmapUv> spread(indexCount);
+        for (std::size_t slot = 0; slot < indexCount; ++slot)
+            spread[slot] = staging.lightmapUvs[staging.indices[slot]];
+        staging.lightmapUvs = std::move(spread);
+    }
     if (staging.hasSkin) {
         std::vector<SkinVertex> spread(indexCount);
         for (std::size_t slot = 0; slot < indexCount; ++slot) {
@@ -1311,6 +1340,10 @@ std::optional<core::EngineError> Importer::appendPrimitive(const fg::Primitive& 
 
         core::expand(submesh.bounds, vertex.position);
         out_.mesh.vertices.push_back(vertex);
+        // Parallel by construction, as the skin is: a primitive with no second
+        // set appends nought, and the stream is dropped below if no primitive
+        // had one.
+        out_.mesh.lightmapUvs.push_back(staging.hasLightmapUvs ? staging.lightmapUvs[slot] : LightmapUv{});
         // The skin stream is parallel to the vertex stream BY CONSTRUCTION, and
         // this is the line that constructs it: a primitive with no skin still
         // appends an entry, so a file whose second primitive is unskinned
@@ -1815,7 +1848,7 @@ void Importer::optimize()
     // vertex's bones. meshoptimizer's remap variant exists for exactly this --
     // it returns the permutation rather than applying it, and both streams are
     // then permuted by the same table.
-    if (out_.skin.empty() && out_.morphs.empty()) {
+    if (out_.skin.empty() && out_.morphs.empty() && out_.mesh.lightmapUvs.empty()) {
         const std::size_t unique =
             meshopt_optimizeVertexFetch(out_.mesh.vertices.data(), out_.mesh.indices.data(), out_.mesh.indices.size(),
                                         out_.mesh.vertices.data(), vertexCount, sizeof(Vertex));
@@ -1833,6 +1866,11 @@ void Importer::optimize()
     if (!out_.skin.empty()) {
         meshopt_remapVertexBuffer(out_.skin.data(), out_.skin.data(), vertexCount, sizeof(SkinVertex), remap.data());
         out_.skin.resize(unique);
+    }
+    if (!out_.mesh.lightmapUvs.empty()) {
+        meshopt_remapVertexBuffer(out_.mesh.lightmapUvs.data(), out_.mesh.lightmapUvs.data(), vertexCount,
+                                  sizeof(LightmapUv), remap.data());
+        out_.mesh.lightmapUvs.resize(unique);
     }
     out_.mesh.vertices.resize(unique);
     // And a third thing that names vertices by where they were: the targets.
