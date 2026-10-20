@@ -115,6 +115,26 @@ bool verifyPassword(std::string_view hash, std::string_view password)
     return crypto_pwhash_str_verify(text, password.data(), password.size()) == 0;
 }
 
+std::string passwordCost(std::string_view hash)
+{
+    // `$argon2id$v=19$m=65536,t=2,p=1$<salt>$<digest>`: what comes before
+    // the salt, under the length `verifyPassword` takes.
+    constexpr std::string_view Algorithm = "$argon2id$";
+    if (hash.size() >= crypto_pwhash_STRBYTES || !hash.starts_with(Algorithm))
+        return {};
+    std::size_t at = Algorithm.size() - 1;
+    for (int field = 0; field < 2; ++field) {
+        at = hash.find('$', at + 1);
+        if (at == std::string_view::npos)
+            return {};
+    }
+    // A salt and a digest after it, or it is not a hash.
+    const std::size_t salt = hash.find('$', at + 1);
+    if (salt == std::string_view::npos || salt == at + 1 || salt + 1 == hash.size())
+        return {};
+    return std::string(hash.substr(1, at - 1));
+}
+
 X25519Pair x25519Generate()
 {
     X25519Pair pair;

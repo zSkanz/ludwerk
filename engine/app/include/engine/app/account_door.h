@@ -61,6 +61,9 @@ public:
         // limits.
         std::function<std::int64_t()> unixClock;
         std::function<core::u64()> clock;
+        // **What each answer cost the pool**, kept for `takeWork`: off, so a
+        // door nobody asks keeps nothing.
+        bool keepWork = false;
     };
 
     struct Result
@@ -99,6 +102,20 @@ public:
     // Nothing waiting, in the pool or delayed: for a test.
     [[nodiscard]] bool idle() const;
 
+    // **The work behind an answer** (amendment A): the Argon2 evaluations the
+    // pool made for it and their cost (`core::passwordCost`), so that every
+    // way an ask goes is shown to do the same work without a clock. An
+    // answer given without the pool -- refused, invalid, busy -- made none.
+    struct Work
+    {
+        core::u32 peer = 0;
+        Failure failure = Failure::None;
+        core::u32 hashes = 0;
+        std::string cost;
+    };
+    // With `Options::keepWork`, one for each answer `take` gave, in order.
+    [[nodiscard]] std::vector<Work> takeWork();
+
     // **The console's `account`** (§3): `create <name> <password>`, `rename
     // <name> <new name>`, `password <name> <password>`, `delete <name>`. A
     // hash made here is made at once: the operator waits on it, not a player.
@@ -122,6 +139,9 @@ private:
         core::u64 id = 0;
         bool ok = false;
         std::string hash;
+        // The Argon2 evaluations made, and at what cost.
+        core::u32 hashes = 0;
+        std::string cost;
     };
     // What waits for the pool, and what it is for.
     struct Asked
@@ -147,6 +167,7 @@ private:
     [[nodiscard]] std::string ticketFor(const DataAccount& account) const;
     void failed(const Asked& asked);
     void finish(Asked& asked, const Done& done);
+    void answer(Result result, core::u32 hashes, std::string cost);
     void work();
     [[nodiscard]] core::u64 nowNs() const;
 
@@ -160,6 +181,7 @@ private:
     std::deque<Asked> m_delayed;
     std::map<core::u64, Asked> m_inPool;
     std::vector<Result> m_results;
+    std::vector<Work> m_work;
     std::map<std::string, std::deque<core::u64>, std::less<>> m_addressFailures;
     std::map<std::string, Failures, std::less<>> m_nameFailures;
 

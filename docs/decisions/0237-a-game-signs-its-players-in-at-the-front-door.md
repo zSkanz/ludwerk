@@ -244,6 +244,17 @@ the account's own player and never shut them out.
   its most. A hash is about 47 ms on one thread, so the two threads a
   machine of four cores gives sign in about 40 a second; the Linux tier,
   four threads beside its own build's tests, made 23.7.
+- **The same work, without a clock** (2026-10-20): the tenth held between a
+  right answer's time and the others' failed on all three hosted runners,
+  where neighbours move a tenth easily. The door can keep, for each answer,
+  the Argon2 evaluations the pool made for it and their cost
+  (`Options::keepWork`, `takeWork`; `core::passwordCost`), and a case of the
+  suite holds a right password, a wrong one, a name with no account and a
+  taken name at exactly one evaluation each, all of the same cost, and an
+  answer refused before the pool at none. That runs everywhere. The time
+  itself is `accounts_clock`, labelled `quiet` (ADR 0148): only the local
+  gate's `perf` stage, alone, runs it; `accounts_timed` keeps the pool's
+  rate and stays in the workflow.
 - **The limits** (§2, amendment G): five failures from an address in a
   minute refuse the next with no hash and the seconds left; five on a
   skeleton in fifteen minutes make each next try on it wait 1, 2, 4 ... 32

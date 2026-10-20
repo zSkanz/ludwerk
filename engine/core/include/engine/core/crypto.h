@@ -64,6 +64,13 @@ using Sha256 = std::array<u8, 32>;
 // not one of `hashPassword`'s. Costs what the hash was made at.
 [[nodiscard]] bool verifyPassword(std::string_view hash, std::string_view password);
 
+// **What checking a password against `hash` costs**: its algorithm and
+// parameters, `argon2id$v=19$m=65536,t=2,p=1`, without the salt or the
+// digest. Empty for a string `verifyPassword` refuses without hashing at
+// all -- empty, too long, not an Argon2id hash -- so two hashes with the same
+// cost take the same work to check, and an empty one took none.
+[[nodiscard]] std::string passwordCost(std::string_view hash);
+
 // **A secret overwritten before it is let go**: a password once its hash is
 // made or checked, where an ordinary clear would leave it in the memory the
 // string gives back. Empty afterwards.

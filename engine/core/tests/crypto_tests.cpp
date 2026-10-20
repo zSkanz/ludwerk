@@ -75,6 +75,22 @@ TEST_CASE("a comparison of secrets tells equal from not, and lengths apart")
     CHECK(core::secureEquals({}, {}));
 }
 
+TEST_CASE("a password's cost is read from its hash, and a string no hash costs nothing")
+{
+    const std::string hash = core::hashPassword("correct horse battery staple");
+    const std::string cost = core::passwordCost(hash);
+    CHECK(cost.starts_with("argon2id$v=19$m="));
+    CHECK(cost.find(",t=") != std::string::npos);
+    CHECK(hash.find(cost) == 1);
+    // Another salt, the same work.
+    CHECK(core::passwordCost(core::hashPassword("another one entirely")) == cost);
+    CHECK(core::passwordCost("").empty());
+    CHECK(core::passwordCost("$argon2i$v=19$m=65536,t=2,p=1$c2FsdHNhbHQ$ZGlnZXN0").empty());
+    CHECK(core::passwordCost("$argon2id$v=19$m=65536,t=2,p=1").empty());
+    CHECK(core::passwordCost("$argon2id$v=19$m=65536,t=2,p=1$c2FsdHNhbHQ$").empty());
+    CHECK(core::passwordCost(hash + std::string(200, 'a')).empty());
+}
+
 TEST_CASE("a password's hash verifies the password, and nothing else")
 {
     const std::string hash = core::hashPassword("correct horse battery staple");

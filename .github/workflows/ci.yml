@@ -436,7 +436,7 @@ jobs:
           # is still a red step: a pipeline reports the LAST command's status,
           # which here is always `tee` succeeding.
           set +e
-          ctest --preset ${{ matrix.preset }} -LE gpu-golden -j 4 2>&1 | tee ctest.log
+          ctest --preset ${{ matrix.preset }} -LE "gpu-golden|quiet" -j 4 2>&1 | tee ctest.log
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
@@ -788,7 +788,7 @@ jobs:
           call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           cmake --preset ${{ matrix.preset }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded || exit /b 1
           cmake --build --preset ${{ matrix.preset }} || exit /b 1
-          ctest --preset ${{ matrix.preset }} --resource-spec-file "%CD%\tests\ctest-resources-hosted.json" -LE gpu-golden -j 4 -I ${{ matrix.shard }},,${{ matrix.shards }} > ctest.log 2>&1 || (type ctest.log & exit /b 1)
+          ctest --preset ${{ matrix.preset }} --resource-spec-file "%CD%\tests\ctest-resources-hosted.json" -LE "gpu-golden|quiet" -j 4 -I ${{ matrix.shard }},,${{ matrix.shards }} > ctest.log 2>&1 || (type ctest.log & exit /b 1)
           type ctest.log
 
       # **What a netcode test saw, kept when the run fails**: each machine's
@@ -1161,7 +1161,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          ctest --preset macos-clang-dev -LE "gpu-golden|netcode" --no-tests=error --output-on-failure -j 4 2>&1 | tee ctest.log
+          ctest --preset macos-clang-dev -LE "gpu-golden|netcode|quiet" --no-tests=error --output-on-failure -j 4 2>&1 | tee ctest.log
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"

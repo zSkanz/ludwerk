@@ -24,7 +24,9 @@ case "$ENG_BUILD_ROOT" in
 esac
 
 # **The tests that measure time** (`LABELS perf`: `perf_budget`), three ways.
-# `with`, the default and what the workflow runs: every test, as before.
+# `with`, the default and what the workflow runs: every test, as before, but
+# those also labelled `quiet` -- a claim only a quiet machine holds (ADR
+# 0148), never made beside the rest of a suite.
 # `without`: they are left out, to be run by themselves when nothing else of
 # the local gate is running -- which runs six stages on one machine at once,
 # and a wall-clock mean measured then is a measure of the other five. `only`:
@@ -97,7 +99,7 @@ trap 'rm -f "$ctestLog"' EXIT
 set +e
 # Every core the container has (ADR 0148): the tests that measure time run
 # alone, and lavapipe draws on the CPU, so nothing else needs to take turns.
-left="gpu-golden"
+left="gpu-golden|quiet"
 if [ "$perf" = "without" ]; then
     left="gpu-golden|perf"
     echo "(the tests that measure time are left to a run of their own: ENG_GATE_PERF=without)"

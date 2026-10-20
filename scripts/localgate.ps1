@@ -531,8 +531,9 @@ Invoke-Stage 'windows' {
         "-R `"$($script:affectedPlan.regex)`""
     } else { '' }
     # The tests that measure time: left to the `perf` stage where the full run
-    # asked for that, and said to have run here where it did not.
-    if ($PerfApart) { $ctestFilter = "$ctestFilter -LE perf" }
+    # asked for that, and said to have run here where it did not. Those that
+    # are `quiet` run in that stage alone, whatever is asked (ADR 0148).
+    $ctestFilter = if ($PerfApart) { "$ctestFilter -LE perf" } else { "$ctestFilter -LE quiet" }
     $script = @"
 chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1

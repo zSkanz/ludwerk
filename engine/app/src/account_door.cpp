@@ -156,7 +156,7 @@ void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view
     const core::u64 now = nowNs();
     const auto refuse = [&](Failure failure, core::u32 retryAfter) {
         core::wipe(password);
-        m_results.push_back(Result{peer, failure, {}, {}, retryAfter});
+        answer(Result{peer, failure, {}, {}, retryAfter}, 0, {});
     };
     // **Five failures from an address in a minute**: the sixth is refused
     // without a hash (§2).
@@ -273,25 +273,39 @@ void AccountDoor::finish(Asked& asked, const Done& done)
     const std::int64_t unixNow = m_options.unixClock ? m_options.unixClock() : 0;
     if (asked.registering) {
         if (!done.ok) {
-            m_results.push_back(Result{asked.peer, Failure::Busy, {}, {}, 1});
+            answer(Result{asked.peer, Failure::Busy, {}, {}, 1}, done.hashes, done.cost);
             return;
         }
         const DataAccount account{randomId(), asked.name, asked.skeleton, done.hash, unixNow, unixNow};
         if (!m_store.createAccount(account)) {
-            m_results.push_back(Result{asked.peer, Failure::Taken, {}, {}, 0});
+            answer(Result{asked.peer, Failure::Taken, {}, {}, 0}, done.hashes, done.cost);
             return;
         }
-        m_results.push_back(Result{asked.peer, Failure::None, ticketFor(account), account.id, 0});
+        answer(Result{asked.peer, Failure::None, ticketFor(account), account.id, 0}, done.hashes, done.cost);
         return;
     }
     if (!done.ok || !asked.account.has_value()) {
         failed(asked);
-        m_results.push_back(Result{asked.peer, Failure::WrongNameOrPassword, {}, {}, 0});
+        answer(Result{asked.peer, Failure::WrongNameOrPassword, {}, {}, 0}, done.hashes, done.cost);
         return;
     }
     m_nameFailures.erase(asked.skeleton);
     m_store.noteSignIn(asked.account->id, unixNow);
-    m_results.push_back(Result{asked.peer, Failure::None, ticketFor(*asked.account), asked.account->id, 0});
+    answer(Result{asked.peer, Failure::None, ticketFor(*asked.account), asked.account->id, 0}, done.hashes, done.cost);
+}
+
+void AccountDoor::answer(Result result, core::u32 hashes, std::string cost)
+{
+    if (m_options.keepWork)
+        m_work.push_back(Work{result.peer, result.failure, hashes, std::move(cost)});
+    m_results.push_back(std::move(result));
+}
+
+std::vector<AccountDoor::Work> AccountDoor::takeWork()
+{
+    std::vector<Work> out;
+    out.swap(m_work);
+    return out;
 }
 
 std::vector<AccountDoor::Result> AccountDoor::take()
@@ -320,13 +334,19 @@ void AccountDoor::work()
         }
         Done done;
         done.id = job.id;
+        // **Counted where it is made**: a hash checked that no Argon2 ran
+        // for -- an empty decoy, a stored hash not one of ours -- costs
+        // nothing and says so.
         if (job.hashing) {
             done.hash = core::hashPassword(job.password);
             done.ok = !done.hash.empty();
+            done.cost = core::passwordCost(done.hash);
         }
         else {
             done.ok = core::verifyPassword(job.hash, job.password);
+            done.cost = core::passwordCost(job.hash);
         }
+        done.hashes = done.cost.empty() ? 0 : 1;
         core::wipe(job.password);
         const std::lock_guard guard(m_lock);
         m_done.push_back(std::move(done));

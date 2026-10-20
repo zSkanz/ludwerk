@@ -600,13 +600,19 @@ if(ENG_BUILD_TESTS)
     # CTest skip. It costs one window and one device -- about a second -- and
     # buys a summary line that tells the truth about the shell on every machine.
     add_test(NAME editor_shell COMMAND engine_app_tests "--test-case=*F3 flips*")
-    # **The sign-ins' times** (ADR 0237 amendment A): a wrong name, a wrong
-    # password and a taken one against a right one, and twenty a second on
-    # a pool of four. They measure time, so they run with the other timed
-    # tests and nowhere else; in the suite they are skipped.
-    add_test(NAME accounts_timed
-        COMMAND engine_app_tests "--test-case=*take a right one's time*,*a pool of four signs in*")
+    # **The sign-ins' times** (ADR 0237 amendment A). They measure time, so
+    # they run with the other timed tests; in the suite they are skipped.
+    # The pool of four against one thread's rate is a ratio on one machine
+    # and holds on a shared runner. A wrong name, a wrong password and a taken
+    # one within a tenth of a right one's time does not: neighbours on a
+    # hosted runner move a tenth easily. That one is `quiet` (ADR 0148), run
+    # where nothing else is -- the local gate's perf stage -- and left out of
+    # the workflow; the same work without a clock is a case of the suite.
+    add_test(NAME accounts_timed COMMAND engine_app_tests "--test-case=*a pool of four signs in*")
     set_tests_properties(accounts_timed PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300 LABELS perf)
+    add_test(NAME accounts_clock COMMAND engine_app_tests "--test-case=*take a right one's time*")
+    set_tests_properties(accounts_clock PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300
+        LABELS "perf;quiet")
     set_tests_properties(editor_shell PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)

@@ -111,3 +111,20 @@ tests labelled `perf` out by default, as the full run's lanes do, and say so;
 `-Perf` puts them back in the stage, for a machine known to be quiet, and
 `-Only perf` runs them by themselves. The full run is unchanged: its lanes
 leave them out, and the `perf` stage runs them last and alone.
+
+## Amended 2026-10-20: `quiet`, what only a quiet machine can measure
+
+Some timed claims are a ratio on one machine and hold on a shared runner:
+the sign-in pool's rate against one thread's, measured beside it. Others are
+a tolerance no neighbour may move, and those do not: a wrong password's
+answer within a tenth of a right one's failed on all three hosted runners,
+where four tests run at once on four cores beside other people's jobs.
+
+A test labelled `quiet` as well as `perf` runs **only in the `perf` stage,
+by itself**: the full run's `perf` stage and `-Only perf`. Every other
+place leaves it out -- the workflow's three jobs (`-LE ...|quiet`), the
+nightly's Tier-2 run (`ENG_GATE_PERF=with`), and a stage run by itself even
+with `-Perf`. A `quiet` claim is never the only proof of its property: what
+it measures is also shown without a clock, in a test that runs everywhere
+-- for the sign-ins, each way an ask can go counted at one Argon2
+evaluation of one cost.

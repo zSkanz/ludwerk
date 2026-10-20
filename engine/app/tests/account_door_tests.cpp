@@ -3,6 +3,7 @@
 // same work; an address's failures and a name's delays; the console's
 // accounts; and a ticket a world's door takes.
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -266,10 +267,54 @@ TEST_CASE("account door > the console makes accounts and passwords, and takes no
     CHECK(door.ask("ana_9", second, false).failure == Failure::WrongNameOrPassword);
 }
 
+TEST_CASE("account door > a wrong name, a wrong password and a taken name do a right one's work")
+{
+    // **The same work, shown without a clock** (amendment A): each way a
+    // sign-in or a register can go is one Argon2 evaluation at one cost, the
+    // decoy's for a name with no account. What a clock shows of it is the
+    // timed case below, run only where the machine is quiet.
+    AccountDoor::Options options;
+    options.keepWork = true;
+    Door door(options);
+    REQUIRE(door.ask("ana_1", "correct horse battery", true).failure == Failure::None);
+    REQUIRE(door.ask("bo_22", "correct horse battery", true).failure == Failure::None);
+    const std::vector<AccountDoor::Work> made = door.door->takeWork();
+    REQUIRE(made.size() == 2);
+    const std::string cost = made[0].cost;
+    REQUIRE_FALSE(cost.empty());
+    CHECK(made[1].cost == cost);
+
+    CHECK(door.ask("ana_1", "correct horse battery", false, "10.0.0.2").failure == Failure::None);
+    CHECK(door.ask("ana_1", "not the password", false, "10.0.0.3").failure == Failure::WrongNameOrPassword);
+    CHECK(door.ask("nobody", "correct horse battery", false, "10.0.0.4").failure == Failure::WrongNameOrPassword);
+    CHECK(door.ask("BO_22", "correct horse battery", true, "10.0.0.5").failure == Failure::Taken);
+    const std::vector<AccountDoor::Work> work = door.door->takeWork();
+    REQUIRE(work.size() == 4);
+    const std::array<Failure, 4> ways{Failure::None, Failure::WrongNameOrPassword, Failure::WrongNameOrPassword,
+                                      Failure::Taken};
+    for (std::size_t at = 0; at < work.size(); ++at) {
+        CAPTURE(at);
+        CHECK(work[at].failure == ways[at]);
+        CHECK(work[at].hashes == 1);
+        CHECK(work[at].cost == cost);
+    }
+
+    // **And an answer the pool never saw made none**: a name that is not a
+    // login name is refused at once, which says nothing about any account.
+    CHECK(door.ask("no", "correct horse battery", false).failure == Failure::InvalidName);
+    const std::vector<AccountDoor::Work> refused = door.door->takeWork();
+    REQUIRE(refused.size() == 1);
+    CHECK(refused[0].hashes == 0);
+    CHECK(refused[0].cost.empty());
+}
+
 TEST_CASE("account door > a wrong name, a wrong password and a taken name take a right one's time" *
           doctest::skip(!engine::platform::environmentFlag("ENG_TIMED_TESTS")))
 {
-    // **Timed**: run where nothing else measures time (the gate's perf stage).
+    // **Timed**: run only where the machine is quiet -- the local gate's perf
+    // stage, alone -- and nowhere a neighbour moves a tenth of a hash's time
+    // (`LABELS quiet`). The work it measures is shown everywhere by the case
+    // above.
     Door door;
     REQUIRE(door.ask("ana_1", "correct horse battery", true).failure == Failure::None);
     REQUIRE(door.ask("bo_22", "correct horse battery", true).failure == Failure::None);
