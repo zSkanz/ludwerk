@@ -95,10 +95,7 @@ cmake --build --preset win-msvc-player --target engine_host || exit /b 1
     $linuxPlayer = Join-Path $players 'linux-x64'
     if (-not $SkipLinuxPlayer) {
         Write-Host "=== the Linux player (Tier-2 container) ===" -ForegroundColor Cyan
-        docker image inspect engine-tier2:latest *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw "no engine-tier2 image; run scripts/localgate.ps1 -Only linux once, or pass -SkipLinuxPlayer"
-        }
+        $tier2Image = Initialize-Tier2Image -Repo $repo
         $buildVolume = Get-Tier2Volume -Base 'engine-tier2-build' -Repo $repo `
             -FirstFile (Join-Path $env:LOCALAPPDATA "$BrandName\tier2-first-checkout.txt")
         docker volume create $buildVolume | Out-Null
@@ -107,7 +104,7 @@ cmake --build --preset win-msvc-player --target engine_host || exit /b 1
         # Built into this checkout's own volume -- the gate's, when this is
         # the checkout the gate runs in -- then copied out through a bind
         # mount: the volume is not a directory this machine can read.
-        docker run --rm -v "${repo}:/repo" -v "${buildVolume}:/build" -v "${players}:/out" engine-tier2:latest `
+        docker run --rm -v "${repo}:/repo" -v "${buildVolume}:/build" -v "${players}:/out" $tier2Image `
             bash -c "cmake --preset linux-clang-player >/dev/null && cmake --build --preset linux-clang-player --target engine_host engine_relay && mkdir -p /out/linux-x64 && cp /build/linux-clang-player/engine/app/engine-host /build/linux-clang-player/tools/relay/engine-relay /out/linux-x64/ && strip --strip-unneeded /out/linux-x64/engine-host /out/linux-x64/engine-relay && cp -r /build/linux-clang-player/engine/app/content /out/linux-x64/"
         if ($LASTEXITCODE -ne 0) { throw "the Linux player failed to build in the container" }
         Write-Host "[package] done with the container: nothing of this run uses Docker from here" -ForegroundColor Cyan

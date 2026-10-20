@@ -158,6 +158,14 @@ Push-Location $repo
 $firstCheckout = (Join-Path $env:LOCALAPPDATA "$BrandName\tier2-first-checkout.txt")
 $buildVolume = Get-Tier2Volume -Base 'engine-tier2-build' -Repo $repo -FirstFile $firstCheckout
 $asanVolume = Get-Tier2Volume -Base 'engine-tier2-asan' -Repo $repo -FirstFile $firstCheckout
+# And one name a container a checkout, so two checkouts run their Docker
+# stages at the same time.
+$gateContainer = Get-Tier2Name -Base 'engine-tier2-gate' -Repo $repo -FirstFile $firstCheckout
+$perfContainer = Get-Tier2Name -Base 'engine-tier2-perf' -Repo $repo -FirstFile $firstCheckout
+$asanContainer = Get-Tier2Name -Base 'engine-tier2-asan' -Repo $repo -FirstFile $firstCheckout
+$shippingContainer = Get-Tier2Name -Base 'engine-shipping-gate' -Repo $repo -FirstFile $firstCheckout
+$lavapipeContainer = Get-Tier2Name -Base 'engine-lavapipe-gate' -Repo $repo -FirstFile $firstCheckout
+$script:tier2Image = $null
 
 $script:failures = @()
 $script:results = @()
@@ -271,14 +279,9 @@ function Get-BashPath {
 # so it is built once and reused. Docker's layer cache makes the second call
 # free; what this avoids is a second copy of the error handling, which is the
 # part that was subtle (see the stderr note above).
-function Initialize-Tier2Image {
-    $server = docker version --format '{{.Server.Version}}'
-    if ($LASTEXITCODE -ne 0 -or -not $server) {
-        throw "Docker is not running. Start Docker Desktop, or pass -SkipLinux."
-    }
-
-    docker build -f scripts/docker/tier2.Dockerfile -t engine-tier2:latest .
-    if ($LASTEXITCODE -ne 0) { throw "the Tier-2 image failed to build" }
+# Built once a Dockerfile, and only then (`tier2volume.ps1`).
+function Use-Tier2Image {
+    $script:tier2Image = Initialize-Tier2Image -Repo $repo
 }
 
 # --- What this change can affect (ADR 0249) -----------------------------------
@@ -460,12 +463,12 @@ Invoke-Stage 'format' {
     # 18, and a tree formatted by one is unformatted to the other. The gate
     # script refuses any major but its pin for that reason, so running it on the
     # host would fail against a correctly formatted tree.
-    Initialize-Tier2Image
+    Use-Tier2Image
 
     $arguments = @('scripts/gates/clang-format.sh')
     if ($Fix) { $arguments += '--fix' }
 
-    docker run --rm -v "${repo}:/repo" engine-tier2:latest bash @arguments
+    docker run --rm -v "${repo}:/repo" $script:tier2Image bash @arguments
     if ($LASTEXITCODE -ne 0) { throw "the C++ formatting gate failed" }
 }
 
@@ -646,16 +649,19 @@ Invoke-Stage 'linux' {
     # $ErrorActionPreference='Stop' throws even when the exit code is zero --
     # so `docker rm -f <nonexistent>` used to kill this stage in four seconds,
     # before a single object was compiled.
-    Initialize-Tier2Image
+    Use-Tier2Image
 
     # A named volume, so the second run is incremental. This is the local
     # equivalent of CI's build cache, and it costs nothing.
     docker volume create $buildVolume | Out-Null
+    # The tests inside take block 0 of the test ports: a container has a
+    # network of its own, so two never meet there (`cmake/engine_test_ports.cmake`).
+    Write-Host "[gate] linux: container $gateContainer, volume $buildVolume, image $script:tier2Image" -ForegroundColor DarkGray
 
     # Asked for by id first: removing a container that is not there is an error
     # on stderr, and see above for why that matters here.
-    $existing = docker ps -aq --filter 'name=^engine-tier2-gate$'
-    if ($existing) { docker rm -f engine-tier2-gate | Out-Null }
+    $existing = docker ps -aq --filter "name=^${gateContainer}$"
+    if ($existing) { docker rm -f $gateContainer | Out-Null }
 
     # Named and not --rm, so the container and its full log stay visible in
     # Docker Desktop after it exits -- a disposable container takes its own
@@ -663,12 +669,12 @@ Invoke-Stage 'linux' {
     $perfMode = if ($PerfApart) { 'without' } else { 'with' }
     # The tests this change can affect (ADR 0249), or every one.
     $gateTests = if ($script:affectedPlan -and $script:affectedPlan.regex) { $script:affectedPlan.regex } else { '' }
-    docker run --name engine-tier2-gate `
+    docker run --name $gateContainer `
         -e "ENG_GATE_PERF=$perfMode" `
         -e "ENG_GATE_TESTS=$gateTests" `
         -v "${repo}:/repo" `
         -v "${buildVolume}:/build" `
-        engine-tier2:latest bash scripts/gates/linux-build.sh
+        $script:tier2Image bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the Tier-2 build or tests failed" }
     if ($PerfApart) {
         Write-Host "[gate] linux: the tests that measure time were left out; the perf stage runs them alone." -ForegroundColor DarkGray
@@ -709,13 +715,13 @@ ctest --preset win-msvc-dev --output-on-failure --no-tests=error -L perf || exit
     }
     if ($SkipLinux) { return }
     Write-Host '[gate] perf (linux): ALONE -- no other stage of the gate is running.' -ForegroundColor Cyan
-    $existing = docker ps -aq --filter 'name=^engine-tier2-perf$'
-    if ($existing) { docker rm -f engine-tier2-perf | Out-Null }
-    docker run --name engine-tier2-perf `
+    $existing = docker ps -aq --filter "name=^${perfContainer}$"
+    if ($existing) { docker rm -f $perfContainer | Out-Null }
+    docker run --name $perfContainer `
         -e ENG_GATE_PERF=only `
         -v "${repo}:/repo" `
         -v "${buildVolume}:/build" `
-        engine-tier2:latest bash scripts/gates/linux-build.sh
+        $script:tier2Image bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "a test that measures time failed in the Tier-2 container, run alone" }
 }
 
@@ -748,11 +754,11 @@ Invoke-Stage 'asan' {
         $script:stageSkipped = $true
         return
     }
-    Initialize-Tier2Image
+    Use-Tier2Image
     docker volume create $asanVolume | Out-Null
 
-    $existing = docker ps -aq --filter 'name=^engine-tier2-asan$'
-    if ($existing) { docker rm -f engine-tier2-asan | Out-Null }
+    $existing = docker ps -aq --filter "name=^${asanContainer}$"
+    if ($existing) { docker rm -f $asanContainer | Out-Null }
 
     # `detect_leaks=0`: this is a leak-check-free run on purpose. The engine
     # holds process-lifetime singletons -- the message catalog, the job pool,
@@ -762,7 +768,7 @@ Invoke-Stage 'asan' {
     #
     # `halt_on_error=1` so the first report is the exit code rather than a line
     # in a log nobody reads.
-    docker run --name engine-tier2-asan `
+    docker run --name $asanContainer `
         -e ENG_LINUX_PRESET=linux-clang-asan `
         -e ENG_GATE_PERF=without `
         -e ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 `
@@ -771,7 +777,7 @@ Invoke-Stage 'asan' {
         -e UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 `
         -v "${repo}:/repo" `
         -v "${asanVolume}:/build" `
-        engine-tier2:latest bash scripts/gates/linux-build.sh
+        $script:tier2Image bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the sanitizer build or tests failed" }
 }
 
@@ -803,19 +809,20 @@ Invoke-Stage 'asan' {
 # Last, because it is the stage most likely to be cold, and a run that fails
 # should say so before spending that.
 Invoke-Stage 'shipping' {
-    Initialize-Tier2Image
+    Use-Tier2Image
     docker volume create $buildVolume | Out-Null
 
-    $existing = docker ps -aq --filter 'name=^engine-shipping-gate$'
-    if ($existing) { docker rm -f engine-shipping-gate | Out-Null }
+    $existing = docker ps -aq --filter "name=^${shippingContainer}$"
+    if ($existing) { docker rm -f $shippingContainer | Out-Null }
+    Write-Host "[gate] shipping: container $shippingContainer, volume $buildVolume, image $script:tier2Image" -ForegroundColor DarkGray
 
     # The same named volume the Linux stage uses: each preset writes to its own
     # subdirectory of it, so the vendored fetches and the ccache-less object
     # trees all survive between runs and no stage disturbs another.
-    docker run --name engine-shipping-gate `
+    docker run --name $shippingContainer `
         -v "${repo}:/repo" `
         -v "${buildVolume}:/build" `
-        engine-tier2:latest bash scripts/gates/shipping-build.sh
+        $script:tier2Image bash scripts/gates/shipping-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the shipping, player or editor profile failed to build" }
 }
 
@@ -896,19 +903,19 @@ Invoke-Stage 'lavapipe' {
         $script:stageSkipped = $true
         return
     }
-    Initialize-Tier2Image
+    Use-Tier2Image
     docker volume create $buildVolume | Out-Null
 
-    $existing = docker ps -aq --filter 'name=^engine-lavapipe-gate$'
-    if ($existing) { docker rm -f engine-lavapipe-gate | Out-Null }
+    $existing = docker ps -aq --filter "name=^${lavapipeContainer}$"
+    if ($existing) { docker rm -f $lavapipeContainer | Out-Null }
 
     $arguments = @('bash', 'scripts/gates/lavapipe-goldens.sh')
     if ($Record) { $arguments += '--record' }
 
-    docker run --name engine-lavapipe-gate `
+    docker run --name $lavapipeContainer `
         -v "${repo}:/repo" `
         -v "${buildVolume}:/build" `
-        engine-tier2:latest @arguments
+        $script:tier2Image @arguments
     if ($LASTEXITCODE -ne 0) { throw "the lavapipe goldens did not match" }
 }
 
@@ -925,6 +932,20 @@ Invoke-Stage 'lavapipe' {
 # license -- each pinned by digest (R5). The containers and their network are
 # named by this run's process, never as the gate's own (`engine-tier2-*`,
 # `engine-lavapipe-gate`), and removed whatever happens.
+# The block of test ports the machine gave this checkout
+# (`cmake/engine_test_ports.cmake`), or 0 when it has none yet.
+function Get-TestPortBlock {
+    $list = Join-Path $env:LOCALAPPDATA "$BrandName\test-port-blocks.txt"
+    if (-not (Test-Path $list)) { return 0 }
+    $here = [System.IO.Path]::GetFullPath($repo).TrimEnd([char]92, [char]47).Replace([char]92, [char]47).ToLowerInvariant()
+    foreach ($line in Get-Content $list) {
+        if ($line -match '^([0-5]) (.+)$' -and
+            $Matches[2].Trim().TrimEnd([char]47).ToLowerInvariant() -eq $here) {
+            return [int]$Matches[1]
+        }
+    }
+    return 0
+}
 $NakamaImage = 'heroiclabs/nakama:3.41.0@sha256:ca9f3fe65c90f56860fe5d7cd024868a395cb1a001abb9912bf87ef47d605349'
 $NakamaDatabase = 'postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297'
 Invoke-Stage 'nakama' {
@@ -938,6 +959,12 @@ Invoke-Stage 'nakama' {
     }
     $engineHost = Join-Path $env:ENG_BUILD_ROOT 'win-msvc-dev\engine\app\engine-host.exe'
     if (-not (Test-Path $engineHost)) { throw "no engine-host at ${engineHost}: run -Only windows first" }
+    # The ports this run takes on the host are in this checkout's block of
+    # test ports, so two checkouts run this stage at once.
+    $shift = (Get-TestPortBlock) * 1000
+    $nakamaPort = 47350 - $shift
+    $gamePort = 47896 - $shift
+    Write-Host "[gate] nakama: test port block $($shift / 1000), Nakama on $nakamaPort, the game on $gamePort" -ForegroundColor DarkGray
     $network = "engine-nakama-$PID"
     $database = "engine-nakama-db-$PID"
     $server = "engine-nakama-$PID"
@@ -953,14 +980,14 @@ Invoke-Stage 'nakama' {
         $start = "until /nakama/nakama migrate up --database.address $address; do sleep 1; done; " +
             "exec /nakama/nakama --name engine --database.address $address --runtime.http_key $key " +
             "--socket.server_key defaultkey"
-        docker run -d --name $server --network $network -p 47350:7350 `
+        docker run -d --name $server --network $network -p ${nakamaPort}:7350 `
             -v "${repo}/integrations/nakama/modules:/nakama/data/modules" `
             --entrypoint /bin/sh $NakamaImage -ec $start | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Nakama did not start" }
         $ready = $false
         foreach ($try in 1..120) {
             try {
-                $answer = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:47350/healthcheck'
+                $answer = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:${nakamaPort}/healthcheck"
                 if ($answer.StatusCode -eq 200) { $ready = $true; break }
             }
             catch {}
@@ -976,7 +1003,7 @@ Invoke-Stage 'nakama' {
 chcp 65001 >nul
 call "$vcvars" >nul || exit /b 1
 set ENG_NAKAMA_HTTP_KEY=$key
-cmake "-DHOST=$engineHost" "-DPROJECT=$repo/tests/data/nakama" "-DWORKDIR=$env:ENG_BUILD_ROOT/win-msvc-dev/nakama-test" -DPORT=47896 "-DNAKAMA=http://127.0.0.1:47350" "-DTWICE=$repo/tests/data/backend-twice/twice.luau" "-DSOURCE=$repo" -P "$repo/tests/data/run_data_nakama.cmake" || exit /b 1
+cmake "-DHOST=$engineHost" "-DPROJECT=$repo/tests/data/nakama" "-DWORKDIR=$env:ENG_BUILD_ROOT/win-msvc-dev/nakama-test" -DPORT=$gamePort "-DNAKAMA=http://127.0.0.1:$nakamaPort" "-DTWICE=$repo/tests/data/backend-twice/twice.luau" "-DSOURCE=$repo" -P "$repo/tests/data/run_data_nakama.cmake" || exit /b 1
 "@
         $driverTemp = Join-Path $env:TEMP "engine-localgate-nakama-$PID.cmd"
         Set-Content -Path $driverTemp -Value $driver -Encoding ascii

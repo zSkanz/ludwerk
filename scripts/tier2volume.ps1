@@ -1,4 +1,5 @@
-# The Docker volume a checkout builds its Linux trees in. Dot-sourced by
+# The Docker volume a checkout builds its Linux trees in, the containers it
+# runs them in and the image it runs. Dot-sourced by
 # `localgate.ps1` and `package.ps1`.
 #
 # **One volume a checkout.** The container sees every checkout at the same
@@ -52,4 +53,71 @@ function Get-Tier2Volume {
     }
     $mark = ([System.BitConverter]::ToString($bytes, 0, 4) -replace '-', '').ToLowerInvariant()
     return "$Base-$mark"
+}
+
+# **And the containers it runs in** (2026-10-20). The gate's containers were
+# named once for the machine, so a second checkout's gate removed the first's
+# container while it ran, and two checkouts could not run a Docker stage at
+# the same time. A checkout's containers are named as its volumes are.
+function Get-Tier2Name {
+    param([string]$Base, [string]$Repo, [string]$FirstFile)
+    return Get-Tier2Volume -Base $Base -Repo $Repo -FirstFile $FirstFile
+}
+
+# **The image a checkout's Dockerfile builds, built only when it changed.**
+# Each run used to call `docker build`, and BuildKit asks the registry for the
+# base's metadata every time even when every layer is cached: with the
+# registry unreachable, an image already on the machine, built from the same
+# file, could not be used. The image is tagged with a hash of what it is built
+# from -- the Dockerfile and the files it copies -- and a checkout whose hash
+# has an image runs that image without asking anyone. Two checkouts with
+# different Dockerfiles each have their own image rather than rebuilding one
+# tag in turn; `engine-tier2:latest` names the last one built, for a person at
+# the command line.
+$Tier2ImageSources = @('scripts/docker/tier2.Dockerfile', 'rokit.toml')
+
+function Get-Tier2Image {
+    param([string]$Repo)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $all = New-Object System.IO.MemoryStream
+        foreach ($source in $Tier2ImageSources) {
+            $name = [System.Text.Encoding]::UTF8.GetBytes("$source`n")
+            $all.Write($name, 0, $name.Length)
+            # Line endings as git stores them: a checkout with CRLF and one
+            # with LF build the same image.
+            $text = [System.IO.File]::ReadAllText((Join-Path $Repo $source)) -replace "`r`n", "`n"
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+            $all.Write($bytes, 0, $bytes.Length)
+        }
+        $hash = $sha.ComputeHash($all.ToArray())
+    } finally {
+        $sha.Dispose()
+    }
+    $mark = ([System.BitConverter]::ToString($hash, 0, 6) -replace '-', '').ToLowerInvariant()
+    return "engine-tier2:$mark"
+}
+
+function Initialize-Tier2Image {
+    param([string]$Repo)
+
+    $server = docker version --format '{{.Server.Version}}'
+    if ($LASTEXITCODE -ne 0 -or -not $server) {
+        throw "Docker is not running. Start Docker Desktop, or pass -SkipLinux."
+    }
+    $image = Get-Tier2Image -Repo $Repo
+    # Asked for by id: an image that is not there is an error on stderr, and
+    # Windows PowerShell turns stderr into a failure.
+    $have = docker images -q $image
+    if ($have) {
+        Write-Host "[tier2] image ${image}: built from this checkout's Dockerfile already" -ForegroundColor DarkGray
+        return $image
+    }
+    Write-Host "[tier2] image ${image}: building, the Dockerfile or what it copies changed" -ForegroundColor Cyan
+    # To the console, not the function's output: the caller takes the image's
+    # name from what this returns.
+    docker build -f (Join-Path $Repo 'scripts/docker/tier2.Dockerfile') -t $image -t engine-tier2:latest $Repo | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "the Tier-2 image failed to build" }
+    return $image
 }

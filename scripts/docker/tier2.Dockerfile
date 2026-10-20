@@ -19,7 +19,21 @@
 # caused it, instead of minutes later on metered CI. Keeping the two in step is
 # a maintenance cost paid deliberately: when the workflow's package list
 # changes, this changes with it, and the comment in ci.yml says so.
-FROM ubuntu:24.04
+# **The base by its digest, and the toolchain by its versions** (R5).
+# `ubuntu:24.04` is a tag Canonical moves: a pull brought a newer base nobody
+# had chosen. The digest fixes the base. The packages that decide what the
+# gate says -- the compiler, its standard library and runtimes, clang-format,
+# CMake and Ninja -- are installed at the versions written beside them; the
+# libraries SDL builds against take what the archive has. Each version moves
+# only by a change to this file, said in its commit. CMake and Ninja are the
+# release's own and stay in the archive; LLVM 18 and libstdc++ 14 come from
+# the updates pocket, which drops a version once a newer one is out, so a
+# build that cannot find one fails saying so, and that is the day to move
+# it. And the image is built only when this file changes (`tier2volume.ps1`),
+# so a machine that has it keeps it whatever the archive does. Not from
+# snapshot.ubuntu.com, which would fix every package to a day: on 2026-10-20 it
+# answered 502 for one package in three and took five minutes for forty.
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 
 # Non-interactive, and no recommends: this image is a build environment, not a
 # desktop, and every extra package is a slower rebuild for nothing.
@@ -30,7 +44,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # that has to move first.
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         build-essential \
-        clang \
+        clang=1:18.0-59~exp2 \
+        clang-18=1:18.1.3-1ubuntu1 \
     # **The standard library the hosted runner compiles against**.
     # Clang takes the newest GCC installed for its libstdc++; `ubuntu-latest`
     # carries GCC 14 beside the distribution's 13, and this image had only 13.
@@ -39,11 +54,11 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     # so a file that used `std::clamp` without naming its header compiled here
     # and stopped CI. Same compiler, same distribution, different library --
     # and "green here, red there" is the one thing this image exists to end.
-        libstdc++-14-dev \
+        libstdc++-14-dev=14.2.0-4ubuntu2~24.04.1 \
     # The formatting gate's binary, at the major scripts/gates/clang-format.sh
     # pins. Versioned on purpose: clang-format's output changes between majors,
     # so "formatted" has to name one of them or it means nothing.
-        clang-format-18 \
+        clang-format-18=1:18.1.3-1ubuntu1 \
     # The sanitizer runtime AND its headers, which are a separate package on
     # Ubuntu from the compiler that emits calls into it. Without this the
     # `linux-clang-asan` preset does not fail at link time, where it would be
@@ -51,13 +66,13 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     # `<sanitizer/asan_interface.h>` to tell ASan about its own allocator's
     # poisoning. That is a vendored file R13 forbids editing, so the image is
     # the only place this can be fixed.
-        libclang-rt-18-dev \
+        libclang-rt-18-dev=1:18.1.3-1ubuntu1 \
     # `llvm-symbolizer`, without which every sanitizer report is a column of
     # hexadecimal addresses and the tool is worth nothing. It ships in `llvm-18`
     # rather than with the runtime above, and the failure mode is a WARNING --
     # "Failed to use and restart external symbolizer" -- rather than an error, so
     # a report looks like it worked while naming nothing.
-        llvm-18 \
+        llvm-18=1:18.1.3-1ubuntu1 \
     # Deliberately NOT clang-tools. CMake 3.28+ would want `clang-scan-deps` to
     # scan C++20 translation units for module dependencies, and Ubuntu ships
     # that binary only under a versioned name, so the default configuration
@@ -65,8 +80,8 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     # runner is perfectly happy. The root CMakeLists turns the scan off instead
     # -- nothing here uses modules -- which removes the work rather than
     # installing a tool to do work nobody needs. This image found that.
-        cmake \
-        ninja-build \
+        cmake=3.28.3-1build7 \
+        ninja-build=1.11.1-2 \
         git \
         ca-certificates \
         curl \
