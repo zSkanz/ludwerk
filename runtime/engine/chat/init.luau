@@ -20,6 +20,8 @@
 --- lines reach nobody (`Muted`), and the game's `Filter` sees each line
 --- before it goes anywhere: nil drops it. Joining, a player is sent the last
 --- `History` lines of the world channel, and of their party's and guild's.
+--- A machine hears each line once: one it already heard, sent again with a
+--- world's history after a hop, is not passed on.
 ---
 --- Casing follows ADR 0034: `chat.start` is a module function, and a line is
 --- an object: `message.Channel`, `message.FromName`, `message.Text`.
@@ -37,6 +39,8 @@ export type Message = {
     Channel: string,
     FromName: string,
     Text: string,
+    --- Which line this is, wherever it is sent again: made where it is said.
+    Id: string?,
 }
 
 export type Config = {
@@ -62,6 +66,9 @@ local LinesPerWindow = 5
 local WindowSeconds = 5
 local WhisperWaitSeconds = 2
 local HistoryScope = "chat"
+-- How many lines a machine remembers having heard: more than one channel's
+-- history, so a hop's history is all known.
+local RememberedLines = 512
 
 -- **A signal of a module's own**: each callback called deferred (R8).
 local function signal(): any
@@ -107,6 +114,24 @@ end
 -- is in, made again when a hop brings another -- and a line still on its way
 -- from the one before ignored.
 local Generation = 0
+-- **The lines this machine has heard**, by id, the oldest forgotten first.
+local HeardIds: { [string]: boolean } = {}
+local HeardOrder: { string } = {}
+
+local function heardBefore(id: any): boolean
+    if typeof(id) ~= "string" then
+        return false
+    end
+    if HeardIds[id] then
+        return true
+    end
+    HeardIds[id] = true
+    table.insert(HeardOrder, id)
+    if #HeardOrder > RememberedLines then
+        HeardIds[table.remove(HeardOrder, 1) :: string] = nil
+    end
+    return false
+end
 local Hearing: { Disconnect: (any) -> () }? = nil
 local Heard: RemoteEvent? = nil
 local Following = false
@@ -136,7 +161,9 @@ local function connect(channel: RemoteEvent)
             return
         end
         if kind == "line" and typeof(payload) == "table" then
-            Received.fire(payload)
+            if not heardBefore(payload.Id) then
+                Received.fire(payload)
+            end
         elseif kind == "notice" and typeof(payload) == "string" then
             Noticed.fire(payload)
         end
@@ -378,6 +405,14 @@ function Chat.start(config: Config?)
         return line
     end
 
+    -- **A line's id**: this world, the tick, a count and a draw, so a world
+    -- started again names no line as one of before.
+    local linesSaid = 0
+    local function lineId(): string
+        linesSaid += 1
+        return `{NetworkService.WorldName}:{RunService.SimTime}:{linesSaid}:{math.random()}`
+    end
+
     local function onReceived(player: Player, kind: any, first: any, second: any)
         if kind == "whisper" then
             if not enabled["whisper"] or typeof(first) ~= "string" then
@@ -388,7 +423,7 @@ function Chat.start(config: Config?)
             if text == nil then
                 return
             end
-            local line: Message = { Channel = "whisper", FromName = player.Name, Text = text }
+            local line: Message = { Channel = "whisper", FromName = player.Name, Text = text, Id = lineId() }
             local token = player.Name .. ":" .. tostring(RunService.SimTime) .. ":" .. tostring(math.random())
             waiting[token] = player
             deliver(player, line)
@@ -409,7 +444,7 @@ function Chat.start(config: Config?)
         if text == nil then
             return
         end
-        local line: Message = { Channel = first, FromName = player.Name, Text = text }
+        local line: Message = { Channel = first, FromName = player.Name, Text = text, Id = lineId() }
         if first == "local" then
             local character = player.Character
             local here = if character and character:IsA("BasePart") then (character :: BasePart).Position else nil

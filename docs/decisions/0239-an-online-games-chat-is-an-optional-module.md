@@ -139,6 +139,14 @@ console and readable by a script (`NetworkService:IsMuted`, ADR 0241 §4).
   last lines. An instance is a world of the manager like another and hears
   the same topics; it is not in that test. `47-realms` uses the module, with
   a box to type in.
+- **A line is heard once** (2026-10-20): the history a joiner is sent holds
+  the lines its machine heard in the world it left, and a chat that lives
+  across worlds showed the guild's last lines again after every hop. A line
+  has an id, made on the server where it is said (`message.Id`), and a
+  player's machine passes a line on once, remembering the last 512 it heard.
+  Proved by the online game end to end (`mmo_end_to_end`): the guild's line
+  once to each of three players in three worlds, the third still once after
+  a hop into an instance.
 
 ## Not decided here
 
