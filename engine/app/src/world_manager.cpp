@@ -267,6 +267,7 @@ std::optional<core::EngineError> WorldManager::start()
     dataOptions.backupKeep = m_options.config.backupKeep;
     dataOptions.movesKeepDays = m_options.config.movesKeepDays;
     m_dataConsole = std::make_unique<DataConsole>(std::move(dataOptions));
+    m_parties = std::make_unique<PartyBook>(m_options.config.partySize);
     if (m_options.config.accounts) {
         AccountDoor::Options accounts;
         accounts.secret = m_signing.secret;
@@ -665,6 +666,20 @@ void WorldManager::createInstance(World& asker, const ManagerMessage& message)
     instance->askedKeys.clear();
     for (core::usize at = 0; at < root["players"].size(); ++at)
         instance->askedKeys.emplace_back(root["players"].at(at).asString());
+    // **For a party** (ADR 0240 §1): its members online, in any world.
+    if (const std::string_view partyId = root["party"].asString(); !partyId.empty() && m_parties != nullptr) {
+        if (const std::optional<Party> party = m_parties->find(partyId); party.has_value()) {
+            for (const std::unique_ptr<World>& world : m_worlds) {
+                for (const auto& [key, account] : world->present) {
+                    const std::string who = memberOf(key, account);
+                    if (std::find(party->members.begin(), party->members.end(), who) != party->members.end() &&
+                        std::find(instance->askedKeys.begin(), instance->askedKeys.end(), key) ==
+                            instance->askedKeys.end())
+                        instance->askedKeys.push_back(key);
+                }
+            }
+        }
+    }
     if (instance->state == State::Ready)
         allocate(*instance);
     topUpWarm();
@@ -883,6 +898,121 @@ void WorldManager::readWorld(World& world)
     world.partial.erase(0, start);
 }
 
+std::string WorldManager::memberOf(const std::string& key, const std::string& account)
+{
+    return account.empty() ? key : account;
+}
+
+void WorldManager::partyOp(World& asker, const ManagerMessage& message, core::u64 nowNs)
+{
+    const core::JsonValue root = message.root();
+    const std::string request(root["request"].asString());
+    const std::string answer = runPartyOp(*m_parties, request, nowNs);
+    core::JsonWriter result(core::JsonLayout::Compact);
+    result.beginObject();
+    result.field("type", "party-result");
+    result.field("id", root["id"].asInteger(0));
+    result.field("answer", std::string_view{answer});
+    result.endObject();
+    send(asker, result);
+    // **An invitation** goes to the world the invitee is in.
+    core::JsonDocument asked;
+    core::JsonDocument answered;
+    if (!asked.parse(request, "party-op") || !answered.parse(answer, "party-result"))
+        return;
+    if (asked.root()["op"].asString() == "invite" && answered.root()["ok"].asBool(false)) {
+        const std::string invitee(asked.root()["member"].asString());
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            const bool here = std::any_of(world->present.begin(), world->present.end(), [&](const auto& entry) {
+                return memberOf(entry.first, entry.second) == invitee;
+            });
+            if (!here || world->process == nullptr)
+                continue;
+            core::JsonWriter invited(core::JsonLayout::Compact);
+            invited.beginObject();
+            invited.field("type", "party-invited");
+            invited.field("member", std::string_view{invitee});
+            invited.field("party", asked.root()["party"].asString());
+            invited.field("by", asked.root()["by"].asString());
+            invited.endObject();
+            send(*world, invited);
+        }
+    }
+    partyNotices();
+}
+
+void WorldManager::partyNotices()
+{
+    // **What changed, to every world a member is in**; what ended, to every
+    // world, which drops what it knew of it.
+    for (const std::string& id : m_parties->takeChanged()) {
+        const std::optional<Party> party = m_parties->find(id);
+        if (!party.has_value())
+            continue;
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            const bool member = std::any_of(world->present.begin(), world->present.end(), [&](const auto& entry) {
+                const std::string who = memberOf(entry.first, entry.second);
+                return std::find(party->members.begin(), party->members.end(), who) != party->members.end();
+            });
+            if (!member || world->process == nullptr)
+                continue;
+            core::JsonWriter notice(core::JsonLayout::Compact);
+            notice.beginObject();
+            notice.field("type", "party-changed");
+            notice.key("party");
+            writeParty(notice, *party);
+            notice.endObject();
+            send(*world, notice);
+        }
+    }
+    for (const std::string& id : m_parties->takeGone()) {
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            if (world->process == nullptr)
+                continue;
+            core::JsonWriter notice(core::JsonLayout::Compact);
+            notice.beginObject();
+            notice.field("type", "party-gone");
+            notice.field("party", std::string_view{id});
+            notice.endObject();
+            send(*world, notice);
+        }
+    }
+}
+
+void WorldManager::partyTravel(const ManagerMessage& message)
+{
+    // **A party sent somewhere** (ADR 0240 §1): each world sends the members
+    // it has, as its own `TravelGroup` would.
+    const core::JsonValue root = message.root();
+    const std::optional<Party> party = m_parties->find(root["party"].asString());
+    if (!party.has_value())
+        return;
+    for (const std::unique_ptr<World>& world : m_worlds) {
+        if (world->process == nullptr)
+            continue;
+        std::vector<std::string> keys;
+        for (const auto& [key, account] : world->present) {
+            const std::string who = memberOf(key, account);
+            if (std::find(party->members.begin(), party->members.end(), who) != party->members.end())
+                keys.push_back(key);
+        }
+        if (keys.empty())
+            continue;
+        core::JsonWriter order(core::JsonLayout::Compact);
+        order.beginObject();
+        order.field("type", "party-travel");
+        order.key("keys");
+        order.beginArray();
+        for (const std::string& key : keys)
+            order.value(std::string_view{key});
+        order.endArray();
+        order.field("target", root["target"].asString());
+        order.field("data", root["data"].asString());
+        order.endObject();
+        send(*world, order);
+    }
+}
+
 std::optional<std::string> WorldManager::admittedAccount(std::string_view key, std::string_view ticket)
 {
     const std::string hex(key);
@@ -1071,6 +1201,14 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
         return;
     }
     // **A player's record** (ADR 0238 §2): asked for, and written.
+    if (type == "party-op" && m_parties != nullptr) {
+        partyOp(world, message, now);
+        return;
+    }
+    if (type == "party-travel" && m_parties != nullptr) {
+        partyTravel(message);
+        return;
+    }
     if (type == "data-load" && m_data != nullptr) {
         m_data->load(dataName(world), static_cast<core::u32>(root["id"].asInteger(0)), root["account"].asString(),
                      static_cast<core::i64>(now / 1'000'000u));
@@ -1481,6 +1619,16 @@ void WorldManager::frame()
         moveAll(old, next);
     }
     dataAnswers(now);
+    // **Who is online**, for the parties' five minutes, and what that changed.
+    if (m_parties != nullptr) {
+        std::set<std::string, std::less<>> online;
+        for (const std::unique_ptr<World>& world : m_worlds) {
+            for (const auto& [key, account] : world->present)
+                online.insert(memberOf(key, account));
+        }
+        m_parties->setOnline(online, now);
+        partyNotices();
+    }
     if (m_dataConsole != nullptr && m_data != nullptr && m_options.unixClock)
         m_dataConsole->frame(*m_data, m_options.unixClock());
     // Drained: stopped once empty, or after a while whatever it holds.

@@ -16,6 +16,7 @@ engine_add_module(app
         src/data_console.cpp
         src/data_ops.cpp
         src/data_store.cpp
+        src/party_book.cpp
         src/simulated_headset.cpp
         src/headset_hands.cpp
         src/manager_link.cpp
@@ -426,6 +427,7 @@ engine_add_module_tests(app
         tests/world_manager_tests.cpp
         tests/account_door_tests.cpp
         tests/data_broker_tests.cpp
+        tests/party_book_tests.cpp
         tests/sub_world_tests.cpp
         tests/debug_overlay_tests.cpp
         tests/inspector_tests.cpp

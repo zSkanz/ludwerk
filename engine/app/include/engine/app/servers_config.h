@@ -59,6 +59,9 @@ struct ServersConfig
     bool accountsRegister = true;
     std::string accountsNamePattern;
 
+    // `[parties] size` (ADR 0240 §1): the most members a party has.
+    core::u32 partySize = 8;
+
     // `[[world]]`: a world that runs while the manager does.
     struct World
     {

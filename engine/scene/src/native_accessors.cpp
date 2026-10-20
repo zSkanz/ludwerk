@@ -2521,6 +2521,14 @@ Value getXRServiceSessionState(const World& world, core::InstanceId)
     return Value{EnumValue{generated::XRSessionStateEnumId, world.engineState().headset.sessionState}};
 }
 
+Value getNetworkServiceWorldName(const World& world, core::InstanceId)
+{
+    // `town` of `town:2` (ADR 0230): a channel is its world's copy.
+    const std::string& name = world.engineState().managedWorld;
+    const std::size_t colon = name.rfind(':');
+    return Value{colon == std::string::npos ? name : name.substr(0, colon)};
+}
+
 Value getNetworkServiceChannel(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkChannel)};

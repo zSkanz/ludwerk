@@ -29,11 +29,11 @@ In an instance: lets the player with this `PublicKey` in too, for a friend who c
 
 In an instance: closes it now. `Closing` fires, and the players still in it go back to the front door.
 
-### `CreateInstanceAsync(template: string, options: { Players: {Player}?, Data: any? }? = nil): string`
+### `CreateInstanceAsync(template: string, options: { Players: {Player}?, Party: string?, Data: any? }? = nil): string`
 
 This method yields: the calling thread waits until it completes.
 
-Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` once it is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises with the reason when the template has as many instances running as it may, the machine has too little memory free, or the instance failed to start.
+Makes an instance of `template` for `options.Players` and nobody else, and returns its `Id` once it is ready, to pass to `Travel` or `TravelGroup`. `options.Party` names a party whose members online, in any world, are let in too. `options.Data` is what the instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises with the reason when the template has as many instances running as it may, the machine has too little memory free, or the instance failed to start.
 
 ### `DisallowPlayer(key: string)`
 

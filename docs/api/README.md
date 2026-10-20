@@ -40,6 +40,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`LocalizationService`](localizationservice.md) | [`Instance`](instance.md) | Returns the game's text by key, in the player's language. |
 | [`NavigationService`](navigationservice.md) | [`Instance`](instance.md) | Finds where agents can walk and computes paths. |
 | [`NetworkService`](networkservice.md) | [`Instance`](instance.md) | Reports the role of this process in a networked game, and joins, hosts and leaves matches. |
+| [`PartyService`](partyservice.md) | [`Instance`](instance.md) | Keeps the parties of an online game: players who play together across its worlds, channels and instances. |
 | [`PhysicsService`](physicsservice.md) | [`Instance`](instance.md) | Holds the simulation's tick length and the physics settings that do not belong to a single part, such as collision groups. |
 | [`ReplicatedStorage`](replicatedstorage.md) | [`Instance`](instance.md) | A container for instances that every machine has but that are not part of the world: templates to clone, `RemoteEvent`s and other data. |
 | [`RunService`](runservice.md) | [`Instance`](instance.md) | Provides the events of the frame loop and the simulation clock. |

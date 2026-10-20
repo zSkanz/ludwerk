@@ -119,6 +119,8 @@ local RuntimeAreas: { [string]: { string } } = {
     views = { "boot" },
     splitscreen = { "boot" },
     npclod = { "boot" },
+    chat = { "net" },
+    guild = { "net" },
 }
 
 -- **An area's tests, by name** (Lua patterns). `render` is not here: it is

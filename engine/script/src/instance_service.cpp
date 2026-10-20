@@ -87,6 +87,13 @@ int instanceServiceCreateInstanceAsync(lua_State* L)
             }
         }
         lua_pop(L, 1);
+        lua_getfield(L, 3, "Party");
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            size_t length = 0;
+            const char* party = lua_tolstring(L, -1, &length);
+            request.party.assign(party, length);
+        }
+        lua_pop(L, 1);
         lua_getfield(L, 3, "Data");
         if (!lua_isnil(L, -1)) {
             std::vector<core::InstanceId> refs;

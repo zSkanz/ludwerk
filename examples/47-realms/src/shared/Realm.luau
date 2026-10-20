@@ -7,10 +7,15 @@
 	**A portal is a place and a function.** Where it sends the player is the
 	world's own script's to say, so the town's dungeon pad can gather a party
 	and ask for an instance while the fields' pad only goes home.
+
+	**Every world has the chat** (`@engine/chat`, ADR 0239), started here so
+	that each one starts it the same.
 ]]
 
 local NetworkService = game:GetService("NetworkService")
 local RunService = game:GetService("RunService")
+
+local chat = require("@engine/chat")
 
 local Walk = require("@shared/Walk")
 
@@ -69,6 +74,7 @@ end
 
 function Realm.build(options: Options)
     workspace:SetAttribute("Realm", options.Name)
+    chat.start()
 
     local ground = Instance.new("Part")
     ground.Name = "Ground"

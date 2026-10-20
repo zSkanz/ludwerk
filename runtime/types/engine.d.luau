@@ -4842,6 +4842,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "XRService"): XRService
     function GetService(self, name: "HapticService"): HapticService
     function GetService(self, name: "CrossWorldService"): CrossWorldService
+    function GetService(self, name: "PartyService"): PartyService
     function GetService(self, name: "InstanceService"): InstanceService
     function GetService(self, name: "ConsoleService"): ConsoleService
     function GetService(self, name: "CryptoService"): CryptoService
@@ -5548,6 +5549,39 @@ declare extern type CrossWorldService extends Instance with
     function Unsubscribe(self, topic: string): ()
 end
 
+declare extern type PartyService extends Instance with
+    --- Fires in every world one of the party's members is in when it changes: a member joins or leaves,
+    --- or the leader changes. Also when it ends; `GetPartyAsync` then finds none.
+    read Changed: Signal<string>
+    --- Fires in the world of a player invited into a party, with who invited them, by `MemberIdOf`.
+    --- What the player is shown, and how they answer, is the game's.
+    read Invited: Signal<Player, string, string>
+    --- Who `player` is in a party: their `AccountId`, or their `PublicKey` where they have none.
+    function MemberIdOf(self, player: Player): string
+    --- Makes a party led by `leader`, and returns it as `{ Id, Leader, Members }`. Returns nil and the
+    --- reason, `InParty`, where the player is in one already. Each of these methods answers a refusal
+    --- so, and never raises for one.
+    function CreateAsync(self, leader: Player): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Invites `invitee` into the party on behalf of `by`, a member of it: `Invited` fires in the
+    --- invitee's world. `invitee` is a player in this world, or a member id (`MemberIdOf`) for one in
+    --- another. Refused with `NoParty`, `NotMember`, `InParty` or `Full`.
+    function InviteAsync(self, party: string, by: Player, invitee: Player | string): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Puts an invited player into the party. Refused with `NotInvited`, `InParty` or `Full`.
+    function AcceptAsync(self, party: string, invitee: Player): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Lets an invitation go unanswered no longer.
+    function DeclineAsync(self, party: string, invitee: Player): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Takes a player out of their party. A leader who leaves hands it to the member who joined first
+    --- after them, and the last one leaving ends it, when it returns nil and no reason.
+    function LeaveAsync(self, member: Player): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Takes a member out of the party, online or not, by `MemberIdOf`. Who may kick whom is the game's
+    --- to decide before it calls this.
+    function KickAsync(self, party: string, member: string): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- Makes a member, by `MemberIdOf`, the party's leader.
+    function SetLeaderAsync(self, party: string, member: string): ({ Id: string, Leader: string, Members: {string} }?, string?)
+    --- The party `player` is in, or nil.
+    function GetPartyAsync(self, player: Player): { Id: string, Leader: string, Members: {string} }?
+end
+
 declare extern type InstanceService extends Instance with
     --- In an instance, its `Id`; empty in a world that is not one.
     read InstanceId: string
@@ -5559,12 +5593,13 @@ declare extern type InstanceService extends Instance with
     --- when it stopped without closing. What the world handed out for the run is settled here: its
     --- players may come back one by one, or not at all.
     read InstanceClosed: Signal<string, string>
-    --- Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` once it
-    --- is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the instance's scene
-    --- reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in
-    --- it. Raises with the reason when the template has as many instances running as it may, the
-    --- machine has too little memory free, or the instance failed to start.
-    function CreateInstanceAsync(self, template: string, options: { Players: {Player}?, Data: any? }?): string
+    --- Makes an instance of `template` for `options.Players` and nobody else, and returns its `Id` once
+    --- it is ready, to pass to `Travel` or `TravelGroup`. `options.Party` names a party whose members
+    --- online, in any world, are let in too. `options.Data` is what the instance's scene reads with
+    --- `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises
+    --- with the reason when the template has as many instances running as it may, the machine has too
+    --- little memory free, or the instance failed to start.
+    function CreateInstanceAsync(self, template: string, options: { Players: {Player}?, Party: string?, Data: any? }?): string
     --- In an instance: lets the player with this `PublicKey` in too, for a friend who comes late.
     function AllowPlayer(self, key: string): ()
     --- In an instance: no longer lets that player in. Somebody already in stays.
@@ -5728,6 +5763,10 @@ declare extern type ServerStorage extends Instance with
 end
 
 declare extern type NetworkService extends Instance with
+    --- The name of the world this server is in `servers.toml`, without its channel's number: `town` for
+    --- `town` and for `town:2`, and an instance's `Id` in an instance. Empty for a server no manager
+    --- runs.
+    read WorldName: string
     --- Which channel of its world this server is: 1 for a world without channels, and for the first of
     --- a world with them. A `[[world]]` with `channels = true` in `servers.toml` is copied into
     --- channels 2, 3 and on as the open ones fill, each a server of its own.
@@ -5989,8 +6028,10 @@ declare extern type NetworkService extends Instance with
     --- Sends several players to the same world together, as `Travel` sends one. The target fires
     --- `TravelArrived` for each, in the order given. Returns the players sent, in the order given. Any
     --- who left while the script waited are skipped, not an error, and the rest still go together; when
-    --- none is left, it returns an empty table and sends nobody.
-    function TravelGroup(self, players: {Player}, target: string, data: any?): {Player}
+    --- none is left, it returns an empty table and sends nobody. Given a party's id (`PartyService`)
+    --- instead of a list, it sends every member of the party who is online, in whatever world each is,
+    --- and returns the ones in this world.
+    function TravelGroup(self, players: {Player} | string, target: string, data: any?): {Player}
     --- Checks a ticket the game's backend signed, on the server and with no call out, and returns its
     --- claims, or nil. The ticket is a standard JWT signed with Ed25519 (`EdDSA`), which any backend's
     --- JWT library issues. A ticket is accepted when its signature checks against `ticket_public_key`

@@ -3431,6 +3431,51 @@ TEST_CASE("a game changes scene at run time, and the game's own code and a kept 
     CHECK(host.world().engineState().currentScene == "scenes/b.scene.json");
 }
 
+TEST_CASE("ADR 0239: a scene that starts the chat has it again each time it loads")
+{
+    // **An instance given its match loads its scene again**, and so does any
+    // server that changes scene: the chat the scene's script started is gone
+    // with the scene's remote, and the script starts it again.
+    Captured log;
+    Project project;
+    writeTwoScenes(project);
+    project.write("src/scenes/b/server/chat.luau", R"(
+        require("@engine/chat").start()
+    )");
+    project.write("src/server/flow.luau", R"(
+        local SceneService = game:GetService("SceneService")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local loads = 0
+        SceneService.SceneLoaded:Connect(function(path: string)
+            loads += 1
+            task.wait()
+            task.wait()
+            local remotes = 0
+            for _, child in ReplicatedStorage:GetChildren() do
+                if child.Name == "EngineChat" then
+                    remotes += 1
+                end
+            end
+            print(`chat-load:{loads}:{path}:{remotes}`)
+            if loads < 3 then
+                SceneService:LoadScene(if path == "scenes/a.scene.json" then "scenes/b.scene.json" else "scenes/a.scene.json")
+            end
+        end)
+        SceneService:LoadScene("scenes/b.scene.json")
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(sceneOptions(project)).has_value());
+    for (int tick = 0; tick < 20; ++tick)
+        host.tick();
+
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("chat-load:1:scenes/b.scene.json:1"));
+    CHECK(log.contains("chat-load:2:scenes/a.scene.json:0"));
+    // B again: its remote, one.
+    CHECK(log.contains("chat-load:3:scenes/b.scene.json:1"));
+}
+
 TEST_CASE("a LoadScene that cannot happen leaves the open scene as it was, and says so")
 {
     // A scene that is not there, and one that does not read. The open scene

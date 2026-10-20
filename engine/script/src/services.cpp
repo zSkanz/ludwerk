@@ -42,6 +42,7 @@
 #include "engine/script/json_module.h"
 #include "engine/script/modules.h"
 #include "engine/script/optional_service.h"
+#include "engine/script/party_service.h"
 #include "engine/script/platform_services.h"
 #include "engine/script/remote.h"
 #include "engine/script/save_service.h"
@@ -3996,6 +3997,15 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"NetworkService", "SwitchChannel", networkServiceSwitchChannel},
     {"NetworkService", "TravelToPlayer", networkServiceTravelToPlayer},
     {"NetworkService", "GetChannelsAsync", networkServiceGetChannelsAsync},
+    {"PartyService", "MemberIdOf", partyServiceMemberIdOf},
+    {"PartyService", "CreateAsync", partyServiceCreateAsync},
+    {"PartyService", "InviteAsync", partyServiceInviteAsync},
+    {"PartyService", "AcceptAsync", partyServiceAcceptAsync},
+    {"PartyService", "DeclineAsync", partyServiceDeclineAsync},
+    {"PartyService", "LeaveAsync", partyServiceLeaveAsync},
+    {"PartyService", "KickAsync", partyServiceKickAsync},
+    {"PartyService", "SetLeaderAsync", partyServiceSetLeaderAsync},
+    {"PartyService", "GetPartyAsync", partyServiceGetPartyAsync},
     {"NetworkService", "SignInAsync", networkServiceSignInAsync},
     {"NetworkService", "RegisterAsync", networkServiceRegisterAsync},
     {"ConsoleService", "Register", serverConsoleRegister},

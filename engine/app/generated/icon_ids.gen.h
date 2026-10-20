@@ -217,6 +217,7 @@ inline constexpr std::string_view ClassPVInstance = "class.PVInstance";
 inline constexpr std::string_view ClassPart = "class.Part";
 inline constexpr std::string_view ClassPart2D = "class.Part2D";
 inline constexpr std::string_view ClassParticleEmitter = "class.ParticleEmitter";
+inline constexpr std::string_view ClassPartyService = "class.PartyService";
 inline constexpr std::string_view ClassPhysicsService = "class.PhysicsService";
 inline constexpr std::string_view ClassPitchShiftSoundEffect = "class.PitchShiftSoundEffect";
 inline constexpr std::string_view ClassPlayer = "class.Player";

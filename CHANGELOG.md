@@ -11,6 +11,17 @@ here.
 
 ### Added
 
+- Parties, guilds and chat for an online game. `PartyService` keeps a game's
+  parties in its manager, across every world, channel and instance: invite,
+  accept, leave, kick, a new leader, `Changed` in each world a member is in
+  and `Invited` in the invitee's. `TravelGroup` takes a party's id and sends
+  every member online, and `CreateInstanceAsync` makes an instance for a
+  party. `@engine/guild` keeps guilds in the game's database -- ranks, what
+  each may do, members in any world, two changes at once both kept -- and
+  `@engine/chat` is a chat of five channels, local, world, party, guild and
+  whisper, with a rate, a filter the game writes, the console's mute and the
+  last lines for a joiner. `47-realms` has a chat box.
+
 - An online game signs its players in at its own servers: `[accounts]` in
   `servers.toml`, and `NetworkService:SignInAsync` and `RegisterAsync` on the
   player's machine, which return a ticket to join with or an
@@ -95,6 +106,9 @@ here.
 - The meter of a headset's eye with the tonemap folded in undoes the curve
   tap by tap, and its toe exactly. A near-black pixel had read several times
   brighter than it was, and a lit edge beside a shadow darker.
+- A player who travels between two worlds of the same scene hears what the
+  new world sends them: their machine kept everything the world they left
+  had sent, so a script looking up a remote by name found the old one.
 - On a standalone headset, the sun's shadows reach as far as the project
   says: its two cascades ended at 2.7 meters of 20, and the first was not as
   deep as asked, so nothing farther than a few steps cast a shadow. The first

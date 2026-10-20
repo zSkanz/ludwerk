@@ -30,6 +30,7 @@
 #include "engine/app/data_broker.h"
 #include "engine/app/data_console.h"
 #include "engine/app/manager_link.h"
+#include "engine/app/party_book.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/crypto.h"
 #include "engine/core/error.h"
@@ -297,6 +298,14 @@ private:
     core::TicketReplay m_tickets;
     std::map<std::string, std::string> m_accountOf;
     core::u64 m_accountsForgottenNs = 0;
+    // **Parties** (ADR 0240 §1): the book, and what it says sent to the
+    // worlds its members are in.
+    std::unique_ptr<PartyBook> m_parties;
+    void partyOp(World& asker, const ManagerMessage& message, core::u64 nowNs);
+    void partyNotices();
+    void partyTravel(const ManagerMessage& message);
+    // Who each player is in a party, in each world: their account, else key.
+    [[nodiscard]] static std::string memberOf(const std::string& key, const std::string& account);
     // A ticket the front door checks, or a player coming back to a place it
     // knows them in: the account; none refuses them.
     [[nodiscard]] std::optional<std::string> admittedAccount(std::string_view key, std::string_view ticket);

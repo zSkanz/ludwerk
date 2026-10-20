@@ -27,7 +27,10 @@ more, one game, run by the manager from `servers.toml`.
   `@engine/announcements` shows what the operator says, and the controls stay
   in `InputService` while the camera is made again in each world.
 - `src/shared/Realm.luau` is what every world has: its ground, a character
-  for each player, walking, and the pads.
+  for each player, walking, the pads, and the chat (`@engine/chat`, ADR
+  0239). Type in the box at the bottom left and press Return: a line goes to
+  the world, `/l` to those near, `/p` to the party, `/w name` to one player
+  in whatever world they are.
 
 ## Running it
 

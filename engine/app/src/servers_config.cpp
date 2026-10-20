@@ -119,6 +119,7 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
     }
     count("data.backup_keep", 1, 1000, config.backupKeep);
     count("data.moves_keep_days", 0, 36500, config.movesKeepDays);
+    count("parties.size", 2, 100, config.partySize);
     config.accounts = document.boolean("accounts.enabled").value_or(false);
     config.accountsRegister = document.boolean("accounts.register").value_or(true);
     if (const std::optional<std::string_view> pattern = document.string("accounts.name_pattern")) {

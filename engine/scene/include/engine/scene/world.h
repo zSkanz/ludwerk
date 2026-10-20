@@ -1133,6 +1133,41 @@ struct EngineState
     };
     std::vector<SignInAnswer> signInAnswers;
     u32 nextSignIn = 1;
+    // **Parties** (ADR 0240 §1): what a script asked, as the text the party
+    // book reads, and its answers; what the book said of a party since, for
+    // `Changed`, and of an invitation, for `Invited`; and the parties this
+    // world was told of, by id, with their members -- what `TravelGroup` and
+    // `CreateInstanceAsync` read a party's id by.
+    struct PartyOp
+    {
+        u32 id = 0;
+        std::string request;
+    };
+    std::vector<PartyOp> partyOps;
+    struct PartyResult
+    {
+        u32 id = 0;
+        std::string answer;
+    };
+    std::vector<PartyResult> partyResults;
+    u32 nextPartyOp = 1;
+    std::vector<std::string> partyChanged;
+    struct PartyInvite
+    {
+        std::string member;
+        std::string party;
+        std::string by;
+    };
+    std::vector<PartyInvite> partyInvites;
+    std::map<std::string, std::vector<std::string>, std::less<>> partyMembers;
+    // `TravelGroup` given a party's id: its members, wherever they are.
+    struct PartyTravel
+    {
+        std::string party;
+        std::string target;
+        std::string data;
+    };
+    std::vector<PartyTravel> partyTravels;
     std::vector<f64> channelMerging;
     // **In line at the front door** (ADR 0232): each place this machine was
     // told, with the seconds until its turn, below 0 for none.
@@ -1165,6 +1200,8 @@ struct EngineState
         std::string templateName;
         std::vector<std::string> keys;
         std::vector<u8> data;
+        // A party's id (ADR 0240 §1): its members, wherever they are, too.
+        std::string party;
     };
     std::vector<InstanceRequest> instanceRequests;
     u32 nextInstanceRequest = 1;

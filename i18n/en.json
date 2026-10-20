@@ -1024,6 +1024,8 @@
   "script.err.out_of_memory": "Script memory is full: it exceeds the project's [script] max_memory_mb, so this thread's allocation failed. The usual cause is a table that grows without limit.",
   "script.err.cannot_yield": "{call} yields, and it was called where yielding is not possible: inside a metamethod, a sort comparator, a __tostring or a predicted step. Call it from the script's own code instead.",
   "script.err.cross_world_client": "CrossWorldService is the server's: a client, or a script on the client's side, cannot use it.",
+  "script.err.party_client": "PartyService runs on the server: a player's machine asks its server, with a RemoteEvent.",
+  "script.err.party_not_a_player": "A party's member is a Player.",
   "script.err.cross_world_rate": "This world has published 200 messages in this second, as many as it may.",
   "script.err.cross_world_topic": "A topic is a string of 1 to 80 bytes.",
   "script.err.cross_world_topics": "This world hears 1000 topics already, as many as it may.",

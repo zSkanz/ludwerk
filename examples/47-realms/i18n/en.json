@@ -21,5 +21,17 @@
   "realm.login.failure.InvalidPassword": "A password is 8 to 128 characters.",
   "realm.login.failure.Busy": "The servers are busy: try again in a moment.",
   "realm.login.failure.Refused": "The servers refused: wait a minute and try again.",
-  "realm.login.failure.Unreachable": "The servers did not answer."
+  "realm.login.failure.Unreachable": "The servers did not answer.",
+  "realm.chat.placeholder": "Say something: /l near, /p party, /w name to one player",
+  "realm.chat.channel.local": "Near",
+  "realm.chat.channel.world": "World",
+  "realm.chat.channel.party": "Party",
+  "realm.chat.channel.guild": "Guild",
+  "realm.chat.channel.whisper": "Whisper",
+  "realm.chat.notice.TooFast": "Slow down: that line was not sent.",
+  "realm.chat.notice.Muted": "You are muted.",
+  "realm.chat.notice.NotOnline": "Nobody of that name is online.",
+  "realm.chat.notice.NoParty": "You are not in a party.",
+  "realm.chat.notice.NoGuild": "You are not in a guild.",
+  "realm.chat.notice.Unknown": "This game has no such channel."
 }

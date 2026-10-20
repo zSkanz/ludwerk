@@ -69,6 +69,44 @@ int travel(lua_State* L, bool group)
         raise(L, ENG_TR("script.err.travel_client"));
     if (state.managedWorld.empty())
         raise(L, ENG_TR("script.err.travel_no_manager"));
+    // **A party's id** (ADR 0240 §1): its members, wherever they are -- each
+    // world sends those it has; this one returns its own.
+    if (group && lua_type(L, 2) == LUA_TSTRING) {
+        size_t partyLength = 0;
+        const char* party = lua_tolstring(L, 2, &partyLength);
+        size_t targetLength = 0;
+        const char* partyTarget = luaL_checklstring(L, 3, &targetLength);
+        const std::string goingTo(partyTarget, targetLength);
+        if (!goingTo.starts_with("i-") &&
+            std::find(state.managerWorlds.begin(), state.managerWorlds.end(), goingTo) == state.managerWorlds.end()) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"target", std::string_view{goingTo}}};
+            raise(L, ENG_TR("script.err.travel_unknown_world"), args);
+        }
+        std::string carried;
+        if (lua_gettop(L) >= 4 && !lua_isnil(L, 4))
+            carried = encodeSavedValue(L, 4, MaxTravelData);
+        const std::string id(party, partyLength);
+        state.partyTravels.push_back(scene::EngineState::PartyTravel{id, goingTo, std::move(carried)});
+        scene::World& w = world(L);
+        lua_createtable(L, 0, 0);
+        const auto members = state.partyMembers.find(id);
+        if (members == state.partyMembers.end())
+            return 1;
+        int index = 0;
+        const core::InstanceId network = scene::networkServiceOf(w, services(L).dataModel);
+        for (core::InstanceId child = network.valid() ? w.firstChild(network) : core::InstanceId{}; child.valid();
+             child = w.nextSibling(child)) {
+            const scene::PlayerComponent* player = w.players().find(child);
+            if (player == nullptr)
+                continue;
+            const std::string& who = !player->accountId.empty() ? player->accountId : player->publicKey;
+            if (std::find(members->second.begin(), members->second.end(), who) == members->second.end())
+                continue;
+            pushInstance(L, child);
+            lua_rawseti(L, -2, ++index);
+        }
+        return 1;
+    }
     std::vector<core::u32> players;
     // Who is sent, for `TravelGroup` to return: the players still here, in
     // the order given.

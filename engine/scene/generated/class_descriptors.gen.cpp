@@ -7101,6 +7101,87 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     crossWorldServiceDesc.methods = crossWorldServiceMethods;
     classes.registerClass(crossWorldServiceDesc);
 
+    // --- PartyService ---
+    static std::array<MethodDesc, 9> partyServiceMethods;
+    partyServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("MemberIdOf"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Who `player` is in a party: their `AccountId`, or their `PublicKey` where they have none.",
+        },
+        MethodDesc{
+            .name = atoms.intern("CreateAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes a party led by `leader`, and returns it as `{ Id, Leader, Members }`. Returns nil and the reason, `InParty`, where the player is in one already. Each of these methods answers a refusal so, and never raises for one.",
+        },
+        MethodDesc{
+            .name = atoms.intern("InviteAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Invites `invitee` into the party on behalf of `by`, a member of it: `Invited` fires in the invitee's world. `invitee` is a player in this world, or a member id (`MemberIdOf`) for one in another. Refused with `NoParty`, `NotMember`, `InParty` or `Full`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("AcceptAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Puts an invited player into the party. Refused with `NotInvited`, `InParty` or `Full`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("DeclineAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Lets an invitation go unanswered no longer.",
+        },
+        MethodDesc{
+            .name = atoms.intern("LeaveAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes a player out of their party. A leader who leaves hands it to the member who joined first after them, and the last one leaving ends it, when it returns nil and no reason.",
+        },
+        MethodDesc{
+            .name = atoms.intern("KickAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Takes a member out of the party, online or not, by `MemberIdOf`. Who may kick whom is the game's to decide before it calls this.",
+        },
+        MethodDesc{
+            .name = atoms.intern("SetLeaderAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Makes a member, by `MemberIdOf`, the party's leader.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetPartyAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "The party `player` is in, or nil.",
+        },
+    }};
+    static std::array<EventDesc, 2> partyServiceEvents;
+    partyServiceEvents = {{
+        EventDesc{
+            .name = atoms.intern("Changed"),
+            .slot = 7,
+            .doc = "Fires in every world one of the party's members is in when it changes: a member joins or leaves, or the leader changes. Also when it ends; `GetPartyAsync` then finds none.",
+        },
+        EventDesc{
+            .name = atoms.intern("Invited"),
+            .slot = 8,
+            .doc = "Fires in the world of a player invited into a party, with who invited them, by `MemberIdOf`. What the player is shown, and how they answer, is the game's.",
+        },
+    }};
+    ClassDescriptor partyServiceDesc;
+    partyServiceDesc.name = atoms.intern("PartyService");
+    partyServiceDesc.super = instanceClass;
+    partyServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    partyServiceDesc.defaultName = atoms.intern("PartyService");
+    partyServiceDesc.doc = "Keeps the parties of an online game: players who play together across its worlds, channels and instances. A party is the manager's, so it is known wherever its members are; a world on its own keeps its own.\012\012A member is who the game knows a player by: `Player.AccountId`, or `Player.PublicKey` where the game has no accounts (`MemberIdOf` says which). A party has at most eight members (`[parties] size` in `servers.toml`), a player is in one at a time, and a member who drops and comes back within five minutes is still in it. `NetworkService:TravelGroup` and `InstanceService:CreateInstanceAsync` take a party's id. What else a party means, such as loot or quests, is the game's. Server side only.";
+    partyServiceDesc.methods = partyServiceMethods;
+    partyServiceDesc.events = partyServiceEvents;
+    classes.registerClass(partyServiceDesc);
+
     // --- InstanceService ---
     static std::array<PropertyDesc, 1> instanceServiceProperties;
     instanceServiceProperties = {{
@@ -7123,7 +7204,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("CreateInstanceAsync"),
             .yields = true,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` once it is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises with the reason when the template has as many instances running as it may, the machine has too little memory free, or the instance failed to start.",
+            .doc = "Makes an instance of `template` for `options.Players` and nobody else, and returns its `Id` once it is ready, to pass to `Travel` or `TravelGroup`. `options.Party` names a party whose members online, in any world, are let in too. `options.Data` is what the instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry it, with no instances in it. Raises with the reason when the template has as many instances running as it may, the machine has too little memory free, or the instance failed to start.",
         },
         MethodDesc{
             .name = atoms.intern("AllowPlayer"),
@@ -7386,8 +7467,20 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(serverStorageDesc);
 
     // --- NetworkService ---
-    static std::array<PropertyDesc, 11> networkServiceProperties;
+    static std::array<PropertyDesc, 12> networkServiceProperties;
     networkServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("WorldName"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The name of the world this server is in `servers.toml`, without its channel's number: `town` for `town` and for `town:2`, and an instance's `Id` in an instance. Empty for a server no manager runs.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getNetworkServiceWorldName,
+            .set = nullptr,
+        },
         PropertyDesc{
             .name = atoms.intern("Channel"),
             .type = ValueType::Number,
@@ -7660,7 +7753,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("TravelGroup"),
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
-            .doc = "Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.\012\012Returns the players sent, in the order given. Any who left while the script waited are skipped, not an error, and the rest still go together; when none is left, it returns an empty table and sends nobody.",
+            .doc = "Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.\012\012Returns the players sent, in the order given. Any who left while the script waited are skipped, not an error, and the rest still go together; when none is left, it returns an empty table and sends nobody.\012\012Given a party's id (`PartyService`) instead of a list, it sends every member of the party who is online, in whatever world each is, and returns the ones in this world.",
         },
         MethodDesc{
             .name = atoms.intern("VerifyTicket"),

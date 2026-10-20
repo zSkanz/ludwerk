@@ -2,6 +2,8 @@
 // whose worlds are real worlds in this process -- their pipes lists -- a front
 // door that sends a joiner to the entry world with a pass, and a player who
 // travels to another world carrying data.
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <deque>
 #include <doctest/doctest.h>
@@ -517,6 +519,438 @@ TEST_CASE("ADR 0237: with accounts on, the front door refuses who did not sign i
         CHECK(log.contains("town-account:trial-"));
         CHECK(log.contains("fields-account:trial-"));
     }
+}
+
+TEST_CASE("ADR 0240: a party crosses worlds -- invited where its member is, heard in each, and sent together")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(Servers, "servers.toml", error);
+    REQUIRE(config.has_value());
+
+    // The town makes a party of its first two players, sends the third to
+    // the fields and invites them there by their member id; once the party is
+    // three, it sends the party to the fields.
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local PartyService = game:GetService("PartyService")
+        local here = {}
+        local sent = false
+        local madeId = nil
+        PartyService.Changed:Connect(function(id)
+            print(`town-changed:{id == madeId}`)
+            local party = PartyService:GetPartyAsync(here[1])
+            if party and #party.Members == 3 and not sent then
+                sent = true
+                local went = NetworkService:TravelGroup(party.Id, "fields")
+                print(`town-sent:{#went}`)
+            end
+        end)
+        NetworkService.PlayerAdded:Connect(function(player)
+            table.insert(here, player)
+            if #here ~= 3 then
+                return
+            end
+            local party = PartyService:CreateAsync(here[1])
+            madeId = party.Id
+            local invited = PartyService:InviteAsync(party.Id, here[1], here[2])
+            local joined = PartyService:AcceptAsync(party.Id, here[2])
+            print(`town-two:{invited ~= nil}:{#joined.Members}`)
+            local _, refused = PartyService:InviteAsync(party.Id, here[3], "nobody-here")
+            print(`town-refused:{refused}`)
+            local third = PartyService:MemberIdOf(here[3])
+            NetworkService:Travel(here[3], "fields", {})
+            task.wait(1)
+            PartyService:InviteAsync(party.Id, here[1], third)
+        end)
+    )";
+    const std::string fields = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local PartyService = game:GetService("PartyService")
+        local arrived = 0
+        PartyService.Changed:Connect(function(id)
+            print("fields-changed")
+        end)
+        PartyService.Invited:Connect(function(player, id, by)
+            local party = PartyService:AcceptAsync(id, player)
+            print(`fields-accepted:{#party.Members}`)
+        end)
+        NetworkService.TravelArrived:Connect(function(player)
+            arrived += 1
+            print(`fields-arrived:{arrived}`)
+        end)
+    )";
+    Project managerRoot;
+    std::map<std::string, std::unique_ptr<WorldMachine>> worlds;
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.projectId = {};
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        auto& machine = worlds[launch.name];
+        machine = std::make_unique<WorldMachine>();
+        machine->boot(wire, launch, launch.name == "town" ? town : fields);
+        return std::make_unique<FakeProcess>(*machine);
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+
+    const std::string joiner = R"(
+        local NetworkService = game:GetService("NetworkService")
+        task.wait(0.2)
+        NetworkService:Join("memory:47981")
+    )";
+    std::array<Client, 3> clients;
+    for (Client& client : clients)
+        client.boot(wire, joiner);
+    for (int at = 0; at < 900; ++at) {
+        now += 16'000'000ull;
+        manager.frame();
+        for (auto& [name, machine] : worlds)
+            machine->frame();
+        for (Client& client : clients)
+            client.frame();
+    }
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("town-two:true:2"));
+    // Only a member invites.
+    CHECK(log.contains("town-refused:NotMember"));
+    // The third, in the fields, invited there and in.
+    CHECK(log.contains("fields-accepted:3"));
+    // The change heard in both worlds.
+    CHECK(log.contains("town-changed:true"));
+    CHECK(log.contains("fields-changed"));
+    // The party sent together: the two in the town go, and all three are in
+    // the fields.
+    CHECK(log.contains("town-sent:2"));
+    CHECK(log.contains("fields-arrived:3"));
+}
+
+TEST_CASE("ADR 0240: an instance made for a party takes its members, and nobody else")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(
+        R"([manager]
+public_address = "memory"
+port = 47940
+world_ports = "47941-47959"
+[[world]]
+name = "town"
+entry = true
+[[instance]]
+template = "crypt"
+max_instances = 2
+)",
+        "servers.toml", error);
+    REQUIRE(config.has_value());
+    Project managerRoot;
+    std::vector<std::unique_ptr<WorldMachine>> machines;
+    // The town makes a party of its first two players, a crypt for the
+    // party, and sends all three there: the third is no member.
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local InstanceService = game:GetService("InstanceService")
+        local PartyService = game:GetService("PartyService")
+        local here = {}
+        NetworkService.PlayerAdded:Connect(function(player)
+            table.insert(here, player)
+            if #here ~= 3 then
+                return
+            end
+            local party = PartyService:CreateAsync(here[1])
+            PartyService:InviteAsync(party.Id, here[1], here[2])
+            PartyService:AcceptAsync(party.Id, here[2])
+            local id = InstanceService:CreateInstanceAsync("crypt", { Party = party.Id })
+            for _, player in here do
+                NetworkService:Travel(player, id)
+            end
+            task.wait(5)
+            local stayed = {}
+            for _, player in here do
+                table.insert(stayed, tostring(table.find(NetworkService:GetPlayers(), player) ~= nil))
+            end
+            print(`town-stayed:{table.concat(stayed, ":")}`)
+        end)
+    )";
+    const std::string crypt = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.TravelArrived:Connect(function()
+            print("crypt-arrived")
+        end)
+    )";
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.prologue = std::vector<core::u8>{};
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        machines.push_back(std::make_unique<WorldMachine>());
+        machines.back()->boot(wire, launch, launch.name == "town" ? town : crypt);
+        return std::make_unique<FakeProcess>(*machines.back());
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+    std::array<Client, 3> clients;
+    for (Client& client : clients)
+        client.boot(wire, R"(
+            local NetworkService = game:GetService("NetworkService")
+            task.wait(0.2)
+            NetworkService:Join("memory:47940")
+        )");
+    for (int at = 0; at < 720; ++at) {
+        now += 16'000'000ull;
+        manager.frame();
+        for (std::size_t index = 0; index < machines.size(); ++index)
+            machines[index]->frame();
+        for (Client& client : clients)
+            client.frame();
+    }
+    const auto count = [&](std::string_view needle) {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    // The two members went in; the third was refused, and is still in the
+    // town.
+    CHECK(count("crypt-arrived") == 2);
+    CHECK(log.contains("Players could not be sent to i-1"));
+    CHECK(log.contains("town-stayed:false:false:true"));
+}
+
+TEST_CASE("ADR 0239 and 0240: a guild across worlds, its chat heard once in each, whispers, the rate, the filter, a "
+          "mute and the history")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(Servers, "servers.toml", error);
+    REQUIRE(config.has_value());
+
+    // **The town**: names its first three players, makes a guild of them --
+    // the third invited by member id and sent to the fields -- and changes
+    // it from two threads at once.
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local PartyService = game:GetService("PartyService")
+        local chat = require("@engine/chat")
+        local guild = require("@engine/guild")
+        chat.start({
+            Filter = function(text: string, from: Player): string?
+                return if string.find(text, "forbidden") then nil else text
+            end,
+        })
+        local names = { "Ana", "Bo", "Cy", "Dee" }
+        local here = {}
+        NetworkService.PlayerAdded:Connect(function(player)
+            table.insert(here, player)
+            player.Name = names[#here] or player.Name
+            if #here ~= 3 then
+                return
+            end
+            local g = guild.create(here[1], "Ironhold") :: string
+            print(`town-guild:{g ~= nil}`)
+            print(`town-taken:{select(2, guild.create(here[2], "IRONHOLD"))}`)
+            guild.addRank(g, "Officer", { "invite", "bank.withdraw" })
+            print(`town-can-before:{guild.can(g, here[2], "invite")}`)
+            guild.invite(g, here[1], here[2])
+            guild.join(g, here[2])
+            local _, refused = guild.invite(g, here[2], "nobody")
+            print(`town-refused:{refused}`)
+            guild.invite(g, here[1], PartyService:MemberIdOf(here[3]))
+            NetworkService:Travel(here[3], "fields", { Name = "Cy" })
+            -- **Two changes at once**: both kept.
+            local done = 0
+            task.spawn(function()
+                guild.setRank(g, here[1], here[2], "Officer")
+                done += 1
+            end)
+            task.spawn(function()
+                guild.addRank(g, "Banker", { "bank.withdraw" })
+                done += 1
+            end)
+            while done < 2 do
+                task.wait()
+            end
+            local info = guild.get(g) :: guild.Info
+            print(`town-both:{info.Members[PartyService:MemberIdOf(here[2])]}:{info.Ranks.Banker ~= nil}`)
+            print(`town-can-after:{guild.can(g, here[2], "invite")}:{guild.can(g, here[2], "kick")}`)
+        end)
+    )";
+    // **The fields**: a traveller keeps their name, and joins the guild they
+    // were invited into.
+    const std::string fields = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local PartyService = game:GetService("PartyService")
+        local chat = require("@engine/chat")
+        local guild = require("@engine/guild")
+        chat.start({
+            Filter = function(text: string, from: Player): string?
+                return if string.find(text, "forbidden") then nil else text
+            end,
+        })
+        local known: { [string]: boolean } = {}
+        guild.changed:Connect(function(id)
+            known[id] = true
+        end)
+        NetworkService.TravelArrived:Connect(function(player, data)
+            if typeof(data) == "table" and typeof(data.Name) == "string" then
+                player.Name = data.Name
+            end
+            task.wait(0.5)
+            for id in known do
+                local info = guild.get(id)
+                if info and info.Invited[PartyService:MemberIdOf(player)] then
+                    print(`fields-joined:{guild.join(id, player)}`)
+                end
+            end
+        end)
+    )";
+    Project managerRoot;
+    std::map<std::string, std::unique_ptr<WorldMachine>> worlds;
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.projectId = {};
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        auto& machine = worlds[launch.name];
+        machine = std::make_unique<WorldMachine>();
+        machine->boot(wire, launch, launch.name == "town" ? town : fields);
+        return std::make_unique<FakeProcess>(*machine);
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+
+    // **The players' machines**, each saying what it hears; what each says
+    // is after the guild is made, in the order the lines are listed.
+    const auto joiner = [](int index, double joinAt, std::string_view says) {
+        return std::string(R"(
+            local NetworkService = game:GetService("NetworkService")
+            local chat = require("@engine/chat")
+            chat.messageReceived:Connect(function(m)
+                print(`c)") +
+               std::to_string(index) + R"(:{m.Channel}:{m.FromName}:{m.Text}`)
+            end)
+            chat.noticeReceived:Connect(function(n)
+                print(`c)" +
+               std::to_string(index) + R"(-notice:{n}`)
+            end)
+            -- In each world it is in, the machine holds that world's remote
+            -- alone.
+            NetworkService.Connected:Connect(function()
+                task.wait(1)
+                local remotes = 0
+                for _, child in game:GetService("ReplicatedStorage"):GetChildren() do
+                    if child.Name == "EngineChat" then
+                        remotes += 1
+                    end
+                end
+                print(`c)" +
+               std::to_string(index) + R"(-remotes:{remotes}`)
+            end)
+            task.wait()" +
+               std::to_string(joinAt) + R"()
+            NetworkService:Join("memory:47981")
+            task.spawn(function()
+                chat.listen()
+            end)
+            )" +
+               std::string(says);
+    };
+    const std::string first = joiner(1, 0.2, R"(
+            task.wait(10)
+            chat.send("guild", "the gates are open")
+            chat.whisper("Cy", "meet at the well")
+            chat.whisper("Nobody", "hello?")
+            task.wait(7)
+            for _, text in { "forbidden here", "one", "two", "three", "four", "five" } do
+                chat.send("world", text)
+            end
+    )");
+    const std::string second = joiner(2, 0.4, R"(
+            task.wait(24)
+            chat.send("world", "muted line")
+    )");
+    const std::string third = joiner(3, 0.6, "");
+    const std::string fourth = joiner(4, 28.0, "");
+    std::array<Client, 4> clients;
+    clients[0].boot(wire, first);
+    clients[1].boot(wire, second);
+    clients[2].boot(wire, third);
+    clients[3].boot(wire, fourth);
+    const auto step = [&]() {
+        now += 16'000'000ull;
+        manager.frame();
+        for (auto& [name, machine] : worlds)
+            machine->frame();
+        for (Client& client : clients)
+            client.frame();
+    };
+    // Twenty-two seconds, then the second player muted, as the console
+    // would, in every world.
+    for (int at = 0; at < 22 * 60; ++at)
+        step();
+    const std::string muted = "key:" + core::toHex(clients[1].network->security().identity.pub);
+    for (auto& [name, machine] : worlds)
+        machine->host->world().engineState().muted.push_back(muted);
+    for (int at = 0; at < 14 * 60; ++at)
+        step();
+
+    const auto count = [&](std::string_view needle) {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    // The guild: made once, its name taken in any case, a rank's permissions
+    // checked, both of two changes at once kept, and its member in the
+    // fields in it.
+    CHECK(log.contains("town-guild:true"));
+    CHECK(log.contains("town-taken:Taken"));
+    CHECK(log.contains("town-can-before:false"));
+    CHECK(log.contains("town-refused:NotAllowed"));
+    CHECK(log.contains("town-both:Officer:true"));
+    CHECK(log.contains("town-can-after:true:false"));
+    CHECK(log.contains("fields-joined:true"));
+    // **A traveller's machine** keeps nothing of the world it left: one
+    // remote after the hop, as before it.
+    CHECK(count("c3-remotes:1") == 2);
+    CHECK(count("-remotes:2") == 0);
+    // **Guild chat**: once to each member, in either world.
+    CHECK(count("c2:guild:Ana:the gates are open") == 1);
+    CHECK(count("c3:guild:Ana:the gates are open") == 1);
+    CHECK(count("c1:guild:Ana:the gates are open") == 1);
+    // A whisper across worlds, and one to nobody online.
+    CHECK(count("c3:whisper:Ana:meet at the well") == 1);
+    CHECK(log.contains("c1-notice:NotOnline"));
+    // The filter's nil drops a line everywhere; the sixth in five seconds is
+    // dropped and its speaker told.
+    CHECK(count("forbidden here") == 0);
+    CHECK(log.contains("c2:world:Ana:four"));
+    CHECK(count(":world:Ana:five") == 0);
+    CHECK(log.contains("c1-notice:TooFast"));
+    // A muted player's line reaches nobody, and they are told.
+    CHECK(count("muted line") == 0);
+    CHECK(log.contains("c2-notice:Muted"));
+    // **Joining**: the world's last lines.
+    CHECK(log.contains("c4:world:Ana:one"));
+    CHECK(log.contains("c4:world:Ana:four"));
 }
 
 TEST_CASE("a world that falls is started again, and past its limit is failed until an operator restarts it")

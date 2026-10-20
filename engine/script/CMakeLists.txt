@@ -38,6 +38,7 @@ engine_add_module(script
         src/instance_service.cpp
         src/join_request.cpp
         src/server_console.cpp
+        src/party_service.cpp
         src/travel.cpp
         src/scenes.cpp
         src/optional_service.cpp

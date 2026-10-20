@@ -322,6 +322,15 @@ public:
     std::vector<InstanceWaiter> channelWaiters;
     // `SignInAsync` and `RegisterAsync` (ADR 0237), by the ask's number.
     std::vector<InstanceWaiter> signInWaiters;
+    // `PartyService`'s asks (ADR 0240), and whether one answers with the
+    // party alone or with a reason too.
+    struct PartyWaiter
+    {
+        core::u32 id = 0;
+        int threadRef = -1;
+        bool partyOnly = false;
+    };
+    std::vector<PartyWaiter> partyWaiters;
     // `XRService:GetRoomAsync` (ADR 0247): the scripts waiting for the
     // headset's answer, each its thread's reference.
     std::vector<int> roomWaiters;

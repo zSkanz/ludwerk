@@ -1124,6 +1124,7 @@ Value getXRServiceSessionState(const World& world, core::InstanceId id);
 Value getInstanceServiceInstanceId(const World& world, core::InstanceId id);
 
 // NetworkService
+Value getNetworkServiceWorldName(const World& world, core::InstanceId id);
 Value getNetworkServiceChannel(const World& world, core::InstanceId id);
 Value getNetworkServiceAuthority(const World& world, core::InstanceId id);
 Value getNetworkServiceTopology(const World& world, core::InstanceId id);

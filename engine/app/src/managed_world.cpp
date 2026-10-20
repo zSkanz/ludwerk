@@ -4,6 +4,7 @@
 #include <span>
 #include <utility>
 
+#include "engine/app/party_book.h"
 #include "engine/core/base64.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -216,6 +217,55 @@ void ManagedWorld::take(const ManagerMessage& message, scene::World& world, repl
         state.dataAnswers.push_back(std::move(answer));
         return;
     }
+    // **Parties** (ADR 0240): the book's answers, what changed, an
+    // invitation, and the members of a party sent somewhere.
+    if (type == "party-result") {
+        state.partyResults.push_back(scene::EngineState::PartyResult{static_cast<core::u32>(root["id"].asInteger(0)),
+                                                                     std::string(root["answer"].asString())});
+        return;
+    }
+    if (type == "party-changed") {
+        if (const std::optional<Party> party = readParty(root["party"]); party.has_value()) {
+            state.partyMembers[party->id] = party->members;
+            state.partyChanged.push_back(party->id);
+        }
+        return;
+    }
+    if (type == "party-gone") {
+        const std::string id(root["party"].asString());
+        state.partyMembers.erase(id);
+        state.partyChanged.push_back(id);
+        return;
+    }
+    if (type == "party-invited") {
+        state.partyInvites.push_back(scene::EngineState::PartyInvite{std::string(root["member"].asString()),
+                                                                     std::string(root["party"].asString()),
+                                                                     std::string(root["by"].asString())});
+        return;
+    }
+    if (type == "party-travel") {
+        std::vector<core::u32> userIds;
+        const core::JsonValue keys = root["keys"];
+        const core::InstanceId network = scene::networkServiceOf(world, m_dataModel);
+        for (core::InstanceId child = network.valid() ? world.firstChild(network) : core::InstanceId{}; child.valid();
+             child = world.nextSibling(child)) {
+            const scene::PlayerComponent* player = world.players().find(child);
+            if (player == nullptr)
+                continue;
+            for (core::usize at = 0; at < keys.size(); ++at) {
+                if (keys.at(at).asString() == player->publicKey)
+                    userIds.push_back(player->userId);
+            }
+        }
+        if (!userIds.empty())
+            state.travelRequests.push_back(scene::EngineState::TravelRequest{state.nextTravel++,
+                                                                             std::move(userIds),
+                                                                             std::string(root["target"].asString()),
+                                                                             std::string(root["data"].asString()),
+                                                                             0,
+                                                                             {}});
+        return;
+    }
     if (type == "data-result") {
         state.dataResults.push_back(scene::EngineState::DataResult{static_cast<core::u32>(root["id"].asInteger(0)),
                                                                    std::string(root["answer"].asString())});
@@ -412,6 +462,7 @@ void ManagedWorld::frame(scene::World& world, core::InstanceId dataModel, replic
         for (const std::string& key : request.keys)
             asked.value(std::string_view{key});
         asked.endArray();
+        asked.field("party", std::string_view{request.party});
         asked.endObject();
         send(asked);
     }
@@ -472,6 +523,30 @@ void ManagedWorld::sendData(scene::EngineState& state) const
         asked.field("type", "data-op");
         asked.field("id", static_cast<core::i64>(op.id));
         asked.field("request", std::string_view{op.request});
+        asked.endObject();
+        send(asked);
+    }
+    // **A party's asks** (ADR 0240), and its members sent somewhere.
+    std::vector<scene::EngineState::PartyOp> partyOps;
+    partyOps.swap(state.partyOps);
+    for (const scene::EngineState::PartyOp& op : partyOps) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "party-op");
+        asked.field("id", static_cast<core::i64>(op.id));
+        asked.field("request", std::string_view{op.request});
+        asked.endObject();
+        send(asked);
+    }
+    std::vector<scene::EngineState::PartyTravel> partyTravels;
+    partyTravels.swap(state.partyTravels);
+    for (const scene::EngineState::PartyTravel& travel : partyTravels) {
+        core::JsonWriter asked(core::JsonLayout::Compact);
+        asked.beginObject();
+        asked.field("type", "party-travel");
+        asked.field("party", std::string_view{travel.party});
+        asked.field("target", std::string_view{travel.target});
+        asked.field("data", std::string_view{travel.data});
         asked.endObject();
         send(asked);
     }

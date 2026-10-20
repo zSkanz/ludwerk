@@ -42,6 +42,7 @@
 #include "engine/script/instance_service.h"
 #include "engine/script/join_request.h"
 #include "engine/script/net_module.h"
+#include "engine/script/party_service.h"
 #include "engine/script/remote.h"
 #include "engine/script/scenes.h"
 #include "engine/script/server_console.h"
@@ -61,9 +62,9 @@ using core::LogLevel;
 //
 // `bot` is a load test's bot (ADR 0236): a game that requires it is told
 // only a bot process runs one, by the module itself.
-constexpr std::string_view RuntimeModules[] = {"announcements", "bot",         "camera",    "npclod",    "ragdoll",
-                                               "settings",      "splitscreen", "stamppool", "subtitles", "testing",
-                                               "travelscreen",  "views",       "xrcomfort", "xrgrab"};
+constexpr std::string_view RuntimeModules[] = {
+    "announcements", "bot",       "camera",    "chat",    "guild",        "npclod", "ragdoll",   "settings",
+    "splitscreen",   "stamppool", "subtitles", "testing", "travelscreen", "views",  "xrcomfort", "xrgrab"};
 
 // The conformance runner, as an ordinary entry script.
 //
@@ -1627,6 +1628,8 @@ void WorldHost::tick()
         script::runJoinRequests(m_runtime->state());
         // And who arrived from another world, or is leaving for one (ADR 0222).
         script::fireTravelEvents(m_runtime->state());
+        // And parties: the book's answers, and what changed (ADR 0240).
+        script::firePartyEvents(m_runtime->state());
         // And instances: the manager's answers, and one closing (ADR 0221).
         script::runInstanceEvents(m_runtime->state());
         // And events from the game's other worlds (ADR 0223).

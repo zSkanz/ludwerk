@@ -4604,7 +4604,7 @@
             },
             {
               "Name": "options",
-              "Type": "{ Players: {Player}?, Data: any? }?",
+              "Type": "{ Players: {Player}?, Party: string?, Data: any? }?",
               "Default": "nil"
             }
           ],
@@ -5527,6 +5527,11 @@
           "ReadOnly": true,
           "ThreadSafety": "Safe",
           "Transient": true
+        },
+        {
+          "Name": "WorldName",
+          "Type": "string",
+          "ReadOnly": true
         }
       ],
       "Methods": [
@@ -5786,7 +5791,7 @@
           "Parameters": [
             {
               "Name": "players",
-              "Type": "{Player}"
+              "Type": "{Player} | string"
             },
             {
               "Name": "target",
@@ -6368,6 +6373,173 @@
         }
       ],
       "Events": []
+    },
+    {
+      "Name": "PartyService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [],
+      "Methods": [
+        {
+          "Name": "AcceptAsync",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "invitee",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "CreateAsync",
+          "Parameters": [
+            {
+              "Name": "leader",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "DeclineAsync",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "invitee",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetPartyAsync",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "InviteAsync",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "by",
+              "Type": "Player"
+            },
+            {
+              "Name": "invitee",
+              "Type": "Player | string"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "KickAsync",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "member",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "LeaveAsync",
+          "Parameters": [
+            {
+              "Name": "member",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "MemberIdOf",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["string"],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "SetLeaderAsync",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "member",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Id: string, Leader: string, Members: {string} }?", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": [
+        {
+          "Name": "Changed",
+          "Parameters": [
+            {
+              "Name": "party",
+              "Type": "string"
+            }
+          ]
+        },
+        {
+          "Name": "Invited",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "party",
+              "Type": "string"
+            },
+            {
+              "Name": "by",
+              "Type": "string"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "PhysicsService",

@@ -32,6 +32,7 @@ listed on the page of the class that declares them.
 | `ServerTick` | `number` | — | read-only | The authority's tick number. On the authority it is its own tick; on a client it is the newest tick the client has applied; in single-player it is 0. It counts ticks and is not a time. |
 | `State` | `Enum.NetworkState` | — | read-only | The connection state of this machine: `Offline`, `Connecting`, `Connected`, `Hosting`, `Serving` or `Reconnecting`. |
 | `Topology` | `Enum.NetworkTopology` | — | read-only | The network role this process runs in. For gameplay decisions, use `Authority`; this property is for showing the role, for example in a menu. |
+| `WorldName` | `string` | — | read-only | The name of the world this server is in `servers.toml`, without its channel's number: `town` for `town` and for `town:2`, and an instance's `Id` in an instance. Empty for a server no manager runs. |
 
 ## Methods
 
@@ -167,11 +168,13 @@ Only a world a manager started can send players elsewhere: anywhere else, and fo
 
 Returns whether `player` was sent. A player who left while the script waited, for `CreateInstanceAsync` say, is not an error: they are gone, nothing is sent, and it returns false.
 
-### `TravelGroup(players: {Player}, target: string, data: any? = nil): {Player}`
+### `TravelGroup(players: {Player} | string, target: string, data: any? = nil): {Player}`
 
 Sends several players to the same world together, as `Travel` sends one. The target fires `TravelArrived` for each, in the order given.
 
 Returns the players sent, in the order given. Any who left while the script waited are skipped, not an error, and the rest still go together; when none is left, it returns an empty table and sends nobody.
+
+Given a party's id (`PartyService`) instead of a list, it sends every member of the party who is online, in whatever world each is, and returns the ones in this world.
 
 ### `TravelToPlayer(player: Player, key: string): boolean`
 

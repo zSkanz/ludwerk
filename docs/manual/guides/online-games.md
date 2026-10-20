@@ -555,6 +555,96 @@ A dedicated server with no manager keeps its database in its saves folder,
 and its own console answers `data` and `moves` the same way, with its
 backups in `backups` there.
 
+## Parties, guilds and chat
+
+**A party** is the manager's: players who play together, wherever each of
+them is -- another world, a channel, an instance. `PartyService` on the
+server makes one, invites to it and answers who is in it:
+
+```luau
+--!strict
+local PartyService = game:GetService("PartyService")
+
+local party = PartyService:CreateAsync(leader)
+PartyService:InviteAsync(party.Id, leader, friend)   -- a Player, or a member id from another world
+PartyService.Invited:Connect(function(player: Player, partyId: string, by: string)
+    PartyService:AcceptAsync(partyId, player)
+end)
+PartyService.Changed:Connect(function(partyId: string)
+    print(PartyService:GetPartyAsync(leader))
+end)
+```
+
+A member is who `PartyService:MemberIdOf(player)` says: their account where
+they signed in, their key where they did not. `Invited` fires in the world the
+invitee is in, and `Changed` in every world a member is in. A party is eight
+at most (`size` under `[parties]` in `servers.toml`), a player is in one at a
+time, and one with nobody online for five minutes is gone. What the engine
+does with a party is move it: `NetworkService:TravelGroup(party.Id, target)`
+sends every member online, from whatever world each is in, and
+`InstanceService:CreateInstanceAsync(template, { Party = party.Id })` makes
+an instance that lets its members in and nobody else. Loot, shared quests and
+the rest are the game's, on `Changed` and `GetPartyAsync`. A server with no
+manager keeps parties for its own world.
+
+**A guild** is data: `@engine/guild` keeps its name, its members with their
+ranks and what each rank may do in the data service's shared values, so every
+world sees one guild and two worlds changing it at once both keep their
+change.
+
+```luau
+--!strict
+local guild = require("@engine/guild")
+
+local id = guild.create(founder, "Ironhold") :: string
+guild.addRank(id, "Officer", { "invite", "bank.withdraw" })
+guild.invite(id, founder, newcomer)         -- refused unless the founder's rank has "invite"
+guild.join(id, newcomer)                    -- in whichever world the newcomer now is
+guild.setRank(id, founder, newcomer, "Officer")
+print(guild.can(id, newcomer, "bank.withdraw"))
+```
+
+A name is a guild's in any case: a second `ironhold` is `Taken`. The
+founder's rank, `Leader`, may do everything; a member who joins is `Member`,
+who may do nothing until the game says. Permissions are strings the game
+names, and the module checks three of its own: `invite`, `kick` and `rank`.
+`guild.changed` fires in every world when a guild changes. A guild's bank is
+the data service's items and money, owned by its id.
+
+**The chat** is `@engine/chat`: a module the game requires, on the server
+of every world and on the player's machine, with five channels -- `local`
+(within `LocalRadius` meters), `world`, `party`, `guild` and `whisper` (one
+player by name, in whatever world).
+
+```luau
+--!strict
+-- On the server of every world, the same:
+local chat = require("@engine/chat")
+chat.start({
+    Filter = function(text: string, from: Player): string?
+        return text -- or nil to drop the line
+    end,
+})
+
+-- On the player's machine:
+chat.messageReceived:Connect(function(message: chat.Message)
+    print(`[{message.Channel}] {message.FromName}: {message.Text}`)
+end)
+chat.noticeReceived:Connect(function(why: string)
+    print(why) -- TooFast, Muted, NotOnline, NoParty, NoGuild
+end)
+chat.send("guild", "the gates are open")
+chat.whisper("Ana", "meet at the well")
+```
+
+A line is 200 characters at most, and a player says five in five seconds;
+past that, the line goes nowhere and its speaker is told `TooFast`. A player
+muted at the console (`mute`) is told `Muted`, and the filter sees each line
+on the server of the world it was said in before it goes anywhere. A player
+who joins a world is sent its last 50 lines of `world` chat, and of their
+party's and guild's. The engine draws nothing: `47-realms` shows the lines
+and a box to type them in, `/w name` to whisper.
+
 ## Trying it in the editor
 
 With a `servers.toml` in the project, the Run view has **This game's worlds**.

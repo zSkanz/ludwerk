@@ -101,6 +101,45 @@ console and readable by a script (`NetworkService:IsMuted`, ADR 0241 §4).
   pieces, as before.
 - `@engine/chat` is code a game can read, copy and change.
 
+## As built (2026-10-19)
+
+- **The module** is `runtime/engine/chat/init.luau`, on a `RemoteEvent` it
+  makes in `ReplicatedStorage` (`EngineChat`) and on `CrossWorldService`
+  topics of its own: `engine.chat.world.<world>`, `engine.chat.party`,
+  `engine.chat.guild` (each carrying its members, so a world sends a line to
+  those of them it has) and `engine.chat.whisper`, whose answer says whether
+  any world had the player -- none within two seconds is `NotOnline`.
+- **Casing** follows ADR 0034, so the code under the decision is spelt as a
+  game spells it: `chat.start({ Channels, LocalRadius, History, Filter })`,
+  and a line is `message.Channel`, `message.FromName`, `message.Text`.
+- **The rate** is the module's own count, on the server of the world the line
+  was said in, as well as ADR 0241's limit on the remote: the general limit
+  drops a call and says nothing, and a speaker past five lines is told
+  `TooFast`.
+- **History**: `world` lines in the world's memory, `party` and `guild` lines
+  in the data service's shared values (scope `chat`); a joiner is sent them
+  as they arrive, and what reaches their machine before it listens waits for
+  its first listener, as every remote's calls do.
+- **`NetworkService.WorldName`**, added for the `world` topic: the world's
+  name in `servers.toml`, the same in each of its channels.
+- **A scene loaded again** -- every instance given its match is -- takes its
+  remote with it, and its script calls `chat.start` again: the topics stay
+  subscribed, and the remote and what listens to it are made again for the
+  new scene, the config kept from the first call.
+- **A traveller's machine** found two remotes after a hop between two worlds
+  of one scene -- the one it left was never cleared -- and heard the stale
+  one. A welcome on a machine already a replica now clears what the last
+  world replicated, as a first join does; the test counts one remote after
+  the hop.
+- **Proved** in the manager's test of two worlds (`ADR 0239 and 0240: a guild
+  across worlds ...`): a guild line once to each member in either world, a
+  whisper across worlds and `NotOnline`, the filter's nil dropping a line
+  everywhere, the sixth line in five seconds dropped and `TooFast`, a muted
+  player's line reaching nobody and `Muted`, and a joiner sent the world's
+  last lines. An instance is a world of the manager like another and hears
+  the same topics; it is not in that test. `47-realms` uses the module, with
+  a box to type in.
+
 ## Not decided here
 
 Voice chat (the audio category's work), and a UI: the module raises events and

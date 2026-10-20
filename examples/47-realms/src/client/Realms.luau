@@ -10,6 +10,9 @@
 	  character moved at once from their keys.
 	- The world's name across the top, and what the world tells this player --
 	  an attribute it sets on them -- under it for a few seconds.
+	- The chat (`@engine/chat`): the last lines heard, and a box that says one
+	  to the world, `/l` to those near, `/p` to the party, `/w name` to one
+	  player wherever they are.
 ]]
 
 local InputService = game:GetService("InputService")
@@ -20,6 +23,7 @@ local SceneService = game:GetService("SceneService")
 local UIService = game:GetService("UIService")
 
 local announcements = require("@engine/announcements")
+local chat = require("@engine/chat")
 local travelscreen = require("@engine/travelscreen")
 
 local Walk = require("@shared/Walk")
@@ -120,5 +124,72 @@ RunService.PreRender:Connect(function()
         notice.Text = LocalizationService:Translate(key)
     else
         notice.Text = ""
+    end
+end)
+
+-- **The chat**: lines over the hint, the box under them. Return keeps the
+-- box focused, so one line follows another.
+local LinesShown = 8
+local LineHeight = 22
+local lines: { TextLabel } = {}
+for index = 1, LinesShown do
+    local line = Instance.new("TextLabel")
+    line.Position = UDim2.new(0, 12, 1, -76 - (LinesShown - index + 1) * LineHeight)
+    line.Size = UDim2.new(0, 520, 0, LineHeight)
+    line.TextSize = 16
+    line.TextColor = Color3.fromRGB(232, 232, 236)
+    line.TextXAlignment = Enum.HorizontalAlignment.Left
+    line.BackgroundTransparency = 1
+    line.Parent = screen
+    lines[index] = line
+end
+local heard: { string } = {}
+local function show(text: string)
+    table.insert(heard, text)
+    if #heard > LinesShown then
+        table.remove(heard, 1)
+    end
+    for index, line in lines do
+        line.Text = heard[index - (LinesShown - #heard)] or ""
+    end
+end
+
+local box = Instance.new("TextInput")
+box.Position = UDim2.new(0, 12, 1, -70)
+box.Size = UDim2.new(0, 520, 0, 32)
+box.TextSize = 16
+box.PlaceholderText = LocalizationService:Translate("realm.chat.placeholder")
+box.ReleaseFocusOnSubmit = false
+box.MaxLength = 200
+box.Parent = screen
+
+chat.messageReceived:Connect(function(message: chat.Message)
+    local channel = LocalizationService:Translate(`realm.chat.channel.{message.Channel}`)
+    show(`[{channel}] {message.FromName}: {message.Text}`)
+end)
+chat.noticeReceived:Connect(function(why: string)
+    show(LocalizationService:Translate(`realm.chat.notice.{why}`))
+end)
+chat.listen()
+
+-- `/l` local, `/p` party, `/g` guild, `/w name` a whisper; anything else to
+-- the world.
+local Prefixes: { [string]: string } = { l = "local", p = "party", g = "guild" }
+box.Submitted:Connect(function(text: string)
+    box.Text = ""
+    if text == "" then
+        return
+    end
+    local name, whispered = string.match(text, "^/w%s+(%S+)%s+(.+)$")
+    if name and whispered then
+        chat.whisper(name, whispered)
+        return
+    end
+    local prefix, said = string.match(text, "^/(%a)%s+(.+)$")
+    local channel: string? = if prefix then Prefixes[prefix] else nil
+    if channel ~= nil and said ~= nil then
+        chat.send(channel, said)
+    else
+        chat.send("world", text)
     end
 end)

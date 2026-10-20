@@ -2420,6 +2420,123 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Method },
     },
     {
+        Name = "PartyService",
+        Extends = "Instance",
+        Module = "scene",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Records = { "ADR 0240" },
+        Doc = "Keeps the parties of an online game: players who play together across its worlds, channels "
+            .. "and instances. A party is the manager's, so it is known wherever its members are; a world on "
+            .. "its own keeps its own.\n\n"
+            .. "A member is who the game knows a player by: `Player.AccountId`, or `Player.PublicKey` where the "
+            .. "game has no accounts (`MemberIdOf` says which). A party has at most eight members (`[parties] "
+            .. "size` in `servers.toml`), a player is in one at a time, and a member who drops and comes back "
+            .. "within five minutes is still in it. `NetworkService:TravelGroup` and "
+            .. "`InstanceService:CreateInstanceAsync` take a party's id. What else a party means, such as loot "
+            .. "or quests, is the game's. Server side only.",
+        Methods = {
+            {
+                Name = "MemberIdOf",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "string" },
+                ThreadSafety = "Unsafe",
+                Doc = "Who `player` is in a party: their `AccountId`, or their `PublicKey` where they have none.",
+            },
+            {
+                Name = "CreateAsync",
+                Parameters = { { Name = "leader", Type = "Player" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Makes a party led by `leader`, and returns it as `{ Id, Leader, Members }`. Returns nil and "
+                    .. "the reason, `InParty`, where the player is in one already. Each of these methods answers "
+                    .. "a refusal so, and never raises for one.",
+            },
+            {
+                Name = "InviteAsync",
+                Parameters = {
+                    { Name = "party", Type = "string" },
+                    { Name = "by", Type = "Player" },
+                    { Name = "invitee", Type = "Player | string" },
+                },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Invites `invitee` into the party on behalf of `by`, a member of it: `Invited` fires in the "
+                    .. "invitee's world. `invitee` is a player in this world, or a member id (`MemberIdOf`) for "
+                    .. "one in another. Refused with `NoParty`, `NotMember`, `InParty` or `Full`.",
+            },
+            {
+                Name = "AcceptAsync",
+                Parameters = { { Name = "party", Type = "string" }, { Name = "invitee", Type = "Player" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Puts an invited player into the party. Refused with `NotInvited`, `InParty` or `Full`.",
+            },
+            {
+                Name = "DeclineAsync",
+                Parameters = { { Name = "party", Type = "string" }, { Name = "invitee", Type = "Player" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Lets an invitation go unanswered no longer.",
+            },
+            {
+                Name = "LeaveAsync",
+                Parameters = { { Name = "member", Type = "Player" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Takes a player out of their party. A leader who leaves hands it to the member who joined "
+                    .. "first after them, and the last one leaving ends it, when it returns nil and no reason.",
+            },
+            {
+                Name = "KickAsync",
+                Parameters = { { Name = "party", Type = "string" }, { Name = "member", Type = "string" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Takes a member out of the party, online or not, by `MemberIdOf`. Who may kick whom is the "
+                    .. "game's to decide before it calls this.",
+            },
+            {
+                Name = "SetLeaderAsync",
+                Parameters = { { Name = "party", Type = "string" }, { Name = "member", Type = "string" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Makes a member, by `MemberIdOf`, the party's leader.",
+            },
+            {
+                Name = "GetPartyAsync",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "{ Id: string, Leader: string, Members: {string} }?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "The party `player` is in, or nil.",
+            },
+        } :: { Schema.Method },
+        Events = {
+            {
+                Name = "Changed",
+                Parameters = { { Name = "party", Type = "string" } },
+                Doc = "Fires in every world one of the party's members is in when it changes: a member joins or "
+                    .. "leaves, or the leader changes. Also when it ends; `GetPartyAsync` then finds none.",
+            },
+            {
+                Name = "Invited",
+                Parameters = {
+                    { Name = "player", Type = "Player" },
+                    { Name = "party", Type = "string" },
+                    { Name = "by", Type = "string" },
+                },
+                Doc = "Fires in the world of a player invited into a party, with who invited them, by "
+                    .. "`MemberIdOf`. What the player is shown, and how they answer, is the game's.",
+            },
+        } :: { Schema.Event },
+    },
+    {
         Name = "InstanceService",
         Extends = "Instance",
         Module = "scene",
@@ -2447,13 +2564,14 @@ local Classes: { Schema.Class } = {
                 Name = "CreateInstanceAsync",
                 Parameters = {
                     { Name = "template", Type = "string" },
-                    { Name = "options", Type = "{ Players: {Player}?, Data: any? }?", Default = "nil" },
+                    { Name = "options", Type = "{ Players: {Player}?, Party: string?, Data: any? }?", Default = "nil" },
                 },
                 Returns = { "string" },
                 Yields = true,
                 ThreadSafety = "Unsafe",
-                Doc = "Makes an instance of `template` for `options.Players`, nobody else, and returns its `Id` "
-                    .. "once it is ready, to pass to `Travel` or `TravelGroup`. `options.Data` is what the "
+                Doc = "Makes an instance of `template` for `options.Players` and nobody else, and returns its `Id` "
+                    .. "once it is ready, to pass to `Travel` or `TravelGroup`. `options.Party` names a party "
+                    .. "whose members online, in any world, are let in too. `options.Data` is what the "
                     .. "instance's scene reads with `SceneService:GetLoadData`, as a `RemoteEvent` would carry "
                     .. "it, with no instances in it. Raises with the reason when the template has as many "
                     .. "instances running as it may, the machine has too little memory free, or the instance "
@@ -2925,6 +3043,16 @@ local Classes: { Schema.Class } = {
             .. "tick. `--serve` is the only way to run a dedicated server.",
         Properties = {
             {
+                Name = "WorldName",
+                Type = "string",
+                ReadOnly = true,
+                Records = { "ADR 0239" },
+                HostFact = true,
+                Doc = "The name of the world this server is in `servers.toml`, without its channel's number: `town` "
+                    .. "for `town` and for `town:2`, and an instance's `Id` in an instance. Empty for a server no "
+                    .. "manager runs.",
+            },
+            {
                 Name = "Channel",
                 Type = "number",
                 ReadOnly = true,
@@ -3393,7 +3521,7 @@ local Classes: { Schema.Class } = {
             {
                 Name = "TravelGroup",
                 Parameters = {
-                    { Name = "players", Type = "{Player}" },
+                    { Name = "players", Type = "{Player} | string" },
                     { Name = "target", Type = "string" },
                     { Name = "data", Type = "any?", Default = "nil" },
                 },
@@ -3404,7 +3532,10 @@ local Classes: { Schema.Class } = {
                     .. "\n\n"
                     .. "Returns the players sent, in the order given. Any who left while the script waited are "
                     .. "skipped, not an error, and the rest still go together; when none is left, it returns an "
-                    .. "empty table and sends nobody.",
+                    .. "empty table and sends nobody."
+                    .. "\n\n"
+                    .. "Given a party's id (`PartyService`) instead of a list, it sends every member of the party "
+                    .. "who is online, in whatever world each is, and returns the ones in this world.",
             },
             {
                 Name = "VerifyTicket",

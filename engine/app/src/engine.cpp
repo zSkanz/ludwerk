@@ -12,12 +12,14 @@
 #include "engine/app/match_keys.h"
 #include "engine/app/match_launcher.h"
 #include "engine/app/network_session.h"
+#include "engine/app/party_book.h"
 #include "engine/app/script_editor.h"
 #include "engine/app/server_console.h"
 #include "engine/app/simulated_headset.h"
 #include "engine/core/base64.h"
 #include "engine/core/brand.h"
 #include "engine/core/content_path.h"
+#include "engine/core/json.h"
 #include "engine/core/profile.h"
 #include "engine/core/run_record.h"
 #if ENG_DEBUG_UI
@@ -45,8 +47,10 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <thread>
@@ -3353,6 +3357,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         dataOptions.game = options.projectId.empty() ? std::string{"game"} : options.projectId;
         dataConsole.emplace(std::move(dataOptions));
     }
+    // **Parties** (ADR 0240 §1): a server with no manager keeps its own
+    // world's, as a manager keeps every world's.
+    std::optional<PartyBook> localParties;
+    if (localData != nullptr)
+        localParties.emplace();
     std::function<std::pair<std::string, bool>(std::string_view)> dataCommand;
     if (dataConsole.has_value()) {
         dataCommand = [&dataConsole, &localData](std::string_view line) {
@@ -3364,7 +3373,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     }
     // The records scripts asked for and wrote, carried to the database and
     // its answers back: once a frame, and once more as the world stops.
-    const auto routeData = [&host, &managedWorld, &localData, &dataConsole]() {
+    const auto routeData = [&host, &managedWorld, &localData, &dataConsole, &localParties]() {
         scene::EngineState& state = host->world().engineState();
         if (managedWorld.has_value()) {
             managedWorld->sendData(state);
@@ -3400,6 +3409,49 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         }
         if (dataConsole.has_value())
             dataConsole->frame(*localData, unixSecondsNow());
+        if (!localParties.has_value())
+            return;
+        // Who is here is who is online; a party of nobody here is kept its
+        // five minutes, as under a manager.
+        const core::u64 nowNs = platform::nowNs();
+        std::set<std::string, std::less<>> online;
+        std::map<std::string, core::InstanceId, std::less<>> here;
+        const core::InstanceId network = scene::networkServiceOf(host->world(), host->dataModel());
+        for (core::InstanceId child = network.valid() ? host->world().firstChild(network) : core::InstanceId{};
+             child.valid(); child = host->world().nextSibling(child)) {
+            if (const scene::PlayerComponent* player = host->world().players().find(child); player != nullptr) {
+                const std::string member = !player->accountId.empty()   ? player->accountId
+                                           : !player->publicKey.empty() ? player->publicKey
+                                                                        : "user:" + std::to_string(player->userId);
+                online.insert(member);
+                here.emplace(member, child);
+            }
+        }
+        localParties->setOnline(online, nowNs);
+        for (const scene::EngineState::PartyOp& op : state.partyOps) {
+            const std::string answer = runPartyOp(*localParties, op.request, nowNs);
+            state.partyResults.push_back(scene::EngineState::PartyResult{op.id, answer});
+            core::JsonDocument asked;
+            core::JsonDocument answered;
+            if (asked.parse(op.request, "party-op") && answered.parse(answer, "party-result") &&
+                asked.root()["op"].asString() == "invite" && answered.root()["ok"].asBool(false) &&
+                here.contains(asked.root()["member"].asString()))
+                state.partyInvites.push_back(scene::EngineState::PartyInvite{
+                    std::string(asked.root()["member"].asString()), std::string(asked.root()["party"].asString()),
+                    std::string(asked.root()["by"].asString())});
+        }
+        state.partyOps.clear();
+        for (const std::string& id : localParties->takeChanged()) {
+            if (const std::optional<Party> party = localParties->find(id); party.has_value())
+                state.partyMembers[id] = party->members;
+            state.partyChanged.push_back(id);
+        }
+        for (const std::string& id : localParties->takeGone()) {
+            state.partyMembers.erase(id);
+            state.partyChanged.push_back(id);
+        }
+        // A world on its own has nowhere to send a party.
+        state.partyTravels.clear();
     };
     if (consoleReads || managedWorld.has_value())
         consoleInput.start();

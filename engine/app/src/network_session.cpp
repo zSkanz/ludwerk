@@ -418,8 +418,13 @@ void NetworkSession::wire()
         if (host == nullptr)
             return;
         scene::EngineState& state = host->world().engineState();
-        if (state.networkTopology == scene::NetworkTopology::Replica)
+        // **Arrived in another world** (a travel, ADR 0222): what the world
+        // before replicated goes, or the machine keeps both -- two of every
+        // remote, and the stale one the first a script finds.
+        if (state.networkTopology == scene::NetworkTopology::Replica) {
+            (void)replication::clearForReplica(host->world(), host->workspace(), host->scriptTemplates());
             return;
+        }
         state.networkTopology = scene::NetworkTopology::Replica;
         // Any scene change this machine was making is the server's to make
         // now.

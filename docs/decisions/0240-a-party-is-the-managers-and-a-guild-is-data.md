@@ -91,6 +91,35 @@ service's (ADR 0238 §3), owned by the guild's id. Guild chat is
 - A guild has no class of its own and no engine code; a game with another
   idea of a guild writes it on the same data service.
 
+## As built (2026-10-19)
+
+- **The manager keeps the parties** (`PartyBook`): each a leader, members and
+  those invited, by member id -- the account where the player signed in, the
+  key where they did not (`PartyService:MemberIdOf`). A world asks the manager
+  over its pipe (`party-op`) and is answered (`party-result`); the manager
+  says `party-changed` to every world a member is in, and `party-invited` to
+  the invitee's. A server with no manager keeps a book of its own.
+- **`InviteAsync`** takes a `Player` or a member id, so a party invites a
+  friend in another world. `KickAsync` and `SetLeaderAsync` take a member id.
+- **`TravelGroup`** takes a party's id: each world sends the members it has,
+  and returns the ones in the asking world. **`CreateInstanceAsync`** takes
+  `Party`, whose members online, in any world, are the instance's group.
+- **Guilds** are `runtime/engine/guild/init.luau`, in the data service's
+  scope `guild`: the guild under its id, its name claimed under
+  `name:<lower case>`, and each member's guild under `member:<id>`, a claim
+  let go of written as `false`. Each change is an `UpdateAsync` of the guild,
+  and `guild.changed` is a `CrossWorldService` topic.
+- **Proved** in the manager's tests: a party of three in two worlds, invited
+  where its member is, `Changed` heard in both, sent together with
+  `TravelGroup`; an instance made for a party of two taking both and refusing
+  the third; a guild made once, its name taken in any case, a member invited
+  by id joining in the other world, two changes to it at once both kept, and
+  `guild.can` refusing what a rank does not have. A member offline and back
+  within five minutes is still in the party, and one gone longer is not, in
+  `PartyBook`'s own tests. The test of two changes at once makes them from
+  two threads of one world; two worlds go through the same data service, as
+  ADR 0238's tests prove.
+
 ## Not decided here
 
 Alliances of guilds, guild housing and guild ranking: a game's, on these.
