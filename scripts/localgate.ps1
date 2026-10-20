@@ -34,6 +34,9 @@
 #   scripts/localgate.ps1 -Only perf          # the tests that measure time, alone,
 #                                             # against the trees already built --
 #                                             # what the full run does last
+#   scripts/localgate.ps1 -Only linux -Perf   # -Only windows and -Only linux leave
+#                                             # those tests out; -Perf runs them in
+#                                             # the stage, on a machine known quiet
 #   scripts/localgate.ps1 -Affected           # THE INNER LOOP AND EACH PUSH OF A
 #                                             # BATCH (ADR 0249): only the stages and
 #                                             # tests this change can affect, since
@@ -90,6 +93,11 @@ param(
     # and linux stages, for the `perf` stage to run by themselves. What the
     # full run passes its lanes; not usually typed.
     [switch]$PerfApart,
+    # With -Only windows or -Only linux: run the tests that measure time in
+    # the stage too. Left out by default -- a stage run by itself shares the
+    # machine with whatever else is building, and a time measured then is
+    # the other work's.
+    [switch]$Perf,
     # **Only what this change can affect** (ADR 0249): the stages and the
     # tests `tools/repo/affected.luau` says the files changed since the
     # merge base with -Base reach, each with why. The full run is once per
@@ -309,6 +317,13 @@ if ($Plan) {
     $script:affectedPlan = Get-Content $Plan -Raw | ConvertFrom-Json
     # The tests that measure time are their own stage's, which the plan asks
     # for or not.
+    $PerfApart = $true
+}
+
+# **A stage run by itself leaves the tests that measure time out** (ADR
+# 0148, amended 2026-10-19), unless -Perf asks for them: two lanes of work on
+# one machine meant a single stage was almost never run on a quiet one.
+if ($Only -in @('windows', 'linux') -and -not $Perf) {
     $PerfApart = $true
 }
 

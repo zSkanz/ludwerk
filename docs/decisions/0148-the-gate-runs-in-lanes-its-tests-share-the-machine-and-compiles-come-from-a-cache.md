@@ -100,3 +100,14 @@ jobs has a machine of its own.
 
 A test that measures time and is not labelled `perf` is not helped by this;
 the label is how a test says it is one.
+
+## Amended 2026-10-19: a stage run by itself leaves them out too
+
+With two lanes of work sharing the machine, a stage run by itself
+(`-Only windows`, `-Only linux`) was almost never on a quiet one: a sign-in
+rate measured during another lane's build read 16 a second against a floor of
+20, and the stage failed on what ran beside it. So those two stages leave the
+tests labelled `perf` out by default, as the full run's lanes do, and say so;
+`-Perf` puts them back in the stage, for a machine known to be quiet, and
+`-Only perf` runs them by themselves. The full run is unchanged: its lanes
+leave them out, and the `perf` stage runs them last and alone.
