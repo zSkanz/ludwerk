@@ -24,7 +24,9 @@ written into `project.toml`:
 name = "Sky Hopper"            # the window, the launcher, the file properties
 id = "com.studio.skyhopper"    # reverse-DNS; the Android package unless it names its own
 version = "1.2.0"              # X.Y.Z: the Windows file version, the Android version name
-company = "Studio"             # the Windows file properties, the Linux launcher entry
+company = "Studio"             # the folder players' saves are in; never change it after release
+publisher = "Studio Games Ltd" # the Windows file properties and the Linux launcher entry
+copyright = "Copyright 2026 Studio Games Ltd"  # the Windows file properties
 icon = "branding/icon.png"     # ONE square PNG; 1024 px is best
 
 [window]
@@ -33,6 +35,14 @@ size = [1280, 720]
 fullscreen = false
 resizable = true
 ```
+
+**`company` is where the saves are; `publisher` is what the game says.** A
+player's saves and settings are kept in a folder named after `company`, so a
+`company` changed after release moves them where the game no longer looks --
+to a player, they are lost. The name the executable shows -- the Windows file
+properties' company, and the Linux launcher entry -- is `publisher`, which can
+change at any release; without one it is `company`. `copyright` is the
+Windows file properties' copyright line.
 
 **One picture, every size.** The export makes a Windows `.ico` (16 to 256), a
 512 px Linux icon, and Android's launcher icons -- the legacy ones and the
@@ -410,8 +420,27 @@ What each service is, on each side (solo and a host have both columns):
 (compiled, below), its catalogs, `project.toml` and `.luaurc`, sealed into
 one file. Beside it, only what is streamed from files of its own --
 a streamed terrain's cells, the partition cache, made on the package itself so
-a dedicated side's cache holds only its own scene. It does **not** hold the
-editor's files: layouts, `editor.json`, the import and check caches.
+a dedicated side's cache holds only its own scene.
+
+**`game/.engine/` holds what the build made, and nothing else**: the pack,
+its manifest, the chunks it streams and their index (`content/`,
+`content.chunks.json`), a terrain's far ground (`terrain-pyramid`), the
+language packs and the partition cache. Nothing else in your project's
+`.engine/` folder ships, whatever it is: the editor's layout and settings,
+the import and check caches, your save slots, the key your saves are sealed
+with under `keys/`, the logs and run files of every run from the folder --
+they hold your paths, your GPU and the command lines -- and any folder a tool
+of yours writes there.
+
+**The notices go with it.** A game made with the engine is a copy of the
+engine, and the licenses it is under ask that a copy carry their notices: a
+Windows or Linux export has a `licenses/` folder beside the executable, and
+an Android package `assets/licenses/`, with the engine's `LICENSE`, `NOTICE`
+and `THIRD_PARTY_NOTICES.md` and the licenses of the tools it carries. A font
+in your content with an `OFL*.txt` beside it -- the Open Font License asks
+that the font ship with it -- has that file in `licenses/fonts/`. Leave them
+where they are, and say in your game's credits or about screen that it is
+made with the engine and where those notices are.
 
 - **No name is readable in it.** What a script asks for as
   `asset://textures/base.png` is found by the hash of that name; the list of
@@ -528,19 +557,25 @@ exactly that, because "it built" and "it runs" are different facts.
 
 ## Development-only services are gone
 
-`HotReloadService` is compiled out. A script that reaches for it unconditionally
-gets nothing:
+`HotReloadService` is not in an exported game: `FindService` returns nil for it
+there. Ask `RunService.Exported` first, which is true in an exported game -- a
+dedicated server's package too -- and false while the game runs from its
+project, in the editor, under `ludwerk dev` and in tests:
 
 ```luau
 --!strict
-local ok, hotReload = pcall(function(): Instance
-    return game:GetService("HotReloadService")
-end)
-if ok then
-    -- development: `hotReload` is the service
+local RunService = game:GetService("RunService")
+
+if not RunService.Exported then
+    -- development: the service is there
+    local hotReload = game:GetService("HotReloadService")
     print(hotReload.Name)
 end
 ```
+
+The same flag is how a game leaves out what is only for its developers -- a
+cheat menu, a level select, a debug camera -- without guessing from anything
+else.
 
 `DebugService` remains, with its overlay compiled out — the methods become
 no-ops, so debug drawing left in shared code costs nothing.

@@ -669,7 +669,7 @@ end
 --- is Vulkan; a cross build has no shader toolchain).
 local function copyEngineContent(from: string, to: string, shaders: string)
     game.copyTree(from, to, function(relative: string): boolean
-        return relative == "shaders" or relative == "templates" or relative == "icons"
+        return relative == "shaders" or game.notForPlayers(relative)
     end)
     game.copyTree(shaders, projectlib.joined(to, "shaders"), function(relative: string): boolean
         return relative == "dxil" or relative == "msl"

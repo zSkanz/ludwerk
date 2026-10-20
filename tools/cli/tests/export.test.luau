@@ -17,8 +17,45 @@ local android = require("../export/android")
 local brand = require("../brand")
 local game = require("../export/game")
 local progress = require("../export/progress")
+local projectlib = require("../project")
 local targets = require("../export/targets")
 local versionCode = require("../export/version_code")
+
+--- A folder beside the tests, emptied first.
+local function scratch(name: string): string
+    local base = string.match(debug.info(1, "s"), "^(.*)[/\\][^/\\]+$") or "tools/cli/tests"
+    local folder = `{base}/scratch-export-{name}`
+    if fs.exists(folder) then
+        fs.removeDirectory(folder, { recursive = true })
+    end
+    fs.createDirectory(folder, { makeParents = true })
+    return folder
+end
+
+local function write(file: string, text: string)
+    local folder = string.match(file, "^(.*)[/\\][^/\\]+$")
+    if folder ~= nil then
+        fs.createDirectory(folder, { makeParents = true })
+    end
+    fs.writeStringToFile(file, text)
+end
+
+local function listed(folder: string): { string }
+    local names: { string } = {}
+    local function walk(at: string, relative: string)
+        for _, entry in fs.listDirectory(at) do
+            local rel = if relative == "" then entry.name else `{relative}/{entry.name}`
+            if entry.type == "dir" then
+                walk(`{at}/{entry.name}`, rel)
+            else
+                table.insert(names, rel)
+            end
+        end
+    end
+    walk(folder, "")
+    table.sort(names)
+    return names
+end
 
 test.suite("export", function(suite)
     -- A package that had no brand file signed with one key and the
@@ -367,12 +404,104 @@ test.suite("export", function(suite)
         for _, name in { "editor.json", "import", "check", "types", "match", "export", "editor-layout.v3.ini" } do
             assert.that(game.editorOnly(name), `{name} would ship`)
         end
+        -- And what no list named: the key saves are sealed with, a run's
+        -- log, a folder some tool wrote.
+        for _, name in { "keys", "engine.log", "engine.run", "cutscene-migration" } do
+            assert.that(game.editorOnly(name), `{name} would ship`)
+        end
         -- The settings of the last person to run the project from its
         -- folder are theirs, not every player's.
         assert.that(game.editorOnly("settings.json"), "a developer's settings would ship")
-        for _, name in { "content.lpack", "content.manifest.json", "partition" } do
+        for _, name in
+            { "content.lpack", "content.manifest.json", "content.chunks.json", "partition", "l10n-pt-BR.lpack" }
+        do
             assert.that(not game.editorOnly(name), `{name} would not ship`)
         end
+    end)
+
+    suite:case("a game's .engine holds what the build made and nothing of the developer's machine", function()
+        local folder = scratch("engine")
+        local project = `{folder}/project`
+        for _, name in
+            {
+                "keys/saves.key",
+                "keys/saves.key.lock",
+                "engine.log",
+                "engine_2.previous.log",
+                "engine.run",
+                "cutscene-migration/intro.before.luau",
+                "editor.json",
+                "settings.json",
+                "content.lpack",
+                "content.manifest.json",
+                "content.chunks.json",
+                "content/chunks/a.chunk",
+                "terrain-pyramid/main/level-1.bin",
+                "l10n-pt-BR.lpack",
+            }
+        do
+            write(`{project}/.engine/{name}`, `bytes of {name}`)
+        end
+        write(`{project}/project.toml`, '[project]\nname = "g"\n')
+        game.compose({
+            project = ({ root = project, config = {} } :: any) :: projectlib.Project,
+            game = `{folder}/out/game`,
+            side = "all",
+            content = `{project}/content`,
+        })
+        assert.eq(
+            table.concat(listed(`{folder}/out/game/.engine`), ","),
+            "content.chunks.json,content.lpack,content.manifest.json,content/chunks/a.chunk,l10n-pt-BR.lpack,"
+                .. "terrain-pyramid/main/level-1.bin"
+        )
+        fs.removeDirectory(folder, { recursive = true })
+    end)
+
+    suite:case("what a boot of the package wrote in its .engine is gone before it ships", function()
+        -- The partition boots the game on the package, and a boot makes this
+        -- machine's match key: shipped, every player had the developer's.
+        local folder = scratch("prune")
+        for _, name in { "keys/saves.key", "keys/saves.key.lock", "engine.log", "content.lpack", "partition/cell.bin" } do
+            write(`{folder}/game/.engine/{name}`, `bytes of {name}`)
+        end
+        game.pruneEngine(`{folder}/game`)
+        assert.eq(table.concat(listed(`{folder}/game/.engine`), ","), "content.lpack,partition/cell.bin")
+        fs.removeDirectory(folder, { recursive = true })
+    end)
+
+    suite:case("an export carries the engine's notices, byte for byte, and its fonts' licenses", function()
+        local folder = scratch("notices")
+        local install = `{folder}/engine`
+        write(`{install}/LICENSE`, "the license")
+        write(`{install}/NOTICE`, "the notice")
+        write(`{install}/THIRD_PARTY_NOTICES.md`, "the third parties")
+        write(`{install}/licenses/lute.txt`, "lute's")
+        local content = `{folder}/content`
+        write(`{content}/fonts/Display/OFL.txt`, "a font's license")
+        write(`{content}/fonts/Body/OFL-Body.txt`, "another font's")
+        write(`{content}/fonts/Body/Body.ttf`, "not a license")
+        local to = `{folder}/out/licenses`
+        local missing = game.copyNotices(install, content, to)
+        assert.eq(#missing, 0)
+        assert.eq(
+            table.concat(listed(to), ","),
+            "LICENSE,NOTICE,THIRD_PARTY_NOTICES.md,fonts/fonts-Body-OFL-Body.txt,fonts/fonts-Display-OFL.txt,lute.txt"
+        )
+        for _, name in game.NoticeFiles do
+            assert.eq(fs.readFileToString(`{to}/{name}`), fs.readFileToString(`{install}/{name}`))
+        end
+        -- The engine this test runs from has them, as an installation does.
+        local here = `{folder}/here`
+        assert.eq(#game.copyNotices(projectlib.installRoot(), nil, here), 0)
+        for _, name in game.NoticeFiles do
+            assert.eq(
+                fs.readFileToString(`{here}/{name}`),
+                fs.readFileToString(projectlib.joined(projectlib.installRoot() :: string, name))
+            )
+        end
+        -- And where there are none, the build is told which.
+        assert.eq(#game.copyNotices(nil, nil, `{folder}/none`), 3)
+        fs.removeDirectory(folder, { recursive = true })
     end)
 
     suite:case("--bump-version-code adds one in place, comments and line endings kept", function()

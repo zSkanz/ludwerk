@@ -34,6 +34,7 @@ local test = require("@std/test")
 
 local bounded = require("../../tools/cli/bounded")
 local build = require("../../tools/cli/commands/build")
+local game = require("../../tools/cli/export/game")
 local new = require("../../tools/cli/commands/new")
 local projectlib = require("../../tools/cli/project")
 
@@ -81,7 +82,13 @@ local function scaffold(name: string): (string, string)
     local replaced
     text, replaced = string.gsub(text, '# icon = "assets/icon.png"', 'icon = "assets/icon.png"', 1)
     assert.eq(replaced, 1)
-    text = string.gsub(text, 'version = "0.1.0"', 'version = "1.2.3"\ncompany = "Packaging Test Co"', 1)
+    text = string.gsub(
+        text,
+        'version = "0.1.0"',
+        'version = "1.2.3"\ncompany = "Packaging Test Co"\npublisher = "Packaging Test Publishing"'
+            .. '\ncopyright = "Copyright 2026 Packaging Test Publishing"',
+        1
+    )
     fs.writeStringToFile(config, text)
 
     return parent, project
@@ -154,6 +161,23 @@ test.suite("packaging", function(suite)
             not fs.exists(projectlib.joined(output, "game", ".engine", "content.manifest.json")),
             "a sealed game carries a manifest of its content's names"
         )
+        -- **Nothing of a machine's**: a new project has no `.engine/` of its
+        -- own, and the build's boot of the package to make its partition made
+        -- this machine's match key there, which every player then had. What
+        -- is in the game's `.engine/` is what the build made.
+        for _, entry in fs.listDirectory(projectlib.joined(output, "game", ".engine")) do
+            assert.that(not game.editorOnly(entry.name), `the game carries .engine/{entry.name}`)
+        end
+        assert.that(not fs.exists(projectlib.joined(output, "game", ".engine", "keys")), "the game carries a match key")
+        -- **And the notices** the engine is distributed under, beside the
+        -- executable, as the installation has them.
+        for _, name in game.NoticeFiles do
+            local engineRoot = projectlib.installRoot() :: string
+            assert.eq(
+                fs.readFileToString(projectlib.joined(output, "licenses", name)),
+                fs.readFileToString(projectlib.joined(engineRoot, name))
+            )
+        end
         local pack = fs.readFileToString(projectlib.joined(output, "game", ".engine", "content.lpack"))
         for _, word in { "asset://", "main.scene", "packagetest", "Packaging Test Co" } do
             assert.that(string.find(pack, word, 1, true) == nil, `"{word}" can be read in the sealed pack`)
@@ -221,7 +245,16 @@ test.suite("packaging", function(suite)
         -- The file properties Explorer's Details tab shows, read back.
         local info = process.run({ iconpatch :: string, "info", executable })
         assert.that(info.ok, `the artifact carries no version resource:\n{info.stdout}{info.stderr}`)
-        for _, line in { "ProductName: packagetest", "CompanyName: Packaging Test Co", "ProductVersion: 1.2.3" } do
+        -- The publisher is what the file says, not `company`, which names the
+        -- saves' folder and stays.
+        for _, line in
+            {
+                "ProductName: packagetest",
+                "CompanyName: Packaging Test Publishing",
+                "LegalCopyright: Copyright 2026 Packaging Test Publishing",
+                "ProductVersion: 1.2.3",
+            }
+        do
             assert.that(string.find(info.stdout, line, 1, true) ~= nil, `no "{line}" in:\n{info.stdout}`)
         end
 

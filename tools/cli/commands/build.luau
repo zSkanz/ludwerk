@@ -126,7 +126,12 @@ local function identityOf(project: projectlib.Project): desktop.Identity
         displayName = displayName,
         fileName = if fileName == "" or string.match(fileName, "^%.+$") ~= nil then "game" else fileName,
         version = version,
-        company = withoutControls(stringField(section, "company")),
+        -- **Who publishes it, apart from where its saves are**: `company`
+        -- names the folder every player's saves are kept in, so a name set
+        -- after release would lose them; `publisher` is only what the
+        -- executable says, and falls back to `company`.
+        company = withoutControls(stringField(section, "publisher") or stringField(section, "company")),
+        copyright = withoutControls(stringField(section, "copyright")),
         icon = if resolved ~= nil and fs.exists(resolved) then resolved else nil,
     }
 end
@@ -462,6 +467,14 @@ local function run(options: Options): number
     fs.createDirectory(output, { makeParents = true })
     fs.writeStringToFile(projectlib.joined(output, MarkerName), MarkerText)
 
+    -- An engine whose notices are not where they belong shipped a game
+    -- without them: said, by name.
+    local function sayMissingNotices(missing: { string })
+        if #missing > 0 then
+            print(tr("cli.build.warn.no_notices", { files = table.concat(missing, ", ") }))
+        end
+    end
+
     local composeGame = function(into: string)
         game.compose({
             project = project,
@@ -486,13 +499,31 @@ local function run(options: Options): number
                 progress.note(reporter, tr("cli.build.warn.no_partition"))
                 return nil
             end
-            local partition = process.run({ host :: string, gameDir, "--partition" })
+            -- **Its saves and keys outside the package**: a boot makes this
+            -- machine's match key beside its saves, and a boot of the package
+            -- with its saves in the package left the developer's key in
+            -- every game. Beside it instead, and gone after.
+            local scratch = projectlib.joined(path.dirname(gameDir), ".partition-run")
+            if fs.exists(scratch) then
+                removeTree(scratch)
+            end
+            local partition = process.run({
+                host :: string,
+                gameDir,
+                "--partition",
+                `--saves={projectlib.joined(scratch, "saves")}`,
+            })
+            if fs.exists(scratch) then
+                removeTree(scratch)
+            end
             if not partition.ok then
                 progress.note(reporter, partition.stdout .. partition.stderr)
                 progress.note(reporter, tr("cli.build.warn.no_partition"))
             end
             return nil
         end)
+        -- What that boot made that is not the game's.
+        game.pruneEngine(gameDir)
     end
 
     -- **seal**: last of what is done to `game/`, after the partition has
@@ -551,6 +582,10 @@ local function run(options: Options): number
                 stage = stage,
                 composeGame = composeGame,
             })
+            -- In the package, beside the game: `assets/licenses/`.
+            sayMissingNotices(
+                game.copyNotices(projectlib.installRoot(), content, projectlib.joined(stage, "assets", "licenses"))
+            )
             return nil
         end)
         if not laidOut then
@@ -727,14 +762,15 @@ local function run(options: Options): number
     local executable = projectlib.joined(output, executableName)
     local laidOut = progress.step(reporter, "layout", function(): string?
         fs.copy(player, executable)
-        -- Less what only an editor reads, as the phone's copy already was: the
-        -- new-project template and the editor's icon theme. Every game used to
-        -- ship both, a starter project's scripts included.
-        game.copyTree(engineContent, projectlib.joined(output, "content"), function(relative: string): boolean
-            return relative == "templates" or relative == "icons"
-        end)
+        -- Less what only an editor or a test reads, as the phone's copy is:
+        -- the new-project template, the editor's icon theme, the conformance
+        -- runner and the API's type definitions. Every game used to ship all
+        -- four, a starter project's scripts included.
+        game.copyTree(engineContent, projectlib.joined(output, "content"), game.notForPlayers)
         moduleExport.deploy(integrationPayloads, output)
         composeGame(projectlib.joined(output, "game"))
+        -- Beside the executable, where a player looks.
+        sayMissingNotices(game.copyNotices(projectlib.installRoot(), content, projectlib.joined(output, "licenses")))
         if chosen.platform == "linux" and not chosen.server then
             fs.writeStringToFile(
                 projectlib.joined(output, `{executableName}.desktop`),

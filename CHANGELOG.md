@@ -11,6 +11,12 @@ here.
 
 ### Added
 
+- `RunService.Exported` says whether a game runs as an exported game -- true
+  in a package `ludwerk build` made, false in the editor, under `ludwerk dev`
+  and in tests -- so a game can leave out what is for its developers only.
+- `[project] publisher` and `copyright` stamp an exported executable's file
+  properties. `publisher` falls back to `company`, which keeps naming the
+  folder players' saves are in.
 - A platform, a lift or a door that a game moves is where the server will
   have it on every player's machine, so a player standing on one, jumping
   onto it or hopping on it is not corrected at any latency.
@@ -147,6 +153,22 @@ here.
 
 ### Fixed
 
+- A game's player no longer carries the build machine's folders and user
+  name: the player, shipping and editor builds compile without them, and
+  the gate reads the shipped binaries for them.
+- `HotReloadService` is not in an exported game, as its page always said.
+- An export no longer ships the conformance runner or the API's type
+  definitions.
+- An exported game carried what the project's `.engine/` folder held besides
+  what the build made: the key saves are sealed with, the logs and run files
+  of every run from the folder, and any folder a tool wrote. It now carries
+  only the pack, its manifest, the streaming index, the language packs and
+  the partition cache.
+- An exported game carried no license notices. A desktop export has a
+  `licenses/` folder beside its executable, and an Android package
+  `assets/licenses/`, with the engine's `LICENSE`, `NOTICE`,
+  `THIRD_PARTY_NOTICES.md` and tool licenses, and the game's own `OFL*.txt`
+  font licenses.
 - On a standalone headset, the picture no longer washes out to pastel. Its
   exposure meter read the headset's image through a view no backend made,
   read black, and opened the exposure to its limit. It now reads the eye

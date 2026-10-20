@@ -31,45 +31,38 @@ local projectlib = require("../project")
 
 export type Side = "all" | "client" | "server"
 
---- **What `.engine/` holds that is the editor's, not the game's**: its layout,
---- its settings, the import and check caches, and the trash -- script files the
---- editor moved aside when their instance went, server code as often as not
---- -- and the conflicts, the editor's copy of a script file that changed
---- on disk under it, server code as often as not, and the developer's own save
---- slots. A game carries the pack, its manifest and the
---- partition cache, and none of these.
---- And `session`: a run's own cache of changed ground (ADR 0149), which a run
---- that died leaves behind -- tens of thousands of files of nobody's.
---- And `settings.json`: the settings of whoever last ran the project from its
---- folder -- a language, a window, a quality -- which were shipped to every
---- player as the game's own. A player's are kept in the player's folder.
-local EditorOnly = {
-    "editor.json",
-    "import",
-    "check",
-    "types",
-    "match",
-    "export",
-    "trash",
-    "conflicts",
-    "saves",
-    "session",
-    "settings.json",
+--- **What a game carries of `.engine/`: what the build made, and nothing
+--- else** -- the pack, its manifest, the chunks it streams and their index
+--- (`content/`, `content.chunks.json`), the far ground a terrain's import
+--- made (`terrain-pyramid`, ADR 0150), the language packs, and the
+--- partition cache, which is made again on the package. Everything else there is the developer's machine's: the
+--- editor's layout and settings, the import and check caches, the trash and
+--- the conflicts (server code as often as not), the save slots, a run's
+--- cache of changed ground, the key the saves are sealed with and its lock,
+--- the logs and run files of every run from the folder -- a path, a GPU, a
+--- command line -- and whatever folder a tool wrote. This was once a list of
+--- what to leave out, and each new thing a tool wrote shipped until somebody
+--- added it: the saves' key, a game's own migration's copies of its source.
+local Shipped: { [string]: boolean } = {
+    ["content.lpack"] = true,
+    ["content.manifest.json"] = true,
+    ["content.chunks.json"] = true,
+    content = true,
+    ["terrain-pyramid"] = true,
+    partition = true,
 }
-local EditorOnlyPrefixes = { "editor-layout" }
 
+local function shipped(name: string): boolean
+    if Shipped[name] then
+        return true
+    end
+    -- A language that ships apart (`export/l10n.luau`), put beside the pack.
+    return string.match(name, "^l10n%-.+%.lpack$") ~= nil or string.match(name, "^l10n%-.+%.manifest%.json$") ~= nil
+end
+
+--- What is not the game's, by the rule above.
 local function editorOnly(name: string): boolean
-    for _, entry in EditorOnly do
-        if name == entry then
-            return true
-        end
-    end
-    for _, prefix in EditorOnlyPrefixes do
-        if string.sub(name, 1, #prefix) == prefix then
-            return true
-        end
-    end
-    return false
+    return not shipped(name)
 end
 
 --- The pack and its manifest: a side builds its own, so it copies neither.
@@ -563,7 +556,100 @@ local function compose(options: ComposeOptions)
     end
 end
 
+--- **What of the engine's own content no player needs**: the new-project
+--- templates and the editor's icon theme, which only an editor reads, the
+--- conformance runner, which only `ludwerk test` boots, and the API's type
+--- definitions, which only a script editor reads. Paths are relative to the
+--- engine's `content/`.
+local function notForPlayers(relative: string): boolean
+    return relative == "templates"
+        or relative == "icons"
+        or relative == "runtime/conformance"
+        or relative == "runtime/types"
+end
+
+--- **What a boot of the package left in its `.engine/`, gone again**: the
+--- partition boots the game on the package itself, and a boot makes what any
+--- run makes -- the key this machine's matches are signed with, under `keys/`,
+--- and its lock. Shipped, every player had the developer's key. Everything
+--- `shipped` does not name is removed, after the boot and before the seal.
+local function pruneEngine(gameDir: string)
+    local folder = projectlib.joined(gameDir, ".engine")
+    if not fs.exists(folder) then
+        return
+    end
+    for _, entry in fs.listDirectory(folder) do
+        if shipped(entry.name) then
+            continue
+        end
+        local at = projectlib.joined(folder, entry.name)
+        if entry.type == "dir" then
+            fs.removeDirectory(at, { recursive = true })
+        else
+            fs.remove(at)
+        end
+    end
+end
+
+--- **The notices the engine is distributed under**, and the game's fonts'
+--- licenses, into `to`: a game made with the engine is a copy of it, and
+--- Apache-2.0's NOTICE and the MIT, BSD and zlib terms of what it carries ask
+--- that a copy carry them. The engine's `LICENSE`, `NOTICE` and
+--- `THIRD_PARTY_NOTICES.md` and its `licenses/` folder, from the installation
+--- (`root`); and every `OFL*.txt` under the game's content, into `fonts/` --
+--- a font under the Open Font License ships with it. Returns the engine
+--- notices that were not found, so a build can say it shipped without them.
+local NoticeFiles = { "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md" }
+
+local function copyNotices(root: string?, content: string?, to: string): { string }
+    fs.createDirectory(to, { makeParents = true })
+    local missing: { string } = {}
+    for _, name in NoticeFiles do
+        local from = if root ~= nil then projectlib.joined(root, name) else nil
+        if from ~= nil and fs.exists(from) then
+            fs.copy(from, projectlib.joined(to, name))
+        else
+            table.insert(missing, name)
+        end
+    end
+    -- An installation's `licenses/`, or this repository's own when the CLI
+    -- runs from its source.
+    if root ~= nil then
+        local folder = projectlib.joined(root, "licenses")
+        if not fs.exists(folder) then
+            folder = projectlib.joined(root, "third_party", "licenses")
+        end
+        if fs.exists(folder) then
+            copyTree(folder, to)
+        end
+    end
+    if content ~= nil and fs.exists(content) then
+        local fonts = projectlib.joined(to, "fonts")
+        local function walk(folder: string, relative: string)
+            for _, entry in fs.listDirectory(folder) do
+                local source = projectlib.joined(folder, entry.name)
+                local rel = if relative == "" then entry.name else `{relative}/{entry.name}`
+                if entry.type == "dir" then
+                    walk(source, rel)
+                elseif entry.type == "file" and string.match(string.lower(entry.name), "^ofl.*%.txt$") ~= nil then
+                    fs.createDirectory(fonts, { makeParents = true })
+                    -- Two fonts' `OFL.txt` side by side keep apart by the
+                    -- folder each was in.
+                    local name = string.gsub(rel, "[/\\]", "-")
+                    fs.copy(source, projectlib.joined(fonts, name))
+                end
+            end
+        end
+        walk(content, "")
+    end
+    return missing
+end
+
 return {
+    notForPlayers = notForPlayers,
+    pruneEngine = pruneEngine,
+    copyNotices = copyNotices,
+    NoticeFiles = NoticeFiles,
     editorOnly = editorOnly,
     foreignScripts = foreignScripts,
     stripScene = stripScene,
