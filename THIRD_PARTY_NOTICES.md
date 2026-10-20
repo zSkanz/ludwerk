@@ -43,6 +43,7 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | fidelityfx_fsr1 | 1.0.2 | `a21ffb8f6c13` | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR | `third_party/fidelityfx_fsr1/` |
 | fidelityfx_fsr2 | 2.2.1 | `1680d1edd5c0` | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR2 | `third_party/fidelityfx_fsr2/` |
 | fidelityfx_sdk | 1.1.4 | `c6efa6bf7f20` | MIT | https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK | `third_party/fidelityfx_sdk/` |
+| xatlas | master-2022-07-25 | `f700c7790aaa` | MIT | https://github.com/jpcy/xatlas | `third_party/xatlas/` |
 
 ## Release archives
 
