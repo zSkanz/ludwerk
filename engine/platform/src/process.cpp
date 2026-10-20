@@ -4,7 +4,10 @@
 #include <SDL3/SDL_process.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
+#include <cerrno>
 #include <cstdlib>
+#include <mutex>
+#include <thread>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -12,10 +15,36 @@
 #include <dxgi1_6.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
 namespace engine::platform {
+
+// **The output read as it comes**: a thread blocked on the pipe's own handle,
+// which SDL made non-blocking and is made blocking again here, since this
+// thread is now the only reader. It ends when the child's end of the pipe
+// closes -- the child exits, or is killed.
+struct ChildProcess::Reader
+{
+    std::mutex lock;
+    std::string text;
+    std::thread thread;
+
+    ~Reader()
+    {
+        if (!thread.joinable())
+            return;
+#if defined(_WIN32)
+        // A child that ended leaves its read ended too, unless another child
+        // started meanwhile holds a copy of the pipe's other end: ended here
+        // rather than waited on.
+        (void)CancelSynchronousIo(static_cast<HANDLE>(thread.native_handle()));
+#endif
+        thread.join();
+    }
+};
+
 namespace {
 
 // One process, its output a pipe this side reads, with the options applied.
@@ -213,12 +242,70 @@ std::unique_ptr<ChildProcess> ChildProcess::start(const std::vector<std::string>
     SDL_Process* process = createProcess(arguments, options);
     if (process == nullptr)
         return nullptr;
-    return std::unique_ptr<ChildProcess>(new ChildProcess(process));
+    std::unique_ptr<ChildProcess> child(new ChildProcess(process));
+    if (!options.onOutput)
+        return child;
+    SDL_IOStream* output = SDL_GetProcessOutput(process);
+    if (output == nullptr)
+        return child;
+    const SDL_PropertiesID streamProps = SDL_GetIOProperties(output);
+    auto reader = std::make_shared<Reader>();
+    const std::function<void()> told = options.onOutput;
+#if defined(_WIN32)
+    auto* pipe = static_cast<HANDLE>(
+        SDL_GetPointerProperty(streamProps, SDL_PROP_IOSTREAM_WINDOWS_HANDLE_POINTER, INVALID_HANDLE_VALUE));
+    if (pipe == INVALID_HANDLE_VALUE || pipe == nullptr)
+        return child;
+    DWORD waiting = PIPE_WAIT;
+    if (SetNamedPipeHandleState(pipe, &waiting, nullptr, nullptr) == 0)
+        return child;
+    reader->thread = std::thread([pipe, reader = reader.get(), told]() {
+        char buffer[4096];
+        for (;;) {
+            DWORD got = 0;
+            if (ReadFile(pipe, buffer, sizeof(buffer), &got, nullptr) == 0 || got == 0)
+                break;
+            {
+                const std::lock_guard<std::mutex> guard(reader->lock);
+                reader->text.append(buffer, got);
+            }
+            told();
+        }
+    });
+#else
+    const auto pipe =
+        static_cast<int>(SDL_GetNumberProperty(streamProps, SDL_PROP_IOSTREAM_FILE_DESCRIPTOR_NUMBER, -1));
+    if (pipe < 0)
+        return child;
+    const int flags = fcntl(pipe, F_GETFL);
+    if (flags < 0 || fcntl(pipe, F_SETFL, flags & ~O_NONBLOCK) < 0)
+        return child;
+    reader->thread = std::thread([pipe, reader = reader.get(), told]() {
+        char buffer[4096];
+        for (;;) {
+            const ssize_t got = ::read(pipe, buffer, sizeof(buffer));
+            if (got < 0 && errno == EINTR)
+                continue;
+            if (got <= 0)
+                break;
+            {
+                const std::lock_guard<std::mutex> guard(reader->lock);
+                reader->text.append(buffer, static_cast<std::size_t>(got));
+            }
+            told();
+        }
+    });
+#endif
+    child->m_reader = std::move(reader);
+    return child;
 }
 
 ChildProcess::~ChildProcess()
 {
     kill();
+    // The reader ends with the child's end of the pipe, and before SDL closes
+    // this end under it.
+    m_reader.reset();
     if (m_process != nullptr)
         SDL_DestroyProcess(static_cast<SDL_Process*>(m_process));
 }
@@ -226,6 +313,11 @@ ChildProcess::~ChildProcess()
 std::string ChildProcess::readAvailable()
 {
     std::string text;
+    if (m_reader != nullptr) {
+        const std::lock_guard<std::mutex> guard(m_reader->lock);
+        text.swap(m_reader->text);
+        return text;
+    }
     if (m_process == nullptr)
         return text;
     SDL_IOStream* output = SDL_GetProcessOutput(static_cast<SDL_Process*>(m_process));

@@ -137,6 +137,7 @@ WorldLauncher engineWorldLauncher(std::filesystem::path engine, std::filesystem:
         platform::ProcessOptions options;
         options.workingDirectory = project;
         options.pipeInput = true;
+        options.onOutput = launch.wake;
         std::unique_ptr<platform::ChildProcess> child = platform::ChildProcess::start(arguments, options);
         if (child == nullptr)
             return nullptr;
@@ -296,6 +297,7 @@ std::optional<core::EngineError> WorldManager::start()
     else {
         m_data = std::make_unique<DataBroker>(openStore());
     }
+    m_data->onDone([wake = m_wake]() { wake->signal(); });
     DataConsole::Options dataOptions;
     dataOptions.backups = m_options.root / "data" / "backups";
     dataOptions.game = m_options.projectId.empty() ? std::string{"game"} : m_options.projectId;
@@ -926,6 +928,7 @@ void WorldManager::launch(World& world)
     launch.health = m_options.config.health;
     launch.timeDilation = world.config.timeDilation;
     launch.logFile = m_options.root / m_options.config.logs / fileName(world.config.name) / "engine.log";
+    launch.wake = [wake = m_wake]() { wake->signal(); };
     world.state = State::Starting;
     world.partial.clear();
     world.players = 0;

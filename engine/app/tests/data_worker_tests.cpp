@@ -16,6 +16,7 @@
 #include "engine/app/data_worker.h"
 #include "engine/app/servers_config.h"
 #include "engine/core/json.h"
+#include "engine/core/wake.h"
 
 using engine::app::DataWorker;
 using engine::app::IDataStore;
@@ -41,6 +42,21 @@ TEST_CASE("data worker > jobs are done in the order asked, and answered on the a
         CHECK(done[static_cast<std::size_t>(at)] == at);
     CHECK(onWorker);
     CHECK(worker.stats().done >= 50);
+}
+
+TEST_CASE("data worker > an answer ready wakes the asker's wait at once")
+{
+    DataWorker worker(engine::app::makeMemoryDataStore());
+    core::Wake wake;
+    worker.onDone([&wake]() { wake.signal(); });
+    bool answered = false;
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE(worker.post([&answered](IDataStore&) -> DataWorker::Then { return [&answered]() { answered = true; }; }));
+    // A wait of five seconds, ended by the answer: well inside one.
+    CHECK(wake.waitFor(std::chrono::seconds(5)));
+    worker.pump();
+    CHECK(answered);
+    CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() < 1.0);
 }
 
 TEST_CASE("data worker > past its bound a job is refused, counted, and nothing of it done")

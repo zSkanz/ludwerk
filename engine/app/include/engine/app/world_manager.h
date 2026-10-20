@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -36,6 +37,7 @@
 #include "engine/core/crypto.h"
 #include "engine/core/error.h"
 #include "engine/core/ticket.h"
+#include "engine/core/wake.h"
 #include "engine/net/transport.h"
 
 namespace engine::app {
@@ -71,6 +73,9 @@ struct WorldLaunch
     // every world runs in the game's folder, and one `engine.log` there for
     // all of them was several processes writing one file.
     std::filesystem::path logFile;
+    // **Called the moment the world writes**, from whatever thread reads it:
+    // the manager's wait ends then rather than at its next frame.
+    std::function<void()> wake;
 };
 
 using WorldLauncher = std::function<std::unique_ptr<WorldProcess>(const WorldLaunch&)>;
@@ -159,6 +164,10 @@ public:
     [[nodiscard]] std::optional<core::EngineError> start();
     // One pass: the door, each world's output, its health, the travels.
     void frame();
+    // **Until there is work, or `most`**: a world wrote, or the store has an
+    // answer for one. A loop between frames waits here rather than sleeping,
+    // so a world's question is answered as soon as it is asked.
+    void waitForWork(std::chrono::nanoseconds most) { m_wake->waitFor(most); }
     // **A line of the manager's own console** (ADR 0220 §8), and its answer.
     [[nodiscard]] std::string run(std::string_view line);
     // Every world stopped and gone: the process ends.
@@ -302,6 +311,9 @@ private:
     Options m_options;
     core::Ed25519Pair m_signing;
     std::unique_ptr<DataBroker> m_data;
+    // Signalled by the worlds' readers and the store's thread; shared, so a
+    // reader still running as a world is taken down holds it.
+    std::shared_ptr<core::Wake> m_wake = std::make_shared<core::Wake>();
     // `data` and `moves`, a backup copying, the move log's days (ADR 0238 §7).
     std::unique_ptr<DataConsole> m_dataConsole;
     core::u32 m_transactionsAsked = 0;

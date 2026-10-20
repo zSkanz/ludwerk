@@ -63,6 +63,8 @@ public:
     // The store's answers since, each on this thread: records given, writes
     // that failed, requests answered.
     void pump() { m_worker.pump(); }
+    // Told when an answer is ready to `pump` (`DataWorker::onDone`).
+    void onDone(std::function<void()> told) { m_worker.onDone(std::move(told)); }
     [[nodiscard]] DataWorker::Stats stats() const { return m_worker.stats(); }
     core::f64 takeWorst() { return m_worker.takeWorst(); }
     // Lets go of every record `world` held: it stopped, or died, and what it

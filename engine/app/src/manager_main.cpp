@@ -6,7 +6,6 @@
 #include <deque>
 #include <map>
 #include <optional>
-#include <thread>
 
 #include "engine/app/admin_channel.h"
 #include "engine/app/admin_server.h"
@@ -263,7 +262,9 @@ int runManager(const std::filesystem::path& serversFile, const std::filesystem::
         if (platform::stopRequested())
             manager.stop();
         manager.frame();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // **Until a world writes or the store answers**, a frame's time at
+        // most: a fixed sleep here made every data operation wait up to two.
+        manager.waitForWork(std::chrono::milliseconds(20));
     }
     return 0;
 }

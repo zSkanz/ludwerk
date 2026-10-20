@@ -50,6 +50,9 @@ public:
     void wait(const std::function<void(IDataStore&)>& job);
     // The answers of the jobs done since, each on this thread, in order.
     void pump();
+    // **Told when an answer is ready to pump**, from the store's thread: the
+    // asker's loop waits on it rather than finding the answer a frame later.
+    void onDone(std::function<void()> told);
 
     struct Stats
     {
@@ -80,6 +83,7 @@ private:
     std::condition_variable m_wake;
     std::deque<Queued> m_jobs;
     std::deque<Then> m_done;
+    std::function<void()> m_told;
     bool m_stopping = false;
     core::u64 m_doneCount = 0;
     core::u64 m_refused = 0;

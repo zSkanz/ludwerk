@@ -66,6 +66,7 @@ engine_add_module_tests(platform
         tests/crash_tests.cpp
         tests/stop_signal_tests.cpp
         tests/file_share_tests.cpp
+        tests/child_process_tests.cpp
     DEPS
         SDL3::SDL3-static
 )
@@ -104,6 +105,13 @@ if(ENG_BUILD_TESTS)
     # that faulted would take the runner with it. See `crash_probe.cpp`.
     add_executable(engine_crash_probe tests/crash_probe.cpp)
     target_link_libraries(engine_crash_probe PRIVATE engine::warnings engine::platform)
+
+    # A child that talks, for `child_process_tests.cpp`.
+    add_executable(engine_talk_probe tests/talk_probe.cpp)
+    target_link_libraries(engine_talk_probe PRIVATE engine::warnings)
+    target_compile_features(engine_talk_probe PRIVATE cxx_std_20)
+    add_dependencies(engine_platform_tests engine_talk_probe)
+    target_compile_definitions(engine_platform_tests PRIVATE ENG_TEST_TALK_PROBE="$<TARGET_FILE:engine_talk_probe>")
 
     add_test(NAME crash_gate
         COMMAND ${CMAKE_COMMAND}

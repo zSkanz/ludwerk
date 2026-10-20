@@ -6847,21 +6847,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             }
             if (serverConsole.finished())
                 quit = true;
-            if (managedWorld.has_value()) {
-                managedWorld->frame(host->world(), host->dataModel(), network.replication(),
-                                    host->world().engineState().networkPort, consoleHost.nowNs,
-                                    lastSimTicks > 0 ? lastSimMs / static_cast<f64>(lastSimTicks) : 0.0);
-                // **A world without its manager stops on its own** (ADR 0220
-                // §5): its pipe closed, or the manager said so.
-                if (consoleInput.ended())
-                    managedWorld->managerGone();
-                if (managedWorld->stopping())
-                    quit = true;
-            }
-            else {
-                routeData();
-            }
         }
+        // **A lone server's answers, before the ticks**: its store answers on
+        // a thread of its own while the last frame drew, and what it answered
+        // is this frame's first tick's. What the ticks ask goes after them.
+        if (!managedWorld.has_value())
+            routeData();
 
         ENG_PROFILE_NEXT(stretch, "frame.reload");
         // **The editor's own reload** (ADR 0057), which `ludwerk edit` has never
@@ -7090,6 +7081,25 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 toldDilation = clock.timeDilation;
                 script::fireTimeDilationChanged(host->runtime().state());
             }
+        }
+        // **What the ticks asked of the manager, sent as they end** (ADR 0220,
+        // amended): an answer read at the next frame's start is the next
+        // tick's. Sent before the ticks, a question asked in one waited for
+        // the next frame to leave and its answer for the one after -- two
+        // ticks a data operation.
+        if (managedWorld.has_value()) {
+            managedWorld->frame(host->world(), host->dataModel(), network.replication(),
+                                host->world().engineState().networkPort, platform::nowNs(),
+                                lastSimTicks > 0 ? lastSimMs / static_cast<f64>(lastSimTicks) : 0.0);
+            // **A world without its manager stops on its own** (ADR 0220
+            // §5): its pipe closed, or the manager said so.
+            if (consoleInput.ended())
+                managedWorld->managerGone();
+            if (managedWorld->stopping())
+                quit = true;
+        }
+        else {
+            routeData();
         }
         ENG_PROFILE_NEXT(stretch, "frame.network");
         // A frame that ran no tick still services the connection: a paused

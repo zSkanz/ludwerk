@@ -7,6 +7,7 @@
 #include <chrono>
 #include <deque>
 #include <doctest/doctest.h>
+#include <functional>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -1862,6 +1863,80 @@ private:
 };
 
 } // namespace
+
+TEST_CASE("a world's data operation wakes the manager's wait, and is answered within a frame of the world's")
+{
+    // **The manager's loop as it runs**: a frame, then a wait for work. A
+    // world's question and the store's answer each end the wait; without
+    // them each wait is the whole second given it.
+    Captured log;
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(R"([manager]
+public_address = "memory"
+port = 47981
+world_ports = "47982-47989"
+[[world]]
+name = "town"
+entry = true
+)",
+                                                                            "servers.toml", error);
+    REQUIRE(config.has_value());
+    Project managerRoot;
+    Scripted town;
+    std::function<void()> told;
+    auto wire = net::createMemoryNetwork();
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = managerRoot.root;
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        told = launch.wake;
+        core::JsonWriter ready(core::JsonLayout::Compact);
+        ready.beginObject();
+        ready.field("type", "ready");
+        ready.field("port", static_cast<core::i64>(launch.port));
+        ready.field("key", "k-town");
+        ready.field("protocol", static_cast<core::i64>(0));
+        ready.endObject();
+        town.say(ready);
+        return std::make_unique<ScriptedProcess>(town);
+    };
+    core::u64 now = 1;
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+    for (int at = 0; at < 4; ++at)
+        manager.frame();
+    REQUIRE(told);
+
+    // **Asked**, as a world's reader would say it wrote.
+    core::JsonWriter asked(core::JsonLayout::Compact);
+    asked.beginObject();
+    asked.field("type", "data-op");
+    asked.field("id", static_cast<core::i64>(7));
+    asked.field("request", R"({"op":"balance","owner":"ana","currency":"Gold"})");
+    asked.endObject();
+    town.say(asked);
+    told();
+    const auto started = std::chrono::steady_clock::now();
+    int frames = 0;
+    while (town.last("data-result").empty() && frames < 3) {
+        manager.waitForWork(std::chrono::seconds(1));
+        manager.frame();
+        ++frames;
+    }
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    const std::string answer = town.last("data-result");
+    REQUIRE_FALSE(answer.empty());
+    CHECK(answer.find("\"id\":7") != std::string::npos);
+    // A frame of a world is a sixtieth of a second; two waits that ran their
+    // course would be two seconds.
+    MESSAGE("answered in ", took * 1000.0, " ms, ", frames, " frames");
+    CHECK(took < 0.5);
+}
 
 TEST_CASE("ADR 0230: a full world opens another channel, players go to the fullest with room, a party together, "
           "and an emptied channel closes or is merged")

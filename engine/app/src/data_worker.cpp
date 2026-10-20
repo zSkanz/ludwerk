@@ -100,12 +100,25 @@ void DataWorker::run()
         }
         Then then = next.job(*m_store);
         const core::f64 tookMs = std::chrono::duration<core::f64, std::milli>(Clock::now() - next.posted).count();
-        const std::lock_guard<std::mutex> lock(m_mutex);
-        ++m_doneCount;
-        m_worstMs = std::max(m_worstMs, tookMs);
-        if (then)
-            m_done.push_back(std::move(then));
+        std::function<void()> told;
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            ++m_doneCount;
+            m_worstMs = std::max(m_worstMs, tookMs);
+            if (then) {
+                m_done.push_back(std::move(then));
+                told = m_told;
+            }
+        }
+        if (told)
+            told();
     }
+}
+
+void DataWorker::onDone(std::function<void()> told)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    m_told = std::move(told);
 }
 
 } // namespace engine::app

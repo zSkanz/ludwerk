@@ -205,3 +205,33 @@ the command.
 
 Instances (ADR 0221), Travel and its pass (ADR 0222), messages between worlds
 (ADR 0223).
+
+## Amended 2026-10-20: the manager waits for work, not for a clock
+
+The manager's loop slept twenty milliseconds after each frame and read the
+worlds' pipes without waiting, so every question a world asked it -- a data
+operation above all -- waited up to two of its frames before it was
+answered, about fifty milliseconds on one machine. A test of a thousand
+trades through a game's own backend, two operations each, took two minutes
+on Linux and did not finish in five on macOS.
+
+So the loop waits for work, with the frame's time as its most. Each world's
+output is read on a thread of its own, blocked on the pipe until the world
+writes, which ends the wait (`ProcessOptions::onOutput`); the store's thread
+ends it when an answer is ready (`DataWorker::onDone`). Idle, the manager
+costs what it did; asked, it answers within the world's own frame. The front
+door and the console are still read once a frame.
+
+**And a world sends what its ticks asked as they end.** It read the
+manager's lines before its ticks and sent its own before them too, so a
+question asked in a tick left at the next frame and its answer was read at
+the one after: two ticks an operation however fast the manager. Sent after
+the ticks, the answer is read before the next frame's first. A lone server,
+whose store is its own, takes its store's answers before the ticks and asks
+after them, the same way.
+
+Measured on one machine, two hundred reads in a row from a world at 60
+ticks a second: 78.5 ms each before, 33.75 with the manager waiting for work,
+16.67 -- one tick -- with both; through the reference backend in Lute, 78.8,
+44.5 and 30.1, the rest being the backend's own answer. The backend test's
+thousand trades took 180 s before and 68 s after.

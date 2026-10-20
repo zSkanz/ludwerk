@@ -12,6 +12,7 @@
 // render thread.
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -42,6 +43,12 @@ struct ProcessOptions
     // **Its standard input a pipe this side writes** (`ChildProcess::write`),
     // rather than nothing: how a manager speaks to its worlds (ADR 0220 §2).
     bool pipeInput = false;
+    // **Told the moment the child writes**: its output is read on a thread of
+    // its own, which waits on the pipe until the child writes or ends, keeps
+    // what it read for `readAvailable`, and calls this -- from that thread.
+    // How a manager hears a world at once rather than at its next frame.
+    // Empty, the output is read only when `readAvailable` asks.
+    std::function<void()> onOutput;
 };
 
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments);
@@ -111,9 +118,13 @@ public:
     void closeInput();
 
 private:
+    struct Reader;
+
     explicit ChildProcess(void* process) noexcept : m_process(process) {}
 
     void* m_process = nullptr;
+    // With `onOutput`: the thread that reads, and what it read.
+    std::shared_ptr<Reader> m_reader;
     int m_exitCode = -1;
     bool m_exited = false;
     bool m_inputClosed = false;
