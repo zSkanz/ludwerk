@@ -4,6 +4,7 @@
 // around the camera, leave behind it, and a cell somebody changed stays -- the
 // one property the whole design is for, since a streamer that dropped an edit
 // would lose a player's work without saying so.
+#include <chrono>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <map>
@@ -120,11 +121,15 @@ struct StreamedWorld
     [[nodiscard]] const asset::VoxelGrid& grid() { return world.voxels().find(workspace)->grid; }
 
     // Pumps until `done`, the way frames would, with the reader's threads
-    // given time to finish.
+    // given time to finish -- a minute of it, by the clock. A count of pumps
+    // was a question about the machine's speed: on a busy one, at a low
+    // priority the readers inherit, twenty thousand yields went by before
+    // they had the processor.
     template <typename Done>
     [[nodiscard]] bool pumpUntil(Done&& done)
     {
-        for (int frame = 0; frame < 20000; ++frame) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+        while (std::chrono::steady_clock::now() < deadline) {
             streamer.pump(50.0);
             if (done())
                 return true;
@@ -364,10 +369,7 @@ TEST_CASE("a cell saved at another voxel size is refused, never merged at the wr
     scene::TerrainComponent& terrain = *streamed.world.terrains().find(streamed.ground);
     terrain.field =
         asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -32.0f, .maxHeight = 32.0f});
-    for (int frame = 0; frame < 2000 && !streamed.streamer.primed(); ++frame) {
-        streamed.streamer.pump(50.0);
-        std::this_thread::yield();
-    }
+    (void)streamed.pumpUntil([&] { return streamed.streamer.primed(); });
     CHECK(streamed.field().empty());
 }
 
