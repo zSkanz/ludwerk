@@ -33,7 +33,10 @@ file(MAKE_DIRECTORY "${OUTPUT}")
 
 foreach(variant drawn applied)
     set(project "${OUTPUT}/${variant}")
-    file(COPY "${SCRIPT}/" DESTINATION "${project}")
+    file(COPY "${SCRIPT}/" DESTINATION "${project}"
+        PATTERN ".engine" EXCLUDE
+        PATTERN "engine.log" EXCLUDE
+        PATTERN "engine.previous.log" EXCLUDE)
     if(variant STREQUAL "applied")
         file(WRITE "${project}/src/shared/applied.luau" "--!strict\nreturn true\n")
     endif()

@@ -18,7 +18,10 @@ endforeach()
 
 file(REMOVE_RECURSE "${OUTPUT}")
 file(MAKE_DIRECTORY "${OUTPUT}")
-file(COPY "${SCENES}/surfaced/" DESTINATION "${OUTPUT}/painted")
+file(COPY "${SCENES}/surfaced/" DESTINATION "${OUTPUT}/painted"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 file(READ "${OUTPUT}/painted/content/shaders/look.surface.hlsl" shader)
 string(REPLACE "surface.BaseColor = Color * base.rgb;" "surface.BaseColor = float3(0.0, 1.0, 0.0);" shader "${shader}")
 file(WRITE "${OUTPUT}/painted/content/shaders/look.surface.hlsl" "${shader}")

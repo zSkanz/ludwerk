@@ -36,7 +36,10 @@ endforeach()
 file(REMOVE_RECURSE "${OUTPUT}")
 file(MAKE_DIRECTORY "${OUTPUT}")
 set(project "${OUTPUT}/project")
-file(COPY "${SCRIPT}/" DESTINATION "${project}")
+file(COPY "${SCRIPT}/" DESTINATION "${project}"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 math(EXPR frames "${CASES} * ${FRAMES_PER_CASE}")
 
 function(run name)

@@ -36,7 +36,10 @@ endforeach()
 # A copy in the build tree, fresh: the import writes the scene and its cells
 # into the project it is given, and the repository's copy has neither.
 file(REMOVE_RECURSE "${WORK}")
-file(COPY "${PROJECT}/" DESTINATION "${WORK}")
+file(COPY "${PROJECT}/" DESTINATION "${WORK}"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 
 execute_process(
     COMMAND "${HOST}" "${WORK}"

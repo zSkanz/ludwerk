@@ -30,7 +30,10 @@ endforeach()
 file(REMOVE_RECURSE "${OUTPUT}")
 file(MAKE_DIRECTORY "${OUTPUT}")
 set(project "${OUTPUT}/project")
-file(COPY "${SCRIPT}/" DESTINATION "${project}")
+file(COPY "${SCRIPT}/" DESTINATION "${project}"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 file(MAKE_DIRECTORY "${project}/content/models")
 file(COPY_FILE "${CARDS}/content/models/card.gltf" "${project}/content/models/card.gltf")
 file(COPY_FILE "${CARDS}/variants/solid.png" "${project}/content/models/card.png")

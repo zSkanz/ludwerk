@@ -84,7 +84,10 @@ endif()
 
 # 3. Two mistakes, and exactly those.
 file(REMOVE_RECURSE "${SCRATCH}")
-file(COPY "${PROJECT}/" DESTINATION "${SCRATCH}")
+file(COPY "${PROJECT}/" DESTINATION "${SCRATCH}"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 file(WRITE "${SCRATCH}/src/client/Main.luau" "--!strict
 local Match = require(\"../shared/Match\")
 local Gone = require(\"../shared/Gone\")

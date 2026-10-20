@@ -14,7 +14,10 @@ endforeach()
 file(REMOVE_RECURSE "${WORKDIR}")
 file(MAKE_DIRECTORY "${WORKDIR}")
 # The game beside `servers.toml`, as a manager finds it.
-file(COPY "${PROJECT}/" DESTINATION "${WORKDIR}/game")
+file(COPY "${PROJECT}/" DESTINATION "${WORKDIR}/game"
+    PATTERN ".engine" EXCLUDE
+    PATTERN "engine.log" EXCLUDE
+    PATTERN "engine.previous.log" EXCLUDE)
 
 # **One run of the manager**, on ports of its own: a world of a run before
 # may still be closing on the last one's, and nothing here waits for it.
