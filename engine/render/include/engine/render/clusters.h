@@ -55,8 +55,8 @@ inline constexpr u32 kClusterGridHeight = kClusterTilesY;
 }
 
 // How many lights one frame may carry. A budget rather than a limit of the
-// design, like `kMaxSkinJoints`: the light table is a texture and a texture has
-// a size. Two hundred and fifty-six is thirty-two times what the first renderer shipped.
+// design: the light table is a texture and a texture has a size. Two hundred and fifty-six is thirty-two times what the
+// first renderer shipped.
 inline constexpr u32 kMaxClusteredLights = 256;
 
 // How many may reach ONE cluster, which is the number a fragment actually pays

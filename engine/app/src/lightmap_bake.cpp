@@ -14,6 +14,7 @@ using core::Color3;
 using core::DVec3;
 using core::f32;
 using core::f64;
+using core::i64;
 using core::u32;
 using core::u64;
 using core::u8;
@@ -26,9 +27,10 @@ namespace {
 constexpr f32 kPi = 3.14159265358979f;
 // How far off its surface a texel's rays begin, as a volume's do.
 constexpr f32 kOffSurface = 0.02f;
-// Rays a texel casts at the sun for its mask, and the sun's own radius as
-// it is seen from here, in radians.
+// Rays a texel casts at the sun for its mask, and a point of the sun grid
+// for its; and the sun's own radius as it is seen from here, in radians.
 constexpr u32 kMaskRays = 16;
+constexpr u32 kSunGridRays = 8;
 constexpr f32 kSunRadius = 0.0047f;
 // The cells a pass's light is kept by for the next to read, in metres.
 constexpr f32 kCellSize = 0.25f;
@@ -272,6 +274,30 @@ void LightmapBake::begin(std::span<const LightmapSurface> surfaces, u32 pageSize
     for (u32 index = 0; index < surfaces.size(); ++index)
         rasterize(surfaces[index], index);
     m_texelCount = m_texels.size();
+    // **The grid what moves is shadowed by**: over every texel's place and
+    // a metre round, as fine as a volume's slices allow and no finer than
+    // half a metre.
+    if (!m_texels.empty()) {
+        DVec3 low = m_texels.front().place;
+        DVec3 high = low;
+        for (const Texel& texel : m_texels) {
+            low = DVec3{std::min(low.x, texel.place.x), std::min(low.y, texel.place.y), std::min(low.z, texel.place.z)};
+            high = DVec3{std::max(high.x, texel.place.x), std::max(high.y, texel.place.y),
+                         std::max(high.z, texel.place.z)};
+        }
+        low = low - DVec3{1.0, 1.0, 1.0};
+        high = high + DVec3{1.0, 1.0, 1.0};
+        const DVec3 extent = high - low;
+        const f64 widest = std::max({extent.x, extent.y, extent.z});
+        m_grid.low = low;
+        m_grid.spacing = static_cast<f32>(std::max(0.5, widest / static_cast<f64>(kSunGridSide - 1)));
+        const f64 along[3] = {extent.x, extent.y, extent.z};
+        for (u32 axis = 0; axis < 3; ++axis) {
+            const auto points = static_cast<u32>(std::ceil(along[axis] / static_cast<f64>(m_grid.spacing))) + 1u;
+            m_grid.counts[axis] = std::clamp(points, 2u, kSunGridSide);
+        }
+        m_grid.sun.assign(static_cast<usize>(m_grid.counts[0]) * m_grid.counts[1] * m_grid.counts[2], 1.0f);
+    }
     m_indirect.assign(m_texels.size(), Color3{0.0f, 0.0f, 0.0f});
     m_inside.assign(m_texels.size(), 0);
     m_mask.assign(m_texels.size(), 0.0f);
@@ -421,6 +447,82 @@ void LightmapBake::maskTexel(usize index, const BakeTrace& trace)
             ++seen;
     }
     m_mask[index] = static_cast<f32>(seen) / static_cast<f32>(kMaskRays);
+}
+
+void LightmapBake::sunPoint(usize point, const BakeTrace& trace)
+{
+    const u32 nx = m_grid.counts[0];
+    const u32 ny = m_grid.counts[1];
+    const auto x = static_cast<f64>(point % nx);
+    const auto y = static_cast<f64>((point / nx) % ny);
+    const auto z = static_cast<f64>(point / (static_cast<usize>(nx) * ny));
+    const auto spacing = static_cast<f64>(m_grid.spacing);
+    const DVec3 from = m_grid.low + DVec3{x * spacing, y * spacing, z * spacing};
+    const Vec3 sun = m_lit.sunDirection;
+    Vec3 tangent;
+    Vec3 bitangent;
+    basisOf(sun, tangent, bitangent);
+    u32 seen = 0;
+    for (u32 ray = 0; ray < kSunGridRays; ++ray) {
+        const Vec3 disc = hemisphereDirection(ray, kSunGridRays, 0.0f);
+        const Vec3 towards = core::normalize(
+            added(sun, added(scaled(tangent, disc.x * kSunRadius), scaled(bitangent, disc.y * kSunRadius))));
+        const BakeHit met = trace(from, towards, kBakeReach);
+        // **A point inside something** takes its neighbours' answer.
+        if (met.hit && met.inside) {
+            m_grid.sun[point] = -1.0f;
+            return;
+        }
+        if (!met.hit)
+            ++seen;
+    }
+    m_grid.sun[point] = static_cast<f32>(seen) / static_cast<f32>(kSunGridRays);
+}
+
+void LightmapBake::sunEnd()
+{
+    const u32 nx = m_grid.counts[0];
+    const u32 ny = m_grid.counts[1];
+    const u32 nz = m_grid.counts[2];
+    // Each point inside something the mean of the ones beside it that are
+    // not, a few times over; what is left is deep in a wall, where nothing
+    // that moves goes, and sees the sun.
+    for (u32 round = 0; round < 3; ++round) {
+        std::vector<f32> filled = m_grid.sun;
+        for (u32 z = 0; z < nz; ++z) {
+            for (u32 y = 0; y < ny; ++y) {
+                for (u32 x = 0; x < nx; ++x) {
+                    const usize at = (static_cast<usize>(z) * ny + y) * nx + x;
+                    if (m_grid.sun[at] >= 0.0f)
+                        continue;
+                    f32 sum = 0.0f;
+                    u32 count = 0;
+                    const i64 here[3] = {x, y, z};
+                    const i64 sizes[3] = {nx, ny, nz};
+                    for (u32 axis = 0; axis < 3; ++axis) {
+                        for (const i64 step : {-1, 1}) {
+                            i64 there[3] = {here[0], here[1], here[2]};
+                            there[axis] += step;
+                            if (there[axis] < 0 || there[axis] >= sizes[axis])
+                                continue;
+                            const f32 value =
+                                m_grid.sun[(static_cast<usize>(there[2]) * ny + static_cast<usize>(there[1])) * nx +
+                                           static_cast<usize>(there[0])];
+                            if (value < 0.0f)
+                                continue;
+                            sum += value;
+                            ++count;
+                        }
+                    }
+                    if (count > 0)
+                        filled[at] = sum / static_cast<f32>(count);
+                }
+            }
+        }
+        m_grid.sun = std::move(filled);
+    }
+    for (f32& value : m_grid.sun)
+        value = value < 0.0f ? 1.0f : value;
 }
 
 void LightmapBake::gatherTexel(usize index, const BakeTrace& trace)
@@ -680,7 +782,26 @@ bool LightmapBake::step(const BakeTrace& trace, const BakeLight& light, u64 budg
     Work work{this, &trace};
     while (m_stage != Stage::Done) {
         const usize texels = m_texels.size();
-        if (m_stage == Stage::Mask || m_stage == Stage::Gather) {
+        if (m_stage == Stage::Sun) {
+            const usize points = m_grid.sun.size();
+            const usize end = budgetNs == 0 ? points : std::min(points, m_cursor + kChunk);
+            jobs::parallelFor(
+                "lightmap.sun", jobs::Domain::Tooling, m_cursor, end, kGrain,
+                [](void* user, usize begin, usize last, u32) noexcept {
+                    const Work& asked = *static_cast<const Work*>(user);
+                    for (usize point = begin; point < last; ++point)
+                        asked.self->sunPoint(point, *asked.trace);
+                },
+                &work);
+            m_cursor = end;
+            if (m_cursor >= points) {
+                sunEnd();
+                m_cursor = 0;
+                m_stage = Stage::Gather;
+                m_pass = 0;
+            }
+        }
+        else if (m_stage == Stage::Mask || m_stage == Stage::Gather) {
             const usize end = budgetNs == 0 ? texels : std::min(texels, m_cursor + kChunk);
             const bool mask = m_stage == Stage::Mask;
             if (mask) {
@@ -707,8 +828,7 @@ bool LightmapBake::step(const BakeTrace& trace, const BakeLight& light, u64 budg
             if (m_cursor >= texels) {
                 m_cursor = 0;
                 if (mask) {
-                    m_stage = Stage::Gather;
-                    m_pass = 0;
+                    m_stage = Stage::Sun;
                 }
                 else {
                     passEnd();
@@ -737,6 +857,8 @@ f32 LightmapBake::progress() const noexcept
         return 0.0f;
     case Stage::Mask:
         return 0.15f * done;
+    case Stage::Sun:
+        return 0.15f;
     case Stage::Gather:
         return 0.15f + 0.8f * (static_cast<f32>(m_pass) + done) / static_cast<f32>(1 + m_bounces);
     case Stage::Finish:

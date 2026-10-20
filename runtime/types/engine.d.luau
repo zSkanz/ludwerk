@@ -5107,6 +5107,13 @@ declare extern type Lighting extends Instance with
     --- only where nothing is drawn; at 1 only the room is seen. Tween it for a portal or a fade between
     --- the room and the game.
     XRPassthroughOpacity: number
+    --- A file that holds the light baked into the parts with `BasePart.BakedLight` on, as an `asset://`
+    --- path ending in `.lightmap`. Write it with the editor's Bake on `Lighting`, or with `engine-host
+    --- <project> --bake-lighting`. Every machine reads it as the scene opens, and each baked part is
+    --- drawn with its light from the first frame. The file holds where each part stood and how large it
+    --- was. A part that has since moved, been resized or renamed is lit as an ordinary part until the
+    --- next bake, and the log says which.
+    Baked: Content
     --- How many texels a meter the bake gives the light of parts with `BasePart.BakedLight` on. At 16,
     --- the default, a texel is about six centimeters across. A scene whose baked parts ask for more
     --- than four pages of 1024 by 1024 texels is baked at a lower density, and the bake says so. Read

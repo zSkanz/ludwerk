@@ -1185,6 +1185,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, lighting->autoExposure);
             return true;
         }
+        if (field.name == "Baked") {
+            setU32(out, lighting->baked.id);
+            return true;
+        }
         if (field.name == "ExposureMin") {
             setF32(out, lighting->exposureMin);
             return true;
@@ -2613,6 +2617,8 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             lighting->globalShadows = asBool(value);
         else if (field.name == "AutoExposure")
             lighting->autoExposure = asBool(value);
+        else if (field.name == "Baked")
+            lighting->baked = core::NameAtom{asU32(value)};
         else if (field.name == "ExposureMin")
             lighting->exposureMin = asF32(value);
         else if (field.name == "ExposureMax")

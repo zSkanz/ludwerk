@@ -237,6 +237,7 @@ public:
 
     void upload(BufferHandle buffer, std::span<const std::byte> data, u32 offsetBytes) override;
     void uploadTexture(TextureHandle texture, std::span<const std::byte> data, u32 mipLevel) override;
+    void uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data) override;
     void uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,
                              std::span<const std::byte> data) override;
     void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) override;
@@ -455,6 +456,10 @@ public:
                                                          SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER) &&
                             SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB,
                                                          SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        caps.bc6hTextures = SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_BC6H_RGB_UFLOAT,
+                                                         SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        caps.astcHdrTextures = SDL_GPUTextureSupportsFormat(device_, SDL_GPU_TEXTUREFORMAT_ASTC_4x4_FLOAT,
+                                                            SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPU_TEXTUREUSAGE_SAMPLER);
         caps.depthClamp = depthClamp_;
         // Said by patch 0009 where the device has VK_EXT_fragment_density_map.
         const SDL_PropertiesID properties = SDL_GetGPUDeviceProperties(device_);
@@ -2380,6 +2385,40 @@ void SdlGpuCmdList::uploadTexture(TextureHandle texture, std::span<const std::by
         .z = 0,
         .w = mipWidth,
         .h = mipHeight,
+        .d = 1,
+    };
+    SDL_UploadToGPUTexture(pass, &source, &region, false);
+    releaseStaged(staged);
+}
+
+void SdlGpuCmdList::uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data)
+{
+    TextureEntry* entry = device_.texture(texture);
+    if (entry == nullptr || entry->texture == nullptr || data.empty() || layer >= entry->layers)
+        return;
+    SDL_GPUCopyPass* pass = ensureCopyPass();
+    if (pass == nullptr)
+        return;
+    const Staged staged = stage(data, kTextureStagingAlignment);
+    if (staged.transfer == nullptr)
+        return;
+    // Rows and texels, not blocks: SDL counts a block format's rows in texels
+    // too.
+    const SDL_GPUTextureTransferInfo source{
+        .transfer_buffer = staged.transfer,
+        .offset = staged.offset,
+        .pixels_per_row = entry->width,
+        .rows_per_layer = entry->height,
+    };
+    const SDL_GPUTextureRegion region{
+        .texture = entry->texture,
+        .mip_level = 0,
+        .layer = layer,
+        .x = 0,
+        .y = 0,
+        .z = 0,
+        .w = entry->width,
+        .h = entry->height,
         .d = 1,
     };
     SDL_UploadToGPUTexture(pass, &source, &region, false);

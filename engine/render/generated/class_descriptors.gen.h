@@ -917,6 +917,8 @@ scene::Value getLightingAutoExposure(const scene::World& world, core::InstanceId
 bool setLightingAutoExposure(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingXRPassthroughOpacity(const scene::World& world, core::InstanceId id);
 bool setLightingXRPassthroughOpacity(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLightingBaked(const scene::World& world, core::InstanceId id);
+bool setLightingBaked(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingLightmapDensity(const scene::World& world, core::InstanceId id);
 bool setLightingLightmapDensity(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getLightingSunDirection(const scene::World& world, core::InstanceId id);

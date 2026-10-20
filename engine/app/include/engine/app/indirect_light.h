@@ -597,6 +597,7 @@ private:
     std::vector<Surface> m_surfaces;
     void readSurfaces(const Frame& frame);
     void stepLightmaps(const Frame& frame);
+    void readKeptLightmap(const Frame& frame);
     void beginLightmaps(const Frame& frame);
 
     // A mesh's triangles as a tree, made the first time a volume is begun
@@ -689,6 +690,12 @@ private:
     std::vector<core::f32> m_lightmapRects;
     std::vector<LightmapPart> m_lightmapLit;
     core::Vec3 m_lightmapSun{0.0f, 1.0f, 0.0f};
+    std::shared_ptr<const std::vector<core::f32>> m_sunGrid;
+    // The file `Lighting.Baked` named when it was last read, read or not.
+    core::NameAtom m_lightmapRead;
+    core::DVec3 m_sunGridLow;
+    core::f32 m_sunGridSpacing = 1.0f;
+    core::u32 m_sunGridCounts[3] = {0, 0, 0};
     core::u64 m_lightmapStamp = 0;
     bool m_lightmapMaskHolds = false;
 };

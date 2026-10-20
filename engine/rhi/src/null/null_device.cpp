@@ -39,6 +39,7 @@ public:
 
     void upload(BufferHandle, std::span<const std::byte>, u32) override {}
     void uploadTexture(TextureHandle, std::span<const std::byte>, u32) override {}
+    void uploadTextureLayer(TextureHandle, u32, std::span<const std::byte>) override {}
     void uploadTextureRegion(TextureHandle, u32, u32, u32, u32, std::span<const std::byte>) override {}
     void blitTexture(TextureHandle, TextureHandle, u32) override {}
     void blitTextureLevel(TextureHandle, u32, TextureHandle, u32, u32) override {}

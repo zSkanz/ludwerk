@@ -911,6 +911,15 @@ local NoFields: { Schema.Field } = {}
 
 local LightingFields: { Schema.Field } = {
     {
+        Name = "Baked",
+        Id = 17,
+        Encoding = "NameAtom",
+        Source = "Component",
+        Component = "lighting",
+        Doc = "The file the light of what stands still is kept in, by content URN (protocol 65, ADR 0253): "
+            .. "each machine reads its own copy.",
+    },
+    {
         Name = "ClockTime",
         Id = 1,
         Encoding = "F32",

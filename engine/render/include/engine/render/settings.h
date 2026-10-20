@@ -368,6 +368,12 @@ inline constexpr u32 Nearby = 32768u;
 // The tonemap folded into a headset eye's forward pass (ADR 0250): drawn as
 // every other frame is, into the 16-bit target and tonemapped after.
 inline constexpr u32 Fold = 65536u;
+// The parts a bake's mask shadows, which the sun's map otherwise leaves out of
+// every cascade but the nearest (ADR 0253 §4): kept in all of them, as with
+// no bake -- what taking them out saves, read off two runs.
+inline constexpr u32 BakedCasters = 131072u;
+// And left out of the nearest cascade as well: what keeping them there costs.
+inline constexpr u32 BakedNear = 262144u;
 } // namespace MeasureSkip
 
 // The taps a shadow quality filters with: `shadowTaps` for the level's place

@@ -26,6 +26,10 @@
 namespace engine::render {
 namespace {
 
+// Joints past which a skeleton is said to cost more on a phone: a frame
+// uploads each as a matrix, every pass that draws it reads them.
+constexpr core::u32 kManyJoints = 256;
+
 using core::f32;
 using core::u32;
 
@@ -1066,6 +1070,9 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
         MeshLibrary::Entry entry;
         core::EngineError uploadError;
         core::u32 triangles = 0;
+        // How many joints its skeleton has: said with the mesh, as what it
+        // costs, rather than refused past a number.
+        core::u32 joints = 0;
 
         if (resolved.source == asset::ResolvedContent::Source::Pack && resolved.kind == asset::AssetKind::Mesh) {
             asset::CompiledMesh compiled;
@@ -1119,6 +1126,7 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             // what a stats panel calls "the mesh", and counting every level
             // would report a mesh roughly twice the size of the one on screen.
             triangles = static_cast<core::u32>(compiled.lods[0].indices.size() / 3);
+            joints = static_cast<core::u32>(compiled.joints.size());
 
             // Its bounds as far as its morph targets reach (ADR 0196), before
             // the cache copies them.
@@ -1241,11 +1249,27 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
 
         ++loaded;
 
-        const std::array<core::I18nArg, 2> args{
-            core::I18nArg{"path", urn},
-            core::I18nArg{"triangles", static_cast<core::i64>(triangles)},
-        };
-        core::log(core::LogLevel::Info, ENG_TR("render.info.mesh_loaded"), args);
+        if (joints == 0) {
+            const std::array<core::I18nArg, 2> args{
+                core::I18nArg{"path", urn},
+                core::I18nArg{"triangles", static_cast<core::i64>(triangles)},
+            };
+            core::log(core::LogLevel::Info, ENG_TR("render.info.mesh_loaded"), args);
+        }
+        else {
+            // **What a skeleton costs, said**: every joint is a matrix a frame
+            // uploads and a vertex may read. Past a few hundred, a phone
+            // notices.
+            const std::array<core::I18nArg, 3> args{
+                core::I18nArg{"path", urn},
+                core::I18nArg{"triangles", static_cast<core::i64>(triangles)},
+                core::I18nArg{"joints", static_cast<core::i64>(joints)},
+            };
+            core::log(core::LogLevel::Info,
+                      joints > kManyJoints ? ENG_TR("render.info.mesh_loaded_many_joints")
+                                           : ENG_TR("render.info.mesh_loaded_joints"),
+                      args);
+        }
     };
     world.meshParts().forEach(
         [&](core::InstanceId, const scene::MeshPartComponent& meshPart) { load(meshPart.meshContent); });

@@ -3005,6 +3005,8 @@ bool dragNumber(const char* label, ImGuiDataType type, void* data, int component
         return ContentKind::Sequence;
     if (name == "Irradiance")
         return ContentKind::Irradiance;
+    if (name == "Lightmap")
+        return ContentKind::Lightmap;
     return ContentKind::Other;
 }
 
@@ -9051,6 +9053,9 @@ bool dialogButton(const char* label, ImVec2 requested)
     // And of what is lit by it.
     case ContentKind::Irradiance:
         return icons::ClassIrradianceVolume;
+    // And of the light the parts keep.
+    case ContentKind::Lightmap:
+        return icons::ClassLighting;
     case ContentKind::Other:
         break;
     }
@@ -9176,6 +9181,8 @@ bool drawContentThumbnail(const ContentTree& tree, const ContentEntry& entry, fl
     case ContentKind::Sequence:
         return "sequence";
     case ContentKind::Irradiance:
+        return "light";
+    case ContentKind::Lightmap:
         return "light";
     case ContentKind::Other:
         break;

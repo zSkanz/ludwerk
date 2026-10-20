@@ -1127,7 +1127,8 @@ TEST_CASE("every Content property the engine ships says which files it accepts")
                                       std::string(atoms.text(property.name)) +
                                       " has an unknown content kind: " + std::string(kind);
             CHECK_MESSAGE((kind == "Mesh" || kind == "Texture" || kind == "Audio" || kind == "Font" ||
-                           kind == "AnimationGraph" || kind == "FaceMap" || kind == "Sequence" || kind == "Irradiance"),
+                           kind == "AnimationGraph" || kind == "FaceMap" || kind == "Sequence" ||
+                           kind == "Irradiance" || kind == "Lightmap"),
                           where);
         }
     }
@@ -1143,7 +1144,8 @@ TEST_CASE("every Content property the engine ships says which files it accepts")
     // **A material's four maps left with the `Material` class** (ADR 0090): a
     // material is an asset, its maps are fields of its file, and the material
     // panel edits them -- not the property grid.
-    CHECK(contentProperties == 25);
+    // And `Lighting.Baked`'s light of what stands still (ADR 0253).
+    CHECK(contentProperties == 26);
 }
 
 TEST_CASE("a reference with a setter is editable, and one without is not")

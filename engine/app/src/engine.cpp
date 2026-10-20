@@ -79,6 +79,7 @@
 #include "engine/app/language_packs.h"
 #include "engine/app/launcher.h"
 #include "engine/app/lightmap_bake.h"
+#include "engine/app/lightmap_file.h"
 #include "engine/app/partition_cache.h"
 #include "engine/app/picking.h"
 #include "engine/app/pointer_ownership.h"
@@ -2314,6 +2315,59 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     IndirectLight indirectLight;
     // `--bake-lighting` (ADR 0253): whether this run's bake is done.
     bool lightingBaked = false;
+    // **The bake into the file `Lighting.Baked` names** (ADR 0253 §6), under
+    // the project's content -- or, where it names none, into
+    // `light/<scene>.lightmap`, and `Lighting.Baked` names that from then on.
+    const auto writeLightmapFile = [&](scene::World& world, const KeptLightmap& kept) {
+        scene::LightingComponent* lighting = nullptr;
+        world.lighting().forEach([&](core::InstanceId id, const scene::LightingComponent&) {
+            if (lighting == nullptr)
+                lighting = world.lighting().find(id);
+        });
+        if (lighting == nullptr)
+            return false;
+        std::string name(world.atoms().text(lighting->baked));
+        constexpr std::string_view Scheme = "asset://";
+        if (!name.starts_with(Scheme)) {
+            const std::string scene = options.startupScene.empty()
+                                          ? std::string("world")
+                                          : std::filesystem::path(options.startupScene).stem().string();
+            name = std::string(Scheme) + "light/" + scene + ".lightmap";
+            lighting->baked = world.atoms().intern(name);
+        }
+        const std::optional<std::filesystem::path> path =
+            core::resolveUnder(options.scriptPath / "content", std::string_view{name}.substr(Scheme.size()));
+        const std::vector<std::byte> bytes = writeLightmap(kept);
+        std::error_code ignored;
+        if (path.has_value())
+            std::filesystem::create_directories(path->parent_path(), ignored);
+        if (!path.has_value() || !platform::writeFile(*path, bytes)) {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"path", std::string_view{name}}};
+            core::log(core::LogLevel::Error, ENG_TR("app.err.lightmap_write"), args);
+            return false;
+        }
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{name}},
+                                                core::I18nArg{"bytes", static_cast<core::i64>(bytes.size())}};
+        core::log(core::LogLevel::Info, ENG_TR("app.info.lightmap_written"), args);
+        return true;
+    };
+    // **What a run that is evidence still owes before it may end**: the bake
+    // it was asked for, and the eyes' picture, taken once the bake is drawn
+    // (`--xr-eyes-shot`). Waited for ten minutes of frames at most.
+    core::u64 eyesShotDue = 0;
+    bool eyesShotTaken = false;
+    const auto eyesShotFrame = [&]() -> core::u64 {
+        if (options.bakeLighting && !lightingBaked)
+            return ~core::u64{0} >> 1;
+        return eyesShotDue != 0 ? eyesShotDue : options.xrEyesShotFrame;
+    };
+    const auto evidenceOwed = [&](core::u64 frames) {
+        if (options.frames == 0 || frames >= static_cast<core::u64>(options.frames) + 36000u)
+            return false;
+        const bool bakeOwed = options.bakeLighting && !lightingBaked;
+        const bool shotOwed = !options.xrEyesShot.empty() && headsetFramesDrawn > 0 && !eyesShotTaken;
+        return bakeOwed || shotOwed;
+    };
     // **Volumes whose light is being worked out to be kept** (ADR 0207): the
     // one the editor's Bake asked for, and under `--bake-irradiance` every
     // one that names a file. And what a bake that could not be done says.
@@ -4018,7 +4072,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // "never reported" (12 s into a run that takes 2). A minute as well.
         const bool conformanceWaits =
             !options.conformanceRoot.empty() && platform::nowNs() - loopBeganNs < 60'000'000'000ull;
-        if (options.frames != 0 && scheduler.totalFrames() >= options.frames && !conformanceWaits)
+        if (options.frames != 0 && scheduler.totalFrames() >= options.frames && !conformanceWaits &&
+            !evidenceOwed(scheduler.totalFrames()))
             break;
 
         // The FrameStart safe point for `PhysicsService.FixedTimestep`
@@ -9193,6 +9248,28 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         LightmapBakeResult baked;
                         if (indirectLight.takeLightmapBake(baked)) {
                             lightingBaked = true;
+                            // **What is drawn is what is kept** (ADR 0253 §6):
+                            // the pages compressed where this build can, and
+                            // the bake handed on as the file holds it.
+                            KeptLightmap kept = keptLightmapOf(lit, baked);
+                            const std::size_t halves = kept.texels.size() * sizeof(core::u16);
+                            const auto compressing = std::chrono::steady_clock::now();
+                            const bool compressed = compressLightmap(kept);
+                            if (compressed) {
+                                std::size_t pictures = 0;
+                                for (std::size_t page = 0; page < kept.light.size(); ++page)
+                                    pictures += kept.light[page].size() + kept.masks[page].size();
+                                const std::array<core::I18nArg, 4> args{
+                                    core::I18nArg{"pages", static_cast<core::i64>(kept.pageCount)},
+                                    core::I18nArg{"from", static_cast<core::i64>(halves)},
+                                    core::I18nArg{"to", static_cast<core::i64>(pictures)},
+                                    core::I18nArg{"seconds", std::chrono::duration<f64>(
+                                                                 std::chrono::steady_clock::now() - compressing)
+                                                                 .count()}};
+                                core::log(core::LogLevel::Info, ENG_TR("app.info.lightmap_compressed"), args);
+                            }
+                            writeLightmapFile(lit, kept);
+                            eyesShotDue = std::max<core::u64>(options.xrEyesShotFrame, headsetFramesDrawn + 30);
                             const std::array<core::I18nArg, 5> args{
                                 core::I18nArg{"parts", static_cast<core::i64>(baked.parts.size())},
                                 core::I18nArg{"pages", static_cast<core::i64>(baked.pages.size())},
@@ -9200,7 +9277,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 core::I18nArg{"texels", static_cast<core::i64>(baked.texels)},
                                 core::I18nArg{"unmapped", static_cast<core::i64>(baked.unmapped.size())}};
                             core::log(core::LogLevel::Info, ENG_TR("engine.info.lighting_baked"), args);
-                            indirectLight.giveLightmap(baked);
+                            core::u32 missing = 0;
+                            indirectLight.giveLightmap(compressed ? lightmapFromKept(lit, kept, missing) : baked);
                         }
                     }
                     indirectLight.append(snapshot);
@@ -10316,8 +10394,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         // room shows through, whose alpha the copy writes from
                         // what the picture covers; nor on the frame whose
                         // pictures `--xr-eyes-shot` reads back.
-                        const bool eyesDirect = snapshot.headsetLean && !eyeCopy.seeThrough &&
-                                                !(!options.xrEyesShot.empty() && headsetFramesDrawn + 1 == 600);
+                        const bool eyesDirect =
+                            snapshot.headsetLean && !eyeCopy.seeThrough &&
+                            !(!options.xrEyesShot.empty() && headsetFramesDrawn + 1 == eyesShotFrame());
                         // **Where the room shows, nothing is behind the
                         // picture**: no sky, cleared to no coverage, and each
                         // pixel's alpha what was drawn there covers -- a panel,
@@ -10414,7 +10493,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         // Read at the frame after the one drawn for it: a frame's
                         // commands are not yet sent when its eyes are, and what a
                         // wait for the device finishes is only what was sent.
-                        const bool eyesShot = !options.xrEyesShot.empty() && headsetFramesDrawn == 601;
+                        const bool eyesShot = !options.xrEyesShot.empty() && headsetFramesDrawn == eyesShotFrame() + 1;
+                        eyesShotTaken = eyesShotTaken || eyesShot;
                         if (headsetFramesDrawn == 1 || eyesShot) {
                             const auto degrees = [](f32 tangent) {
                                 return std::round(std::atan(static_cast<f64>(tangent)) * 572.9578) / 10.0;
@@ -11001,7 +11081,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         else if (!options.headless && !target.valid())
             platform::sleepNs(std::max<u64>(scheduler.nanosUntilNextTick(platform::nowNs()), 1'000'000ull));
 
-        if (options.frames != 0 && options.exitAfterFrames && frame.index + 1 >= options.frames)
+        if (options.frames != 0 && options.exitAfterFrames && frame.index + 1 >= options.frames &&
+            !evidenceOwed(frame.index + 1))
+            quit = true;
+        // **A bake from the command line is over once it is written** (ADR
+        // 0253 §7), where no number of frames was asked for.
+        if (options.bakeLighting && options.headless && options.frames == 0 && lightingBaked)
             quit = true;
         // **The device is gone** (a driver reset, most often a shader that ran
         // past the driver's timeout). The frame it happened in was dropped by

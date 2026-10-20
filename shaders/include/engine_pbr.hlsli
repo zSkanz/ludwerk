@@ -179,6 +179,10 @@ cbuffer GpuFrameUniforms : register(b0, space3)
     // **The tonemap folded into this pass** (a headset's eye): x the
     // exposure, nought where it is not (`foldOutput`).
     float4 ForwardFold;
+    // **The bake's grid of the sun** (ADR 0253 §4): into its points, xyz an
+    // offset and w a scale; its counts and its first layer; x one over the
+    // array's side, w one where it is read (`bakedSunAt`).
+    float4 SunGridRows[3];
 };
 #endif
 
@@ -214,18 +218,28 @@ cbuffer GpuShadowUniforms : register(b0, space1)
 #endif
 
 #if defined(ENG_UNIFORMS_SKIN)
-// Mirrors `render::kMaxSkinJoints`. A macro rather than a `static const` because
-// it is an array bound.
-#define ENG_MAX_SKIN_JOINTS 64
+// **A skeleton of any size**: the frame's palettes are one storage buffer --
+// every joint's model-space matrix, its inverse bind already folded in, each
+// skeleton's back to back (`RenderWorld::bones`) -- and a draw says where its
+// own begins. A block of sixty-four matrices was the budget here once, and a
+// rig past it drew its first sixty-four joints posed and the rest left behind.
+//
+// The vertex stage's first storage buffer, or its second where the first is a
+// mesh's morph targets (`engine_morph.hlsli`), which defines the register first.
+#if !defined(ENG_SKIN_PALETTE_REGISTER)
+#define ENG_SKIN_PALETTE_REGISTER t0
+#endif
+struct SkinPaletteJoint
+{
+    column_major float4x4 Matrix;
+};
+StructuredBuffer<SkinPaletteJoint> SkinJointPalette : register(ENG_SKIN_PALETTE_REGISTER, space0);
 
-// `render::GpuSkinUniforms`, 4096 bytes: one model-space matrix per joint, with
-// the inverse bind already folded in. The palette is what a vertex multiplies
-// by, so it is the only form worth uploading -- sending joint transforms and
-// inverse binds separately would send twice the bytes to do the same multiply
-// on the GPU.
+// `render::GpuSkinUniforms`: x where the draw's palette begins, y how many
+// joints it has -- nought for a skeleton with no pose, drawn as modelled.
 cbuffer GpuSkinUniforms : register(b1, space1)
 {
-    column_major float4x4 JointMatrices[ENG_MAX_SKIN_JOINTS];
+    uint4 SkinPalette;
 };
 
 // `joints` arrives as a `uint4` and the CALLER converts it from the float4 the
@@ -248,8 +262,14 @@ float4x4 skinMatrix(uint4 joints, float4 weights)
         return float4x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                         1.0f);
     }
-    return JointMatrices[joints.x] * weights.x + JointMatrices[joints.y] * weights.y +
-           JointMatrices[joints.z] * weights.z + JointMatrices[joints.w] * weights.w;
+    if (SkinPalette.y == 0u) {
+        return float4x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                        1.0f);
+    }
+    const uint first = SkinPalette.x;
+    joints = min(joints, (SkinPalette.y - 1u).xxxx);
+    return SkinJointPalette[first + joints.x].Matrix * weights.x + SkinJointPalette[first + joints.y].Matrix * weights.y +
+           SkinJointPalette[first + joints.z].Matrix * weights.z + SkinJointPalette[first + joints.w].Matrix * weights.w;
 }
 #endif
 

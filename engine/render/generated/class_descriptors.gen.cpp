@@ -4384,7 +4384,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(foliageMeshDesc);
 
     // --- Lighting ---
-    static std::array<scene::PropertyDesc, 19> lightingProperties;
+    static std::array<scene::PropertyDesc, 20> lightingProperties;
     lightingProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("ClockTime"),
@@ -4573,6 +4573,19 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
             .get = native::getLightingXRPassthroughOpacity,
             .set = native::setLightingXRPassthroughOpacity,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Baked"),
+            .type = scene::ValueType::String,
+            .contentKind = atoms.intern("Lightmap"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "A file that holds the light baked into the parts with `BasePart.BakedLight` on, as an `asset://` path ending in `.lightmap`. Write it with the editor's Bake on `Lighting`, or with `engine-host <project> --bake-lighting`. Every machine reads it as the scene opens, and each baked part is drawn with its light from the first frame.\012\012The file holds where each part stood and how large it was. A part that has since moved, been resized or renamed is lit as an ordinary part until the next bake, and the log says which.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getLightingBaked,
+            .set = native::setLightingBaked,
         },
         scene::PropertyDesc{
             .name = atoms.intern("LightmapDensity"),

@@ -31,6 +31,7 @@ public:
     void drawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) override;
     void upload(BufferHandle buffer, std::span<const std::byte> data, u32 offsetBytes) override;
     void uploadTexture(TextureHandle texture, std::span<const std::byte> data, u32 mipLevel) override;
+    void uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data) override;
     void uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,
                              std::span<const std::byte> data) override;
     void blitTexture(TextureHandle source, TextureHandle destination, u32 destinationLayer) override;

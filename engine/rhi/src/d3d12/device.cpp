@@ -38,6 +38,8 @@ public:
                  .rendersPixels = true,
                  .compute = true,
                  .astcTextures = false,
+                 .bc6hTextures = true,
+                 .astcHdrTextures = false,
                  .depthClamp = !desc.leastFeatures};
         Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
         Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;

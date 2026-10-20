@@ -120,7 +120,19 @@ enum class TextureFormat : u8
     // threads at once. Never sampled: read through the binding it is written
     // by, or loaded (`TextureUsage::ComputeStorageRead`).
     R32Uint,
+    // **Light in blocks of four by four** (ADR 0253 §6): half-float colour,
+    // no alpha -- BC6H on a desktop, ASTC's HDR profile on a phone or a
+    // headset, each sampled only where `Capabilities` says. A baked page of
+    // light is a byte a texel in either, where half floats were eight.
+    Bc6hRgbUfloat,
+    Astc4x4Float,
 };
+
+[[nodiscard]] constexpr bool isBlockCompressedFormat(TextureFormat format) noexcept
+{
+    return (format >= TextureFormat::Bc1RgbaUnorm && format <= TextureFormat::Astc4x4RgbaUnormSrgb) ||
+           format == TextureFormat::Bc6hRgbUfloat || format == TextureFormat::Astc4x4Float;
+}
 
 [[nodiscard]] constexpr bool isDepthFormat(TextureFormat format) noexcept
 {

@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 64;
+inline constexpr u32 ProtocolVersion = 65;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -186,6 +186,7 @@ inline constexpr FieldDesc ModelFields[] = {
 };
 
 inline constexpr FieldDesc LightingFields[] = {
+    {"Baked", 17, Encoding::NameAtom, Source::Component, "lighting"},
     {"ClockTime", 1, Encoding::F32, Source::Component, "lighting"},
     {"GeographicLatitude", 2, Encoding::F32, Source::Component, "lighting"},
     {"Ambient", 3, Encoding::Color3, Source::Component, "lighting"},

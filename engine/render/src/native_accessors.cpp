@@ -2874,6 +2874,22 @@ bool setLightingXRPassthroughOpacity(scene::World& world, core::InstanceId id, c
     return writeNumber(world.lighting(), id, value, &scene::LightingComponent::xrPassthroughOpacity, 0.0f, 1.0f);
 }
 
+Value getLightingBaked(const scene::World& world, core::InstanceId id)
+{
+    const scene::LightingComponent* lighting = world.lighting().find(id);
+    return lighting == nullptr ? Value{} : Value{std::string(world.atoms().text(lighting->baked))};
+}
+
+bool setLightingBaked(scene::World& world, core::InstanceId id, const Value& value)
+{
+    const auto* text = std::get_if<std::string>(&value);
+    scene::LightingComponent* lighting = world.lighting().find(id);
+    if (text == nullptr || lighting == nullptr)
+        return false;
+    lighting->baked = world.atoms().intern(*text);
+    return true;
+}
+
 Value getLightingLightmapDensity(const scene::World& world, core::InstanceId id)
 {
     return readNumber(world.lighting(), id, &scene::LightingComponent::lightmapDensity);

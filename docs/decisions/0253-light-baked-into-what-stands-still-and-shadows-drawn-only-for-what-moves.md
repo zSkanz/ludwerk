@@ -100,6 +100,19 @@ commercial titles on these headsets light their places this way.
    floats are kept. A scene asks for four pages at most by default (4 MB on
    the device, compressed) and says so when its parts ask for more, which
    the density lowers.
+
+   **As built, two things differ.** The bake compresses, not the export:
+   the encoder is linked into the editor and the tools (never into a game),
+   so the file the editor writes already holds each page as UASTC HDR, and
+   what the editor draws after a bake is the file as it ships. A build with
+   no encoder writes the half floats, and every build reads both. And the
+   mask is not in a format of its own: the lit pass already samples sixteen
+   textures, the most a stage has on every backend, so the mask is encoded
+   the same way, as grey, into the layer after its page -- a byte a texel
+   too, and one array still. Measured on a village of 321 baked parts (four
+   pages of 1024): the file went from 33.6 MB to 1.8 MB, and the pages on
+   the GPU from 40 MB (the half-float array and the page it was uploaded
+   through) to 8 MB of BC6H.
 7. **The bake**: the editor's Lighting has a Bake, with its progress; the
    command is `engine-host <project> --bake-lighting [--scene=...]`. The
    rays are ADR 0203's -- on the processor, through the job system, against

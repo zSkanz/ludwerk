@@ -82,6 +82,11 @@ struct Capabilities
     // Whether the GPU samples ASTC's four-by-four blocks (ADR 0180): a
     // phone's does, a desktop's mostly does not.
     bool astcTextures = false;
+    // Whether it samples half-float colour in blocks (ADR 0253 §6): BC6H,
+    // which every desktop GPU does, and ASTC's HDR profile, which a phone's
+    // or a headset's may.
+    bool bc6hTextures = false;
+    bool astcHdrTextures = false;
     // Whether depth can be clamped where a pipeline does not clip it. A GPU
     // without it clips: what stands nearer a light than its map begins is
     // cut, where it was flattened onto the map's near plane.
@@ -138,6 +143,10 @@ public:
     // Callers upload and draw; that is the whole point of the seam.
     virtual void upload(BufferHandle buffer, std::span<const std::byte> data, u32 offsetBytes) = 0;
     virtual void uploadTexture(TextureHandle texture, std::span<const std::byte> data, u32 mipLevel) = 0;
+    // **One layer of an array, whole** (ADR 0253 §6): what puts a page of
+    // blocks in its layer, where `blitTexture` draws -- and nothing draws into
+    // a block format.
+    virtual void uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data) = 0;
 
     // A rectangle of mip 0, tightly packed rows of `width` texels (ADR 0071).
     //

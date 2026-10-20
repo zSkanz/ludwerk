@@ -4,6 +4,8 @@
 
 #define ENG_UNIFORMS_SHADOW
 #define ENG_UNIFORMS_SKIN
+// The morph targets are the stage's first storage buffer; the palette its second.
+#define ENG_SKIN_PALETTE_REGISTER t1
 #include "engine_pbr.hlsli"
 // The palette has the vertex stage's `b1`.
 #define ENG_MORPH_REGISTER b2

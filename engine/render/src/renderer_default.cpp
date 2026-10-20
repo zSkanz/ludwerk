@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "engine/asset/surface_shader.h"
+#include "engine/asset/texture.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/profile.h"
@@ -982,6 +983,11 @@ private:
     // Groups the sorted draw list into instanced runs and fills the staging
     // buffer. Runs before any render pass, because the upload has to.
     void buildInstanceBatches(const RenderWorld& world, const MeshCache& meshes);
+    // A skinned draw's place in the frame's palette, at the vertex stage's
+    // second block, and the palette at its first storage buffer -- or its
+    // second, after a mesh's morph targets.
+    void bindSkinPalette(rhi::ICmdList& cmd, const RenderWorld& world, const DrawItem& draw, bool afterMorphs);
+    bool ensureSkinPalette(rhi::IDevice& device);
 
     // --- Surface shaders (ADR 0091) -------------------------------------------
     //
@@ -1180,6 +1186,15 @@ private:
         core::u64 lastUsed = 0;
     };
     std::vector<VolumeSlot> volumeSlots_;
+    // **The bake's grid of the sun** (ADR 0253 §4), in layers of the same
+    // array as a volume's slices and placed among them, and its rows; and
+    // whether this cascade of the sun's map leaves the baked parts out.
+    f32 sunGridRows_[3][4]{};
+    const std::vector<f32>* sunGridHeld_ = nullptr;
+    // A frame brought the grid: the environment array keeps layers for it
+    // even where it keeps none for volumes -- a standalone headset's.
+    bool sunGridWanted_ = false;
+    bool shadowLeavesBaked_ = false;
     // A probe's map while it is made: the six pictures gathered, with a plain
     // chain of levels under it; then a target a level, and one for the diffuse
     // light. And a layer of volume slices on its way into the array.
@@ -1366,13 +1381,19 @@ private:
     std::vector<std::array<f32, 4>> bakedInstanceStaging_;
     bool anyBakedRun_ = false;
     rhi::TextureHandle lightmapPages_{};
-    rhi::TextureHandle lightmapScratch_{};
     rhi::BufferHandle lightmapRects_{};
     u32 lightmapPageSize_ = 0;
     u32 lightmapPageCount_ = 0;
+    // Layers in all, and a page's: two where its mask is the layer after its
+    // light (`uploadLightmap`).
+    u32 lightmapLayers_ = 0;
+    u32 lightmapLayersPerPage_ = 1;
+    rhi::TextureFormat lightmapFormat_ = rhi::TextureFormat::Undefined;
     u32 lightmapRectsBytes_ = 0;
     u64 lightmapStamp_ = 0;
     std::vector<core::u16> lightmapPixels_;
+    std::vector<std::byte> lightmapBlocks_;
+    std::vector<std::byte> lightmapMaskBlocks_;
     rhi::PipelineHandle pbrBakedInstancedPipeline_{};
     rhi::PipelineHandle pbrBakedInstancedPrepassedPipeline_{};
     // Every run's members' bounds, in the order staged (ADR 0182), and the
@@ -2875,7 +2896,9 @@ constexpr u32 kProbeIrradianceLevel = kEnvironmentMipCount - 2;
 bool DefaultRenderer::ensureEnvironmentMap(rhi::IDevice& device)
 {
     const u32 probes = settings_.reflectionProbes;
-    const u32 volumeLayers = settings_.indirectLight ? kVolumeLayers : 0;
+    // **And the bake's grid of the sun** (ADR 0253 §4), which takes a
+    // volume's slices: where no volume is worked out, layers for it alone.
+    const u32 volumeLayers = settings_.indirectLight ? kVolumeLayers : sunGridWanted_ ? kIrradianceVolumeSide / 4u : 0u;
     if (environmentMap_.valid() && probes == environmentProbeSlots_ && volumeLayers == environmentVolumeLayers_)
         return true;
     if (environmentMap_.valid())
@@ -3082,6 +3105,16 @@ void DefaultRenderer::prepareIndirect(rhi::IDevice& device, rhi::ICmdList& cmd, 
     }
     indirectParams_[0] = static_cast<f32>(probeCount);
 
+    // The bake's grid of the sun is placed among the volumes after them: held
+    // as used before they look for room, so none of them makes room with it.
+    if (world.lightmap.sun && world.lightmap.maskHolds) {
+        const core::u64 gridKey = 0xB4CE000000000000ull ^ world.lightmap.stamp;
+        for (VolumeSlot& held : volumeSlots_) {
+            if (held.key == gridKey)
+                held.lastUsed = indirectFrame_;
+        }
+    }
+
     // **Volumes**: each in a run of layers of its own, four slices a layer,
     // taken again when its samples changed.
     u32 volumeCount = 0;
@@ -3225,6 +3258,92 @@ void DefaultRenderer::prepareIndirect(rhi::IDevice& device, rhi::ICmdList& cmd, 
         ++volumeCount;
     }
     indirectParams_[1] = static_cast<f32>(volumeCount);
+
+    // **The bake's grid of the sun** (ADR 0253 §4): one value a point, in the
+    // first tile of a run of layers placed as a volume's, read while the mask
+    // holds. Uploaded when the grid is another.
+    std::memset(sunGridRows_, 0, sizeof(sunGridRows_));
+    const RenderLightmap& baked = world.lightmap;
+    const u32 gx = baked.sunCounts[0];
+    const u32 gy = baked.sunCounts[1];
+    const u32 gz = baked.sunCounts[2];
+    if (baked.sun && baked.maskHolds && hasLayers && gx > 0 && gy > 0 && gz > 0 && gx <= kIrradianceVolumeSide &&
+        gy <= kIrradianceVolumeSide && gz <= kIrradianceVolumeSide &&
+        baked.sun->size() == static_cast<usize>(gx) * gy * gz) {
+        const u32 layers = (gz + 3u) / 4u;
+        // Its key is its own, past every volume's.
+        const core::u64 key = 0xB4CE000000000000ull ^ baked.stamp;
+        auto slot = std::find_if(volumeSlots_.begin(), volumeSlots_.end(),
+                                 [&](const VolumeSlot& held) { return held.key == key; });
+        bool upload = slot == volumeSlots_.end() || sunGridHeld_ != baked.sun.get() || slot->layers != layers;
+        if (slot != volumeSlots_.end() && slot->layers != layers) {
+            volumeSlots_.erase(slot);
+            slot = volumeSlots_.end();
+        }
+        if (slot == volumeSlots_.end()) {
+            std::sort(volumeSlots_.begin(), volumeSlots_.end(),
+                      [](const VolumeSlot& a, const VolumeSlot& b) { return a.first < b.first; });
+            std::optional<u32> first;
+            u32 cursor = 0;
+            for (const VolumeSlot& held : volumeSlots_) {
+                if (held.first - cursor >= layers) {
+                    first = cursor;
+                    break;
+                }
+                cursor = held.first + held.layers;
+            }
+            if (!first.has_value() && environmentVolumeLayers_ - cursor >= layers)
+                first = cursor;
+            if (first.has_value()) {
+                volumeSlots_.push_back(VolumeSlot{.key = key, .first = *first, .layers = layers});
+                slot = volumeSlots_.end() - 1;
+            }
+        }
+        if (slot != volumeSlots_.end()) {
+            slot->lastUsed = indirectFrame_;
+            if (upload && !volumeScratch_.valid()) {
+                volumeScratch_ = device.createTexture({
+                    .format = kHdrFormat,
+                    .usage = rhi::TextureUsage::Sampled,
+                    .width = kEnvironmentBaseSize,
+                    .height = kEnvironmentBaseSize,
+                    .debugName = "volume-slices",
+                });
+            }
+            if (upload && volumeScratch_.valid()) {
+                const usize side = kEnvironmentBaseSize;
+                for (u32 layer = 0; layer < layers; ++layer) {
+                    volumePixels_.assign(side * side * 4, 0);
+                    for (u32 row = 0; row < 4 && layer * 4 + row < gz; ++row) {
+                        const u32 z = layer * 4 + row;
+                        for (u32 y = 0; y < gy; ++y) {
+                            for (u32 x = 0; x < gx; ++x) {
+                                const f32 seen = (*baked.sun)[(static_cast<usize>(z) * gy + y) * gx + x];
+                                volumePixels_[((static_cast<usize>(row) * kIrradianceVolumeSide + y) * side + x) * 4] =
+                                    floatToHalf(seen);
+                            }
+                        }
+                    }
+                    cmd.uploadTexture(volumeScratch_,
+                                      asBytes(volumePixels_.data(), volumePixels_.size() * sizeof(core::u16)), 0);
+                    cmd.blitTexture(volumeScratch_, environmentMap_, firstVolumeLayer + slot->first + layer);
+                }
+                sunGridHeld_ = baked.sun.get();
+            }
+            if (sunGridHeld_ == baked.sun.get()) {
+                sunGridRows_[0][0] = baked.sunOffset.x;
+                sunGridRows_[0][1] = baked.sunOffset.y;
+                sunGridRows_[0][2] = baked.sunOffset.z;
+                sunGridRows_[0][3] = baked.sunScale;
+                sunGridRows_[1][0] = static_cast<f32>(gx);
+                sunGridRows_[1][1] = static_cast<f32>(gy);
+                sunGridRows_[1][2] = static_cast<f32>(gz);
+                sunGridRows_[1][3] = static_cast<f32>(firstVolumeLayer + slot->first);
+                sunGridRows_[2][0] = 1.0f / static_cast<f32>(kEnvironmentBaseSize);
+                sunGridRows_[2][3] = 1.0f;
+            }
+        }
+    }
 }
 
 void DefaultRenderer::useView(u32 view)
@@ -4204,16 +4323,17 @@ void DefaultRenderer::copySceneForSurfaces(rhi::IDevice& device, rhi::ICmdList& 
 
 void DefaultRenderer::releaseLightmap(rhi::IDevice& device)
 {
-    for (rhi::TextureHandle* texture : {&lightmapPages_, &lightmapScratch_}) {
-        if (texture->valid())
-            device.destroy(*texture);
-        *texture = {};
-    }
+    if (lightmapPages_.valid())
+        device.destroy(lightmapPages_);
+    lightmapPages_ = {};
     if (lightmapRects_.valid())
         device.destroy(lightmapRects_);
     lightmapRects_ = {};
     lightmapPageSize_ = 0;
     lightmapPageCount_ = 0;
+    lightmapLayers_ = 0;
+    lightmapLayersPerPage_ = 1;
+    lightmapFormat_ = rhi::TextureFormat::Undefined;
     lightmapRectsBytes_ = 0;
     lightmapStamp_ = 0;
 }
@@ -4223,52 +4343,101 @@ void DefaultRenderer::uploadLightmap(rhi::IDevice& device, rhi::ICmdList& cmd, c
     ENG_PROFILE_SCOPE("render.lightmap_upload");
     lightmapStamp_ = lightmap.stamp;
     const LightmapPages* pages = lightmap.pages.get();
-    if (lightmap.stamp == 0 || pages == nullptr || pages->size == 0 || pages->count == 0 || lightmap.rects.empty() ||
-        pages->texels.size() != static_cast<core::usize>(pages->size) * pages->size * 4 * pages->count) {
+    const bool encoded = pages != nullptr && !pages->light.empty();
+    const bool whole =
+        pages != nullptr && pages->size > 0 && pages->count > 0 &&
+        (encoded ? pages->light.size() == pages->count && pages->masks.size() == pages->count
+                 : pages->texels.size() == static_cast<core::usize>(pages->size) * pages->size * 4 * pages->count);
+    if (lightmap.stamp == 0 || !whole || lightmap.rects.empty()) {
         // **No bake, or none whole**: every part is drawn as it was.
         releaseLightmap(device);
         lightmapStamp_ = lightmap.stamp;
         return;
     }
-    // The pages: another size or count makes the array again.
-    if (pages->size != lightmapPageSize_ || pages->count != lightmapPageCount_ || !lightmapPages_.valid()) {
-        for (rhi::TextureHandle* texture : {&lightmapPages_, &lightmapScratch_}) {
-            if (texture->valid())
-                device.destroy(*texture);
-            *texture = {};
-        }
+    // **In the blocks the card samples** (ADR 0253 §6): a page kept as UASTC
+    // HDR is BC6H's or ASTC's, a byte a texel, with its mask the layer after
+    // it -- blocks have no alpha. Half floats with the mask in their alpha
+    // where the card samples neither, and for a bake not yet kept.
+    const rhi::Capabilities caps = device.caps();
+    const asset::HdrBlocks blocks = !encoded               ? asset::HdrBlocks::Half
+                                    : caps.bc6hTextures    ? asset::HdrBlocks::Bc6h
+                                    : caps.astcHdrTextures ? asset::HdrBlocks::Astc4x4
+                                                           : asset::HdrBlocks::Half;
+    const rhi::TextureFormat format = blocks == asset::HdrBlocks::Bc6h      ? rhi::TextureFormat::Bc6hRgbUfloat
+                                      : blocks == asset::HdrBlocks::Astc4x4 ? rhi::TextureFormat::Astc4x4Float
+                                                                            : kHdrFormat;
+    const u32 perPage = blocks == asset::HdrBlocks::Half ? 1u : 2u;
+    const u32 layers = pages->count * perPage;
+    if (pages->size != lightmapPageSize_ || layers != lightmapLayers_ || format != lightmapFormat_ ||
+        !lightmapPages_.valid()) {
+        if (lightmapPages_.valid())
+            device.destroy(lightmapPages_);
         lightmapPages_ = device.createTexture({
-            .format = kHdrFormat,
-            .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget,
-            .width = pages->size,
-            .height = pages->size,
-            .layers = std::max(pages->count, 2u),
-            .debugName = "lightmap-pages",
-        });
-        lightmapScratch_ = device.createTexture({
-            .format = kHdrFormat,
+            .format = format,
             .usage = rhi::TextureUsage::Sampled,
             .width = pages->size,
             .height = pages->size,
-            .debugName = "lightmap-scratch",
+            .layers = std::max(layers, 2u),
+            .debugName = "lightmap-pages",
         });
         lightmapPageSize_ = pages->size;
         lightmapPageCount_ = pages->count;
+        lightmapLayers_ = layers;
+        lightmapFormat_ = format;
     }
-    if (!lightmapPages_.valid() || !lightmapScratch_.valid()) {
+    if (!lightmapPages_.valid()) {
         releaseLightmap(device);
         lightmapStamp_ = lightmap.stamp;
         return;
     }
-    // A page at a time, as half floats, through the scratch into its layer.
-    const core::usize perPage = static_cast<core::usize>(pages->size) * pages->size * 4;
-    lightmapPixels_.resize(perPage);
+    lightmapLayersPerPage_ = perPage;
+    const core::usize texels = static_cast<core::usize>(pages->size) * pages->size;
     for (u32 page = 0; page < pages->count; ++page) {
-        const f32* from = pages->texels.data() + page * perPage;
-        for (core::usize at = 0; at < perPage; ++at)
-            lightmapPixels_[at] = floatToHalf(from[at]);
-        cmd.uploadTexture(lightmapScratch_, asBytes(lightmapPixels_.data(), perPage * sizeof(core::u16)), 0);
-        cmd.blitTexture(lightmapScratch_, lightmapPages_, page);
+        if (!encoded) {
+            lightmapPixels_.resize(texels * 4);
+            const f32* from = pages->texels.data() + page * texels * 4;
+            for (core::usize at = 0; at < texels * 4; ++at)
+                lightmapPixels_[at] = floatToHalf(from[at]);
+            cmd.uploadTextureLayer(lightmapPages_, page,
+                                   asBytes(lightmapPixels_.data(), lightmapPixels_.size() * sizeof(core::u16)));
+            continue;
+        }
+        u32 width = 0;
+        u32 height = 0;
+        u32 maskWidth = 0;
+        u32 maskHeight = 0;
+        if (!asset::transcodeHdrPicture(pages->light[page], blocks, width, height, lightmapBlocks_) ||
+            !asset::transcodeHdrPicture(pages->masks[page], blocks, maskWidth, maskHeight, lightmapMaskBlocks_) ||
+            width != pages->size || height != pages->size || maskWidth != pages->size || maskHeight != pages->size) {
+            releaseLightmap(device);
+            lightmapStamp_ = lightmap.stamp;
+            return;
+        }
+        if (blocks == asset::HdrBlocks::Half) {
+            // The mask's grey into the light's alpha: four half floats a
+            // texel, each.
+            auto* light = reinterpret_cast<core::u16*>(lightmapBlocks_.data());
+            const auto* mask = reinterpret_cast<const core::u16*>(lightmapMaskBlocks_.data());
+            for (core::usize texel = 0; texel < texels; ++texel)
+                light[texel * 4 + 3] = mask[texel * 4];
+            cmd.uploadTextureLayer(lightmapPages_, page, lightmapBlocks_);
+            continue;
+        }
+        cmd.uploadTextureLayer(lightmapPages_, page * 2, lightmapBlocks_);
+        cmd.uploadTextureLayer(lightmapPages_, page * 2 + 1, lightmapMaskBlocks_);
+    }
+    {
+        // What the light costs the card, said once a bake.
+        const core::usize bytes = static_cast<core::usize>(layers) * texels * (perPage == 1 ? 8u : 1u);
+        const std::array<core::I18nArg, 4> args{
+            core::I18nArg{"pages", static_cast<core::i64>(pages->count)},
+            core::I18nArg{"size", static_cast<core::i64>(pages->size)},
+            core::I18nArg{"format", std::string_view{blocks == asset::HdrBlocks::Bc6h      ? "BC6H"
+                                                     : blocks == asset::HdrBlocks::Astc4x4 ? "ASTC HDR"
+                                                                                           : "RGBA16F"}},
+            core::I18nArg{"bytes", static_cast<core::i64>(bytes)},
+        };
+        core::log(core::LogLevel::Info, ENG_TR("render.info.lightmap_uploaded"), args);
     }
     // The rows: a buffer as large as they are, kept while it is large enough.
     const auto bytes = static_cast<u32>(lightmap.rects.size() * sizeof(f32));
@@ -4284,6 +4453,25 @@ void DefaultRenderer::uploadLightmap(rhi::IDevice& device, rhi::ICmdList& cmd, c
     }
     if (lightmapRects_.valid())
         cmd.upload(lightmapRects_, asBytes(lightmap.rects.data(), bytes), 0);
+}
+
+void DefaultRenderer::bindSkinPalette(rhi::ICmdList& cmd, const RenderWorld& world, const DrawItem& draw,
+                                      bool afterMorphs)
+{
+    // Where its joints begin in the frame's palette and how many there are:
+    // none, and it is drawn as modelled.
+    GpuSkinUniforms skin;
+    const bool posed =
+        paletteBuffer_.valid() && draw.firstBone < world.bones.size() && world.bones.size() <= kMaxPaletteJoints;
+    skin.palette[0] = posed ? draw.firstBone : 0u;
+    skin.palette[1] =
+        posed ? static_cast<u32>(std::min<usize>(draw.boneCount, world.bones.size() - draw.firstBone)) : 0u;
+    cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&skin, sizeof(skin)));
+    // The morph table binds itself and this buffer after it.
+    if (!afterMorphs && paletteBuffer_.valid()) {
+        const std::array<rhi::BufferHandle, 1> palettes{paletteBuffer_};
+        cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, palettes);
+    }
 }
 
 void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshCache& meshes)
@@ -4497,10 +4685,11 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             }
             else {
                 instanceStaging_.push_back(instance);
-                bakedInstanceStaging_.push_back(baked ? std::array<f32, 4>{static_cast<f32>(draw.lightmap),
-                                                                           world.lightmap.maskHolds ? 1.0f : 0.0f, 0.0f,
-                                                                           0.0f}
-                                                      : std::array<f32, 4>{});
+                // Its rows, whether the mask holds, and a page's layers.
+                bakedInstanceStaging_.push_back(
+                    baked ? std::array<f32, 4>{static_cast<f32>(draw.lightmap), world.lightmap.maskHolds ? 1.0f : 0.0f,
+                                               static_cast<f32>(lightmapLayersPerPage_), 0.0f}
+                          : std::array<f32, 4>{});
             }
         }
 
@@ -4702,6 +4891,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             continue;
         // And what is see-through casts none (`castsShadow`).
         if (selection == Selection::Shadow && !castsShadow(draw))
+            continue;
+        // Nor, past the nearest cascade, a run drawn with its bake's mask.
+        if (selection == Selection::Shadow && shadowLeavesBaked_ && batch != nullptr && batch->baked)
             continue;
         // A part this machine thinned to nothing (`BasePart.Fade`) is in the
         // list for its shadow alone: the camera's blended pass has none of it.
@@ -5123,26 +5315,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
         else if (skinnedDraw) {
-            // The palette, one upload per draw. Per draw rather than per
-            // skeleton because `bindUniforms` is the only route the frozen RHI
-            // gives (ADR 0037) and it is scoped to the next draw -- which is why
-            // `kMaxSkinJoints` is a budget worth keeping small. **Only the
-            // joints the skeleton has, straight from the frame's bones**:
-            // a twenty-joint character pushed all sixty-four, copied into a
-            // block first, per draw per pass. The joints past its count are
-            // never indexed by its vertices, and a backend reads the block from
-            // its own uniform ring, never past the end of a buffer.
-            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
-            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
-            static_assert(sizeof(GpuSkinUniforms) == sizeof(Mat4) * kMaxSkinJoints);
-            if (count > 0) {
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
-                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
-            }
-            else {
-                static const GpuSkinUniforms Rest{};
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
-            }
+            // **Where its palette begins in the frame's**, which is uploaded
+            // once: sixteen bytes a draw, whatever the skeleton's size.
+            bindSkinPalette(cmd, world, draw, morphDraw);
 
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
             cmd.bindVertexBuffers(0, vertexBuffers);
@@ -5156,8 +5331,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
             // draw's targets in the block after the ones it already has: the
             // object's, and a skinned draw's palette. A cloth's table is the
             // frame's rows, and its one target the run that is its own.
-            const std::array<rhi::BufferHandle, 1> table{clothDraw ? clothBuffer_ : resolved->morph};
-            cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0, table);
+            const std::array<rhi::BufferHandle, 2> table{clothDraw ? clothBuffer_ : resolved->morph, paletteBuffer_};
+            cmd.bindStorageBuffers(rhi::ShaderStage::Vertex, 0,
+                                   std::span(table).first(skinnedDraw && paletteBuffer_.valid() ? 2u : 1u));
             GpuMorphUniforms block;
             if (clothDraw) {
                 const ClothDraw& rows = world.cloths[draw.cloth];
@@ -6121,16 +6297,7 @@ void DefaultRenderer::drawWarpMotion(rhi::IDevice& device, rhi::ICmdList& cmd, c
         motion.previous = view * before;
         cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
         if (skinned) {
-            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
-            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
-            if (count > 0) {
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
-                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
-            }
-            else {
-                static const GpuSkinUniforms Rest{};
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
-            }
+            bindSkinPalette(cmd, world, draw, false);
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
@@ -6291,16 +6458,7 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
         motion.previous = previousViewProjection_ * before.transform;
         cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&motion, sizeof(motion)));
         if (skinned) {
-            const usize first = std::min<usize>(draw.firstBone, world.bones.size());
-            const usize count = std::min<usize>({draw.boneCount, kMaxSkinJoints, world.bones.size() - first});
-            if (count > 0) {
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1,
-                                 asBytes(world.bones.data() + first, sizeof(Mat4) * count));
-            }
-            else {
-                static const GpuSkinUniforms Rest{};
-                cmd.bindUniforms(rhi::ShaderStage::Vertex, 1, asBytes(&Rest, sizeof(Rest)));
-            }
+            bindSkinPalette(cmd, world, draw, false);
             const std::array<rhi::BufferHandle, 2> vertexBuffers{resolved->vertices, resolved->skin};
             cmd.bindVertexBuffers(0, vertexBuffers);
         }
@@ -8344,13 +8502,21 @@ bool DefaultRenderer::ensureSkinnedInstancing(rhi::IDevice& device)
         .sizeBytes = kMaxSkinnedInstances * static_cast<u32>(sizeof(GpuSkinnedInstance)),
         .debugName = "skinned-instances",
     });
-    paletteBuffer_ = device.createBuffer({
-        .usage = rhi::BufferUsage::GraphicsStorageRead,
-        .sizeBytes = kMaxPaletteJoints * static_cast<u32>(sizeof(Mat4)),
-        .debugName = "skin-palettes",
-    });
+    (void)ensureSkinPalette(device);
     return pbrSkinnedInstancedPipeline_.valid() && shadowSkinnedInstancedPipeline_.valid() &&
            depthPrepassSkinnedInstancedPipeline_.valid() && skinnedInstanceBuffer_.valid() && paletteBuffer_.valid();
+}
+
+bool DefaultRenderer::ensureSkinPalette(rhi::IDevice& device)
+{
+    if (!paletteBuffer_.valid()) {
+        paletteBuffer_ = device.createBuffer({
+            .usage = rhi::BufferUsage::GraphicsStorageRead,
+            .sizeBytes = kMaxPaletteJoints * static_cast<u32>(sizeof(Mat4)),
+            .debugName = "skin-palettes",
+        });
+    }
+    return paletteBuffer_.valid();
 }
 
 bool DefaultRenderer::ensureParticles(rhi::IDevice& device)
@@ -9939,6 +10105,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // The scale, and the cap on a handheld's resolution (`effectiveRenderScale`)
     // -- and neither for a picture of sprites alone (`spritesOnly`).
     const f32 worldScale = worldRenderScale(world, target.width, target.height);
+    // A view that brings no bake leaves the layers as the last that did.
+    if (world.lightmap.sun)
+        sunGridWanted_ = true;
     const auto scaled = [&](u32 value) {
         const auto result = static_cast<u32>(static_cast<f32>(value) * worldScale + 0.5f);
         return result > 0 ? result : 1u;
@@ -10157,8 +10326,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         cmd.upload(skinnedInstanceBuffer_,
                    asBytes(skinnedInstanceStaging_.data(), skinnedInstanceStaging_.size() * sizeof(GpuSkinnedInstance)),
                    0);
-        cmd.upload(paletteBuffer_, asBytes(world.bones.data(), world.bones.size() * sizeof(Mat4)), 0);
     }
+    // **Every skeleton's palette, once a frame**, whatever draws it: a run, or
+    // one object at a time (`bindSkinPalette`).
+    if (!world.bones.empty() && world.bones.size() <= kMaxPaletteJoints && ensureSkinPalette(device))
+        cmd.upload(paletteBuffer_, asBytes(world.bones.data(), world.bones.size() * sizeof(Mat4)), 0);
 
     // This frame's particles, up before any pass for the reason the instances
     // are. The pipeline is made the first frame there is one, so a world
@@ -10623,8 +10795,15 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             // metres in the far cascade.
             terrainShadowPush_ = terrainCascadePush(cascades.texelWorld[index], cascades.depthRange[index],
                                                     shadowPenumbra(world.environment.shadowSoftness));
+            // **What is baked casts into the nearest cascade alone** while the
+            // mask holds (ADR 0253 §4): there the map is what what moves near
+            // the player is shadowed by, sharp; further out the bake's grid is.
+            shadowLeavesBaked_ = world.lightmap.maskHolds && sunGridRows_[2][3] > 0.5f &&
+                                 (settings_.measuredSkip & MeasureSkip::BakedCasters) == 0u &&
+                                 (index > 0 || (settings_.measuredSkip & MeasureSkip::BakedNear) != 0u);
             drawGeometry(cmd, world, meshes, cascades.viewProjection[index], shadowPipeline_, shadowSkinnedPipeline_,
                          Selection::Shadow, &cull);
+            shadowLeavesBaked_ = false;
             // Foliage casts only near the camera: the shader drops what lies
             // past `foliage_shadow_distance`, so the far cascades get none.
             if (splits[index] < world.foliageShadowDistance)
@@ -11402,6 +11581,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         frame.screenViewProjection = world.camera.viewProjection;
         std::memcpy(frame.probeRows, probeRows_, sizeof(probeRows_));
         std::memcpy(frame.volumeRows, volumeRows_, sizeof(volumeRows_));
+        std::memcpy(frame.sunGridRows, sunGridRows_, sizeof(sunGridRows_));
 
         // **What no decal paints** (`BasePart.ReceivesDecals`). A
         // decal is projected onto the depth the picture holds, which is of

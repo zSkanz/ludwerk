@@ -1,4 +1,7 @@
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <doctest/doctest.h>
 #include <string>
 #include <vector>
@@ -303,4 +306,80 @@ TEST_CASE("a texture is taken without its largest levels, and never under the fl
     REQUIRE_FALSE(engine::asset::transcodeTexture(small, options, kept).has_value());
     CHECK(kept.width == 64);
     CHECK(kept.skippedLevels == 0);
+}
+
+namespace {
+
+// A half float's value, as the transcoder writes one.
+[[nodiscard]] f32 fromHalf(std::uint16_t half)
+{
+    const u32 sign = (half >> 15) & 1u;
+    const u32 exponent = (half >> 10) & 31u;
+    const u32 mantissa = half & 1023u;
+    const f32 magnitude = exponent == 0
+                              ? std::ldexp(static_cast<f32>(mantissa), -24)
+                              : std::ldexp(static_cast<f32>(mantissa | 1024u), static_cast<int>(exponent) - 25);
+    return sign != 0 ? -magnitude : magnitude;
+}
+
+} // namespace
+
+TEST_CASE("light encoded as UASTC HDR comes back near what it was, in blocks or half floats, the same for any threads")
+{
+    seedRealCatalog();
+
+    // Light as a bake leaves it: a soft gradient brighter than white, a hard
+    // shadow's edge across it, and a dark corner.
+    constexpr u32 Size = 64;
+    std::vector<f32> rgb(static_cast<usize>(Size) * Size * 3);
+    for (u32 y = 0; y < Size; ++y) {
+        for (u32 x = 0; x < Size; ++x) {
+            const usize at = (static_cast<usize>(y) * Size + x) * 3;
+            const f32 lit = (x + y > Size ? 1.0f : 0.15f) * (0.2f + 4.0f * static_cast<f32>(x) / Size);
+            rgb[at] = lit;
+            rgb[at + 1] = lit * 0.9f;
+            rgb[at + 2] = lit * 0.7f;
+        }
+    }
+    std::vector<std::byte> one;
+    std::vector<std::byte> many;
+    REQUIRE_FALSE(engine::assetc::encodeHdrPicture(rgb, Size, Size, 1, one).has_value());
+    REQUIRE_FALSE(engine::assetc::encodeHdrPicture(rgb, Size, Size, 4, many).has_value());
+    CHECK(one == many);
+    // Half floats were eight bytes a texel.
+    CHECK(one.size() < static_cast<usize>(Size) * Size * 2);
+
+    u32 width = 0;
+    u32 height = 0;
+    std::vector<std::byte> halves;
+    REQUIRE(engine::asset::transcodeHdrPicture(one, engine::asset::HdrBlocks::Half, width, height, halves));
+    CHECK(width == Size);
+    CHECK(height == Size);
+    REQUIRE(halves.size() == static_cast<usize>(Size) * Size * 8);
+    double error = 0.0;
+    for (usize texel = 0; texel < static_cast<usize>(Size) * Size; ++texel) {
+        for (usize channel = 0; channel < 3; ++channel) {
+            std::uint16_t half = 0;
+            std::memcpy(&half, halves.data() + (texel * 4 + channel) * 2, 2);
+            error += static_cast<double>(std::abs(fromHalf(half) - rgb[texel * 3 + channel]) /
+                                         (rgb[texel * 3 + channel] + 0.05f));
+        }
+    }
+    // Within a couple of percent on the mean.
+    CHECK(error / (static_cast<double>(Size) * Size * 3) < 0.02);
+
+    // A byte a texel, as BC6H's blocks and as ASTC's.
+    std::vector<std::byte> blocks;
+    REQUIRE(engine::asset::transcodeHdrPicture(one, engine::asset::HdrBlocks::Bc6h, width, height, blocks));
+    CHECK(blocks.size() == static_cast<usize>(Size) * Size);
+    REQUIRE(engine::asset::transcodeHdrPicture(one, engine::asset::HdrBlocks::Astc4x4, width, height, blocks));
+    CHECK(blocks.size() == static_cast<usize>(Size) * Size);
+
+    // Not such a picture: refused, and nothing written.
+    const engine::asset::Image colour = testImage(64, false);
+    std::vector<std::byte> ldr;
+    REQUIRE_FALSE(engine::assetc::encodeTexture(colour, true, ldr).has_value());
+    CHECK_FALSE(engine::asset::transcodeHdrPicture(ldr, engine::asset::HdrBlocks::Bc6h, width, height, blocks));
+    CHECK(blocks.empty());
+    CHECK_FALSE(engine::asset::transcodeHdrPicture({}, engine::asset::HdrBlocks::Half, width, height, blocks));
 }

@@ -45,7 +45,7 @@ StructuredBuffer<float4> LightmapRects : register(t0, space0);
 // A chart's margin inside its cell (`asset::kPrimitiveChartMargin`).
 static const float ChartMargin = 0.04f;
 
-float3 lightmapPlace(float2 uv, uint row)
+float3 lightmapPlace(float2 uv, uint row, uint layersPerPage)
 {
     const float4 grid = LightmapRects[row];
     float2 local = uv;
@@ -62,7 +62,7 @@ float3 lightmapPlace(float2 uv, uint row)
     }
     const float4 rect = LightmapRects[row + 1u + cell];
     const float page = floor(rect.x);
-    return float3(rect.x - page + local.x * rect.z, rect.y + local.y * rect.w, page);
+    return float3(rect.x - page + local.x * rect.z, rect.y + local.y * rect.w, page * float(layersPerPage));
 }
 
 // `core::Mat4` stores `m[column][row]`, so the four attributes ARE the matrix's
@@ -123,8 +123,11 @@ Interpolants VertexMain(VertexInput input)
     output.UvMetres = input.Uv * uvMetresScale((float3x3)model, input.Normal, input.Tangent);
     output.InstanceAlpha = input.InstanceAlphaTint.x;
     output.InstanceTint = input.InstanceAlphaTint.yzw;
-    output.LightmapPlace = lightmapPlace(input.LightmapUv, uint(input.Baked.x + 0.5f));
-    output.MaskHolds = input.Baked.y;
+    // A page's layers: one, the mask its light's alpha; two, the mask the
+    // layer after its light, which in blocks has none.
+    const uint layersPerPage = max(uint(input.Baked.z + 0.5f), 1u);
+    output.LightmapPlace = lightmapPlace(input.LightmapUv, uint(input.Baked.x + 0.5f), layersPerPage);
+    output.MaskHolds = input.Baked.y * float(layersPerPage);
 
     return output;
 }

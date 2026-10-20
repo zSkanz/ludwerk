@@ -108,6 +108,23 @@ struct LightmapPage
     std::vector<core::f32> mask;
 };
 
+// **Whether a place sees the sun past what is baked** (ADR 0253 §4): points
+// on a grid over the baked parts, a metre or so apart, each with how much of
+// the sun's disc it sees from the direction the bake was made for. What
+// moves is shadowed by it where the sun's map no longer holds the baked
+// parts -- past its nearest cascade.
+struct LightmapSunGrid
+{
+    // Its first point, and how far apart they stand.
+    core::DVec3 low;
+    core::f32 spacing = 1.0f;
+    core::u32 counts[3] = {0, 0, 0};
+    // One a point, x fastest, then y, then z.
+    std::vector<core::f32> sun;
+};
+// Points along each side at most: a volume's slices hold as many.
+inline constexpr core::u32 kSunGridSide = 32;
+
 // **A scene's light baked into what stands still**, as the bake leaves it.
 struct LightmapBakeResult
 {
@@ -129,6 +146,12 @@ struct LightmapBakeResult
     // which are lit as a moving thing is until it is imported with them.
     std::vector<core::InstanceId> unmapped;
     std::vector<LightmapPage> pages;
+    // Or, read from a file that keeps them so (ADR 0253 §6): each page as
+    // UASTC HDR -- its light, and its mask as grey -- `encodedSize` a side.
+    core::u32 encodedSize = 0;
+    std::vector<std::vector<std::byte>> encodedLight;
+    std::vector<std::vector<std::byte>> encodedMasks;
+    LightmapSunGrid sunGrid;
     // Towards the sun the mask was made for.
     core::Vec3 sunDirection{0.0f, 1.0f, 0.0f};
     // The density the rectangles were given, and whether it is less than the
@@ -160,12 +183,14 @@ public:
     // something and took their neighbours' light.
     [[nodiscard]] core::usize texelCount() const noexcept { return m_texelCount; }
     [[nodiscard]] core::u32 insideCount() const noexcept { return m_insideCount; }
+    [[nodiscard]] const LightmapSunGrid& sunGrid() const noexcept { return m_grid; }
 
 private:
     enum class Stage : core::u8
     {
         Idle,
         Mask,
+        Sun,
         Gather,
         Finish,
         Done,
@@ -185,6 +210,8 @@ private:
 
     void rasterize(const LightmapSurface& surface, core::u32 index);
     void maskTexel(core::usize texel, const BakeTrace& trace);
+    void sunPoint(core::usize point, const BakeTrace& trace);
+    void sunEnd();
     void gatherTexel(core::usize texel, const BakeTrace& trace);
     void passEnd();
     void finish();
@@ -208,6 +235,7 @@ private:
     std::vector<core::u8> m_inside;
     core::u32 m_insideCount = 0;
     std::vector<core::f32> m_mask;
+    LightmapSunGrid m_grid;
     // The light of the pass before, by a cell of the world and the way the
     // surface there faces, sorted by key: what a ray that meets a baked
     // surface finds has bounced onto it.

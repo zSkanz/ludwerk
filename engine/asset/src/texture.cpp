@@ -262,6 +262,40 @@ std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx
     return std::nullopt;
 }
 
+bool transcodeHdrPicture(std::span<const std::byte> ktx2, HdrBlocks into, u32& width, u32& height,
+                         std::vector<std::byte>& out)
+{
+    out.clear();
+    width = 0;
+    height = 0;
+    ensureTranscoderReady();
+    if (ktx2.empty())
+        return false;
+    basist::ktx2_transcoder transcoder;
+    if (!transcoder.init(ktx2.data(), static_cast<u32>(ktx2.size())) || !transcoder.is_hdr() ||
+        !transcoder.start_transcoding())
+        return false;
+    width = transcoder.get_width();
+    height = transcoder.get_height();
+    if (width == 0 || height == 0)
+        return false;
+    const bool blocks = into != HdrBlocks::Half;
+    // Blocks for a block format, texels for half floats: the unit of the
+    // transcoder's capacity is what it writes.
+    const usize count =
+        blocks ? static_cast<usize>(blocksAcross(width)) * blocksAcross(height) : static_cast<usize>(width) * height;
+    out.resize(count * (blocks ? 16u : 8u));
+    const basist::transcoder_texture_format target =
+        into == HdrBlocks::Bc6h      ? basist::transcoder_texture_format::cTFBC6H
+        : into == HdrBlocks::Astc4x4 ? basist::transcoder_texture_format::cTFASTC_HDR_4x4_RGBA
+                                     : basist::transcoder_texture_format::cTFRGBA_HALF;
+    if (!transcoder.transcode_image_level(0, 0, 0, out.data(), static_cast<u32>(count), target)) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 void meanColorOf(const Image& image, bool srgb, core::f32 (&out)[3]) noexcept
 {
     if (!image.valid())

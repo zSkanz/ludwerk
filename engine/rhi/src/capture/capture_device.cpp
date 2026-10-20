@@ -326,6 +326,10 @@ std::string_view name(TextureFormat value)
         return "Astc4x4RgbaUnorm";
     case TextureFormat::Astc4x4RgbaUnormSrgb:
         return "Astc4x4RgbaUnormSrgb";
+    case TextureFormat::Bc6hRgbUfloat:
+        return "Bc6hRgbUfloat";
+    case TextureFormat::Astc4x4Float:
+        return "Astc4x4Float";
     }
     return "?";
 }
@@ -679,6 +683,21 @@ public:
                        .num("texture", static_cast<u64>(texture.id))
                        .num("bytes", static_cast<u64>(data.size()))
                        .num("mip", static_cast<u64>(mipLevel))
+                       .num("words", summary.words)
+                       .num("packedWords", summary.packedWords)
+                       .str("packed", summary.packed)
+                       .real("mean", summary.mean)
+                       .real("flow", summary.flow)
+                       .finish();
+    }
+
+    void uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data) override
+    {
+        const UploadSummary summary = summarize(data, kinds_.texture(texture.id));
+        stream_ += Line("uploadTextureLayer")
+                       .num("texture", static_cast<u64>(texture.id))
+                       .num("layer", static_cast<u64>(layer))
+                       .num("bytes", static_cast<u64>(data.size()))
                        .num("words", summary.words)
                        .num("packedWords", summary.packedWords)
                        .str("packed", summary.packed)

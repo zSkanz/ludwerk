@@ -8,7 +8,8 @@ namespace engine::rhi::d3d12 {
 namespace {
 bool compressed(TextureFormat value) noexcept
 {
-    return value >= TextureFormat::Bc1RgbaUnorm && value <= TextureFormat::Bc7RgbaUnormSrgb;
+    return (value >= TextureFormat::Bc1RgbaUnorm && value <= TextureFormat::Bc7RgbaUnormSrgb) ||
+           value == TextureFormat::Bc6hRgbUfloat;
 }
 std::uint32_t texelBytes(TextureFormat value) noexcept
 {
@@ -113,6 +114,8 @@ DXGI_FORMAT format(TextureFormat value) noexcept
         return DXGI_FORMAT_BC7_UNORM;
     case TextureFormat::Bc7RgbaUnormSrgb:
         return DXGI_FORMAT_BC7_UNORM_SRGB;
+    case TextureFormat::Bc6hRgbUfloat:
+        return DXGI_FORMAT_BC6H_UF16;
     default:
         return DXGI_FORMAT_UNKNOWN;
     }
@@ -410,9 +413,18 @@ HRESULT Resources::uploadTextureRegion(TextureHandle handle, u32 x, u32 y, u32 w
     auto* value = texture(handle);
     return value ? uploadRegion(*value, 0, x, y, width, height, bytes) : E_INVALIDARG;
 }
-HRESULT Resources::uploadRegion(Texture& value, u32 mip, u32 x, u32 y, u32 width, u32 height,
+HRESULT Resources::uploadTextureLayer(TextureHandle handle, u32 layer, std::span<const std::byte> bytes)
+{
+    auto* value = texture(handle);
+    if (!value || layer >= value->desc.layers)
+        return E_INVALIDARG;
+    // A layer's first level is the subresource a layer's worth of levels on.
+    return uploadRegion(*value, layer * value->desc.mipLevels, 0, 0, value->desc.width, value->desc.height, bytes);
+}
+HRESULT Resources::uploadRegion(Texture& value, u32 subresource, u32 x, u32 y, u32 width, u32 height,
                                 std::span<const std::byte> bytes)
 {
+    const u32 mip = subresource % (std::max)(1u, value.desc.mipLevels);
     const u32 limitX = (std::max)(1u, value.desc.width >> mip), limitY = (std::max)(1u, value.desc.height >> mip);
     const u32 row = rowBytes(value.desc.format, width), rows = rowCount(value.desc.format, height);
     if (!context_.recording() || !width || !height || x > limitX || y > limitY || width > limitX - x ||
@@ -438,8 +450,8 @@ HRESULT Resources::uploadRegion(Texture& value, u32 mip, u32 x, u32 y, u32 width
     D3D12_TEXTURE_COPY_LOCATION destination{};
     destination.pResource = value.native.Get();
     destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    destination.SubresourceIndex = mip;
-    transition(value, D3D12_RESOURCE_STATE_COPY_DEST, mip);
+    destination.SubresourceIndex = subresource;
+    transition(value, D3D12_RESOURCE_STATE_COPY_DEST, subresource);
     context_.commands()->CopyTextureRegion(&destination, x, y, 0, &source, nullptr);
     return S_OK;
 }

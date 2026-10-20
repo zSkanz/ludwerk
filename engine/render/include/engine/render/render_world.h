@@ -443,7 +443,14 @@ struct LightmapPages
 {
     u32 size = 0;
     u32 count = 0;
+    // Four numbers a texel -- the light over pi, and the mask -- page after
+    // page, rows from the top. Or none, and:
     std::vector<f32> texels;
+    // **Each page as UASTC HDR** (ADR 0253 §6), as a kept bake holds it: its
+    // light, and its mask as grey, a picture each -- transcoded to the blocks
+    // the card samples as they are uploaded.
+    std::vector<std::vector<std::byte>> light;
+    std::vector<std::vector<std::byte>> masks;
 };
 
 struct RenderLightmap
@@ -460,6 +467,15 @@ struct RenderLightmap
     // direction it was baked for. Past that a baked surface is shadowed by
     // the map alone.
     bool maskHolds = false;
+    // **Whether a place sees the sun past what is baked** (ADR 0253 §4):
+    // a grid of points over the baked parts, what moves is shadowed by past
+    // the sun's nearest cascade, where the map holds what is baked no more.
+    // A camera-relative place times `sunScale`, plus `sunOffset`, is where it
+    // stands in the grid's points. None, no grid.
+    std::shared_ptr<const std::vector<f32>> sun;
+    Vec3 sunOffset{0.0f, 0.0f, 0.0f};
+    f32 sunScale = 1.0f;
+    u32 sunCounts[3] = {0, 0, 0};
 };
 
 struct RenderTerrainLayer
@@ -1159,6 +1175,7 @@ struct RenderWorld
         lightmap.pages.reset();
         lightmap.rects.clear();
         lightmap.maskHolds = false;
+        lightmap.sun.reset();
         capture = false;
         sprites.clear();
         worldUiVertices.clear();

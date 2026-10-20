@@ -321,6 +321,13 @@ void Commands::uploadTexture(TextureHandle texture, std::span<const std::byte> d
     if (recording())
         fail(resources_.uploadTexture(texture, data, mip));
 }
+void Commands::uploadTextureLayer(TextureHandle texture, u32 layer, std::span<const std::byte> data)
+{
+    endRenderPass();
+    endComputePass();
+    if (recording())
+        fail(resources_.uploadTextureLayer(texture, layer, data));
+}
 void Commands::uploadTextureRegion(TextureHandle texture, u32 x, u32 y, u32 width, u32 height,
                                    std::span<const std::byte> data)
 {

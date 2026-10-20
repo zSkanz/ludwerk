@@ -1033,6 +1033,20 @@ local Classes: { Schema.Class } = {
                     .. "fade between the room and the game.",
             },
             {
+                Name = "Baked",
+                Type = "Content",
+                ContentKind = "Lightmap",
+                Presentation = true,
+                Records = { "ADR 0253" },
+                Doc = "A file that holds the light baked into the parts with `BasePart.BakedLight` on, as an "
+                    .. "`asset://` path ending in `.lightmap`. Write it with the editor's Bake on `Lighting`, or with "
+                    .. "`engine-host <project> --bake-lighting`. Every machine reads it as the scene opens, and each "
+                    .. "baked part is drawn with its light from the first frame.\n\n"
+                    .. "The file holds where each part stood and how large it was. A part that has since moved, "
+                    .. "been resized or renamed is lit as an ordinary part until the next bake, and the log says "
+                    .. "which.",
+            },
+            {
                 Name = "LightmapDensity",
                 Type = "number",
                 Default = "16",

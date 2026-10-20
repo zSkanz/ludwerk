@@ -106,6 +106,7 @@ engine_add_module(app
         src/baked_light.cpp
         src/indirect_light.cpp
         src/lightmap_bake.cpp
+        src/lightmap_file.cpp
         src/mesh_rays.cpp
         src/sequences.cpp
         src/timeline.cpp

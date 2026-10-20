@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <basisu_comp.h>
 #include <basisu_enc.h>
 #include <cstring>
@@ -108,6 +109,57 @@ std::optional<core::EngineError> encodeTexture(const asset::Image& image, bool s
     if (!ktx2.empty()) {
         std::memcpy(out.data(), ktx2.data(), ktx2.size());
     }
+    return std::nullopt;
+}
+
+std::optional<core::EngineError> encodeHdrPicture(std::span<const core::f32> rgb, core::u32 width, core::u32 height,
+                                                  core::u32 threads, std::vector<std::byte>& out)
+{
+    out.clear();
+    if (width == 0 || height == 0 || rgb.size() != static_cast<std::size_t>(width) * height * 3) {
+        const I18nArg args[] = {{"code", "no pixels"}};
+        return core::makeError(ENG_TR("asset.texture.err.encode_failed"), args);
+    }
+    ensureEncoderReady();
+
+    basisu::imagef source(width, height);
+    for (core::u32 y = 0; y < height; ++y) {
+        for (core::u32 x = 0; x < width; ++x) {
+            const std::size_t at = (static_cast<std::size_t>(y) * width + x) * 3;
+            source(x, y) = basisu::vec4F(rgb[at], rgb[at + 1], rgb[at + 2], 1.0f);
+        }
+    }
+
+    basisu::basis_compressor_params params;
+    params.set_format_mode(basist::basis_tex_format::cUASTC_HDR_4x4);
+    params.m_source_images_hdr.push_back(source);
+    params.m_uastc_hdr_4x4_options.set_quality_level(basisu::uastc_hdr_4x4_codec_options::cDefaultLevel);
+    params.m_create_ktx2_file = true;
+    params.m_ktx2_uastc_supercompression = basist::KTX2_SS_ZSTANDARD;
+    params.m_mip_gen = false;
+    params.m_write_output_basis_or_ktx2_files = false;
+    params.m_read_source_images = false;
+    params.m_status_output = false;
+
+    // The pool counts the calling thread (`basisu_enc.h:827`).
+    basisu::job_pool pool(std::max(threads, 1u));
+    params.m_pJob_pool = &pool;
+    params.m_multithreading = threads > 1;
+
+    basisu::basis_compressor compressor;
+    if (!compressor.init(params)) {
+        const I18nArg initArgs[] = {{"code", "init"}};
+        return core::makeError(ENG_TR("asset.texture.err.encode_failed"), initArgs);
+    }
+    const basisu::basis_compressor::error_code code = compressor.process();
+    if (code != basisu::basis_compressor::cECSuccess) {
+        const I18nArg args[] = {{"code", std::to_string(static_cast<int>(code))}};
+        return core::makeError(ENG_TR("asset.texture.err.encode_failed"), args);
+    }
+    const basisu::uint8_vec& ktx2 = compressor.get_output_ktx2_file();
+    out.resize(ktx2.size());
+    if (!ktx2.empty())
+        std::memcpy(out.data(), ktx2.data(), ktx2.size());
     return std::nullopt;
 }
 

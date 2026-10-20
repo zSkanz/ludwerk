@@ -140,6 +140,21 @@ struct TranscodeOptions
 [[nodiscard]] std::optional<core::EngineError> transcodeTexture(std::span<const std::byte> ktx2,
                                                                 const TranscodeOptions& options, TextureAsset& out);
 
+// **A picture of light** (ADR 0253 §6): one UASTC HDR picture with no levels,
+// as the blocks the card samples -- BC6H's, ASTC's HDR profile -- or as four
+// half floats a texel where it samples neither. A baked page of light is one,
+// and its mask, as grey, another.
+enum class HdrBlocks : core::u8
+{
+    Half,
+    Bc6h,
+    Astc4x4,
+};
+
+// False for bytes that are not such a picture, and `out` empty.
+[[nodiscard]] bool transcodeHdrPicture(std::span<const std::byte> ktx2, HdrBlocks into, u32& width, u32& height,
+                                       std::vector<std::byte>& out);
+
 struct Image;
 
 // **A decoded picture with its smaller levels**, as `Rgba8`: the picture

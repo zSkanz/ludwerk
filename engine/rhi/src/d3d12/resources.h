@@ -64,6 +64,7 @@ public:
     HRESULT collect();
     HRESULT upload(BufferHandle handle, std::span<const std::byte> bytes, std::uint32_t offset);
     HRESULT uploadTexture(TextureHandle handle, std::span<const std::byte> bytes, std::uint32_t mip);
+    HRESULT uploadTextureLayer(TextureHandle handle, std::uint32_t layer, std::span<const std::byte> bytes);
     HRESULT uploadTextureRegion(TextureHandle handle, std::uint32_t x, std::uint32_t y, std::uint32_t width,
                                 std::uint32_t height, std::span<const std::byte> bytes);
     HRESULT readBuffer(BufferHandle handle, std::uint32_t offset, std::span<std::byte> bytes);
@@ -86,8 +87,8 @@ private:
         Ptr<T> native;
         std::uint64_t fence = 0;
     };
-    HRESULT uploadRegion(Texture& texture, std::uint32_t mip, std::uint32_t x, std::uint32_t y, std::uint32_t width,
-                         std::uint32_t height, std::span<const std::byte> bytes);
+    HRESULT uploadRegion(Texture& texture, std::uint32_t subresource, std::uint32_t x, std::uint32_t y,
+                         std::uint32_t width, std::uint32_t height, std::span<const std::byte> bytes);
     Context& context_;
     std::vector<Buffer> buffers_;
     std::vector<Texture> textures_;

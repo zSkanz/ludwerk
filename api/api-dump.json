@@ -4840,6 +4840,10 @@
           "Default": "true"
         },
         {
+          "Name": "Baked",
+          "Type": "Content"
+        },
+        {
           "Name": "Brightness",
           "Type": "number"
         },

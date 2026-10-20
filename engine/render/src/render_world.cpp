@@ -1326,17 +1326,16 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
         // The palette, appended once per POSE rather than once per section: a
         // character with four submeshes is one skeleton, and uploading its pose
-        // four times would be four times the bytes for one answer. Truncated at
-        // `kMaxSkinJoints` rather than refused -- a rig past the budget draws
-        // its first sixty-four joints posed and the rest in bind, which is
-        // visibly wrong in a way that says what happened.
+        // four times would be four times the bytes for one answer. Whole,
+        // however many joints it has: every pass reads it from the frame's one
+        // buffer.
         u32 firstBone = 0;
         u32 boneCount = 0;
         if (animation != nullptr) {
             // The pose it is DRAWN with: its own, or the copy a cape moved
             // (`AnimationSystem::present`).
             if (const Pose* pose = animation->drawnPose(id); pose != nullptr && !pose->palette.empty()) {
-                boneCount = static_cast<u32>(std::min<usize>(pose->palette.size(), kMaxSkinJoints));
+                boneCount = static_cast<u32>(pose->palette.size());
                 const auto [palette, inserted] = paletteOffsets.try_emplace(pose, static_cast<u32>(out.bones.size()));
                 firstBone = palette->second;
                 if (inserted)

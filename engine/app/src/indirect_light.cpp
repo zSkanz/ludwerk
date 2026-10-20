@@ -8,6 +8,7 @@
 #include <string>
 
 #include "engine/app/lightmap_bake.h"
+#include "engine/app/lightmap_file.h"
 #include "engine/asset/primitives.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
@@ -36,6 +37,10 @@ constexpr f32 kPi = 3.14159265358979f;
 // behind the loading curtain, which still has to turn its own picture, and a
 // sliver of it while the game is watched.
 constexpr u64 kCurtainBudgetNs = 12'000'000;
+// **What a lightmap bake takes of a frame nobody watches** (ADR 0253): behind
+// the loading curtain, or in a run with no window. A bake a frame's twelve
+// milliseconds at a time is a game's first half minute.
+constexpr u64 kBakeUnwatchedNs = 100'000'000;
 // The cosine of three degrees: how near the sun must be to where a bake's
 // mask was made for the mask to be its shadow (ADR 0253).
 constexpr f32 kLightmapMaskCos = 0.99862953f;
@@ -1236,6 +1241,7 @@ void IndirectLight::update(const Frame& frame)
     if (frame.loadersIdle) {
         stepVolumes(frame);
         stepLightmaps(frame);
+        readKeptLightmap(frame);
     }
     if (m_lightmapStamp != 0) {
         // **Within three degrees of the sun it was baked for**, the mask is
@@ -1961,11 +1967,12 @@ void IndirectLight::stepLightmaps(const Frame& frame)
         return;
     const BakeTrace trace = traceOf(*frame.world, *frame.physics, m_bakedSurfaces, m_bakedTraced, m_bakedBoxes,
                                     m_bakedBodies, frame.textures);
-    if (!m_lightmap->step(trace, m_light, kCurtainBudgetNs))
+    if (!m_lightmap->step(trace, m_light, frame.flatOut ? kBakeUnwatchedNs : kCurtainBudgetNs))
         return;
     LightmapBakeResult& done = *m_lightmapDone;
     done.pages.assign(m_lightmap->pages().begin(), m_lightmap->pages().end());
     done.sunDirection = m_lightmap->sunDirection();
+    done.sunGrid = m_lightmap->sunGrid();
     done.texels = m_lightmap->texelCount();
     done.inside = m_lightmap->insideCount();
     // A scene with nothing to bake still finishes: with no pages.
@@ -1976,14 +1983,21 @@ void IndirectLight::stepLightmaps(const Frame& frame)
 void IndirectLight::giveLightmap(const LightmapBakeResult& baked)
 {
     forgetLightmap();
-    if (baked.pages.empty())
+    const bool encoded = !baked.encodedLight.empty();
+    if (baked.pages.empty() && !encoded)
         return;
     auto pages = std::make_shared<render::LightmapPages>();
-    pages->size = baked.pages.front().size;
-    pages->count = static_cast<u32>(baked.pages.size());
+    pages->size = encoded ? baked.encodedSize : baked.pages.front().size;
+    pages->count = static_cast<u32>(encoded ? baked.encodedLight.size() : baked.pages.size());
     const usize perPage = static_cast<usize>(pages->size) * pages->size;
-    pages->texels.assign(perPage * 4 * pages->count, 0.0f);
-    for (usize page = 0; page < baked.pages.size(); ++page) {
+    if (encoded) {
+        pages->light = baked.encodedLight;
+        pages->masks = baked.encodedMasks;
+    }
+    else {
+        pages->texels.assign(perPage * 4 * pages->count, 0.0f);
+    }
+    for (usize page = 0; page < baked.pages.size() && !encoded; ++page) {
         const LightmapPage& from = baked.pages[page];
         if (from.size != pages->size || from.light.size() != perPage * 4 || from.mask.size() != perPage)
             return;
@@ -2020,6 +2034,13 @@ void IndirectLight::giveLightmap(const LightmapBakeResult& baked)
               [](const LightmapPart& a, const LightmapPart& b) { return a.key < b.key; });
     m_lightmapPages = std::move(pages);
     m_lightmapSun = baked.sunDirection;
+    const LightmapSunGrid& grid = baked.sunGrid;
+    if (!grid.sun.empty() && grid.sun.size() == static_cast<usize>(grid.counts[0]) * grid.counts[1] * grid.counts[2]) {
+        m_sunGrid = std::make_shared<const std::vector<f32>>(grid.sun);
+        m_sunGridLow = grid.low;
+        m_sunGridSpacing = grid.spacing;
+        std::copy_n(grid.counts, 3, m_sunGridCounts);
+    }
     static u64 stamps = 0;
     m_lightmapStamp = ++stamps;
 }
@@ -2031,6 +2052,48 @@ void IndirectLight::forgetLightmap() noexcept
     m_lightmapLit.clear();
     m_lightmapStamp = 0;
     m_lightmapMaskHolds = false;
+    m_sunGrid.reset();
+}
+
+void IndirectLight::readKeptLightmap(const Frame& frame)
+{
+    // **The file `Lighting.Baked` names, read once a name** (ADR 0253 §6),
+    // a few ticks in so what a script builds as it starts is there to be
+    // found -- and not while a bake is under way, which is about to be the
+    // scene's light.
+    if (frame.bakingLightmaps || m_lightmap || frame.tick < 4 || !frame.readContent)
+        return;
+    const scene::World& world = *frame.world;
+    core::NameAtom named;
+    world.lighting().forEach([&](InstanceId, const scene::LightingComponent& lighting) {
+        if (!named.valid())
+            named = lighting.baked;
+    });
+    if (named == m_lightmapRead)
+        return;
+    // A bake given here before the file had a name is that file's light:
+    // the bake that wrote it.
+    const bool fromBake = m_lightmapStamp != 0 && !m_lightmapRead.valid();
+    m_lightmapRead = named;
+    if (fromBake)
+        return;
+    if (!named.valid())
+        return;
+    const std::string_view urn = world.atoms().text(named);
+    std::vector<std::byte> bytes;
+    KeptLightmap kept;
+    if (!frame.readContent(urn, bytes) || !readLightmap(bytes, kept)) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"path", urn}};
+        core::log(core::LogLevel::Warn, ENG_TR("app.warn.lightmap_unreadable"), args);
+        return;
+    }
+    u32 missing = 0;
+    const LightmapBakeResult baked = lightmapFromKept(world, kept, missing);
+    giveLightmap(baked);
+    const std::array<core::I18nArg, 3> args{core::I18nArg{"path", urn},
+                                            core::I18nArg{"parts", static_cast<core::i64>(baked.parts.size())},
+                                            core::I18nArg{"missing", static_cast<core::i64>(missing)}};
+    core::log(core::LogLevel::Info, ENG_TR("app.info.lightmap_read"), args);
 }
 
 bool IndirectLight::takeLightmapBake(LightmapBakeResult& out)
@@ -2193,6 +2256,17 @@ void IndirectLight::append(render::RenderWorld& out, bool whole) const
         out.lightmap.pages = m_lightmapPages;
         out.lightmap.rects = m_lightmapRects;
         out.lightmap.maskHolds = m_lightmapMaskHolds;
+        if (m_sunGrid) {
+            // Into the grid's points from the camera's own space: the
+            // camera's place is where that space begins.
+            const f64 scale = 1.0 / static_cast<f64>(m_sunGridSpacing);
+            const DVec3 offset = out.camera.origin - m_sunGridLow;
+            out.lightmap.sun = m_sunGrid;
+            out.lightmap.sunScale = static_cast<f32>(scale);
+            out.lightmap.sunOffset = Vec3{static_cast<f32>(offset.x * scale), static_cast<f32>(offset.y * scale),
+                                          static_cast<f32>(offset.z * scale)};
+            std::copy_n(m_sunGridCounts, 3, out.lightmap.sunCounts);
+        }
         for (render::DrawItem& draw : out.draws) {
             if (draw.motionKey == 0 || draw.transparent)
                 continue;

@@ -290,6 +290,16 @@ writeObjectStore(const CompileResult& result, const std::filesystem::path& objec
 [[nodiscard]] std::optional<core::EngineError> encodeTexture(const asset::Image& image, bool srgb,
                                                              std::vector<std::byte>& out);
 
+// **A picture of light, as UASTC HDR** (ADR 0253 §6): three floats a texel,
+// rows from the top, linear and unbounded above; no smaller levels, since a
+// baked page is read at its own size. A byte a texel on the card, as BC6H or
+// ASTC, where half floats were eight; zstd inside the KTX2, as every texture.
+// `threads` share the blocks, which are each encoded alone: the same bytes
+// for any number of them.
+[[nodiscard]] std::optional<core::EngineError> encodeHdrPicture(std::span<const core::f32> rgb, core::u32 width,
+                                                                core::u32 height, core::u32 threads,
+                                                                std::vector<std::byte>& out);
+
 [[nodiscard]] std::string writeManifest(std::span<const ManifestEntry> entries);
 
 [[nodiscard]] bool writeFile(const std::filesystem::path& path, std::span<const std::byte> bytes,

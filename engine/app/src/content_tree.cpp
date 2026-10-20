@@ -99,6 +99,8 @@ ContentKind contentKindOf(std::string_view fileName) noexcept
         return ContentKind::Sequence;
     if (endsWith(name, ".irradiance"))
         return ContentKind::Irradiance;
+    if (endsWith(name, ".lightmap"))
+        return ContentKind::Lightmap;
     if (endsWith(name, kShaderExtension))
         return ContentKind::Shader;
 
@@ -321,6 +323,8 @@ namespace {
         return ".sequence.json";
     case ContentKind::Irradiance:
         return ".irradiance";
+    case ContentKind::Lightmap:
+        return ".lightmap";
     case ContentKind::Folder:
     case ContentKind::Mesh:
     case ContentKind::Texture:

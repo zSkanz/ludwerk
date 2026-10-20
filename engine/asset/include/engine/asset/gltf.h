@@ -40,23 +40,16 @@ struct GltfImportOptions
     bool generateMissingNormals = true;
     bool generateMissingTangents = true;
 
-    // How many joints the CALLER can pose, or zero for "no limit".
+    // **The bind pose baked into the vertices, asked for**: past this many
+    // joints the import hands back a static mesh -- no skin stream, no joints,
+    // no clips -- standing as the skeleton's bind pose has it. Nought, the
+    // default, never: a skeleton of any size is posed -- every palette is one
+    // storage buffer a frame (`render::GpuSkinUniforms`) -- and what one costs
+    // is said when it loads rather than refused past a number.
     //
-    // A renderer's skin palette is a fixed array in a uniform block, so there is
-    // a number past which a rig cannot be posed at all -- and a rig past it is
-    // not a rig that poses badly, it is one whose vertices index off the end of
-    // the palette and scatter. A downloaded horse with 677 joints against a
-    // budget of 64 is what found this.
-    //
-    // Past the limit the import BAKES the bind pose into the vertices and hands
-    // back a static mesh: no skin stream, no joints, no clips. That is the
-    // honest trade, and it is the whole trade -- a rig this engine cannot pose
-    // is a rig whose bind pose is everything it will ever show, so baking it
-    // costs nothing that was ever available and buys a model that stands up
-    // correctly instead of one placed by whatever its mesh node happened to say.
-    //
-    // The number lives here rather than in `asset` because it is a fact about
-    // the renderer, and `asset` must not acquire an opinion about one.
+    // An option for an import that wants a prop rather than a rig: a model
+    // with a skeleton nobody will animate is cheaper drawn as the shape it
+    // already stands in.
     core::u32 maxSkinJoints = 0;
 
     // Read the skeleton and the clips only: no geometry, no materials, no

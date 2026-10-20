@@ -3,6 +3,7 @@
 // known.
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <doctest/doctest.h>
 #include <optional>
 #include <vector>
@@ -10,9 +11,12 @@
 #include "class_descriptors.gen.h"
 #include "engine/app/indirect_light.h"
 #include "engine/app/lightmap_bake.h"
+#include "engine/app/lightmap_file.h"
 #include "engine/asset/primitives.h"
+#include "engine/asset/texture.h"
 #include "engine/audio/scene_types.h"
 #include "engine/physics/backends.h"
+#include "engine/render/environment.h"
 #include "engine/render/renderer.h"
 #include "engine/render/scene_types.h"
 #include "engine/scene/physics_sync.h"
@@ -27,6 +31,7 @@ using engine::app::LightmapSurface;
 using engine::core::Color3;
 using engine::core::DVec3;
 using engine::core::f32;
+using engine::core::f64;
 using engine::core::u32;
 using engine::core::usize;
 using engine::core::Vec2;
@@ -491,4 +496,167 @@ TEST_CASE("a baked part is drawn with its light until it moves, and with its mas
     scene.world->parts().find(floor)->cframe.position = DVec3{0.0, 0.5, 0.0};
     const engine::render::RenderWorld moved = drawn();
     CHECK(moved.draws[0].lightmap == engine::render::NoLightmap);
+}
+
+// **The grid what moves is shadowed by** (ADR 0253 §4): its points see the
+// sun where nothing baked stands between, and none of it under a baked
+// roof; and a frame drawn with the bake carries it while the mask holds.
+TEST_CASE("the bake's grid of the sun is dark under a baked roof and lit beside it, and a frame carries it")
+{
+    Scene scene;
+    (void)scene.block(DVec3{0.0, 0.0, 0.0}, Vec3{6.0f, 0.2f, 6.0f}, true);
+    (void)scene.block(DVec3{-1.5, 2.0, 0.0}, Vec3{3.0f, 0.2f, 6.0f}, true);
+    const engine::app::LightmapBakeResult baked = scene.bake();
+    const engine::app::LightmapSunGrid& grid = baked.sunGrid;
+    REQUIRE(grid.counts[0] >= 2);
+    REQUIRE(grid.sun.size() == static_cast<usize>(grid.counts[0]) * grid.counts[1] * grid.counts[2]);
+    // The point nearest a place a metre up: under the roof, and in the open.
+    const auto at = [&](f64 x, f64 y, f64 z) {
+        const auto index = [&](f64 value, f64 low, u32 count) {
+            const auto step = static_cast<f64>(grid.spacing);
+            return std::min<u32>(count - 1, static_cast<u32>(std::lround(std::max(0.0, (value - low) / step))));
+        };
+        const u32 ix = index(x, grid.low.x, grid.counts[0]);
+        const u32 iy = index(y, grid.low.y, grid.counts[1]);
+        const u32 iz = index(z, grid.low.z, grid.counts[2]);
+        return grid.sun[(static_cast<usize>(iz) * grid.counts[1] + iy) * grid.counts[0] + ix];
+    };
+    CHECK(at(-1.5, 1.0, 0.0) < 0.5f);
+    CHECK(at(2.0, 1.0, 0.0) > 0.5f);
+
+    scene.light.giveLightmap(baked);
+    scene.step(false);
+    engine::render::RenderWorld out;
+    out.camera.valid = true;
+    scene.light.append(out);
+    REQUIRE(out.lightmap.sun != nullptr);
+    CHECK(out.lightmap.sun->size() == grid.sun.size());
+    CHECK(out.lightmap.sunCounts[0] == grid.counts[0]);
+    CHECK(out.lightmap.sunScale > 0.0f);
+}
+
+// **A bake kept in a file** (ADR 0253 §6): read back as written, and found
+// again in the scene by each part's names and where it stood -- a part moved
+// since is not found, and is said.
+TEST_CASE("a bake written to a file reads back, and finds its parts again only where they stood")
+{
+    Scene scene;
+    const engine::core::InstanceId floor = scene.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    const engine::core::InstanceId wall = scene.block(DVec3{0.0, 1.0, -2.0}, Vec3{4.0f, 2.0f, 0.2f}, true);
+    scene.world->setName(floor, scene.atoms.intern("Floor"));
+    scene.world->setName(wall, scene.atoms.intern("Wall"));
+    const engine::app::LightmapBakeResult baked = scene.bake();
+    REQUIRE(baked.parts.size() == 2);
+
+    const engine::app::KeptLightmap kept = engine::app::keptLightmapOf(*scene.world, baked);
+    const std::vector<std::byte> bytes = engine::app::writeLightmap(kept);
+    engine::app::KeptLightmap read;
+    REQUIRE(engine::app::readLightmap(bytes, read));
+    CHECK(read.pageSize == kept.pageSize);
+    CHECK(read.pageCount == kept.pageCount);
+    CHECK(read.texels == kept.texels);
+    REQUIRE(read.parts.size() == 2);
+    CHECK(read.parts[0].path == kept.parts[0].path);
+    CHECK(read.sunGrid.sun.size() == kept.sunGrid.sun.size());
+    // Cut short, or another kind of file: refused.
+    CHECK_FALSE(engine::app::readLightmap(std::span(bytes).first(bytes.size() - 1), read));
+    CHECK_FALSE(engine::app::readLightmap(std::span(bytes).subspan(1), read));
+
+    engine::core::u32 missing = 0;
+    const engine::app::LightmapBakeResult found = engine::app::lightmapFromKept(*scene.world, kept, missing);
+    CHECK(missing == 0);
+    CHECK(found.parts.size() == 2);
+    CHECK(found.pages.size() == baked.pages.size());
+
+    // The wall moved: the floor is found, the wall is not.
+    scene.world->parts().find(wall)->cframe.position = DVec3{0.0, 1.0, -3.0};
+    const engine::app::LightmapBakeResult partly = engine::app::lightmapFromKept(*scene.world, kept, missing);
+    CHECK(missing == 1);
+    REQUIRE(partly.parts.size() == 1);
+    CHECK(partly.parts[0].id == floor);
+}
+
+TEST_CASE("a bake kept as UASTC HDR is a fraction of the file, reads back as kept, and is near the light it was")
+{
+    Scene scene;
+    const engine::core::InstanceId floor = scene.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    const engine::core::InstanceId wall = scene.block(DVec3{0.0, 1.0, -2.0}, Vec3{4.0f, 2.0f, 0.2f}, true);
+    scene.world->setName(floor, scene.atoms.intern("Floor"));
+    scene.world->setName(wall, scene.atoms.intern("Wall"));
+    const engine::app::LightmapBakeResult baked = scene.bake();
+    REQUIRE(baked.parts.size() == 2);
+    engine::app::KeptLightmap kept = engine::app::keptLightmapOf(*scene.world, baked);
+    const std::vector<std::byte> halves = engine::app::writeLightmap(kept);
+
+    // A file of the first version -- half floats, and no word for how --
+    // still reads.
+    {
+        std::vector<std::byte> first(halves);
+        const engine::core::usize words = kept.texels.size() * sizeof(engine::core::u16);
+        first.erase(first.end() - static_cast<std::ptrdiff_t>(words) - 4,
+                    first.end() - static_cast<std::ptrdiff_t>(words));
+        const engine::core::u32 version = 1;
+        std::memcpy(first.data() + 8, &version, sizeof(version));
+        engine::app::KeptLightmap read;
+        REQUIRE(engine::app::readLightmap(first, read));
+        CHECK(read.texels == kept.texels);
+    }
+
+#if ENG_DEBUG_UI
+    const std::vector<engine::core::u16> before = kept.texels;
+    REQUIRE(engine::app::compressLightmap(kept));
+    CHECK(kept.texels.empty());
+    REQUIRE(kept.light.size() == kept.pageCount);
+    REQUIRE(kept.masks.size() == kept.pageCount);
+    const std::vector<std::byte> bytes = engine::app::writeLightmap(kept);
+    CHECK(bytes.size() * 4 < halves.size());
+    engine::app::KeptLightmap read;
+    REQUIRE(engine::app::readLightmap(bytes, read));
+    CHECK(read.light == kept.light);
+    CHECK(read.masks == kept.masks);
+    CHECK(read.texels.empty());
+    CHECK_FALSE(engine::app::readLightmap(std::span(bytes).first(bytes.size() - 1), read));
+
+    // Near the light and the mask it was, wherever the bake lit.
+    const engine::core::usize texels = static_cast<engine::core::usize>(kept.pageSize) * kept.pageSize;
+    engine::core::u32 width = 0;
+    engine::core::u32 height = 0;
+    std::vector<std::byte> light;
+    std::vector<std::byte> mask;
+    REQUIRE(engine::asset::transcodeHdrPicture(kept.light[0], engine::asset::HdrBlocks::Half, width, height, light));
+    REQUIRE(engine::asset::transcodeHdrPicture(kept.masks[0], engine::asset::HdrBlocks::Half, width, height, mask));
+    CHECK(width == kept.pageSize);
+    double lightError = 0.0;
+    double maskError = 0.0;
+    engine::core::usize lit = 0;
+    for (engine::core::usize texel = 0; texel < texels; ++texel) {
+        const auto half = [](const std::vector<std::byte>& from, engine::core::usize at) {
+            engine::core::u16 value = 0;
+            std::memcpy(&value, from.data() + at * 2, 2);
+            return engine::render::halfToFloat(value);
+        };
+        const f32 was = engine::render::halfToFloat(before[texel * 4]);
+        if (was <= 0.0f)
+            continue;
+        ++lit;
+        lightError += static_cast<double>(std::abs(half(light, texel * 4) - was) / (was + 0.05f));
+        maskError +=
+            static_cast<double>(std::abs(half(mask, texel * 4) - engine::render::halfToFloat(before[texel * 4 + 3])));
+    }
+    REQUIRE(lit > 500);
+    CHECK(lightError / static_cast<double>(lit) < 0.03);
+    CHECK(maskError / static_cast<double>(lit) < 0.02);
+
+    // Handed on as kept: transcoded only where it is uploaded.
+    engine::core::u32 missing = 0;
+    const engine::app::LightmapBakeResult found = engine::app::lightmapFromKept(*scene.world, read, missing);
+    CHECK(missing == 0);
+    CHECK(found.pages.empty());
+    CHECK(found.encodedSize == kept.pageSize);
+    CHECK(found.encodedLight.size() == kept.pageCount);
+#else
+    // A game makes no bake, and has no encoder to keep one with.
+    CHECK_FALSE(engine::app::compressLightmap(kept));
+    CHECK_FALSE(kept.texels.empty());
+#endif
 }

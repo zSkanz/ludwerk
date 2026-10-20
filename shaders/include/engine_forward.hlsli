@@ -182,8 +182,8 @@ static float4 EngineBakedLight = float4(0.0f, 0.0f, 0.0f, 0.0f);
 static float EngineBakedSun = 1.0f;
 
 #if defined(ENG_BAKED)
-// The pages, one a layer: rgb the light, a the mask. The stage's sixteenth
-// and last texture.
+// The pages: rgb the light, a the mask -- or, in blocks with no alpha, the
+// mask the layer after (ADR 0253 §6). The stage's sixteenth and last texture.
 Texture2DArray LightmapPages : register(t15, space2);
 SamplerState LightmapSampler : register(s15, space2);
 #endif
@@ -383,7 +383,9 @@ struct Interpolants
     // tile size divides (`EmissiveFactor.w`).
     float2 UvMetres : TEXCOORD7;
 #if defined(ENG_BAKED)
-    // Its place in the lightmap: u, v and the page.
+    // Its place in the lightmap: u, v and the page's first layer. And where
+    // the sun's mask is read, while it holds: 1 the light's alpha, 2 the
+    // layer after; 0 it does not.
     float3 LightmapPlace : TEXCOORD8;
     nointerpolation float MaskHolds : TEXCOORD9;
 #endif
@@ -476,6 +478,37 @@ void readVolumeSlice(float2 cell, float slice, float firstLayer, float texel, ou
                                    0.0f);
     c = EnvironmentMap.SampleLevel(EnvironmentSampler, float3((origin + cell + float2(64.0f, 0.0f)) * texel, layer),
                                    0.0f);
+}
+
+// **How much of the sun a place sees past what is baked** (ADR 0253 §4):
+// the bake's grid, between its points; 1 outside it and with no bake.
+float bakedSunAt(float3 shadingPosition)
+{
+    if (SunGridRows[2].w < 0.5f)
+    {
+        return 1.0f;
+    }
+    const float3 counts = SunGridRows[1].xyz;
+    const float3 grid = shadingPosition * SunGridRows[0].w + SunGridRows[0].xyz;
+    if (any(grid < 0.0f) || any(grid > counts - 1.0f))
+    {
+        return 1.0f;
+    }
+    const float slice = floor(grid.z);
+    const float next = min(slice + 1.0f, counts.z - 1.0f);
+    const float2 cell = grid.xy + 0.5f;
+    const float texel = SunGridRows[2].x;
+    const float2 origin = float2(0.0f, (slice - floor(slice * 0.25f) * 4.0f) * 32.0f);
+    const float2 originNext = float2(0.0f, (next - floor(next * 0.25f) * 4.0f) * 32.0f);
+    const float a = EnvironmentMap
+                        .SampleLevel(EnvironmentSampler,
+                                     float3((origin + cell) * texel, SunGridRows[1].w + floor(slice * 0.25f)), 0.0f)
+                        .r;
+    const float b = EnvironmentMap
+                        .SampleLevel(EnvironmentSampler,
+                                     float3((originNext + cell) * texel, SunGridRows[1].w + floor(next * 0.25f)), 0.0f)
+                        .r;
+    return saturate(lerp(a, b, grid.z - slice));
 }
 
 // A volume's light on a surface facing `normal`, at a place in its box:
@@ -831,8 +864,23 @@ float3 lightSurface(Surface surface, float3 shadingPosition, float3 normal, floa
         {
             contact = ContactShadowTexture.SampleLevel(ContactShadowSampler, pixel * ViewportParams.zw, 0.0f);
         }
+        // **Past the nearest cascade the map holds no baked part** (ADR 0253
+        // §4): what is not baked itself is shadowed by them through the
+        // bake's grid there, coming in over the band the map's cascades blend
+        // across, so the handover is not a line on the ground.
+        float bakedSun = EngineBakedSun;
+        [branch]
+        if (SunGridRows[2].w > 0.5f && EngineBakedLight.a <= 0.0f)
+        {
+            const float band = max(CascadeFar[0] * ShadowParams.z, 1e-4f);
+            const float far = saturate((viewDepth - (CascadeFar[0] - band)) / band);
+            if (far > 0.0f)
+            {
+                bakedSun = lerp(1.0f, bakedSunAt(shadingPosition), far);
+            }
+        }
         const float sunShadow =
-            min(min(min(shadow, contact), nearbySunShadow(shadingPosition, sunDirection)), EngineBakedSun);
+            min(min(min(shadow, contact), nearbySunShadow(shadingPosition, sunDirection)), bakedSun);
         const float3 sunRadiance = SunColorUnused.rgb * (SunDirectionBrightness.w * sunShadow);
         color = shadeDirect(surface, sunDirection, sunRadiance);
     }
@@ -1056,7 +1104,12 @@ float4 shadeForward(Interpolants input)
 #if defined(ENG_BAKED)
     const float4 baked = LightmapPages.SampleLevel(LightmapSampler, input.LightmapPlace, 0.0f);
     EngineBakedLight = float4(baked.rgb, 1.0f);
-    EngineBakedSun = input.MaskHolds > 0.5f ? baked.a : 1.0f;
+    float mask = baked.a;
+    [branch] if (input.MaskHolds > 1.5f)
+    {
+        mask = LightmapPages.SampleLevel(LightmapSampler, input.LightmapPlace + float3(0.0f, 0.0f, 1.0f), 0.0f).r;
+    }
+    EngineBakedSun = input.MaskHolds > 0.5f ? mask : 1.0f;
 #endif
 
     // The sun. Its direction already points from the world towards it, so the

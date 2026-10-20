@@ -140,14 +140,12 @@ namespace {
 //
 // **The nodes above the skeleton are folded into its roots** rather than made
 // joints, which is where the file's axis conversion and armature live. They
-// would cost palette slots (render/shader_types.h: sixty-four) and animate
-// nothing.
+// would cost palette slots and animate nothing.
 
-// The renderer's palette budget (`render::kMaxSkinJoints`, which this tool
-// cannot include). A rig that fits keeps every bone the file declares -- an
-// unweighted one may be what a script attaches a sword to -- and one that does
-// not keeps only the bones that move a vertex.
-constexpr std::size_t PaletteBudget = 64;
+// **Every bone the file declares is kept**, weighted or not: an unweighted one
+// may be what a script attaches a sword to. A skeleton has no budget of
+// joints to fit (the renderer reads each from the frame's palette), so none
+// is dropped to make one fit.
 
 [[nodiscard]] core::Mat4 toMat4(const aiMatrix4x4& source) noexcept
 {
@@ -234,7 +232,6 @@ void readSkeleton(const aiScene& scene, const std::vector<const aiNode*>& meshNo
                   Skeleton& skeleton)
 {
     std::set<const aiNode*> bones;
-    std::set<const aiNode*> weighted;
     for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex) {
         const aiMesh& mesh = *scene.mMeshes[meshIndex];
         for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones; ++boneIndex) {
@@ -243,15 +240,9 @@ void readSkeleton(const aiScene& scene, const std::vector<const aiNode*>& meshNo
             if (node == nullptr)
                 continue;
             bones.insert(node);
-            for (unsigned int weight = 0; weight < bone.mNumWeights; ++weight) {
-                if (bone.mWeights[weight].mWeight > 0.0f) {
-                    weighted.insert(node);
-                    break;
-                }
-            }
         }
     }
-    const std::set<const aiNode*>& kept = bones.size() <= PaletteBudget ? bones : weighted;
+    const std::set<const aiNode*>& kept = bones;
 
     // A node between two kept bones is a joint too -- the chain from one to the
     // other has to exist for the pose to reach the lower one -- and a node

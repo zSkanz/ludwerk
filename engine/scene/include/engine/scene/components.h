@@ -1243,6 +1243,8 @@ struct LightingComponent
     // `Lighting.LightmapDensity` (ADR 0253): texels a metre the bake gives a
     // baked part. Read by the bake alone.
     f32 lightmapDensity = 16.0f;
+    // `Lighting.Baked`: the file the bake is kept in, by content URN.
+    core::NameAtom baked;
     bool globalShadows = true;
     bool autoExposure = true;
 };

@@ -523,8 +523,13 @@ struct EngineOptions
 #endif
     // `--xr-eyes-shot=<path>`: both eyes' pictures as drawn, before the
     // runtime has them, written as `<name>-left` and `<name>-right` at the
-    // 600th frame a headset draws, beside the eyes' geometry in the log.
+    // 600th frame a headset draws (`--xr-eyes-shot-frame=N` for another),
+    // beside the eyes' geometry in the log. **With `--bake-lighting`, not
+    // before the bake is drawn**: thirty frames after it at the earliest,
+    // and the run does not end before then -- a picture of what the bake
+    // changes, taken before it, shows nothing of it.
     std::filesystem::path xrEyesShot;
+    core::u32 xrEyesShotFrame = 600;
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;

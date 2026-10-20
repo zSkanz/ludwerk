@@ -75,6 +75,9 @@ enum class ContentKind
     // An `.irradiance` (ADR 0207): a volume's light, kept. A kind of its own
     // so `IrradianceVolume.Baked` offers those and nothing else.
     Irradiance,
+    // A `.lightmap` (ADR 0253): the light of what stands still, kept. A kind
+    // of its own so `Lighting.Baked` offers those and nothing else.
+    Lightmap,
     Other,
 };
 

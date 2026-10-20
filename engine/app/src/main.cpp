@@ -789,6 +789,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.xrFoveationFromFlag = true;
             continue;
         }
+        if (arg.starts_with("--xr-eyes-shot-frame=")) {
+            std::uint64_t frame = 0;
+            if (!numericValue(arg.substr(21), frame) || frame < 2 || frame > 1'000'000) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            options.xrEyesShotFrame = static_cast<engine::core::u32>(frame);
+            continue;
+        }
         if (arg.starts_with("--xr-eyes-shot=")) {
             options.xrEyesShot = std::string(arg.substr(15));
             continue;
@@ -1498,7 +1508,7 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
     // closes it the same way (`platform::installStopSignals`).
     // (And a bake, which ends when its volumes are written -- or says why
     // it could not.)
-    if (options.headless && options.frames == 0 && !options.bakeIrradiance &&
+    if (options.headless && options.frames == 0 && !options.bakeIrradiance && !options.bakeLighting &&
         options.network.topology != engine::replication::Topology::Dedicated) {
         engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.headless_needs_frames"));
         return kExitUsage;

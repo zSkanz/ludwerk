@@ -203,11 +203,16 @@ struct GpuFrameUniforms
     // **The tonemap folded into the forward pass** (a headset's eye, ADR
     // 0250): x the exposure the pass writes with, nought where it does not.
     f32 forwardFold[4]{};
+    // **The bake's grid of the sun** (ADR 0253 §4): into its points from
+    // the camera's space -- xyz an offset, w a scale; how many along each
+    // side and the layer its first slice is in; and x one over the array's
+    // side in texels, w one where it is read this frame.
+    f32 sunGridRows[3][4]{};
 };
 
 static_assert(sizeof(GpuFrameUniforms) == 224 + 256 + 144 + 64 * kLocalShadowTileCount + 16 + 16 + 16 + 64 +
                                               96 * kFrameReflectionProbes + 16 * kVolumeRows * kFrameIrradianceVolumes +
-                                              16 * kFrameOccluders + 16 + 16,
+                                              16 * kFrameOccluders + 16 + 16 + 48,
               "GpuFrameUniforms is a cbuffer layout; see engine_forward.hlsli");
 
 // Fragment stage, `b1 space3`. Per material rather than per frame, because it
@@ -291,24 +296,17 @@ struct GpuShadowUniforms
 
 static_assert(sizeof(GpuShadowUniforms) == 128, "GpuShadowUniforms is a cbuffer layout");
 
-// The most joints one skinned draw can be posed by. A budget rather than a limit
-// of the design, like `kMaxForwardLights`: the palette is a constant buffer and
-// a constant buffer has a size, so a rig with more joints than this draws in
-// bind pose for the ones past it. Sixty-four is generous for a humanoid -- a
-// game character is typically thirty to fifty -- and 4 KB is a comfortable push
-// on every backend. Raising it is one number here and one in `engine_pbr.hlsli`.
-inline constexpr u32 kMaxSkinJoints = 64;
-
-// Vertex stage, `b1 space1`, for both skinned passes. `joint * inverseBind`
-// already combined, because that product is what a vertex multiplies by and
-// sending the two halves separately would send twice the bytes to do the same
-// multiply on the GPU.
+// Vertex stage, `b1 space1`, for every skinned pass drawn one object at a time:
+// where its palette begins in the frame's (`RenderWorld::bones`, one storage
+// buffer), and how many joints it has. **A skeleton of any size**: the
+// palette was a block of sixty-four matrices, and a rig past it drew its
+// first sixty-four joints posed and the rest left behind.
 struct GpuSkinUniforms
 {
-    core::Mat4 jointMatrices[kMaxSkinJoints];
+    u32 palette[4]{0, 0, 0, 0};
 };
 
-static_assert(sizeof(GpuSkinUniforms) == 64 * 64, "GpuSkinUniforms is a cbuffer layout; see engine_pbr.hlsli");
+static_assert(sizeof(GpuSkinUniforms) == 16, "GpuSkinUniforms is a cbuffer layout; see engine_pbr.hlsli");
 
 // Fragment stage, `b0 space3`, for the tonemap pass.
 struct GpuTonemapUniforms
