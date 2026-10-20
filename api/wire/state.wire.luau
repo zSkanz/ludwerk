@@ -512,6 +512,16 @@ local CharacterBodyFields: { Schema.Field } = {
         Component = "characterBodies",
         Doc = "The same: whether it has weight is how it is stepped.",
     },
+    {
+        Name = "GroundPart",
+        Id = 13,
+        Encoding = "InstanceRef",
+        Source = "Component",
+        Component = "characterBodies",
+        Doc = "**What it stands on** (protocol 64, ADR 0254 §5): a replica that draws a platform where "
+            .. "its authority will have it draws the player standing on it in the platform's frame, "
+            .. "moving with it rather than sliding over it.",
+    },
 }
 
 --- **`moveDirection` is deliberately absent**, and it is worth saying why here
@@ -5834,6 +5844,42 @@ local Messages: { Schema.Message } = {
             .. "when a replica would draw it wrong, and takes what it sent as what the replica has; a "
             .. "message nobody acknowledges within the round trip was lost, and its agents are told "
             .. "again at once rather than when they are next due.",
+    },
+    {
+        Name = "MovingCurve",
+        Id = 41,
+        Channel = "Control",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "part", Type = "u32", Doc = "The network id of the part the tween moves." },
+            {
+                Name = "kind",
+                Type = "u8",
+                Doc = "What it moves: 1 the part's `CFrame`, 2 its `Position`; 0 says the tween let go of the "
+                    .. "part, and the rest of the message is to be ignored.",
+            },
+            { Name = "tick", Type = "u64", Doc = "The authority's tick the clock below is as of, after its step." },
+            { Name = "time", Type = "F64", Doc = "`TweenInfo.Time`, seconds." },
+            { Name = "delayTime", Type = "F64", Doc = "`TweenInfo.DelayTime`, seconds." },
+            { Name = "repeatCount", Type = "I32", Doc = "`TweenInfo.RepeatCount`; negative repeats for ever." },
+            { Name = "style", Type = "u8", Doc = "`TweenInfo.EasingStyle`, its value." },
+            { Name = "direction", Type = "u8", Doc = "`TweenInfo.EasingDirection`, its value." },
+            { Name = "reverses", Type = "u8", Doc = "`TweenInfo.Reverses`: 1 if so." },
+            { Name = "elapsed", Type = "F64", Doc = "Seconds into the current phase, the delay or the traversal." },
+            { Name = "repeatsDone", Type = "I32", Doc = "Traversals finished." },
+            { Name = "state", Type = "u8", Doc = "`Enum.PlaybackState`'s value." },
+            { Name = "returning", Type = "u8", Doc = "1 while playing the way back of a reversing traversal." },
+            { Name = "captured", Type = "u8", Doc = "1 when this traversal's start has been taken." },
+            { Name = "start", Type = "CFrameD", Doc = "This traversal's start." },
+            { Name = "goal", Type = "CFrameD", Doc = "The tween's goal." },
+            { Name = "now", Type = "CFrameD", Doc = "Where the part is at `tick`." },
+        },
+        Doc = "A tween on a replicated part's place, as its authority's `TweenService` runs it (protocol 64, "
+            .. "ADR 0254): sent when a traversal begins or the tween's state changes, and to a peer the part "
+            .. "enters the view of while it is in force. From it a replica takes the same steps of the "
+            .. "tween's clock, a tick at a time, to the tick it predicts: the part is where the authority "
+            .. "will have it. A `Position` tween blends in the 32-bit floats a script's `vector` holds, as "
+            .. "the authority does.",
     },
 }
 

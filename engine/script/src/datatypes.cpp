@@ -1817,6 +1817,7 @@ void registerDatatypes(lua_State* L)
     registerSceneTypes(L);
     registerIntentWriter(L);
     registerPredictedStep(L);
+    registerWorldStep(L);
     registerAnimationTypes(L);
     registerInputTypes(L);
     registerMaterialTypes(L);

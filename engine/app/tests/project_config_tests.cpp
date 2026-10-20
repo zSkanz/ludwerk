@@ -70,6 +70,24 @@ constexpr const char* kAuthoredHigh = "[project]\n"
 
 } // namespace
 
+TEST_CASE("a project says what its replicas predict (ADRs 0133, 0254)")
+{
+    const ProjectDir project("[project]\nname = \"Predicting\"\n\n[network]\npredict_radius = 12.5\n"
+                             "predict_max_bodies = 4\npredict_linger_ticks = 90\npredict_moving_lead_ms = 400\n");
+    const app::ProjectConfig config = app::loadProjectConfig(project.path, {});
+    CHECK(config.networkPredictRadius == doctest::Approx(12.5));
+    CHECK(config.networkPredictMaxBodies == 4u);
+    CHECK(config.networkPredictLingerTicks == 90u);
+    CHECK(config.networkPredictMovingLeadMs == 400u);
+    // And what it does not say, the defaults.
+    const ProjectDir plain("[project]\nname = \"Plain\"\n");
+    const app::ProjectConfig defaults = app::loadProjectConfig(plain.path, {});
+    CHECK(defaults.networkPredictRadius == doctest::Approx(8.0));
+    CHECK(defaults.networkPredictMaxBodies == 32u);
+    CHECK(defaults.networkPredictLingerTicks == 30u);
+    CHECK(defaults.networkPredictMovingLeadMs == 250u);
+}
+
 TEST_CASE("a project file refines the level it names")
 {
     const ProjectDir project(kAuthoredHigh);

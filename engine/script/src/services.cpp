@@ -1990,6 +1990,8 @@ int networkServiceGetStats(lua_State* L)
     field("Corrections", static_cast<double>(stats.corrections));
     field("InterpolationDelay", stats.interpolationDelayMs);
     field("PredictedParts", static_cast<double>(stats.predictedParts));
+    field("MovingParts", static_cast<double>(stats.movingParts));
+    field("WorldStepTime", stats.worldStepMs);
     field("ResimulationsPerSecond", stats.resimulationsPerSecond);
     field("ResimulatedTicksPerSecond", stats.resimulatedTicksPerSecond);
     field("ResimulationTime", stats.resimulationMs);
@@ -3971,6 +3973,8 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"RunService", "UnbindFromIntent", runServiceUnbindFromIntent},
     {"RunService", "BindToPredictedStep", runServiceBindToPredictedStep},
     {"RunService", "UnbindFromPredictedStep", runServiceUnbindFromPredictedStep},
+    {"RunService", "BindToWorldStep", runServiceBindToWorldStep},
+    {"RunService", "UnbindFromWorldStep", runServiceUnbindFromWorldStep},
     {"RunService", "UnbindFromRenderStep", runServiceUnbindFromRenderStep},
     {"RunService", "Resume", runServiceResume},
     {"RunService", "IsPaused", runServiceIsPaused},

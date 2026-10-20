@@ -757,7 +757,8 @@ core::u32 closeScene(lua_State* L, core::u32 next)
         unref(L, binding.functionRef);
         return true;
     });
-    for (std::vector<PredictedBinding>* bindings : {&state.predictedSteps, &state.predictedTouches}) {
+    for (std::vector<PredictedBinding>* bindings :
+         {&state.predictedSteps, &state.predictedTouches, &state.worldSteps}) {
         std::erase_if(*bindings, [&](const PredictedBinding& binding) {
             if (!ownedByScene(L, binding.owner))
                 return false;
@@ -1360,6 +1361,156 @@ void runPredictedTouch(lua_State* L, const scene::PredictedTick& tick, core::Ins
         pushInstance(co, tick.character);
         return 1;
     });
+}
+
+// --- The world's step (ADR 0254) --------------------------------------------
+
+int runServiceBindToWorldStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    if (length == 0)
+        raise(L, ENG_TR("script.err.intent_binding_name"));
+    const std::string name{text, length};
+    SceneState& state = scenes(L);
+    std::erase_if(state.worldSteps, [&](const PredictedBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    lua_pushvalue(L, 3);
+    const int ref = lua_ref(L, -1);
+    lua_pop(L, 1);
+    state.worldSteps.push_back(PredictedBinding{name, state.nextPredicted++, ref, scriptOfThread(L), {}});
+    return 0;
+}
+
+int runServiceUnbindFromWorldStep(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    size_t length = 0;
+    const char* text = luaL_checklstring(L, 2, &length);
+    const std::string_view name{text, length};
+    std::erase_if(scenes(L).worldSteps, [&](const PredictedBinding& binding) {
+        if (binding.name != name)
+            return false;
+        unref(L, binding.functionRef);
+        return true;
+    });
+    return 0;
+}
+
+bool worldStepBound(lua_State* L)
+{
+    return !scenes(L).worldSteps.empty();
+}
+
+namespace {
+
+struct WorldStepUserdata
+{
+    core::u32 run = 0;
+};
+
+const scene::WorldTick& checkWorldStep(lua_State* L)
+{
+    const auto* step =
+        static_cast<const WorldStepUserdata*>(luaL_checkudatatagged(L, 1, static_cast<int>(UserdataTag::WorldStep)));
+    const SceneState& state = scenes(L);
+    if (step->run == 0 || step->run != state.worldRun || state.worldNow == nullptr)
+        raise(L, ENG_TR("script.err.predicted_step_spent"));
+    return *state.worldNow;
+}
+
+int worldStepTick(lua_State* L)
+{
+    lua_pushnumber(L, static_cast<double>(checkWorldStep(L).tick));
+    return 1;
+}
+
+int worldStepDeltaTime(lua_State* L)
+{
+    lua_pushnumber(L, checkWorldStep(L).dt);
+    return 1;
+}
+
+int worldStepReplaying(lua_State* L)
+{
+    lua_pushboolean(L, checkWorldStep(L).replay ? 1 : 0);
+    return 1;
+}
+
+int worldStepPredicted(lua_State* L)
+{
+    lua_pushboolean(L, checkWorldStep(L).predicted ? 1 : 0);
+    return 1;
+}
+
+// The same draws on every machine and in every replay of a tick: seeded by
+// the tick alone.
+int worldStepRandom(lua_State* L)
+{
+    const scene::WorldTick& tick = checkWorldStep(L);
+    pushRandom(L, core::Pcg32{(tick.tick * 0x9E3779B97F4A7C15ull) ^ 0x5745u});
+    return 1;
+}
+
+} // namespace
+
+void runWorldStep(lua_State* L, const scene::WorldTick& tick)
+{
+    SceneState& state = scenes(L);
+    if (state.worldSteps.empty())
+        return;
+    VmContext& ctx = context(L);
+    const scene::WorldTick* outer = state.worldNow;
+    const core::u32 outerRun = state.worldRun;
+    const bool outerIn = ctx.inWorldStep;
+    state.worldNow = &tick;
+    state.worldRun = ++state.worldRuns == 0 ? ++state.worldRuns : state.worldRuns;
+    ctx.inWorldStep = true;
+    const core::u32 run = state.worldRun;
+    // In bind order (R10); what a function binds or unbinds is the next step's.
+    std::vector<PredictedBinding> running = state.worldSteps;
+    std::stable_sort(running.begin(), running.end(),
+                     [](const PredictedBinding& a, const PredictedBinding& b) { return a.order < b.order; });
+    for (const PredictedBinding& binding : running) {
+        lua_getref(L, binding.functionRef);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+        const SuppressReason reason = suppressionFor(L, scriptOfFunction(L, -1), runEnvOfFunction(L, -1));
+        lua_pop(L, 1);
+        if (reason != SuppressReason::None)
+            continue;
+        lua_State* co = lua_newthread(L);
+        lua_getref(L, binding.functionRef);
+        lua_xmove(L, co, 1);
+        void* memory =
+            lua_newuserdatataggedwithmetatable(co, sizeof(WorldStepUserdata), static_cast<int>(UserdataTag::WorldStep));
+        static_cast<WorldStepUserdata*>(memory)->run = run;
+        (void)callUnyielding(L, co, 1);
+        lua_pop(L, 1);
+    }
+    state.worldNow = outer;
+    state.worldRun = outerRun;
+    ctx.inWorldStep = outerIn;
+}
+
+void registerWorldStep(lua_State* L)
+{
+    VmContext& ctx = context(L);
+    MemberTable& getters = ctx.getters[static_cast<usize>(UserdataTag::WorldStep)];
+    addMember(getters, ctx.world->atoms(), "Tick", worldStepTick);
+    addMember(getters, ctx.world->atoms(), "DeltaTime", worldStepDeltaTime);
+    addMember(getters, ctx.world->atoms(), "Replaying", worldStepReplaying);
+    addMember(getters, ctx.world->atoms(), "Predicted", worldStepPredicted);
+    addMember(getters, ctx.world->atoms(), "Random", worldStepRandom);
+    installTagMetatable(L, UserdataTag::WorldStep, nullptr, nullptr);
 }
 
 void registerPredictedStep(lua_State* L)

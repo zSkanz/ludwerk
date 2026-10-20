@@ -40,6 +40,7 @@
 #include "engine/scene/localization.h"
 #include "engine/scene/screen_split.h"
 #include "engine/scene/sequence_files.h"
+#include "engine/scene/tween_clock.h"
 #include "engine/scene/types.h"
 #include "engine/scene/value.h"
 
@@ -366,6 +367,35 @@ struct EngineState
     // means to -- a clock that runs ahead is slowed, never its intents
     // dropped. Not a rate scripts are told of.
     f64 clockPace = 1.0;
+    // **The authority's tick for a tick this machine steps** (ADR 0254): its
+    // own tick plus this, which a replica learns from each answer; and
+    // whether it steps ahead of an authority at all. Zero and false on the
+    // authority and alone. What a world step is told its tick is.
+    i64 worldStepOffset = 0;
+    bool worldStepAhead = false;
+    // What the world steps took on the last tick, replays of it included, in
+    // milliseconds: the physics mirror's measure, for the network's stats.
+    f64 worldStepMs = 0.0;
+    // **A tween on a part's place, as its replicas are to know it** (ADR
+    // 0254 §2.1): its timing and its clock as of `tick`, after that tick's
+    // step, the two ends of this traversal and where the part is now -- from
+    // which a replica takes the same steps to any later tick. Made by
+    // `TweenService` when a traversal begins or the tween's state changes;
+    // `kind` 0 says the tween let go of the part. The last second's: the
+    // authority takes each once, at its next snapshot.
+    struct MovingCurve
+    {
+        core::InstanceId part;
+        // 0 none, 1 its `CFrame`, 2 its `Position`.
+        u8 kind = 0;
+        u64 tick = 0;
+        TweenTiming timing;
+        TweenClock clock;
+        core::CFrameD start;
+        core::CFrameD goal;
+        core::CFrameD now;
+    };
+    std::vector<MovingCurve> movingCurvesOut;
     // **The phases this world has named** (ADR 0231), each a bit: its place
     // here. At most `MostPhases`.
     std::vector<core::NameAtom> phaseNames;
@@ -593,6 +623,11 @@ struct EngineState
         // the re-simulations a second and the ticks they stepped, and what
         // one took on average over that second, in milliseconds.
         u32 predictedParts = 0;
+        // ADR 0254: the parts moving on their own drawn where the authority
+        // will have them, and what this machine's world step took a tick,
+        // replays in it, in milliseconds.
+        u32 movingParts = 0;
+        f64 worldStepMs = 0.0;
         f64 resimulationsPerSecond = 0.0;
         f64 resimulatedTicksPerSecond = 0.0;
         f64 resimulationMs = 0.0;

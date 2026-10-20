@@ -23,6 +23,7 @@ engine_add_module(scene
         src/localization.cpp
         src/ui_pages.cpp
         src/world_hash.cpp
+        src/tween_clock.cpp
         src/wind.cpp
         src/dormancy.cpp
         src/phases.cpp

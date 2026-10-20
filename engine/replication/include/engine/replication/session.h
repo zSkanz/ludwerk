@@ -46,6 +46,7 @@
 #include "engine/replication/types.h"
 #include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
+#include "engine/scene/tween_clock.h"
 
 namespace engine::scene {
 class World;
@@ -202,6 +203,15 @@ inline constexpr core::f64 RestMetres = 0.0005;
 inline constexpr core::f32 RestSpeed = 0.01f;
 inline constexpr u32 DefaultPredictMaxBodies = 32;
 inline constexpr u32 DefaultPredictLingerTicks = 30;
+// **A part that moves on its own, near a character this machine predicts**
+// (ADR 0254): drawn where the authority will have it at the tick predicted,
+// carried on by its last motion at most this far ahead of what was heard
+// (`[network] predict_moving_lead_ms`), and blended back between snapshots
+// over this many ticks once it leaves.
+inline constexpr core::f64 DefaultPredictMovingLeadMs = 250.0;
+inline constexpr u32 MovingBlendTicks = 15;
+// A part moved within this many ticks of the newest snapshot is moving.
+inline constexpr u64 MovingRecentTicks = 60;
 inline constexpr core::f64 VisualSnapMetres = 2.0;
 // **A vehicle glides slower than a character** (ADR 0213): what is left of a
 // correction a tick, about a quarter of a second to nothing. A car moves its
@@ -965,6 +975,10 @@ private:
     // The entries that waited for names this peer has now given.
     static void takeNamedIntents(scene::World& world, Peer& peer);
     void sendAttributes(Peer& peer, const std::vector<u32>& entering);
+    // The tweens on parts' places a peer is to know (ADR 0254 §2.1): those
+    // changed this send, of parts it has, and those in force on parts
+    // entering its view.
+    void sendCurves(Peer& peer, const std::vector<u32>& entering);
 
     using TileBlock = std::pair<scene::TileChunkKey, scene::TileChunk>;
     // One tilemap's cells as last sent to every peer (ADR 0103): one copy
@@ -1087,6 +1101,13 @@ private:
     // `GlobalScriptService` and (3, 0) for its `Shared` folder.
     using AttributeOwner = std::pair<u8, u32>;
     std::map<AttributeOwner, std::vector<u8>> m_attributeShadows;
+    // **The tweens on parts' places** (ADR 0254 §2.1): each in force, by the
+    // part's network id, as its `MovingCurve` message; and this send's news,
+    // stops among them.
+    std::map<u32, std::vector<u8>> m_curves;
+    std::vector<std::pair<u32, std::vector<u8>>> m_curveNews;
+    // The tick of the newest curve taken, so each is taken once.
+    u64 m_curvesTaken = 0;
     // The instances the last send captured, by network id in order: an
     // instance in here and not in the shadows was known and carried nothing
     // (the shadows keep only what carries something, of the instances).
@@ -1266,6 +1287,7 @@ public:
     {
         Stats now = m_stats;
         now.predictedBodies = static_cast<u32>(m_predictedParts.size());
+        now.movingParts = static_cast<u32>(m_movingParts.size());
         for (usize seat = 0; seat < m_seats.size(); ++seat) {
             now.seatPredicted[seat] = m_seats[seat].netId != 0 && m_seats[seat].synced;
             now.seatUser[seat] = seat == 0 ? m_playerId : m_guests[seat - 1].userId;
@@ -1293,6 +1315,10 @@ public:
         m_predictLinger = lingerTicks;
     }
     [[nodiscard]] usize predictedCount() const noexcept { return m_predictedParts.size(); }
+    // How far ahead a moving part is carried on by its last motion (ADR 0254).
+    void setMovingLead(core::f64 milliseconds) noexcept { m_predictLeadMs = milliseconds; }
+    // The moving parts drawn at the predicted tick (ADR 0254).
+    [[nodiscard]] usize movingCount() const noexcept { return m_movingParts.size(); }
     // An own character's drawn offset (`VisualCorrection`), by seat: 0 the
     // machine's first player, 1 to 3 its guests (ADR 0208).
     [[nodiscard]] VisualCorrection visualCorrection(usize seat = 0) const noexcept
@@ -1398,6 +1424,15 @@ private:
     void reconcile2d(scene::World& world, Owned& seat, core::InstanceId character, core::Vec2 position,
                      core::f32 rotation);
     void interpolate(scene::World& world);
+    // **Where a moving part is at the authority's `tick`** (ADR 0254): between
+    // the states it was sent, or past the newest carried on by its last motion
+    // for at most `leadTicks` -- held where it was if it has stopped or leapt.
+    [[nodiscard]] std::optional<core::CFrameD> movingPoseAt(u32 netId, u64 tick, u64 leadTicks) const;
+    // **Where a tweened part is at the authority's `tick`**, by the tween's own
+    // clock (ADR 0254 §2.1): none for a part with no tween in force, or a tick
+    // before the one it was told at.
+    [[nodiscard]] std::optional<core::CFrameD> curvePoseAt(u32 netId, u64 tick, core::f64 dt);
+    void onMovingCurve(std::span<const u8> bytes);
     [[nodiscard]] const WorldState* stateAt(u64 tick) const noexcept;
 
     net::ITransport& m_transport;
@@ -1497,6 +1532,27 @@ private:
     // Predicted parts, by network id, and how many ticks each has been out of
     // range.
     std::map<u32, u32> m_predictedParts;
+    // **Moving parts** (ADR 0254), by network id, and how many ticks each
+    // has been out of range; and those blended back, by the ticks left.
+    std::map<u32, u32> m_movingParts;
+    std::map<u32, u32> m_movingLeaving;
+    // **The tweens in force on parts' places** (ADR 0254 §2.1), by network id:
+    // as the authority told them, and where stepping on from there has come.
+    struct Curve
+    {
+        u8 kind = 0;
+        u64 tick = 0;
+        scene::TweenTiming timing;
+        scene::TweenClock clock;
+        core::CFrameD start;
+        core::CFrameD goal;
+        core::CFrameD now;
+        u64 atTick = 0;
+        scene::TweenClock atClock;
+        core::CFrameD atStart;
+        core::CFrameD atNow;
+    };
+    std::map<u32, Curve> m_curves;
     // How far the last comparison found a predicted part from the authority's.
     core::f64 m_lastBodyCorrection = 0.0;
     // The vehicles the last answer carried, by controller: one not among them is
@@ -1506,6 +1562,7 @@ private:
     core::f64 m_predictRadius = DefaultPredictRadius;
     u32 m_predictMax = DefaultPredictMaxBodies;
     u32 m_predictLinger = DefaultPredictLingerTicks;
+    core::f64 m_predictLeadMs = DefaultPredictMovingLeadMs;
     // The parts this replica owns (ADR 0099): simulated here, sent up, and
     // never overwritten by a snapshot.
     std::set<u32> m_ownedParts;
@@ -1528,6 +1585,9 @@ private:
     // The last intent the authority applied: one for the machine, whose
     // input is one stream -- every seat's character is answered at it.
     u64 m_ackedIntent = 0;
+    // The authority's tick of the snapshot that answered it: predicted intent
+    // `N` is stepped there at `m_ackedServerTick + N - m_ackedIntent`.
+    u64 m_ackedServerTick = 0;
     // The last `IntentRedundancy` intents sent, encoded, oldest first: each
     // message carries them all (protocol 22).
     std::deque<std::pair<u64, std::vector<u8>>> m_sentIntents;

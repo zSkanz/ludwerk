@@ -16,6 +16,7 @@
 #include "engine/app/world_ui.h"
 #include "engine/net/memory_transport.h"
 #include "engine/platform/file.h"
+#include "engine/platform/process.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/replication.h"
@@ -104,6 +105,8 @@ struct Machine
     std::unique_ptr<app::NetworkSession> network;
     // `--net-log-client-writes`, for the machine booted after it is set.
     bool logClientWrites = false;
+    // What its session is made with, as a project's `[network]` would say it.
+    replication::Config config{};
 
     void boot(const std::shared_ptr<net::MemoryNetwork>& wire,
               scene::NetworkTopology topology = scene::NetworkTopology::Solo, std::string_view scene = {},
@@ -125,7 +128,7 @@ struct Machine
             };
         }
         REQUIRE_FALSE(host->boot(options).has_value());
-        replication::Config base;
+        replication::Config base = config;
         base.ticksPerSnapshot = 1;
         base.interpolationDelayTicks = 0;
         base.maxPeers = maxPlayers;
@@ -147,7 +150,7 @@ struct Machine
         };
         REQUIRE_FALSE(host->boot(options).has_value());
         network = std::make_unique<app::NetworkSession>(
-            [this]() { return host.get(); }, replication::Config{},
+            [this]() { return host.get(); }, config,
             [wire, polls]() { return std::make_unique<DelayedTransport>(net::createMemoryTransport(wire), polls); });
     }
 
@@ -159,7 +162,7 @@ struct Machine
         const std::optional<net::LossConfig> lossy =
             loss != nullptr ? std::optional<net::LossConfig>(*loss) : std::nullopt;
         network = std::make_unique<app::NetworkSession>(
-            [this]() { return host.get(); }, replication::Config{},
+            [this]() { return host.get(); }, config,
             [wire, lossy]() {
                 return lossy.has_value() ? net::createLossyTransport(net::createMemoryTransport(wire), *lossy)
                                          : net::createMemoryTransport(wire);
@@ -2050,6 +2053,20 @@ function Rider.bind()
         end
     end)
 end
+-- **The platform's motion by the world's tick** (ADR 0254), bound on both
+-- ends: where it is is a function of the tick alone.
+function Rider.place(platform: BasePart, tick: number, case: string)
+    if case == "spin" then
+        platform.CFrame = CFrame.new(0, 0.1, 0) * CFrame.fromEuler(0, tick * 0.02, 0)
+    else
+        platform.Position = vector.create(3 * math.sin(tick / 60), 0.1, 0)
+    end
+end
+function Rider.carry(platform: BasePart, case: string)
+    RunService:BindToWorldStep("platform", function(step)
+        Rider.place(platform, step.Tick, case)
+    end)
+end
 return Rider
 )";
 
@@ -2069,14 +2086,24 @@ platform.Size = vector.create(6, 0.2, 6)
 platform.Position = vector.create(0, 0.1, 0)
 platform.Parent = workspace
 local ticks = 0
-RunService.PreSimulation:Connect(function()
-    ticks += 1
+if Motion == "step" then
+    Rider.carry(platform, Case)
+elseif Motion == "tween" then
+    -- **A tween, on the server alone** (ADR 0254 §2.1): sent as its clock.
+    local TweenService = game:GetService("TweenService")
+    local info = TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
     if Case == "spin" then
-        platform.CFrame = CFrame.new(0, 0.1, 0) * CFrame.fromEuler(0, ticks * 0.02, 0)
+        TweenService:Create(platform, info, { CFrame = CFrame.new(0, 0.1, 0) * CFrame.fromEuler(0, 1.5, 0) }):Play()
     else
-        platform.Position = vector.create(3 * math.sin(ticks / 60), 0.1, 0)
+        platform.Position = vector.create(-3, 0.1, 0)
+        TweenService:Create(platform, info, { Position = vector.create(3, 0.1, 0) }):Play()
     end
-end)
+else
+    RunService.PreSimulation:Connect(function()
+        ticks += 1
+        Rider.place(platform, ticks, Case)
+    end)
+end
 Rider.bind()
 local function arrive(player: Player)
     if player.UserId == 1 then
@@ -2134,6 +2161,9 @@ RunService.Heartbeat:Connect(function()
     if not bound then
         bound = true
         Rider.bind()
+        if Motion == "step" then
+            Rider.carry(workspace:WaitForChild("Platform") :: BasePart, Case)
+        end
     end
     ticks += 1
 end)
@@ -2145,11 +2175,12 @@ struct RiderRun
     double largest = 0.0;
 };
 
-[[nodiscard]] RiderRun rider(std::string_view kase, core::u32 polls)
+[[nodiscard]] RiderRun rider(std::string_view kase, core::u32 polls, std::string_view motion = "script")
 {
     Captured log;
     auto wire = net::createMemoryNetwork();
-    const std::string head = std::string("local Case = \"") + std::string(kase) + "\"\n";
+    const std::string head =
+        std::string("local Case = \"") + std::string(kase) + "\"\nlocal Motion = \"" + std::string(motion) + "\"\n";
     Machine server;
     server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
     server.project.write("src/shared/rider.luau", std::string(RiderShared));
@@ -2197,13 +2228,17 @@ struct RiderRun
 TEST_CASE("a player on a moving platform is not corrected walking on it or turned by it, and once at most leaving it")
 {
     // Two, five and nine frames each way: 67, 167 and 300 ms there and back,
-    // over the engine's own settings, the platform drawn here a few ticks in
-    // the past. A walker on it was corrected by about a tick of its travel
-    // nearly every tick: 434, 426 and 419 times. A character jumping off it
-    // leaves from where the platform is drawn here, and lands that far from
-    // the authority's on the floor: once. One landing on it from the floor
-    // is put right as it lands. Hopping on it is measured and not yet held:
-    // in the air the character has no platform to be measured from.
+    // over the engine's own settings, the platform moved by a script setting
+    // its place each tick -- a motion the replica cannot compute, so it
+    // carries the platform on along the curve of its last places to the tick
+    // the authority will step (ADR 0254 §2.2). Drawn in the past, a walker on
+    // it was corrected nearly every tick: 434, 426 and 419 times. Carried
+    // on, walking, turning, jumping off and landing on it are corrected once
+    // at most. Hopping is measured and not held: a platform carried on is
+    // within a centimetre, and a centimetre decides on which tick a hop
+    // lands -- 34, 52 and 16 corrections, from 81, 69 and 16 drawn in the
+    // past. A world step or a tween, computed exactly, holds it at none
+    // (the next case).
     for (const std::string_view kase : {"walk", "hop", "jumpon", "jumpoff", "spin"}) {
         for (const core::u32 polls : {2u, 5u, 9u}) {
             const std::string name(kase);
@@ -2214,12 +2249,359 @@ TEST_CASE("a player on a moving platform is not corrected walking on it or turne
                                      << " correction(s), largest " << run.largest);
             if (kase == "walk" || kase == "spin")
                 CHECK(run.corrections == 0);
-            else if (kase == "jumpoff")
+            else if (kase == "jumpoff" || kase == "jumpon")
                 CHECK(run.corrections <= 1);
-            else if (kase == "jumpon")
-                CHECK(run.corrections <= 2);
         }
     }
+}
+
+TEST_CASE("a platform the world's step or a tween moves is where the authority has it, and its rider is "
+          "corrected at most twice hopping (ADR 0254)")
+{
+    // The same platform, the same five courses and the same three links as
+    // above, moved by a world step bound on both ends, or by a tween on the
+    // server alone: the replica places it at the authority's tick for the
+    // tick it predicts, exactly -- the step by running it, the tween by
+    // stepping the clock it was sent.
+    for (const std::string_view motion : {"step", "tween"}) {
+        for (const std::string_view kase : {"walk", "hop", "jumpon", "jumpoff", "spin"}) {
+            for (const core::u32 polls : {2u, 5u, 9u}) {
+                const std::string name(kase);
+                const std::string moved(motion);
+                CAPTURE(moved);
+                CAPTURE(name);
+                CAPTURE(polls);
+                const RiderRun run = rider(kase, polls, motion);
+                MESSAGE("MEASURE " << motion << " rider " << kase << " polls=" << polls << ": " << run.corrections
+                                   << " correction(s), largest " << run.largest);
+                if (kase == "walk" || kase == "spin")
+                    CHECK(run.corrections == 0);
+                else if (kase == "hop")
+                    CHECK(run.corrections <= 2);
+                else
+                    CHECK(run.corrections <= 1);
+            }
+        }
+    }
+}
+
+namespace {
+
+// **Two players, one on a platform** (ADR 0254 §5): the first stands still on
+// a platform the world's step moves, the second stands on the floor beside
+// it -- near enough that the platform is drawn on the second's machine where
+// the authority will have it.
+constexpr std::string_view StandingServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local Rider = require("@shared/rider")
+local floor = Instance.new("Part")
+floor.Anchored = true
+floor.Size = vector.create(200, 1, 200)
+floor.Position = vector.create(0, -0.5, 0)
+floor.Parent = workspace
+local platform = Instance.new("Part")
+platform.Name = "Platform"
+platform.Anchored = true
+platform.Size = vector.create(6, 0.2, 6)
+platform.Position = vector.create(0, 0.1, 0)
+platform.Parent = workspace
+Rider.carry(platform, "move")
+local count = 0
+local function arrive(player: Player)
+    if player.UserId == 1 then
+        return
+    end
+    count += 1
+    local body = Instance.new("CharacterBody")
+    body.Name = "Body" .. count
+    body.Size = vector.create(1, 2, 1)
+    body.Position = if count == 1 then vector.create(0, 1.2, 0) else vector.create(0, 1.2, -5)
+    body.Parent = workspace
+    player.Character = body
+    if count == 2 then
+        workspace:SetAttribute("Started", true)
+    end
+end
+for _, player in NetworkService:GetPlayers() do
+    arrive(player)
+end
+NetworkService.PlayerAdded:Connect(arrive)
+NetworkService:Host(47193)
+)";
+
+constexpr std::string_view StandingClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Rider = require("@shared/rider")
+NetworkService:Join("memory:47193")
+local bound = false
+RunService.Heartbeat:Connect(function()
+    local me = NetworkService.LocalPlayer
+    if bound or NetworkService.State ~= Enum.NetworkState.Connected or not me or not me.Character then
+        return
+    end
+    bound = true
+    Rider.bind()
+    Rider.carry(workspace:WaitForChild("Platform") :: BasePart, "move")
+end)
+)";
+
+} // namespace
+
+TEST_CASE("another player standing on a platform drawn where the authority will have it moves with it (ADR 0254)")
+{
+    // The second machine draws the first player between snapshots and the
+    // platform at the tick it predicts. Without the platform's frame the
+    // first player slid over it by the platform's speed times the ticks
+    // between the two; in it, where they stand on it stays where it is.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    constexpr core::u32 Polls = 5;
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/rider.luau", std::string(RiderShared));
+    server.project.write("src/server/init.luau", std::string(StandingServer));
+    server.bootDelayed(wire, Polls);
+    Machine rider;
+    Machine watcher;
+    for (Machine* machine : {&rider, &watcher}) {
+        machine->project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+        machine->project.write("src/shared/rider.luau", std::string(RiderShared));
+        machine->project.write("src/client/init.luau", std::string(StandingClient));
+    }
+    rider.bootDelayed(wire, Polls);
+    HostReplay riderReplay(*rider.host);
+    rider.network->setCharacterReplay(&riderReplay);
+    // The second only once the first is in, so it is the second to arrive.
+    for (int frame = 0; frame < 30; ++frame) {
+        server.frame();
+        rider.frame();
+    }
+    watcher.bootDelayed(wire, Polls);
+    HostReplay watcherReplay(*watcher.host);
+    watcher.network->setCharacterReplay(&watcherReplay);
+
+    scene::World& world = watcher.host->world();
+    int after = -1;
+    double lowest = 1e9;
+    double highest = -1e9;
+    double largestStep = 0.0;
+    double previous = 0.0;
+    double authorityLowest = 1e9;
+    double authorityHighest = -1e9;
+    for (int frame = 0; frame < 900; ++frame) {
+        server.frame();
+        rider.frame();
+        watcher.frame();
+        if (!std::holds_alternative<bool>(
+                world.getAttribute(watcher.host->workspace(), world.atoms().lookup("Started"))))
+            continue;
+        ++after;
+        const core::InstanceId body = world.findFirstChild(watcher.host->workspace(), world.atoms().lookup("Body1"));
+        const core::InstanceId platform =
+            world.findFirstChild(watcher.host->workspace(), world.atoms().lookup("Platform"));
+        const scene::PartComponent* standing = body.valid() ? world.parts().find(body) : nullptr;
+        const scene::PartComponent* under = platform.valid() ? world.parts().find(platform) : nullptr;
+        // The first two seconds are both arriving and settling.
+        if (standing == nullptr || under == nullptr || after < 120)
+            continue;
+        const double along = standing->cframe.position.x - under->cframe.position.x;
+        if (after > 120)
+            largestStep = std::max(largestStep, std::abs(along - previous));
+        previous = along;
+        lowest = std::min(lowest, along);
+        highest = std::max(highest, along);
+        // And where the authority itself has them, for what is the authority's.
+        scene::World& authority = server.host->world();
+        const core::InstanceId theirs =
+            authority.findFirstChild(server.host->workspace(), authority.atoms().lookup("Body1"));
+        const core::InstanceId theirPlatform =
+            authority.findFirstChild(server.host->workspace(), authority.atoms().lookup("Platform"));
+        if (theirs.valid() && theirPlatform.valid()) {
+            const double there = authority.parts().find(theirs)->cframe.position.x -
+                                 authority.parts().find(theirPlatform)->cframe.position.x;
+            authorityLowest = std::min(authorityLowest, there);
+            authorityHighest = std::max(authorityHighest, there);
+        }
+    }
+    MESSAGE("MEASURE standing on the platform, seen by another player: spread "
+            << (highest - lowest) << " m, largest step " << largestStep << " m; on the authority "
+            << (authorityHighest - authorityLowest) << " m");
+    CHECK(after > 600);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(highest - lowest < 0.01);
+    CHECK(largestStep < 0.01);
+}
+
+namespace {
+
+// **Fifty platforms** (ADR 0254 §6): half on a world step, half tweened, in a
+// grid round the player -- or, for the baseline, standing still.
+constexpr std::string_view FiftyShared = R"(
+local RunService = game:GetService("RunService")
+local Fifty = {}
+function Fifty.platforms(): { BasePart }
+    local made = {}
+    for index = 0, 49 do
+        local part = workspace:FindFirstChild("P" .. index) :: BasePart?
+        if part then
+            table.insert(made, part)
+        end
+    end
+    return made
+end
+function Fifty.carry(still: boolean)
+    if still then
+        return
+    end
+    RunService:BindToWorldStep("fifty", function(step)
+        for index = 0, 24 do
+            local part = workspace:FindFirstChild("P" .. index) :: BasePart?
+            if part then
+                local column = index % 10
+                local row = index // 10
+                local x = (column - 4.5) * 4
+                local z = (row - 2) * 4
+                part.Position = vector.create(x + math.sin(step.Tick / 60 + index), 0.1, z)
+            end
+        end
+    end)
+end
+return Fifty
+)";
+
+constexpr std::string_view FiftyServer = R"(
+local NetworkService = game:GetService("NetworkService")
+local TweenService = game:GetService("TweenService")
+local Fifty = require("@shared/fifty")
+local floor = Instance.new("Part")
+floor.Anchored = true
+floor.Size = vector.create(200, 1, 200)
+floor.Position = vector.create(0, -0.5, 0)
+floor.Parent = workspace
+for index = 0, 49 do
+    local column = index % 10
+    local row = index // 10
+    local part = Instance.new("Part")
+    part.Name = "P" .. index
+    part.Anchored = true
+    part.Size = vector.create(2, 0.2, 2)
+    part.Position = vector.create((column - 4.5) * 4, 0.1, (row - 2) * 4)
+    part.Parent = workspace
+    if index >= 25 and not Still then
+        local info = TweenInfo.new(2 + index % 3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+        TweenService:Create(part, info, { Position = part.Position + vector.create(1, 0, 0) }):Play()
+    end
+end
+Fifty.carry(Still)
+local function arrive(player: Player)
+    if player.UserId == 1 then
+        return
+    end
+    local body = Instance.new("CharacterBody")
+    body.Size = vector.create(1, 2, 1)
+    body.Position = vector.create(0, 1.2, 0)
+    body.Parent = workspace
+    player.Character = body
+    workspace:SetAttribute("Started", true)
+end
+for _, player in NetworkService:GetPlayers() do
+    arrive(player)
+end
+NetworkService.PlayerAdded:Connect(arrive)
+NetworkService:Host(47194)
+)";
+
+constexpr std::string_view FiftyClient = R"(
+local NetworkService = game:GetService("NetworkService")
+local RunService = game:GetService("RunService")
+local Fifty = require("@shared/fifty")
+NetworkService:Join("memory:47194")
+local bound = false
+RunService.Heartbeat:Connect(function()
+    if bound or NetworkService.State ~= Enum.NetworkState.Connected then
+        return
+    end
+    bound = true
+    Fifty.carry(Still)
+end)
+)";
+
+struct FiftyRun
+{
+    double serverMs = 0.0;
+    double clientMs = 0.0;
+    double worldStepMs = 0.0;
+    core::u32 moving = 0;
+    core::u64 replays = 0;
+    double replayMs = 0.0;
+};
+
+[[nodiscard]] FiftyRun fifty(bool still)
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    const std::string head = std::string("local Still = ") + (still ? "true" : "false") + "\n";
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/fifty.luau", std::string(FiftyShared));
+    server.project.write("src/server/init.luau", head + std::string(FiftyServer));
+    server.bootDelayed(wire, 5);
+    Machine client;
+    client.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    client.project.write("src/shared/fifty.luau", std::string(FiftyShared));
+    client.project.write("src/client/init.luau", head + std::string(FiftyClient));
+    client.bootDelayed(wire, 5);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+    scene::World& world = client.host->world();
+    FiftyRun run;
+    int measured = 0;
+    double serverNs = 0.0;
+    double clientNs = 0.0;
+    double stepMs = 0.0;
+    for (int frame = 0; frame < 900; ++frame) {
+        const auto began = std::chrono::steady_clock::now();
+        server.frame();
+        const auto between = std::chrono::steady_clock::now();
+        client.frame();
+        const auto ended = std::chrono::steady_clock::now();
+        if (!std::holds_alternative<bool>(
+                world.getAttribute(client.host->workspace(), world.atoms().lookup("Started"))) ||
+            frame < 300)
+            continue;
+        ++measured;
+        serverNs += static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(between - began).count());
+        clientNs += static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(ended - between).count());
+        stepMs += world.engineState().worldStepMs;
+        if (const replication::IReplication* replica = client.network->replication(); replica != nullptr)
+            run.moving = std::max(run.moving, replica->stats().movingParts);
+    }
+    REQUIRE(measured > 300);
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    run.serverMs = serverNs / measured / 1.0e6;
+    run.clientMs = clientNs / measured / 1.0e6;
+    run.worldStepMs = stepMs / measured;
+    run.replays = replay.replays;
+    run.replayMs = static_cast<double>(replay.replayMicros) / 1000.0;
+    return run;
+}
+
+} // namespace
+
+TEST_CASE("measured: fifty platforms on a world step and tweens, a replica at 167 ms (ADR 0254 section 6)" *
+          doctest::skip(!engine::platform::environmentFlag("ENG_TIMED_TESTS")))
+{
+    // **Timed**, and run by hand: what the moving parts cost, against the same
+    // fifty standing still. One frame of each machine is one tick.
+    const FiftyRun still = fifty(true);
+    const FiftyRun moving = fifty(false);
+    MESSAGE("MEASURE fifty still: server " << still.serverMs << " ms, replica " << still.clientMs << " ms a frame");
+    MESSAGE("MEASURE fifty moving: server "
+            << moving.serverMs << " ms, replica " << moving.clientMs << " ms a frame, world step " << moving.worldStepMs
+            << " ms a tick, " << moving.moving << " moving parts drawn ahead, " << moving.replays << " replays taking "
+            << moving.replayMs << " ms in all");
+    CHECK(moving.moving > 0);
 }
 
 TEST_CASE("a car handed over moving is where the authority has it, whatever tick the authority stood in")
@@ -2287,6 +2669,47 @@ part("Crate3", vector.create(2, 2, 2), vector.create(14, 1, 0), false))";
             predicted = replica->stats().predictedBodies;
     }
     CHECK(predicted == 2);
+}
+
+TEST_CASE("a project's predict_max_bodies holds what a replica predicts to it (ADR 0133)")
+{
+    // The scene above, two crates in reach: one, if the project says one.
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    Machine server;
+    server.project.write(".luaurc", R"({"aliases": {"shared": "src/shared"}})");
+    server.project.write("src/shared/corner.luau", std::string(CornerShared));
+    std::string script(CrateServer);
+    const std::string placed = R"(part("Crate1", vector.create(2, 2, 2), vector.create(-1, 1, 0), false)
+part("Crate2", vector.create(2, 2, 2), vector.create(2, 1, 0.6), false)
+part("Crate3", vector.create(2, 2, 2), vector.create(5, 1, -0.8), false))";
+    const std::string instead = R"(part("Crate1", vector.create(2, 2, 2), vector.create(1.5, 1, 0), false)
+part("Crate2", vector.create(2, 2, 2), vector.create(3.6, 1, 0), false)
+part("Crate3", vector.create(2, 2, 2), vector.create(14, 1, 0), false))";
+    const std::size_t at = script.find(placed);
+    REQUIRE(at != std::string::npos);
+    script.replace(at, placed.size(), instead);
+    server.project.write("src/server/init.luau", script);
+    server.bootOver(wire, nullptr);
+    Machine client;
+    client.config.predictMaxBodies = 1;
+    client.project.write("src/client/init.luau", R"(game:GetService("NetworkService"):Join("memory:47121"))");
+    client.bootOver(wire, nullptr);
+    HostReplay replay(*client.host);
+    client.network->setCharacterReplay(&replay);
+
+    core::u32 predicted = 0;
+    core::u32 most = 0;
+    for (int frame = 0; frame < 240; ++frame) {
+        server.frame();
+        client.frame();
+        if (const replication::IReplication* replica = client.network->replication(); replica != nullptr) {
+            predicted = replica->stats().predictedBodies;
+            most = std::max(most, predicted);
+        }
+    }
+    CHECK(predicted == 1);
+    CHECK(most == 1);
 }
 
 // --- Scripts in the predicted step -------------------------------------------------

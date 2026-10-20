@@ -975,6 +975,8 @@ void NetworkSession::update()
         }
         shown.interpolationDelayMs = static_cast<core::f64>(stats.interpolationDelayTicks) * 1000.0 / 60.0;
         shown.predictedParts = stats.predictedBodies;
+        shown.movingParts = stats.movingParts;
+        shown.worldStepMs = host->world().engineState().worldStepMs;
         shown.unreliableSent = stats.unreliableSent;
         shown.unreliableReceived = stats.unreliableReceived;
         shown.unreliableDropped = stats.unreliableDropped;

@@ -915,6 +915,68 @@ pad:BindToPredictedTouch(function(character, step)
 end)
 ```
 
+### Platforms and lifts
+
+A player's machine draws its own character a little ahead of what the server
+has said, and everything else a little behind. A platform the server moves
+would be behind, under a character that is ahead: walking on it holds, but a
+character that jumps from it, lands on it or hops on it would be corrected.
+So a part the game moves on its own -- anchored, carried by a script, a tween
+or an animation -- that is near a character a player's machine is
+predicting is drawn and simulated **where the server will have it** at the
+tick that machine is at. How exactly depends on how it moves.
+
+**A world step: exact.** Move the part in a function bound with
+`RunService:BindToWorldStep`, from a module both the server and the client
+require. It runs once a tick inside the simulation step on the server, and
+on a player's machine at every tick it predicts, with `step.Tick` set to the
+tick the server will be at:
+
+```luau
+--!strict
+-- shared/lift.luau: required by the server's script and the client's.
+local RunService = game:GetService("RunService")
+
+local Lift = {}
+
+function Lift.bind(platform: BasePart, bottom: vector, top: vector)
+    RunService:BindToWorldStep("lift", function(step)
+        -- Up and down every eight seconds: a function of the tick alone.
+        local t = (step.Tick % 480) / 480
+        local up = if t < 0.5 then t * 2 else 2 - t * 2
+        platform.Position = vector.lerp(bottom, top, up)
+    end)
+end
+
+return Lift
+```
+
+The function runs several times for the same tick on a player's machine --
+once as the tick is predicted, again in each correction that replays it -- so
+it must set the same places every time: compute them from `step.Tick` and
+replicated state, never from the clock, from state kept between calls, or
+from an unseeded `Random` (`step.Random` is seeded by the tick). To play a
+sound once, check that `step.Replaying` is false. It must not yield.
+
+**A tween: exact, with no code on the client.** A `TweenService` tween on a
+part's `CFrame` or `Position`, played on the server, is sent to each player
+whose machine has the part, and that machine runs the same tween's clock to
+the tick it predicts.
+
+**Anything else: carried on.** A part moved some other way -- a script setting
+its `CFrame` every tick -- is carried on from the last places the server sent
+along the curve they make, at most `predict_moving_lead_ms` ahead (250 by
+default, under `[network]`). A part that stops is held where it stopped, and
+one that jumps is not carried. It is close, not exact: in a test of a
+platform swinging three meters every six seconds, a player hopping on it was
+corrected a few dozen times a minute at 167 ms instead of never with a world
+step.
+
+Another player standing on such a part is drawn moving with it.
+`[network] predict_radius` says how near a character a part must be,
+`predict_max_bodies` how many parts a machine takes at most, nearest first,
+with the loose parts it simulates.
+
 ### Input your code writes
 
 An intent is what a player did, and what the server applies for them. Input

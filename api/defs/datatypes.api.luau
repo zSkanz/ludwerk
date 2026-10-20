@@ -2474,6 +2474,46 @@ local Datatypes: { Schema.Datatype } = {
         },
     },
     {
+        Name = "WorldStep",
+        Module = "script",
+        Records = { "ADR 0254" },
+        Doc = "One tick of the world, passed to a function bound with `RunService:BindToWorldStep`. It is valid "
+            .. "only during that call.",
+        Properties = {
+            {
+                Name = "Tick",
+                Type = "number",
+                ReadOnly = true,
+                Doc = "The authority's tick number for this step. On a client it is the tick at which the "
+                    .. "authority will simulate the tick being predicted, so a part placed from it is where the "
+                    .. "authority will have it.",
+            },
+            { Name = "DeltaTime", Type = "number", ReadOnly = true, Doc = "The length of the step, in seconds." },
+            {
+                Name = "Replaying",
+                Type = "boolean",
+                ReadOnly = true,
+                Doc = "Whether this step is being simulated again after a correction, on a client. Check it "
+                    .. "before doing something that must happen only once, such as playing a sound.",
+            },
+            {
+                Name = "Predicted",
+                Type = "boolean",
+                ReadOnly = true,
+                Doc = "Whether this machine is a client simulating a tick ahead of its authority. It is false on "
+                    .. "the authority and in a single-player game.",
+            },
+            {
+                Name = "Random",
+                Type = "Random",
+                ReadOnly = true,
+                Doc = "A random number generator seeded from `Tick`. It gives the same numbers on every machine "
+                    .. "and in every replay of the tick. Each read returns a generator at the start of its "
+                    .. "sequence, so store it in a local variable.",
+            },
+        },
+    },
+    {
         Name = "AnimationTrack",
         Module = "script",
         Doc = "One clip playing on one `AnimationPlayer`, returned by `LoadAnimation`. It is a handle, not an "

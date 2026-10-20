@@ -11,6 +11,18 @@ here.
 
 ### Added
 
+- A platform, a lift or a door that a game moves is where the server will
+  have it on every player's machine, so a player standing on one, jumping
+  onto it or hopping on it is not corrected at any latency.
+  `RunService:BindToWorldStep` moves parts from the tick on both ends, and a
+  `TweenService` tween on a part's `CFrame` or `Position` is sent as its
+  clock and run to the same tick; a part moved any other way is carried on
+  by its motion. Another player standing on one is drawn moving with it.
+  `NetworkService:GetStats()` reports `MovingParts` and `WorldStepTime`.
+  `[network] predict_radius`, `predict_max_bodies`, `predict_linger_ticks`
+  and `predict_moving_lead_ms` in `project.toml` now take effect. The wire
+  protocol is 64.
+
 - A game can sign its players in with Nakama and keep its data there.
   `NakamaService` signs a player in to the game's Nakama and turns that
   session into a ticket at the game's front door, which asks Nakama who the

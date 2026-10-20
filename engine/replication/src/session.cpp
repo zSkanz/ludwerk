@@ -1759,6 +1759,20 @@ void AuthoritySession::sendGroundWhole(Peer& peer, const scene::World& world)
         sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
 }
 
+void AuthoritySession::sendCurves(Peer& peer, const std::vector<u32>& entering)
+{
+    const auto knows = [&](u32 id) { return std::binary_search(peer.known.begin(), peer.known.end(), id); };
+    const auto isEntering = [&](u32 id) { return std::binary_search(entering.begin(), entering.end(), id); };
+    for (const auto& [id, bytes] : m_curveNews) {
+        if (knows(id) && !isEntering(id))
+            sendBytes(m_transport, peer.id, bytes, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
+    for (const u32 id : entering) {
+        if (const auto found = m_curves.find(id); found != m_curves.end())
+            sendBytes(m_transport, peer.id, found->second, net::Delivery::Reliable, ControlChannel, m_stats);
+    }
+}
+
 void AuthoritySession::sendAttributes(Peer& peer, const std::vector<u32>& entering)
 {
     const auto send = [&](const AttributeOwner& owner, const std::vector<u8>& body) {
@@ -4025,6 +4039,46 @@ void AuthoritySession::send(const scene::World& world, InstanceId root, u64 tick
     core::profile::Sections stretch;
     ENG_PROFILE_NEXT(stretch, "net.capture");
     capture(world, root, tick);
+    // **The tweens on parts' places told since the last send** (ADR 0254
+    // §2.1), as the messages each peer that has the part is sent: after the
+    // capture, which gives a part made this tick its network id.
+    m_curveNews.clear();
+    u64 newest = m_curvesTaken;
+    for (const scene::EngineState::MovingCurve& curve : world.engineState().movingCurvesOut) {
+        if (curve.tick <= m_curvesTaken)
+            continue;
+        newest = std::max(newest, curve.tick);
+        const NetId net = netIdOf(curve.part);
+        if (net.value == 0)
+            continue;
+        Writer message;
+        message.u8v(static_cast<u8>(MessageType::MovingCurve));
+        message.u32v(net.value);
+        message.u8v(curve.kind);
+        message.u64v(curve.tick);
+        writeF64(message, curve.timing.time);
+        writeF64(message, curve.timing.delayTime);
+        message.u32v(static_cast<u32>(curve.timing.repeatCount));
+        message.u8v(static_cast<u8>(curve.timing.style));
+        message.u8v(static_cast<u8>(curve.timing.direction));
+        message.u8v(curve.timing.reverses ? 1 : 0);
+        writeF64(message, curve.clock.elapsed);
+        message.u32v(static_cast<u32>(curve.clock.repeatsDone));
+        message.u8v(static_cast<u8>(curve.clock.state));
+        message.u8v(curve.clock.returning ? 1 : 0);
+        message.u8v(curve.clock.captured ? 1 : 0);
+        for (const core::CFrameD& frame : {curve.start, curve.goal, curve.now}) {
+            FieldValue value;
+            setCFrame(value, frame);
+            encodeField(message.bytes, generated::Encoding::CFrameD, value);
+        }
+        if (curve.kind == 0)
+            m_curves.erase(net.value);
+        else
+            m_curves[net.value] = message.bytes;
+        m_curveNews.emplace_back(net.value, std::move(message.bytes));
+    }
+    m_curvesTaken = newest;
     ENG_PROFILE_NEXT(stretch, "net.changes");
     diffTilemaps(world);
     diffAttributes(world, root);
@@ -4660,6 +4714,7 @@ void AuthoritySession::sendTo(Peer& peer, const WorldState& everything, const st
         const std::vector<u32> known = std::move(peer.known);
         peer.known = now;
         sendAttributes(peer, entering);
+        sendCurves(peer, entering);
         peer.known = known;
     }
     peer.known = std::move(now);
@@ -5321,6 +5376,9 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
         case MessageType::Attributes:
             onAttributes(world, root, event.payload);
             break;
+        case MessageType::MovingCurve:
+            onMovingCurve(event.payload);
+            break;
         case MessageType::AttributeEdits:
             onAttributeEdits(world, root, event.payload);
             break;
@@ -5474,6 +5532,9 @@ void ReplicaSession::updatePredicted(scene::World& world)
         for (const auto& [netId, away] : m_predictedParts)
             release(netId);
         m_predictedParts.clear();
+        for (const auto& [netId, away] : m_movingParts)
+            m_movingLeaving[netId] = MovingBlendTicks;
+        m_movingParts.clear();
         return;
     }
 
@@ -5537,12 +5598,79 @@ void ReplicaSession::updatePredicted(scene::World& world)
             }
         }
     }
+    // **And the parts that move on their own** (ADR 0254): anchored, nobody's,
+    // a script's or a tween's, moved lately, in range -- or carrying one of
+    // this machine's characters. Under the same cap, nearest first; drawn at
+    // the tick predicted rather than simulated.
+    std::set<u32> carrying;
+    for (const Owned& seat : m_seats) {
+        const auto own = seat.netId != 0 && seat.synced ? m_locals.find(seat.netId) : m_locals.end();
+        if (own == m_locals.end())
+            continue;
+        if (const scene::CharacterBodyComponent* body = world.characterBodies().find(own->second);
+            body != nullptr && body->grounded && body->groundPart.valid()) {
+            for (const auto& [netId, local] : m_locals) {
+                if (local == body->groundPart) {
+                    carrying.insert(netId);
+                    break;
+                }
+            }
+        }
+    }
+    std::set<u32> movingCandidates;
+    for (const auto& [netId, samples] : m_samples) {
+        const bool tweened = m_curves.contains(netId);
+        if ((!tweened && (samples.size() < 2 || samples.back().tick + MovingRecentTicks < m_ackedServerTick)) ||
+            ownsNet(netId))
+            continue;
+        const auto local = m_locals.find(netId);
+        if (local == m_locals.end() || !world.alive(local->second) ||
+            world.characterBodies().find(local->second) != nullptr)
+            continue;
+        const scene::RigidBodyComponent* body = world.rigidBodies().find(local->second);
+        const scene::PartComponent* part = world.parts().find(local->second);
+        if (body == nullptr || part == nullptr || !body->anchored || body->networkOwner != 0)
+            continue;
+        f64 nearest = carrying.contains(netId) ? 0.0 : std::numeric_limits<f64>::infinity();
+        for (const core::DVec3& centre : centres) {
+            const core::DVec3 d = part->cframe.position - centre;
+            nearest = std::min(nearest, std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
+        }
+        if (nearest <= m_predictRadius) {
+            near.emplace_back(nearest, netId);
+            movingCandidates.insert(netId);
+        }
+    }
     std::sort(near.begin(), near.end());
     if (near.size() > m_predictMax)
         near.resize(m_predictMax);
     std::set<u32> wanted;
-    for (const auto& entry : near)
-        wanted.insert(entry.second);
+    std::set<u32> movingWanted;
+    for (const auto& entry : near) {
+        if (movingCandidates.contains(entry.second))
+            movingWanted.insert(entry.second);
+        else
+            wanted.insert(entry.second);
+    }
+    // A moving part out of range long enough is blended back between
+    // snapshots; one in range again stops leaving.
+    for (auto at = m_movingParts.begin(); at != m_movingParts.end();) {
+        if (movingWanted.contains(at->first)) {
+            at->second = 0;
+            ++at;
+            continue;
+        }
+        if (++at->second > m_predictLinger) {
+            m_movingLeaving[at->first] = MovingBlendTicks;
+            at = m_movingParts.erase(at);
+            continue;
+        }
+        ++at;
+    }
+    for (const u32 netId : movingWanted) {
+        m_movingParts.emplace(netId, 0u);
+        m_movingLeaving.erase(netId);
+    }
 
     // Out of range long enough: drawn between snapshots again.
     for (auto at = m_predictedParts.begin(); at != m_predictedParts.end();) {
@@ -6034,6 +6162,76 @@ void ReplicaSession::interpolate(scene::World& world)
         expect();
     }
 
+    // **The parts that move on their own, where the authority will have them**
+    // (ADR 0254): at the authority's tick for the intent this machine is
+    // predicting, so a character here meets the platform the authority's
+    // step will carry it on; blended back between snapshots as one leaves.
+    if (!m_movingParts.empty() || !m_movingLeaving.empty()) {
+        // Received before the tick it is input to: the world is at the tick
+        // before, and the step about to run is the next, the intent it sends.
+        const u64 stepping = world.engineState().tick + 1;
+        const u64 predicted = m_ackedIntent != 0 && m_ackedServerTick != 0 && stepping >= m_ackedIntent
+                                  ? m_ackedServerTick + (stepping - m_ackedIntent)
+                                  : drawn;
+        const f64 tickMs = std::max(world.engineState().fixedTimestep, 1e-6) * 1000.0;
+        const auto leadTicks = static_cast<u64>(std::lround(std::max(0.0, m_predictLeadMs) / tickMs));
+        const auto partOf = [&](u32 netId) -> scene::PartComponent* {
+            const auto local = m_locals.find(netId);
+            return local != m_locals.end() && world.alive(local->second) ? world.parts().find(local->second) : nullptr;
+        };
+        const f64 dt = world.engineState().fixedTimestep;
+        for (const auto& [netId, away] : m_movingParts) {
+            scene::PartComponent* part = partOf(netId);
+            // A tween's own clock first, exactly; else carried on by its motion.
+            std::optional<core::CFrameD> at = curvePoseAt(netId, predicted, dt);
+            if (!at.has_value())
+                at = movingPoseAt(netId, predicted, leadTicks);
+            if (part != nullptr && at.has_value())
+                part->cframe = *at;
+        }
+        // **Another player standing on one, in its frame** (ADR 0254 §5):
+        // drawn where it stands on the platform between snapshots, put on the
+        // platform where it is drawn now -- moving with it, not sliding over
+        // it, the platform drawn ahead and the player behind.
+        for (const auto& [netId, samples] : m_samples) {
+            if (samples.empty() || ownsNet(netId))
+                continue;
+            const auto local = m_locals.find(netId);
+            if (local == m_locals.end() || !world.alive(local->second))
+                continue;
+            const scene::CharacterBodyComponent* body = world.characterBodies().find(local->second);
+            scene::PartComponent* rider = world.parts().find(local->second);
+            if (body == nullptr || rider == nullptr || !body->grounded || !body->groundPart.valid())
+                continue;
+            for (const auto& [platformNet, away] : m_movingParts) {
+                const auto platform = m_locals.find(platformNet);
+                if (platform == m_locals.end() || platform->second != body->groundPart)
+                    continue;
+                const scene::PartComponent* now = world.parts().find(platform->second);
+                const u64 behind = static_cast<u64>(std::lround(samples.back().lag));
+                const std::optional<core::CFrameD> then =
+                    movingPoseAt(platformNet, drawn > behind ? drawn - behind : 0, leadTicks);
+                if (now != nullptr && then.has_value())
+                    rider->cframe = now->cframe * (core::inverse(*then) * rider->cframe);
+                break;
+            }
+        }
+        for (auto at = m_movingLeaving.begin(); at != m_movingLeaving.end();) {
+            scene::PartComponent* part = partOf(at->first);
+            const std::optional<core::CFrameD> ahead = movingPoseAt(at->first, predicted, leadTicks);
+            if (part != nullptr && ahead.has_value() && at->second > 0) {
+                const f64 still = static_cast<f64>(at->second) / static_cast<f64>(MovingBlendTicks);
+                part->cframe = core::lerp(part->cframe, *ahead, still);
+            }
+            if (part == nullptr || at->second == 0) {
+                at = m_movingLeaving.erase(at);
+                continue;
+            }
+            --at->second;
+            ++at;
+        }
+    }
+
     // **Sprites the same way** (ADR 0103), by the same rules: past the newest
     // sample the newest, and nothing this machine owns.
     const u64 target = drawn;
@@ -6082,6 +6280,159 @@ void ReplicaSession::interpolate(scene::World& world)
             turn += 360.0f;
         sprite->rotation = before->rotation + turn * alpha;
     }
+}
+
+void ReplicaSession::onMovingCurve(std::span<const u8> bytes)
+{
+    Reader reader(bytes);
+    (void)reader.u8v();
+    const u32 netId = reader.u32v();
+    Curve curve;
+    curve.kind = reader.u8v();
+    curve.tick = reader.u64v();
+    curve.timing.time = readF64(reader);
+    curve.timing.delayTime = readF64(reader);
+    curve.timing.repeatCount = static_cast<core::i32>(reader.u32v());
+    curve.timing.style = static_cast<core::EasingStyle>(reader.u8v());
+    curve.timing.direction = static_cast<core::EasingDirection>(reader.u8v());
+    curve.timing.reverses = reader.u8v() != 0;
+    curve.clock.elapsed = readF64(reader);
+    curve.clock.repeatsDone = static_cast<core::i32>(reader.u32v());
+    curve.clock.state = static_cast<scene::TweenPlayback>(reader.u8v());
+    curve.clock.returning = reader.u8v() != 0;
+    curve.clock.captured = reader.u8v() != 0;
+    std::array<core::CFrameD, 3> frames{};
+    for (core::CFrameD& frame : frames) {
+        FieldValue value;
+        if (!reader.ok() || !decodeField(reader.bytes(), reader.at(), generated::Encoding::CFrameD, value)) {
+            reader.fail();
+            break;
+        }
+        frame = asCFrame(value);
+    }
+    if (!reader.ok() || netId == 0)
+        return;
+    if (curve.kind == 0 || curve.kind > 2) {
+        m_curves.erase(netId);
+        return;
+    }
+    curve.start = frames[0];
+    curve.goal = frames[1];
+    curve.now = frames[2];
+    curve.atTick = curve.tick;
+    curve.atClock = curve.clock;
+    curve.atStart = curve.start;
+    curve.atNow = curve.now;
+    m_curves[netId] = curve;
+}
+
+std::optional<core::CFrameD> ReplicaSession::curvePoseAt(u32 netId, u64 tick, core::f64 dt)
+{
+    const auto found = m_curves.find(netId);
+    if (found == m_curves.end() || tick < found->second.tick)
+        return std::nullopt;
+    Curve& curve = found->second;
+    if (tick < curve.atTick) {
+        curve.atTick = curve.tick;
+        curve.atClock = curve.clock;
+        curve.atStart = curve.start;
+        curve.atNow = curve.now;
+    }
+    // **The authority's steps, taken again**: its clock, its capture of each
+    // traversal's start from where the part is, its blend -- a `Position` in
+    // the `vector` a script would write, as `TweenService` writes it.
+    while (curve.atTick < tick) {
+        const scene::TweenTick step = scene::advanceTweenClock(curve.timing, curve.atClock, dt);
+        if (step.captureStart)
+            curve.atStart = curve.atNow;
+        if (step.writes) {
+            if (curve.kind == 1) {
+                curve.atNow = core::lerp(curve.atStart, curve.goal, static_cast<f64>(step.eased));
+            }
+            else {
+                const core::Vec3 from = core::toVec3(curve.atStart.position);
+                const core::Vec3 to = core::toVec3(curve.goal.position);
+                const core::Vec3 mixed{from.x + (to.x - from.x) * step.eased, from.y + (to.y - from.y) * step.eased,
+                                       from.z + (to.z - from.z) * step.eased};
+                curve.atNow.position = core::toDVec3(mixed);
+            }
+        }
+        curve.atTick += 1;
+    }
+    return curve.atNow;
+}
+
+std::optional<core::CFrameD> ReplicaSession::movingPoseAt(u32 netId, u64 tick, u64 leadTicks) const
+{
+    const auto found = m_samples.find(netId);
+    if (found == m_samples.end() || found->second.empty())
+        return std::nullopt;
+    const std::deque<Sample>& samples = found->second;
+    const Sample& newest = samples.back();
+    if (tick <= newest.tick) {
+        // Heard already: between the two states round it, as drawn.
+        const Sample* before = &samples.front();
+        const Sample* after = nullptr;
+        for (const Sample& sample : samples) {
+            if (sample.tick <= tick)
+                before = &sample;
+            else if (after == nullptr)
+                after = &sample;
+        }
+        if (after == nullptr || tick <= before->tick || after->tick <= before->tick)
+            return tick < samples.front().tick ? samples.front().cframe : before->cframe;
+        const core::DVec3 moved = after->cframe.position - before->cframe.position;
+        const f64 reach = TeleportMetresPerTick * static_cast<f64>(after->tick - before->tick);
+        if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach)
+            return before->cframe;
+        return core::lerp(before->cframe, after->cframe,
+                          static_cast<f64>(tick - before->tick) / static_cast<f64>(after->tick - before->tick));
+    }
+    // **Ahead of what was heard**: carried on by its last motion, while it
+    // still moves. A sample is kept only when a part's place changes, so a
+    // newest older than the newest snapshot is a part that stopped -- unless
+    // the authority's budget held it back (ADR 0229).
+    if (samples.size() < 2 || (newest.tick < m_ackedServerTick && newest.lag <= 0.0f))
+        return newest.cframe;
+    const Sample& prior = samples[samples.size() - 2];
+    if (newest.tick <= prior.tick)
+        return newest.cframe;
+    const u64 gap = newest.tick - prior.tick;
+    const core::DVec3 moved = newest.cframe.position - prior.cframe.position;
+    const f64 reach = TeleportMetresPerTick * static_cast<f64>(gap);
+    if (moved.x * moved.x + moved.y * moved.y + moved.z * moved.z > reach * reach)
+        return newest.cframe;
+    const u64 ahead = std::min(tick - newest.tick, leadTicks);
+    core::CFrameD carried =
+        core::lerp(prior.cframe, newest.cframe, static_cast<f64>(gap + ahead) / static_cast<f64>(gap));
+    // **Its place on the curve through its last three**, not the line through
+    // two: a platform that swings or eases is turning its motion all the
+    // time, and a line ten ticks long missed a swing three metres wide by six
+    // centimetres. Only where the three are close together and the curve
+    // bends no more than a part can move; else the line.
+    if (samples.size() >= 3) {
+        const Sample& oldest = samples[samples.size() - 3];
+        const u64 span = newest.tick - oldest.tick;
+        if (prior.tick > oldest.tick && span <= 4 * gap) {
+            const f64 t0 = static_cast<f64>(oldest.tick);
+            const f64 t1 = static_cast<f64>(prior.tick);
+            const f64 t2 = static_cast<f64>(newest.tick);
+            const f64 t = t2 + static_cast<f64>(ahead);
+            const auto axis = [&](f64 p0, f64 p1, f64 p2) {
+                const f64 late = (p2 - p1) / (t2 - t1);
+                const f64 early = (p1 - p0) / (t1 - t0);
+                const f64 bend = (late - early) / (t2 - t0);
+                return std::pair<f64, f64>{p2 + late * (t - t2) + bend * (t - t2) * (t - t1), bend};
+            };
+            const auto [x, bx] = axis(oldest.cframe.position.x, prior.cframe.position.x, newest.cframe.position.x);
+            const auto [y, by] = axis(oldest.cframe.position.y, prior.cframe.position.y, newest.cframe.position.y);
+            const auto [z, bz] = axis(oldest.cframe.position.z, prior.cframe.position.z, newest.cframe.position.z);
+            const f64 most = TeleportMetresPerTick / static_cast<f64>(std::max<u64>(span, 1));
+            if (bx * bx + by * by + bz * bz <= most * most)
+                carried.position = core::DVec3{x, y, z};
+        }
+    }
+    return carried;
 }
 
 void ReplicaSession::resolveCharacters(scene::World& world, InstanceId root)
@@ -7385,6 +7736,7 @@ void ReplicaSession::forget(std::span<const u32> ids)
     for (const u32 id : ids) {
         m_departed[id] = m_applied;
         m_samples.erase(id);
+        m_curves.erase(id);
         m_samples2d.erase(id);
         m_ownedParts.erase(id);
         m_locals.erase(id);
@@ -7640,6 +7992,10 @@ void ReplicaSession::onSnapshot(scene::World& world, InstanceId root, std::span<
     else if (static_cast<f64>(m_serverClock - tick) > m_lateAverage + 2.0 * m_lateSpread + 1.0)
         m_serverClock -= 1;
     m_ackedIntent = intentTick;
+    m_ackedServerTick = tick;
+    // What a world step on this machine is told its tick is (ADR 0254).
+    world.engineState().worldStepOffset = static_cast<core::i64>(tick) - static_cast<core::i64>(intentTick);
+    world.engineState().worldStepAhead = true;
     for (usize seat = 0; seat < m_seats.size(); ++seat)
         m_seats[seat].snapshotAttributes = std::move(predicted[seat]);
     applyToWorld(world, root, state);
@@ -8744,7 +9100,7 @@ void ReplicaSession::applyToWorld(scene::World& world, InstanceId root,
                 // and was corrected every snapshot.
                 if (field != nullptr && field->pool == "characterBodies" &&
                     (field->name == "VerticalVelocity" || field->name == "Grounded" || field->name == "State" ||
-                     field->name == "PushVelocity"))
+                     field->name == "PushVelocity" || field->name == "GroundPart"))
                     continue;
                 // **And its body's velocity is its motion too**: the
                 // authority's, a round trip older than the prediction, was

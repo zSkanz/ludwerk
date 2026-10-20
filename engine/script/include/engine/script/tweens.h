@@ -97,6 +97,10 @@ struct TweenRecord
     bool returning = false;
     // Whether `start` has been captured for this traversal.
     bool captured = false;
+    // **What its replicas were last told of it** (ADR 0254 §2.1): the state
+    // then, and whether anything was told.
+    PlaybackState toldState = PlaybackState::Begin;
+    bool told = false;
 };
 
 // Every live tween in the VM. Held in `ServiceState` beside the rest of the

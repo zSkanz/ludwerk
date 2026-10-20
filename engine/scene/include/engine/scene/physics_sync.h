@@ -808,6 +808,8 @@ private:
     // ran them for, with their input, for the touches the step begins; and,
     // while a replay steps again, the character and the command it steps.
     PredictedStepHost* m_predictedHost = nullptr;
+    // What the world steps took since the last live one (ADR 0254 §6).
+    u64 m_worldStepNs = 0;
     struct PredictedNow
     {
         core::InstanceId character;
@@ -833,6 +835,9 @@ private:
     // characters it simulates are theirs (ADR 0208).
     std::vector<core::InstanceId> m_localPlayers;
     void runPredictedSteps(f64 fixedDt);
+    // The world's step (ADR 0254), before the characters': live, or with the
+    // tick a replay steps again.
+    void runWorldSteps(f64 fixedDt);
     void runPredictedTouches(std::span<const physics::ContactEvent> events, f64 fixedDt);
     [[nodiscard]] PredictedAttributes predictedAttributesOf(core::InstanceId id) const;
     [[nodiscard]] IslandEntity::Pending pendingOf(core::InstanceId id) const;

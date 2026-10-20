@@ -23,6 +23,7 @@ struct lua_State;
 namespace engine::scene {
 struct PlayerIntent;
 struct PredictedTick;
+struct WorldTick;
 } // namespace engine::scene
 
 namespace engine::script {
@@ -169,6 +170,11 @@ struct SceneState
     const scene::PredictedTick* predictedNow = nullptr;
     core::u32 predictedRun = 0;
     core::u32 predictedRuns = 0;
+    // The world steps bound (ADR 0254), and the one running now, as above.
+    std::vector<PredictedBinding> worldSteps;
+    const scene::WorldTick* worldNow = nullptr;
+    core::u32 worldRun = 0;
+    core::u32 worldRuns = 0;
     std::vector<HeldMessage> held;
 
     std::vector<SceneLoadRecord> loads;
@@ -225,6 +231,14 @@ void runPredictedStep(lua_State* L, const scene::PredictedTick& tick);
 void runPredictedTouch(lua_State* L, const scene::PredictedTick& tick, core::InstanceId part);
 [[nodiscard]] bool predictedTouchBound(lua_State* L, core::InstanceId part);
 void registerPredictedStep(lua_State* L);
+// `RunService:BindToWorldStep` and `UnbindFromWorldStep` (ADR 0254), run by the
+// mirror once a step before the characters'; `WorldStep` registered with the
+// scene types.
+int runServiceBindToWorldStep(lua_State* L);
+int runServiceUnbindFromWorldStep(lua_State* L);
+void runWorldStep(lua_State* L, const scene::WorldTick& tick);
+[[nodiscard]] bool worldStepBound(lua_State* L);
+void registerWorldStep(lua_State* L);
 // An intent as `Player:GetIntent` answers it: a boolean, a number, a
 // `Vector2` or a `vector` by its type.
 void pushIntentValue(lua_State* L, const scene::PlayerIntent& intent);

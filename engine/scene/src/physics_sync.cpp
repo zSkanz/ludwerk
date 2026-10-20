@@ -1198,6 +1198,65 @@ void PhysicsSync::putPredictedAttributes(core::InstanceId id, const PredictedAtt
     }
 }
 
+void PhysicsSync::runWorldSteps(f64 fixedDt)
+{
+    if (m_predictedHost == nullptr || !m_predictedHost->worldStepBound())
+        return;
+    const EngineState& state = m_scene.engineState();
+    const auto authority = [&state](u64 own) {
+        const i64 at = static_cast<i64>(own) + state.worldStepOffset;
+        return at > 0 ? static_cast<u64>(at) : u64{0};
+    };
+    // **Stepping again**: the tick being replayed, which every character of
+    // the step shares.
+    if (!m_replaying.empty()) {
+        const auto began = std::chrono::steady_clock::now();
+        m_predictedHost->worldStep(WorldTick{authority(m_replaying.front().second->tick), fixedDt, true, true});
+        m_worldStepNs += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count());
+        return;
+    }
+    // A script's own `StepSimulation` (ADR 0101) is its scripts' to fill.
+    if (m_quiet)
+        return;
+    // **Another player standing on what it moves goes with it** (ADR 0254
+    // §5): a character this machine draws and does not step, placed on its
+    // part before the step, is carried by what the step does to that part.
+    struct Riding
+    {
+        core::InstanceId character;
+        core::InstanceId ground;
+        core::CFrameD before;
+    };
+    std::vector<Riding> riding;
+    for (const auto& [key, record] : m_characters) {
+        if (!record.follower)
+            continue;
+        const core::InstanceId character = unpackInstance(key);
+        const CharacterBodyComponent* body = m_scene.characterBodies().find(character);
+        if (body == nullptr || !body->grounded || !body->groundPart.valid())
+            continue;
+        if (const PartComponent* ground = m_scene.parts().find(body->groundPart); ground != nullptr)
+            riding.push_back(Riding{character, body->groundPart, ground->cframe});
+    }
+    const auto began = std::chrono::steady_clock::now();
+    m_predictedHost->worldStep(WorldTick{authority(state.tick), fixedDt, false, state.worldStepAhead});
+    m_worldStepNs += static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count());
+    // A live tick closes the measure: its own step and the replays since.
+    m_scene.engineState().worldStepMs = static_cast<f64>(m_worldStepNs) / 1.0e6;
+    m_worldStepNs = 0;
+    for (const Riding& one : riding) {
+        const PartComponent* ground = m_scene.parts().find(one.ground);
+        PartComponent* character = m_scene.parts().find(one.character);
+        if (ground == nullptr || character == nullptr)
+            continue;
+        if (ground->cframe == one.before)
+            continue;
+        character->cframe = ground->cframe * (core::inverse(one.before) * character->cframe);
+    }
+}
+
 void PhysicsSync::runPredictedSteps(f64 fixedDt)
 {
     m_predictedNow.clear();
@@ -3777,6 +3836,12 @@ void PhysicsSync::step(f64 fixedDt)
     if (!m_workspace.valid())
         return;
 
+    {
+        ENG_PROFILE_SCOPE("scripts.world");
+        // **The world's step before anything** (ADR 0254): the platforms it
+        // moves are where this step's characters meet them.
+        runWorldSteps(fixedDt);
+    }
     {
         ENG_PROFILE_SCOPE("scripts.predicted");
         // **The predicted steps first**: what their scripts write --

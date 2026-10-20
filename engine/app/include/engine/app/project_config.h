@@ -231,6 +231,14 @@ struct ProjectConfig
     // `[network] client_budget_kb_per_second` (ADR 0229): kilobytes of the
     // world's state a second each player is sent at most; 0 for no budget.
     core::u32 networkClientBudgetKb = 48;
+    // **What a replica predicts besides its characters** (ADRs 0133, 0254):
+    // `[network] predict_radius` in metres, `predict_max_bodies`,
+    // `predict_linger_ticks`, and how far ahead a part moving on its own is
+    // carried on by its motion, `predict_moving_lead_ms`.
+    core::f64 networkPredictRadius = 8.0;
+    core::u32 networkPredictMaxBodies = 32;
+    core::u32 networkPredictLingerTicks = 30;
+    core::u32 networkPredictMovingLeadMs = 250;
     // `[network] rewind_cap_ms` (ADR 0235): the furthest back, in
     // milliseconds, a shot is checked against what its shooter saw. From 0 --
     // never -- to 1000; 200 by default.

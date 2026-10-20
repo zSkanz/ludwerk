@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "engine/scene/tween_clock.h"
 #include "engine/scene/world.h"
 #include "engine/script/binding.h"
 #include "engine/script/datatypes.h"
@@ -21,6 +22,11 @@ namespace {
 
 using core::EasingDirection;
 using core::EasingStyle;
+
+[[nodiscard]] scene::TweenTiming timingOf(const TweenInfoData& info) noexcept
+{
+    return scene::TweenTiming{info.time, info.delayTime, info.repeatCount, info.style, info.direction, info.reverses};
+}
 
 [[nodiscard]] TweenSystem& tweens(lua_State* L)
 {
@@ -456,11 +462,71 @@ void stepTweens(lua_State* L, f64 fixedDt)
     TweenSystem& system = tweens(L);
     scene::World& w = world(L);
 
+    // **The tweens on parts' places, told the replicas** (ADR 0254 §2.1): a
+    // traversal begun, or a state changed -- paused, resumed, done -- with
+    // the clock as of this tick, so a replica steps the same clock on.
+    scene::EngineState& engine = w.engineState();
+    // Kept a second: an authority sends at its snapshots, not every tick, and
+    // takes each once by its tick.
+    std::erase_if(engine.movingCurvesOut,
+                  [&engine](const scene::EngineState::MovingCurve& told) { return told.tick + 60 < engine.tick; });
+    const core::NameAtom cframeName = w.atoms().lookup("CFrame");
+    const core::NameAtom positionName = w.atoms().lookup("Position");
+    const auto tell = [&](TweenRecord& record) {
+        const scene::PartComponent* part = w.parts().find(record.target);
+        if (part == nullptr)
+            return;
+        const TweenGoal* place = nullptr;
+        u8 kind = 0;
+        for (const TweenGoal& goal : record.goals) {
+            if (goal.property == cframeName && cframeName.id != 0) {
+                place = &goal;
+                kind = 1;
+                break;
+            }
+            if (goal.property == positionName && positionName.id != 0) {
+                place = &goal;
+                kind = 2;
+                break;
+            }
+        }
+        if (place == nullptr)
+            return;
+        const auto asCFrame = [&](const scene::Value& value) {
+            if (const auto* frame = std::get_if<core::CFrameD>(&value))
+                return *frame;
+            core::CFrameD at = part->cframe;
+            if (const auto* position = std::get_if<core::Vec3>(&value))
+                at.position = core::toDVec3(*position);
+            return at;
+        };
+        const bool holds = record.state == PlaybackState::Playing || record.state == PlaybackState::Delayed ||
+                           record.state == PlaybackState::Paused;
+        scene::EngineState::MovingCurve curve;
+        curve.part = record.target;
+        curve.kind = holds ? kind : u8{0};
+        curve.tick = engine.tick;
+        curve.timing = timingOf(record.info);
+        curve.clock =
+            scene::TweenClock{record.elapsed, record.repeatsDone, static_cast<scene::TweenPlayback>(record.state),
+                              record.returning, record.captured};
+        curve.start = asCFrame(place->start);
+        curve.goal = asCFrame(place->goal);
+        curve.now = part->cframe;
+        engine.movingCurvesOut.push_back(curve);
+        record.toldState = record.state;
+        record.told = true;
+    };
+
     // Slot order, which is a pure function of the operation sequence, so two
     // tweens writing the same property write in the same order on every run.
     system.tweens.forEach([&](TweenId, TweenRecord& record) {
-        if (record.state != PlaybackState::Playing && record.state != PlaybackState::Delayed)
+        if (record.state != PlaybackState::Playing && record.state != PlaybackState::Delayed) {
+            // Paused, cancelled or done since it was last told: told again.
+            if (record.told && record.toldState != record.state && w.alive(record.target))
+                tell(record);
             return;
+        }
 
         // A tween whose target is gone stops rather than raising. The target is
         // a reference and not an ownership: a tween is not a reason to keep an
@@ -470,77 +536,37 @@ void stepTweens(lua_State* L, f64 fixedDt)
             return;
         }
 
-        record.elapsed += fixedDt;
+        // **The clock is scene's** (ADR 0254): the same steps a replica takes
+        // for a tween its authority runs, so the two agree to the bit.
+        scene::TweenClock clock{record.elapsed, record.repeatsDone, static_cast<scene::TweenPlayback>(record.state),
+                                record.returning, record.captured};
+        const scene::TweenTick tick = scene::advanceTweenClock(timingOf(record.info), clock, fixedDt);
+        record.elapsed = clock.elapsed;
+        record.repeatsDone = clock.repeatsDone;
+        record.state = static_cast<PlaybackState>(clock.state);
+        record.returning = clock.returning;
+        record.captured = clock.captured;
 
-        if (record.state == PlaybackState::Delayed) {
-            if (record.elapsed < record.info.delayTime)
-                return;
-            record.elapsed -= record.info.delayTime;
-            record.state = PlaybackState::Playing;
-        }
-
-        // Captured at the first tick that writes, not at `Create`: a tween
-        // created now and played in three seconds should move from where the
-        // property IS then.
-        if (!record.captured) {
+        if (tick.captureStart) {
             for (TweenGoal& goal : record.goals) {
                 const scene::PropertyDesc* property = w.classes().findProperty(w.classOf(record.target), goal.property);
                 if (property != nullptr && property->get != nullptr)
                     goal.start = property->get(w, record.target);
             }
-            record.captured = true;
         }
-
-        const f64 duration = record.info.time;
-        bool traversalDone = false;
-        f64 raw = 1.0;
-        if (duration <= 0.0) {
-            // A zero-length tween lands on its goal in one tick rather than
-            // dividing by zero. It is a legal thing to ask for -- "set this, but
-            // through the tween system so `Completed` fires".
-            traversalDone = true;
+        if (tick.writes) {
+            for (const TweenGoal& goal : record.goals) {
+                // Through `setProperty`, which is the same call the binding
+                // makes for `part.Size = v`: same equality filter, same change
+                // queue, same range refusal. A second route would make a
+                // tweened write mean something different from an assigned one.
+                (void)w.setProperty(record.target, goal.property, blend(goal.start, goal.goal, tick.eased));
+            }
         }
-        else if (record.elapsed >= duration) {
-            traversalDone = true;
-        }
-        else {
-            raw = record.elapsed / duration;
-        }
-
-        const f64 progress = record.returning ? 1.0 - raw : raw;
-        const f32 t = core::ease(static_cast<f32>(progress), record.info.style, record.info.direction);
-
-        for (const TweenGoal& goal : record.goals) {
-            // Through `setProperty`, which is the same call the binding makes
-            // for `part.Size = v`: same equality filter, same change queue, same
-            // range refusal. A second route would make a tweened write mean
-            // something different from an assigned one.
-            (void)w.setProperty(record.target, goal.property, blend(goal.start, goal.goal, t));
-        }
-
-        if (!traversalDone)
-            return;
-
-        if (record.info.reverses && !record.returning) {
-            record.returning = true;
-            record.elapsed = 0.0;
-            return;
-        }
-
-        record.returning = false;
-        record.elapsed = 0.0;
-        record.captured = false;
-        record.repeatsDone += 1;
-
-        // A negative `RepeatCount` repeats forever, which is the one negative
-        // number in `TweenInfo` that means something.
-        const bool forever = record.info.repeatCount < 0;
-        if (forever || record.repeatsDone <= record.info.repeatCount) {
-            record.state = record.info.delayTime > 0.0 ? PlaybackState::Delayed : PlaybackState::Playing;
-            return;
-        }
-
-        finish(L, record, PlaybackState::Completed);
+        if (tick.completed)
+            finish(L, record, PlaybackState::Completed);
+        if (tick.captureStart || !record.told || record.toldState != record.state)
+            tell(record);
     });
 }
 

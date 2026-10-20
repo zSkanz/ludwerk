@@ -5957,7 +5957,7 @@
         {
           "Name": "GetStats",
           "Parameters": [],
-          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, PredictedDriftPart: BasePart?, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
+          "Returns": ["{ Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, PredictedDriftPart: BasePart?, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, MovingParts: number, WorldStepTime: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }"],
           "ThreadSafety": "Unsafe"
         },
         {
@@ -7664,6 +7664,21 @@
           "ThreadSafety": "Unsafe"
         },
         {
+          "Name": "BindToWorldStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            },
+            {
+              "Name": "fn",
+              "Type": "(step: WorldStep) -> ()"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
           "Name": "GetLastRun",
           "Parameters": [],
           "Returns": ["{ Outcome: Enum.RunOutcome, ScriptErrors: number, FirstScriptError: string?, Report: string?, Dump: string? }"],
@@ -7734,6 +7749,17 @@
         },
         {
           "Name": "UnbindFromRenderStep",
+          "Parameters": [
+            {
+              "Name": "name",
+              "Type": "string"
+            }
+          ],
+          "Returns": [],
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "UnbindFromWorldStep",
           "Parameters": [
             {
               "Name": "name",
@@ -15868,6 +15894,40 @@
           "ThreadSafety": "Safe"
         }
       ],
+      "Operators": []
+    },
+    {
+      "Name": "WorldStep",
+      "Constructors": [],
+      "Constants": [],
+      "Properties": [
+        {
+          "Name": "DeltaTime",
+          "Type": "number",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Predicted",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Random",
+          "Type": "Random",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Replaying",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Tick",
+          "Type": "number",
+          "ReadOnly": true
+        }
+      ],
+      "Methods": [],
       "Operators": []
     }
   ],

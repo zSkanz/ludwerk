@@ -177,6 +177,8 @@ enum class UserdataTag : int
     // ADR 0238: a player's record this world holds, a pointer to what
     // `ServiceState` keeps for the account for the VM's lifetime.
     DataRecord = 31,
+    // ADR 0254: what a world step's function is handed, by its run.
+    WorldStep = 32,
 
     // Not a tag. The count exists so a registration loop can assert it covered
     // everything, and so the budget remaining is a number someone can read.
@@ -287,6 +289,9 @@ struct VmContext
     // **The character a predicted step is running for**: an attribute
     // written on it now is predicted state, remembered and stepped again.
     core::InstanceId predictedCharacter;
+    // A world step is running (ADR 0254): what it moves is its motion, the
+    // same on every machine, and not a client's write to warn of.
+    bool inWorldStep = false;
 
     // **The old names this run has already been told about**: a property or
     // an enum item reached by a name it used to have works, and says what it

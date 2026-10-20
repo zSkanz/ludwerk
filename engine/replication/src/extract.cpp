@@ -1098,6 +1098,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, body->flying);
             return true;
         }
+        if (field.name == "GroundPart") {
+            setInstance(out, body->grounded ? body->groundPart : InstanceId{});
+            return true;
+        }
         return false;
     }
 
@@ -2546,6 +2550,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "Flying") {
             body->flying = asBool(value);
+            return true;
+        }
+        if (field.name == "GroundPart") {
+            body->groundPart = asInstance(value);
             return true;
         }
         return false;

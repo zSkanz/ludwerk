@@ -2097,6 +2097,10 @@ static int hostMain(int argc, char** argv)
         if (!options.maxPerAddressFromFlag)
             options.network.maxPeersPerAddress = config.networkMaxPerAddress;
         options.network.clientBudgetBytesPerSecond = config.networkClientBudgetKb * 1024u;
+        options.network.predictRadius = config.networkPredictRadius;
+        options.network.predictMaxBodies = config.networkPredictMaxBodies;
+        options.network.predictLingerTicks = config.networkPredictLingerTicks;
+        options.network.predictMovingLeadMs = config.networkPredictMovingLeadMs;
         options.maxViewsPerFrame = config.maxViewsPerFrame;
         options.maxHighlights = config.maxHighlights;
         options.foliageDensity = config.foliageDensity;

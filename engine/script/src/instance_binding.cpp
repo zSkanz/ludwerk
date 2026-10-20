@@ -265,7 +265,7 @@ int instanceIndex(lua_State* L)
 void noteClientWrite(lua_State* L, core::InstanceId id, core::u32 mark, std::string_view what, std::string_view field)
 {
     VmContext& ctx = context(L);
-    if (!ctx.travels)
+    if (!ctx.travels || ctx.inWorldStep)
         return;
     const World& w = world(L);
     if (w.engineState().networkTopology != scene::NetworkTopology::Host || !threadMakesLocal(L))

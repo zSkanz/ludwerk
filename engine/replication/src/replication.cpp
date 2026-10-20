@@ -44,6 +44,8 @@ public:
                 return error;
             m_replica.emplace(*m_transport, authority);
             m_replica->setCorrectionLog(m_config.logCorrections);
+            m_replica->setPrediction(m_config.predictRadius, m_config.predictMaxBodies, m_config.predictLingerTicks);
+            m_replica->setMovingLead(m_config.predictMovingLeadMs);
             if (m_config.token.valid())
                 m_replica->setPlayerToken(m_config.token);
             m_replica->setLuauFlags(m_config.luauFlags);

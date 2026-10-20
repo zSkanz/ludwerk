@@ -19754,6 +19754,9 @@ void drawNetwork(const scene::World& world)
             number(static_cast<double>(stats.inputStarvations), 0, ""));
         row(core::tr(ENG_TR("engine.editor.network.predicted_parts")),
             number(static_cast<double>(stats.predictedParts), 0, ""));
+        row(core::tr(ENG_TR("engine.editor.network.moving_parts")),
+            number(static_cast<double>(stats.movingParts), 0, ""));
+        row(core::tr(ENG_TR("engine.editor.network.world_step")), number(stats.worldStepMs, 2, " ms"));
         row(core::tr(ENG_TR("engine.editor.network.resimulations")), number(stats.resimulationsPerSecond, 1, " /s"));
         row(core::tr(ENG_TR("engine.editor.network.resimulated_ticks")),
             number(stats.resimulatedTicksPerSecond, 0, " /s"));

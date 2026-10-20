@@ -629,9 +629,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `NetworkService:SignInAsync` and `RegisterAsync` (ADR 0237); 398:
     // `PartyService`'s nine (ADR 0240); 411: `MatchmakingService`'s thirteen
     // (ADR 0243); 412: `XRService:MarkCut` (ADR 0252); 414: `NakamaService`'s two (ADR 0242); 416:
-    // its queue's two.
-    CHECK(coverage.declared == 416);
-    CHECK(coverage.bound == 416);
+    // its queue's two; 418: `RunService:BindToWorldStep` and its unbinding
+    // (ADR 0254).
+    CHECK(coverage.declared == 418);
+    CHECK(coverage.bound == 418);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

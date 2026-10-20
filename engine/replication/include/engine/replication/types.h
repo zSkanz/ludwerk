@@ -116,6 +116,14 @@ struct Config
     // (ADR 0229, `[network] client_budget_kb_per_second`); nought for no
     // budget. A player's `ReplicationBudget` overrides it.
     u32 clientBudgetBytesPerSecond = 48u * 1024u;
+    // **What a replica predicts besides its characters** (ADRs 0133, 0254,
+    // `[network] predict_*`): loose parts within this many metres, at most
+    // this many, let go of after this many ticks out of range; and how far
+    // ahead a part moving on its own is carried on by its motion.
+    core::f64 predictRadius = 8.0;
+    u32 predictMaxBodies = 32;
+    u32 predictLingerTicks = 30;
+    core::f64 predictMovingLeadMs = 250.0;
     // **What the project changed of Luau that compiled code can tell**
     // (ADR 0217), as one number, nought for nothing: a joiner whose number is
     // not the host's runs other scripts, and is refused before it plays.
@@ -360,6 +368,9 @@ struct Stats
     // its island again, and how many ticks they stepped in all; and the time
     // they took, in microseconds -- measured, never simulated with.
     u32 predictedBodies = 0;
+    // The parts moving on their own a replica draws where its authority will
+    // have them (ADR 0254).
+    u32 movingParts = 0;
     // A replica: how many ticks behind the server's clock others are drawn,
     // as the link has made it.
     u32 interpolationDelayTicks = 0;

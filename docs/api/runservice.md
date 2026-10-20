@@ -47,6 +47,14 @@ Bound functions run in order of `priority`, lowest first, and in the order they 
 
 Binding a name that is already bound replaces the function. Nothing runs in a run without a window. A binding belongs to the script that made it and is removed with that script's scene.
 
+### `BindToWorldStep(name: string, fn: (step: WorldStep) -> ())`
+
+Binds a function that runs as `fn(step)` once per tick inside the simulation step, before physics is solved and before any `BindToPredictedStep` function. Use it to move anchored parts that the game drives, such as a lift, a moving platform or a door, so that a client standing on one, jumping onto it or riding it is not corrected at any latency.
+
+Bind it on the server and on the client with the same code, for example from a module both require. On the authority it runs once per tick. On a client it runs at every tick the client predicts, with `step.Tick` set to the tick at which the authority will simulate that tick, and again for every tick replayed after a correction, with `step.Replaying` true. So the function must compute the parts' positions from `step.Tick` and from replicated state only: it must not read the clock, keep state between calls, or use an unseeded `Random`; use `step.Random`. Called twice for the same tick, it must set the same positions. To play a sound or an effect only once, check that `step.Replaying` is false.
+
+The function must not yield; `task.wait` inside it raises an error. Functions run in the order they were bound. Binding a name that is already bound replaces the function, and a binding belongs to the script that made it and is removed with that script's scene.
+
 ### `GetLastRun(): { Outcome: Enum.RunOutcome, ScriptErrors: number, FirstScriptError: string?, Report: string?, Dump: string? }`
 
 Returns how the previous run of the game ended on this machine, and where its report is. Call it at startup to offer the player a way to send a crash report: the engine uploads nothing and shows nothing by itself.
@@ -94,6 +102,10 @@ Removes the function bound with `BindToPredictedStep` under `name`. Does nothing
 ### `UnbindFromRenderStep(name: string)`
 
 Removes the function bound with `BindToRenderStep` under `name`. Does nothing if no function is bound under that name.
+
+### `UnbindFromWorldStep(name: string)`
+
+Removes the function bound with `BindToWorldStep` under `name`. Does nothing if no function is bound under that name.
 
 ## Events
 

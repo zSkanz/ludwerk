@@ -867,6 +867,25 @@ declare extern type PredictedStep with
     function Pressed(self, action: string): boolean
 end
 
+declare extern type WorldStep with
+    --- The authority's tick number for this step. On a client it is the tick at which the authority
+    --- will simulate the tick being predicted, so a part placed from it is where the authority will
+    --- have it.
+    read Tick: number
+    --- The length of the step, in seconds.
+    read DeltaTime: number
+    --- Whether this step is being simulated again after a correction, on a client. Check it before
+    --- doing something that must happen only once, such as playing a sound.
+    read Replaying: boolean
+    --- Whether this machine is a client simulating a tick ahead of its authority. It is false on the
+    --- authority and in a single-player game.
+    read Predicted: boolean
+    --- A random number generator seeded from `Tick`. It gives the same numbers on every machine and in
+    --- every replay of the tick. Each read returns a generator at the start of its sequence, so store
+    --- it in a local variable.
+    read Random: Random
+end
+
 declare extern type AnimationTrack with
     --- Whether the track is advancing. It becomes false when a track that is not `Looped` reaches the
     --- end of its clip. Such a track keeps showing its last frame until it is stopped or played again.
@@ -6075,19 +6094,22 @@ declare extern type NetworkService extends Instance with
     --- milliseconds. It is two snapshot intervals plus the link's jitter, and adapts to the link. - On
     --- a client, `PredictedParts` is the number of loose parts near its character that it predicts. The
     --- table also reports how often a correction made the client simulate them again, how many ticks it
-    --- simulated again, and `ResimulationTime`, the average time that took in milliseconds. Traffic:
-    --- `BytesSent` and `BytesReceived` are totals since the session began. Five more fields break the
-    --- total down, sent and received together: `SnapshotBytes` for world state, `AttributeBytes` for
-    --- attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s, `UnreliableBytes` for
-    --- `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the state of the parts it
-    --- owns. `SwarmBytes` is the positions of replicated swarms. The remainder is instances being
-    --- created and removed, terrain and the handshake. To get a rate, read a field twice, one second
-    --- apart, and subtract. `CrossWorldDropped` counts `CrossWorldService` messages this world dropped
-    --- unheard: too many waiting, or older than 10 seconds when their turn came. `WireBytesSent` and
-    --- `WireBytesReceived` are what the network itself carried: the same messages with the transport's
-    --- headers, acknowledgements, resends and encryption added. They are what a player's connection
-    --- pays for, and are larger than `BytesSent` and `BytesReceived`. On an authority, `Deferred`
-    --- counts the updates its players' budgets held back in the last second
+    --- simulated again, and `ResimulationTime`, the average time that took in milliseconds. - On a
+    --- client, `MovingParts` is the number of parts moving on their own near its character, such as
+    --- platforms and lifts, that it draws where the authority will have them. `WorldStepTime` is what
+    --- its `RunService:BindToWorldStep` functions took on the last tick, replays included, in
+    --- milliseconds. Traffic: `BytesSent` and `BytesReceived` are totals since the session began. Five
+    --- more fields break the total down, sent and received together: `SnapshotBytes` for world state,
+    --- `AttributeBytes` for attributes, `RemoteBytes` for `RemoteEvent`s and `RemoteFunction`s,
+    --- `UnreliableBytes` for `UnreliableRemoteEvent`s, and `InputBytes` for a client's input and the
+    --- state of the parts it owns. `SwarmBytes` is the positions of replicated swarms. The remainder is
+    --- instances being created and removed, terrain and the handshake. To get a rate, read a field
+    --- twice, one second apart, and subtract. `CrossWorldDropped` counts `CrossWorldService` messages
+    --- this world dropped unheard: too many waiting, or older than 10 seconds when their turn came.
+    --- `WireBytesSent` and `WireBytesReceived` are what the network itself carried: the same messages
+    --- with the transport's headers, acknowledgements, resends and encryption added. They are what a
+    --- player's connection pays for, and are larger than `BytesSent` and `BytesReceived`. On an
+    --- authority, `Deferred` counts the updates its players' budgets held back in the last second
     --- (`Player.ReplicationBudget`), and `BudgetUsed` is how much of those budgets that second's
     --- snapshots spent, from 0 to 1; above 1 when what may not wait, such as a player joining, spent
     --- more. Both are 0 on a client. `Path` says how the other end is reached: `"lan"` on the same
@@ -6097,7 +6119,7 @@ declare extern type NetworkService extends Instance with
     --- a match: the primary player first, then the guests. Each entry has the player's `UserId` and the
     --- three correction numbers for that player's character alone. It is empty on an authority and in
     --- single-player.
-    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, PredictedDriftPart: BasePart?, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
+    function GetStats(self): { Ping: number, Jitter: number, Loss: number, SnapshotsPerSecond: number, CorrectionsPerSecond: number, Corrections: number, LastCorrection: number, PredictedDrift: number, PredictedDriftPart: BasePart?, InputBufferDepth: number, InputStarvations: number, InputReanchors: number, InterpolationDelay: number, PredictedParts: number, MovingParts: number, WorldStepTime: number, ResimulationsPerSecond: number, ResimulatedTicksPerSecond: number, ResimulationTime: number, UnreliableSent: number, UnreliableReceived: number, UnreliableDropped: number, BytesSent: number, BytesReceived: number, WireBytesSent: number, WireBytesReceived: number, Deferred: number, BudgetUsed: number, SwarmBytes: number, SnapshotBytes: number, AttributeBytes: number, RemoteBytes: number, UnreliableBytes: number, InputBytes: number, CrossWorldDropped: number, Path: string, LocalPlayers: { { UserId: number, Corrections: number, CorrectionsPerSecond: number, LastCorrection: number } } }
     --- Connects to a server at `address`, written as `host` or `host:port`. With no address, it
     --- connects to `[network] server` from `project.toml`. Joining replaces this machine's scene with
     --- the server's, and server scripts stop, because this machine is no longer the authority.
@@ -6458,6 +6480,24 @@ declare extern type RunService extends Instance with
     --- Removes the function bound with `BindToPredictedStep` under `name`. Does nothing if no function
     --- is bound under that name.
     function UnbindFromPredictedStep(self, name: string): ()
+    --- Binds a function that runs as `fn(step)` once per tick inside the simulation step, before
+    --- physics is solved and before any `BindToPredictedStep` function. Use it to move anchored parts
+    --- that the game drives, such as a lift, a moving platform or a door, so that a client standing on
+    --- one, jumping onto it or riding it is not corrected at any latency. Bind it on the server and on
+    --- the client with the same code, for example from a module both require. On the authority it runs
+    --- once per tick. On a client it runs at every tick the client predicts, with `step.Tick` set to
+    --- the tick at which the authority will simulate that tick, and again for every tick replayed after
+    --- a correction, with `step.Replaying` true. So the function must compute the parts' positions from
+    --- `step.Tick` and from replicated state only: it must not read the clock, keep state between
+    --- calls, or use an unseeded `Random`; use `step.Random`. Called twice for the same tick, it must
+    --- set the same positions. To play a sound or an effect only once, check that `step.Replaying` is
+    --- false. The function must not yield; `task.wait` inside it raises an error. Functions run in the
+    --- order they were bound. Binding a name that is already bound replaces the function, and a binding
+    --- belongs to the script that made it and is removed with that script's scene.
+    function BindToWorldStep(self, name: string, fn: (step: WorldStep) -> ()): ()
+    --- Removes the function bound with `BindToWorldStep` under `name`. Does nothing if no function is
+    --- bound under that name.
+    function UnbindFromWorldStep(self, name: string): ()
     --- Removes the function bound with `BindToRenderStep` under `name`. Does nothing if no function is
     --- bound under that name.
     function UnbindFromRenderStep(self, name: string): ()

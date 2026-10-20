@@ -2604,6 +2604,8 @@
   "engine.editor.network.player_corrections": "Player {player}: corrections",
   "engine.editor.network.player_last_correction": "Player {player}: last correction",
   "engine.editor.network.predicted_parts": "Predicted parts",
+  "engine.editor.network.moving_parts": "Moving parts drawn ahead",
+  "engine.editor.network.world_step": "World step",
   "engine.editor.network.resimulated_ticks": "Resimulated ticks",
   "engine.editor.network.resimulation": "Resimulation",
   "engine.editor.network.resimulations": "Resimulations",

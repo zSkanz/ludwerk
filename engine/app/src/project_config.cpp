@@ -852,6 +852,12 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
     count("network.timeout", 1, 120, config.networkTimeoutSeconds);
     count("network.max_connections_per_address", 0, 4095, config.networkMaxPerAddress);
     count("network.client_budget_kb_per_second", 0, 65536, config.networkClientBudgetKb);
+    if (const std::optional<f64> value = document.number("network.predict_radius");
+        value.has_value() && *value >= 0.0 && *value <= 64.0)
+        config.networkPredictRadius = *value;
+    count("network.predict_max_bodies", 0, 256, config.networkPredictMaxBodies);
+    count("network.predict_linger_ticks", 0, 600, config.networkPredictLingerTicks);
+    count("network.predict_moving_lead_ms", 0, 1000, config.networkPredictMovingLeadMs);
     count("network.rewind_cap_ms", 0, 1000, config.networkRewindCapMs);
     count("network.kick_over_limit", 0, 10000, config.networkKickOverLimit);
     count("server.physics_threads", 0, 64, config.serverPhysicsThreads);

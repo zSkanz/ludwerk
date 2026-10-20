@@ -1186,3 +1186,17 @@ Returns the dot product with `other`. It is the method form of `vector.dot`.
 ### `Lerp(goal: vector, alpha: number): vector`
 
 Returns the linear interpolation toward `goal`. It is the method form of `vector.lerp`. `alpha` is not clamped.
+
+## WorldStep
+
+One tick of the world, passed to a function bound with `RunService:BindToWorldStep`. It is valid only during that call.
+
+## WorldStep — properties
+
+| Name | Type | Default | Access | Description |
+|---|---|---|---|---|
+| `DeltaTime` | `number` | — | read-only | The length of the step, in seconds. |
+| `Predicted` | `boolean` | — | read-only | Whether this machine is a client simulating a tick ahead of its authority. It is false on the authority and in a single-player game. |
+| `Random` | `Random` | — | read-only | A random number generator seeded from `Tick`. It gives the same numbers on every machine and in every replay of the tick. Each read returns a generator at the start of its sequence, so store it in a local variable. |
+| `Replaying` | `boolean` | — | read-only | Whether this step is being simulated again after a correction, on a client. Check it before doing something that must happen only once, such as playing a sound. |
+| `Tick` | `number` | — | read-only | The authority's tick number for this step. On a client it is the tick at which the authority will simulate the tick being predicted, so a part placed from it is where the authority will have it. |

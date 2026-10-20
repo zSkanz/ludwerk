@@ -271,6 +271,12 @@ public:
         if (m_state != nullptr)
             script::runPredictedTouch(m_state, tick, part);
     }
+    [[nodiscard]] bool worldStepBound() const override { return m_state != nullptr && script::worldStepBound(m_state); }
+    void worldStep(const scene::WorldTick& tick) override
+    {
+        if (m_state != nullptr)
+            script::runWorldStep(m_state, tick);
+    }
 
 private:
     lua_State*& m_state;

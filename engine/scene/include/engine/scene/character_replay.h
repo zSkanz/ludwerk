@@ -154,6 +154,19 @@ struct PredictedTick
     std::span<const core::NameAtom> presses;
 };
 
+// **The world's step** (ADR 0254): what a function bound with
+// `RunService:BindToWorldStep` is handed. `tick` is the authority's tick of the
+// step -- on a replica, the one its authority will step the tick predicted at.
+struct WorldTick
+{
+    core::u64 tick = 0;
+    core::f64 dt = 0.0;
+    // Stepped again after an answer.
+    bool replay = false;
+    // Stepped by a replica ahead of its authority.
+    bool predicted = false;
+};
+
 // **Scripts in the simulation step**: the narrow interface the mirror
 // calls them through, in the shape `ICharacterReplay` set -- `scene` declares
 // it, the script runtime implements it, `app` connects the two.
@@ -169,6 +182,10 @@ public:
     [[nodiscard]] virtual bool touchBound(core::InstanceId part) const = 0;
     // A predicted character began touching `part` in the step of `tick`.
     virtual void predictedTouch(const PredictedTick& tick, core::InstanceId part) = 0;
+    // **The world's step** (ADR 0254): once a step, before the characters'.
+    // Whether anything is bound, asked every step, so cheap.
+    [[nodiscard]] virtual bool worldStepBound() const = 0;
+    virtual void worldStep(const WorldTick& tick) = 0;
 };
 
 // **One character of a step taken again** (ADR 0208): who, the authority's word

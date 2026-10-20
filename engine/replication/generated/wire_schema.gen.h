@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 63;
+inline constexpr u32 ProtocolVersion = 64;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -176,6 +176,7 @@ inline constexpr FieldDesc CharacterBodyFields[] = {
     {"SwimSpeed", 10, Encoding::F32, Source::Component, "characterBodies"},
     {"FlySpeed", 11, Encoding::F32, Source::Component, "characterBodies"},
     {"Flying", 12, Encoding::Bool, Source::Component, "characterBodies"},
+    {"GroundPart", 13, Encoding::InstanceRef, Source::Component, "characterBodies"},
 };
 
 inline constexpr FieldDesc ModelFields[] = {
@@ -1133,6 +1134,7 @@ enum class MessageType : u8
     SwarmAgents = 27,
     SwarmState = 28,
     SwarmAck = 29,
+    MovingCurve = 41,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -1192,6 +1194,7 @@ inline constexpr MessageDesc Messages[] = {
     {"SwarmAgents", MessageType::SwarmAgents, 0, Direction::ToReplica},
     {"SwarmState", MessageType::SwarmState, 5, Direction::ToReplica},
     {"SwarmAck", MessageType::SwarmAck, 5, Direction::ToAuthority},
+    {"MovingCurve", MessageType::MovingCurve, 0, Direction::ToReplica},
 };
 
 } // namespace engine::replication::generated
