@@ -62,20 +62,30 @@ TEST_CASE("data worker > an answer ready wakes the asker's wait at once")
 TEST_CASE("data worker > past its bound a job is refused, counted, and nothing of it done")
 {
     DataWorker worker(engine::app::makeMemoryDataStore(), 4);
-    // The first job holds the thread while the queue fills behind it.
+    // The first job holds the thread while the queue fills behind it. The
+    // queue is filled once the thread has taken it, not after a guess at how
+    // long that takes: on a loaded machine it had not, and the held job took
+    // a place in the queue.
+    std::atomic<bool> holding{false};
     std::atomic<bool> release{false};
     REQUIRE(worker.post([&](IDataStore&) -> DataWorker::Then {
+        holding = true;
         while (!release)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         return {};
     }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto asked = std::chrono::steady_clock::now();
+    while (!holding && std::chrono::steady_clock::now() - asked < std::chrono::seconds(10))
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    REQUIRE(holding);
     int queued = 0;
     for (int at = 0; at < 10; ++at)
         queued += worker.post([](IDataStore&) -> DataWorker::Then { return {}; }) ? 1 : 0;
     CHECK(queued == 4);
     CHECK(worker.stats().refused == 6);
     CHECK(worker.stats().queued == 4);
+    // Held at least this long, so the worst below is past 10 ms.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     release = true;
     worker.wait([](IDataStore&) {});
     CHECK(worker.stats().queued == 0);
