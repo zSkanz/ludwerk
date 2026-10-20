@@ -1,0 +1,36 @@
+Ludwerk: a headset's colour image can be blitted from, on Vulkan.
+
+0007 makes every image of an OpenXR swapchain a colour target and nothing
+else, so SDL refused it as a blit's source, and a renderer that wanted to
+read what it drew into an eye -- an exposure meter reducing it to a few
+hundred texels -- had no way to. Sampling it is not the answer: the image
+rests in the colour attachment's layout, which is the one OpenXR asks for
+when the runtime takes it back, and SDL moves a sampled texture to no other.
+A blit on Vulkan is vkCmdBlitImage, which takes the image to the transfer
+source's layout and back; with this patch, a colour swapchain asked for
+with XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT is said to be blittable, and the
+texture's own usage -- the one its layouts follow -- stays the colour
+target's. Direct3D 12 is unchanged: SDL blits there by drawing, which reads
+the source through a view these images do not have. Drop it with 0007, or
+when upstream lets an OpenXR image be read.
+
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index 4392637..9158d69 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -13472,6 +13472,15 @@ static XrResult VULKAN_CreateXRSwapchain(
+         container->header.info.num_levels = createInfo.mipCount;
+         container->header.info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+         container->header.info.usage = texture->usage;
++        /* A colour swapchain asked for as a transfer source can be blitted
++         * from: on Vulkan a blit is vkCmdBlitImage, which takes the image from
++         * its default layout to the transfer source's and back. Only the
++         * container says so, for the blit's check; the texture's own usage
++         * stays the colour target's, so the image rests -- and goes back to the
++         * runtime -- in the colour attachment's layout, as OpenXR asks. */
++        if (!depthTarget && (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT)) {
++            container->header.info.usage |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
++        }
+ 
+         container->externallyManaged = true;
+         container->canBeCycled = false;

@@ -136,6 +136,7 @@ bool SimulatedHeadset::beginFrame(rhi::HeadsetFrame& frame)
     frame.width = m_width;
     frame.height = m_height;
     frame.format = rhi::TextureFormat::Rgba8UnormSrgb;
+    frame.colorReadable = true;
     frame.displayTimeNs = static_cast<core::i64>(m_frames) * 13'888'889;
     if (!m_images[0].valid() || !m_images[1].valid())
         return true;

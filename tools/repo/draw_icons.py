@@ -130,7 +130,9 @@ TOOLKIT = {
                 "VehicleController", "VehicleWheel"),
     "ui": ("UIGridLayout", "UIPageLayout", "UIFlexItem", "UIScale", "UIAspectRatioConstraint",
            "UISizeConstraint", "UITextSizeConstraint", "CanvasGroup", "UIDragDetector"),
-    "effects": ("Highlight", "Beam", "Trail"),
+    "effects": ("Highlight", "Beam", "Trail", "BoxHandleAdornment", "SphereHandleAdornment",
+                "CylinderHandleAdornment", "ConeHandleAdornment", "LineHandleAdornment", "ImageHandleAdornment",
+                "SelectionBox", "SelectionSphere"),
     "modeling": ("UnionOperation", "NegateOperation", "action.Union", "action.Negate", "action.Separate",
                  "action.ShapeCornerWedge", "action.ShapeTruss"),
     "audio": ("ReverbSoundEffect", "EchoSoundEffect", "EqualizerSoundEffect", "LowPassSoundEffect",
@@ -222,6 +224,33 @@ def toolkit_icon(group, name):
     elif name == "Highlight":
         i.rect(7,7,10,10,1)
         for pts in (((2,7),(2,2),(7,2)),((17,2),(22,2),(22,7)),((2,17),(2,22),(7,22)),((17,22),(22,22),(22,17))): i.line(*pts)
+    # The shape adornments (ADR 0251): the shape, and a corner of the
+    # bracket a mark on something wears.
+    elif name == "BoxHandleAdornment":
+        i.line((12,6),(19,10),(19,17),(12,21),(5,17),(5,10),closed=True).line((5,10),(12,14),(19,10)).line((12,14),(12,21))
+        i.line((2,6),(2,2),(6,2))
+    elif name == "SphereHandleAdornment":
+        i.circle(13,13,8).ellipse_arc(13,13,8,3)
+        i.line((2,6),(2,2),(6,2))
+    elif name == "CylinderHandleAdornment":
+        i.ellipse_arc(13,7,6,2.5).ellipse_arc(13,19,6,2.5,0,180).line((7,7),(7,19)).line((19,7),(19,19))
+        i.line((2,6),(2,2),(6,2))
+    elif name == "ConeHandleAdornment":
+        i.line((13,4),(6,19)).line((13,4),(20,19)).ellipse_arc(13,19,7,2.5,0,180)
+        i.line((2,6),(2,2),(6,2))
+    elif name == "LineHandleAdornment":
+        i.line((5,19),(20,5)).circle(5,19,2,True)
+        i.line((2,6),(2,2),(6,2))
+    elif name == "ImageHandleAdornment":
+        i.rect(5,6,15,13,1).line((7,17),(11,12),(14,15),(16,13),(19,17)).circle(16,9,1.5,True)
+        i.line((2,6),(2,2),(6,2))
+    elif name == "SelectionBox":
+        i.line((12,4),(20,8.5),(20,16.5),(12,21),(4,16.5),(4,8.5),closed=True)
+        i.line((4,8.5),(12,13),(20,8.5)).line((12,13),(12,21))
+        for x, y in ((12,4),(20,8.5),(20,16.5),(12,21),(4,16.5),(4,8.5),(12,13)): i.circle(x,y,1.5,True)
+    elif name == "SelectionSphere":
+        i.circle(12,12,8).circle(12,12,5.5)
+        for x, y in ((12,4),(20,12),(12,20),(4,12)): i.circle(x,y,1.5,True)
     elif name == "Beam":
         i.line((4,8),(20,11)).line((4,16),(20,13)).line((4,8),(4,16))
         i.circle(3,12,2,True).circle(21,12,2,True)

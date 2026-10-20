@@ -13472,6 +13472,15 @@ static XrResult VULKAN_CreateXRSwapchain(
         container->header.info.num_levels = createInfo.mipCount;
         container->header.info.sample_count = SDL_GPU_SAMPLECOUNT_1;
         container->header.info.usage = texture->usage;
+        /* A colour swapchain asked for as a transfer source can be blitted
+         * from: on Vulkan a blit is vkCmdBlitImage, which takes the image from
+         * its default layout to the transfer source's and back. Only the
+         * container says so, for the blit's check; the texture's own usage
+         * stays the colour target's, so the image rests -- and goes back to the
+         * runtime -- in the colour attachment's layout, as OpenXR asks. */
+        if (!depthTarget && (createInfo.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT)) {
+            container->header.info.usage |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        }
 
         container->externallyManaged = true;
         container->canBeCycled = false;

@@ -69,6 +69,34 @@
       "Events": []
     },
     {
+      "Name": "Adornment",
+      "Extends": "Instance",
+      "Tags": ["Abstract"],
+      "Properties": [
+        {
+          "Name": "Adornee",
+          "Type": "(BasePart | Model)?"
+        },
+        {
+          "Name": "Color3",
+          "Type": "Color3",
+          "Default": "Color3.new(0.05, 0.41, 0.68)"
+        },
+        {
+          "Name": "Transparency",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
+          "Name": "Visible",
+          "Type": "boolean",
+          "Default": "true"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "AlignOrientation",
       "Extends": "Constraint",
       "Tags": [],
@@ -1072,6 +1100,20 @@
       "Events": []
     },
     {
+      "Name": "BoxHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Size",
+          "Type": "vector",
+          "Default": "vector.one"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "Camera",
       "Extends": "PVInstance",
       "Tags": [],
@@ -1627,6 +1669,25 @@
       "Events": []
     },
     {
+      "Name": "ConeHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Height",
+          "Type": "number",
+          "Default": "2"
+        },
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "0.5"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "ConsoleService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -1994,6 +2055,25 @@
           "ThreadSafety": "Unsafe"
         }
       ],
+      "Events": []
+    },
+    {
+      "Name": "CylinderHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Height",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
       "Events": []
     },
     {
@@ -3265,6 +3345,30 @@
       ]
     },
     {
+      "Name": "HandleAdornment",
+      "Extends": "Adornment",
+      "Tags": ["Abstract"],
+      "Properties": [
+        {
+          "Name": "AlwaysOnTop",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "CFrame",
+          "Type": "CFrame",
+          "Default": "CFrame.identity"
+        },
+        {
+          "Name": "ZIndex",
+          "Type": "number",
+          "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "HapticService",
       "Extends": "Instance",
       "Tags": ["NotCreatable", "Service"],
@@ -3655,6 +3759,25 @@
       "Extends": "ImageLabel",
       "Tags": [],
       "Properties": [],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "ImageHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Image",
+          "Type": "Content",
+          "Default": ""
+        },
+        {
+          "Name": "Size",
+          "Type": "Vector2",
+          "Default": "Vector2.new(1, 1)"
+        }
+      ],
       "Methods": [],
       "Events": []
     },
@@ -4778,6 +4901,25 @@
           "Name": "XRPassthroughOpacity",
           "Type": "number",
           "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "LineHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Length",
+          "Type": "number",
+          "Default": "5"
+        },
+        {
+          "Name": "Thickness",
+          "Type": "number",
+          "Default": "0.05"
         }
       ],
       "Methods": [],
@@ -7433,6 +7575,54 @@
       "Events": []
     },
     {
+      "Name": "SelectionBox",
+      "Extends": "Adornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LineThickness",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
+          "Name": "SurfaceColor3",
+          "Type": "Color3",
+          "Default": "Color3.new(0.05, 0.41, 0.68)"
+        },
+        {
+          "Name": "SurfaceTransparency",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SelectionSphere",
+      "Extends": "Adornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "LineThickness",
+          "Type": "number",
+          "Default": "0.05"
+        },
+        {
+          "Name": "SurfaceColor3",
+          "Type": "Color3",
+          "Default": "Color3.new(0.05, 0.41, 0.68)"
+        },
+        {
+          "Name": "SurfaceTransparency",
+          "Type": "number",
+          "Default": "1"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
       "Name": "SequenceBinding",
       "Extends": "Instance",
       "Tags": [],
@@ -7922,6 +8112,20 @@
           "Name": "Priority",
           "Type": "number",
           "Default": "0"
+        }
+      ],
+      "Methods": [],
+      "Events": []
+    },
+    {
+      "Name": "SphereHandleAdornment",
+      "Extends": "HandleAdornment",
+      "Tags": [],
+      "Properties": [
+        {
+          "Name": "Radius",
+          "Type": "number",
+          "Default": "1"
         }
       ],
       "Methods": [],

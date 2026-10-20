@@ -71,7 +71,16 @@ are what decides whether its own scene holds its frame rate.
    meter's, read back a few frames late through `IDevice::requestReadback`
    (a ring of copies taken once the GPU is known to be done with them,
    never waited on), and the meter reads the folded picture with the curve
-   and the exposure undone; it agrees with the 16-bit meter within 1.1%.
+   and the exposure undone, tap by tap; it agrees with the 16-bit meter
+   within 1.1%, and where much of the picture clips it reads brighter and
+   exposes darker, never the other way. **It reads a blit of the eye**, 256
+   texels square, into a texture of the renderer's own. The runtime's image
+   rests in the colour attachment's layout, the one the runtime takes it
+   back in, and no backend makes a view to sample it through: read where it
+   was, it read black on a Quest, and the exposure opened to its limit. A
+   blit on Vulkan takes it to the transfer source's layout and back, so the
+   eye images are made transfer sources there. Where they cannot be read,
+   Direct3D 12's runtime images among them, an eye is not folded.
    Blending happens after the curve, so a dark translucent surface over a
    bright one shows lighter than in the 16-bit frame; the world's interface
    is drawn as the display shows it (item 7) and is not affected.
@@ -127,7 +136,11 @@ are what decides whether its own scene holds its frame rate.
     whatever was drawn, and a first split past the one they gave was
     dropped: a standalone headset's two cascades ended at 2.7 meters of 20,
     and nothing farther cast a shadow. A screen's settings, which ask for no
-    first split, divide the distance as before.
+    first split, divide the distance as before. The first split's default is
+    1.1 meters, where the first cascade had ended before: the hands and a
+    table at 1.9 mm a texel of 2048. At 2 meters the texel doubled, and with
+    it the lift along the normal that keeps a base on its shadow -- the gap
+    under a crate came back.
 13. **With the room seen through, what blends is over the room.** The eye's
     alpha had been read from its depth -- none where nothing wrote depth --
     so the world's interface, transparent parts and particles, which write

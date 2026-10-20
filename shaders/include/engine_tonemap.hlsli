@@ -86,7 +86,13 @@ float3 untonemapPbrNeutral(float3 mapped)
         const float original = d * d / (1.0f - held) - d + startCompression;
         color *= original / max(peak, 1e-4f);
     }
-    return color + 0.04f;
+    // The toe solved as well: below 0.08 the curve took `x - 6.25x^2` off
+    // the darkest channel `x`, leaving `6.25x^2` of it, so a mapped darkest
+    // channel `m` under 0.04 came from `0.4 sqrt(m)`. A flat 0.04 put back
+    // there read a near-black as several times brighter than it was.
+    const float darkest = max(min(color.r, min(color.g, color.b)), 0.0f);
+    const float offset = darkest < 0.04f ? 0.4f * sqrt(darkest) - darkest : 0.04f;
+    return color + offset;
 }
 
 // **What a forward pass with the tonemap folded into it writes** (a headset's

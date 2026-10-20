@@ -660,6 +660,7 @@ public:
         frame.width = m_width;
         frame.height = m_height;
         frame.format = m_format;
+        frame.colorReadable = m_eyesReadable;
         if (timing.shouldRender == XR_FALSE)
             return true;
 
@@ -1300,20 +1301,31 @@ private:
         return true;
     }
 
-    // **Each eye's colour image**, at the size and in the format chosen.
+    // **Each eye's colour image**, at the size and in the format chosen --
+    // on Vulkan a transfer source as well, which the renderer blits from to
+    // meter what an eye showed (`HeadsetFrame::colorReadable`), and without
+    // it where a runtime will not make one.
     [[nodiscard]] bool makeEyeSwapchains()
     {
+        m_eyesReadable = SDL_GetGPUDeviceDriver(m_hooks.device) == std::string_view{"vulkan"};
         for (EyeSwapchain& eye : m_eyes) {
             auto info = made<XrSwapchainCreateInfo>(XR_TYPE_SWAPCHAIN_CREATE_INFO);
-            info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+            info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
+                              (m_eyesReadable ? XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT : 0);
             info.sampleCount = 1;
             info.width = m_width;
             info.height = m_height;
             info.faceCount = 1;
             info.arraySize = 1;
             info.mipCount = 1;
-            const XrResult result =
+            XrResult result =
                 SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, m_colorFormat, &eye.swapchain, &eye.images);
+            if (XR_FAILED(result) && m_eyesReadable) {
+                m_eyesReadable = false;
+                info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+                result = SDL_CreateGPUXRSwapchain(m_hooks.device, m_session, &info, m_colorFormat, &eye.swapchain,
+                                                  &eye.images);
+            }
             if (XR_FAILED(result)) {
                 logFailure("SDL_CreateGPUXRSwapchain", result);
                 return false;
@@ -1657,6 +1669,8 @@ private:
     f32 m_scaleAsked = 1.0f;
     SDL_GPUTextureFormat m_colorFormat = SDL_GPU_TEXTUREFORMAT_INVALID;
     TextureFormat m_format = TextureFormat::Undefined;
+    // Whether every eye's colour image was made a transfer source.
+    bool m_eyesReadable = false;
     XrTime m_displayTime = 0;
     bool m_running = false;
     bool m_drawing = false;

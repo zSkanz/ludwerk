@@ -1291,6 +1291,7 @@ struct NameIndex
     X(ParticleEmitterComponent, particleEmitters)                                                                      \
     X(DecalComponent, decals)                                                                                          \
     X(HighlightComponent, highlights)                                                                                  \
+    X(AdornmentComponent, adornments)                                                                                  \
     X(SwarmComponent, swarms)                                                                                          \
     X(AnimationPlayerComponent, animationPlayers)                                                                      \
     X(BeamComponent, beams)                                                                                            \
@@ -2142,6 +2143,8 @@ public:
     }
     [[nodiscard]] ComponentPool<HighlightComponent>& highlights() noexcept { return m_highlights; }
     [[nodiscard]] const ComponentPool<HighlightComponent>& highlights() const noexcept { return m_highlights; }
+    [[nodiscard]] ComponentPool<AdornmentComponent>& adornments() noexcept { return m_adornments; }
+    [[nodiscard]] const ComponentPool<AdornmentComponent>& adornments() const noexcept { return m_adornments; }
     [[nodiscard]] ComponentPool<BeamComponent>& beams() noexcept { return m_beams; }
     [[nodiscard]] const ComponentPool<BeamComponent>& beams() const noexcept { return m_beams; }
     [[nodiscard]] ComponentPool<TrailComponent>& trails() noexcept { return m_trails; }

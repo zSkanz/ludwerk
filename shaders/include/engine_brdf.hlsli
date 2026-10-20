@@ -441,6 +441,48 @@ static const float EngineShadowMostSlope = 4.0f;
 // through the cube: attached, with no acne on a plate two millimetres thick
 // at a sun near the horizon.
 static const float EngineHeadsetNormalOffsetTexels = 1.0f;
+// **A headset's kernel**: eight of the disc's points, 1.75 texels of the
+// cascade across their reach. The tent before it -- four comparisons half a
+// texel apart -- stepped along a shadow's far rim at the first cascade's 1.9
+// mm a texel, seen from the third of a metre a held thing is looked at. At
+// a texel and a quarter of disc a tap, with each tap a bilinear comparison
+// two texels wide, the disc has no gaps, and it is not turned: a turn there
+// only gives each pixel an answer a little off its neighbour's.
+static const float EngineHeadsetDiscTexels = 1.75f;
+// **Harder where a thing touches** (a headset's, with `nearbyOcclusion`'s
+// spheres): a real penumbra is sharp at the contact and widens with the
+// distance to what casts it. Within a centimetre of a sphere's surface the
+// disc is a texel -- narrower, and the texels of the sphere's outline in the
+// map stood out as steps -- and it widens to the whole of it by three and a
+// half.
+// The disc at its full width, there, reached past the centimetre the sun's
+// own test of the spheres darkens, and drew a faint streak of light into
+// the dark under a ball.
+static const float EngineHeadsetContactTexels = 1.0f;
+static const float EngineHeadsetContactNear = 0.01f;
+static const float EngineHeadsetContactFar = 0.035f;
+
+// How wide a headset's disc is at a receiver: narrower the nearer the surface
+// of a sphere that rests on it. A point on a sphere's own surface -- its
+// normal along the sphere's radius -- is not a receiver of that sphere, and
+// keeps the disc whole.
+float headsetDiscTexels(float3 position, float3 normal)
+{
+    float gap = EngineHeadsetContactFar;
+    const uint count = min(uint(OccluderParams.x), 8u);
+    [loop]
+    for (uint i = 0u; i < count; ++i)
+    {
+        const float4 occluder = Occluders[i];
+        const float3 outward = position - occluder.xyz;
+        const float distance = length(outward);
+        if (dot(normal, outward) > 0.9f * distance)
+            continue;
+        gap = min(gap, distance - occluder.w);
+    }
+    const float wide = saturate((gap - EngineHeadsetContactNear) / (EngineHeadsetContactFar - EngineHeadsetContactNear));
+    return lerp(EngineHeadsetContactTexels, EngineHeadsetDiscTexels, wide);
+}
 static const float EngineHeadsetShadowSlopeTexels = 0.0f;
 
 // **The depth a cascade's taps are compared against**.
@@ -618,15 +660,17 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     const float texelWorld = CascadeTexelWorld[cascade];
     const float depthRange = max(CascadeDepthRange[cascade], 1e-3f);
 
-    // **A standalone headset's tent** (`EnvironmentParams.w` below nought):
-    // four bilinear comparisons, half a texel to each side, which is a tent
-    // three texels wide -- a millimetre or two of the first cascade, crisp
-    // and attached where a cube stands on a table, for four reads.
+    // **A standalone headset's kernel** (`EnvironmentParams.w` below nought):
+    // eight bilinear comparisons on the disc (`EngineHeadsetDiscTexels`), a
+    // few millimetres of the first cascade -- a soft rim, still attached
+    // where a cube stands on a table, and narrower where a ball touches it
+    // (`headsetDiscTexels`).
     const bool tent = EnvironmentParams.w < 0.0f;
 
     // The kernel's reach in texels: the authored world penumbra over this
     // cascade's texel, never under a texel and a half and never over six.
-    const float radiusTexels = tent ? 1.5f : clamp(ShadowParams.x / max(texelWorld, 1e-6f), 1.5f, 6.0f);
+    const float radiusTexels =
+        tent ? headsetDiscTexels(position, normal) : clamp(ShadowParams.x / max(texelWorld, 1e-6f), 1.5f, 6.0f);
 
     // Normal offset, sideways to the light only (the reference renderers' form):
     // the part of the normal that points along the light would move the lookup
@@ -688,16 +732,13 @@ float sampleCascade(Texture2D<float> atlas, SamplerState pointSampler, uint casc
     [branch]
     if (tent)
     {
-        const float2 apart = 0.5f * texelUv;
-        float lit = shadowTapPcf(atlas, pointSampler, clamp(centre + float2(-apart.x, -apart.y), lowest, highest),
-                                 reference, atlasSize);
-        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(apart.x, -apart.y), lowest, highest), reference,
-                            atlasSize);
-        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(-apart.x, apart.y), lowest, highest), reference,
-                            atlasSize);
-        lit += shadowTapPcf(atlas, pointSampler, clamp(centre + float2(apart.x, apart.y), lowest, highest), reference,
-                            atlasSize);
-        return lit * 0.25f;
+        const float2 reach = radiusUv * rsqrt(8.0f);
+        float lit = 0.0f;
+        [unroll]
+        for (int i = 0; i < 8; ++i)
+            lit += shadowTapPcf(atlas, pointSampler, clamp(centre + EngineShadowDisc[i] * reach, lowest, highest),
+                                reference, atlasSize);
+        return lit * 0.125f;
     }
 
     // **How many taps is the level's to say** (ADR 0172): `EnvironmentParams.w`

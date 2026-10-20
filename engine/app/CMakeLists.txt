@@ -805,7 +805,7 @@ if(ENG_BUILD_TESTS)
                 --xr=simulated)
     set_tests_properties(xr_quality PROPERTIES
         PASS_REGULAR_EXPRESSION
-            "\\[quality\\] first: msaa=1 scale=1 resolution=0 distance=0 cascades=0 split=2 effects=false foveation=Off rate=0.*\\[quality\\] set: msaa=4 scale=0\\.75 resolution=1024 distance=30 cascades=3 split=3 effects=true foveation=Medium rate=90 refused=true"
+            "\\[quality\\] first: msaa=1 scale=1 resolution=0 distance=0 cascades=0 split=1\\.1[0-9]* effects=false foveation=Off rate=0.*\\[quality\\] set: msaa=4 scale=0\\.75 resolution=1024 distance=30 cascades=3 split=3 effects=true foveation=Medium rate=90 refused=true"
         TIMEOUT 60)
     add_test(NAME xr_room
         COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/xr/xr_room.luau" --headless --frames=150 --exit

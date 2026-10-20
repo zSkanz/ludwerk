@@ -319,7 +319,7 @@ constexpr std::array<std::string_view, 18> kCategoryOrder{
 
 // Sorted by property name, so a lookup is a binary search. A name several
 // classes share is one row: it means the same thing wherever it is declared.
-constexpr std::array<CategoryRow, 160> kCategories{{
+constexpr std::array<CategoryRow, 168> kCategories{{
     {"AbsolutePosition", "Layout"},
     {"AbsoluteSize", "Layout"},
     {"Acceleration", "Emission"},
@@ -362,6 +362,7 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"CollisionFidelity", "Collision"},
     {"CollisionGroup", "Collision"},
     {"Color", "Appearance"},
+    {"Color3", "Appearance"},
     {"ColorEnd", "Emission"},
     {"Content", "Data"},
     {"CornerRadius", "Appearance"},
@@ -388,6 +389,7 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"GeographicLatitude", "Appearance"},
     {"Gravity", "Physics"},
     {"GravityScale", "Physics"},
+    {"Height", "Transform"},
     {"HorizontalAlignment", "Layout"},
     {"Image", "Image"},
     {"ImageColor", "Image"},
@@ -395,10 +397,12 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"ImageRectSize", "Image"},
     {"JumpSpeed", "Character"},
     {"LayoutOrder", "Layout"},
+    {"Length", "Transform"},
     {"Lifetime", "Emission"},
     {"LightEmission", "Emission"},
     {"LightInfluence", "Light"},
     {"LimitsEnabled", "Constraint"},
+    {"LineThickness", "Appearance"},
     {"LinearVelocity", "Physics"},
     {"LoadRadius", "Streaming"},
     {"Looped", "Audio"},
@@ -434,6 +438,7 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"PrimaryPart", "Data"},
     {"Priority", "Behavior"},
     {"Projection", "Camera"},
+    {"Radius", "Transform"},
     {"Range", "Light"},
     {"Rate", "Emission"},
     {"ReceivesDecals", "Appearance"},
@@ -457,6 +462,8 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"Speed", "Emission"},
     {"SpreadAngle", "Emission"},
     {"StreamingMode", "Streaming"},
+    {"SurfaceColor3", "Appearance"},
+    {"SurfaceTransparency", "Appearance"},
     {"Text", "Text"},
     {"TextColor", "Text"},
     {"TextOverflow", "Text"},
@@ -467,6 +474,7 @@ constexpr std::array<CategoryRow, 160> kCategories{{
     {"TextXAlignment", "Text"},
     {"TextYAlignment", "Text"},
     {"Texture", "Appearance"},
+    {"Thickness", "Appearance"},
     {"Tileset", "Data"},
     {"TimeLength", "Audio"},
     {"TimePosition", "Audio"},

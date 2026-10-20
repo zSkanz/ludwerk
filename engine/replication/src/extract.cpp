@@ -464,6 +464,26 @@ constexpr Carried<Cloth> ClothCarried[] = {
     {"CollidesWithWorld", &Cloth::collidesWithWorld},
 };
 
+using Adornment = scene::AdornmentComponent;
+constexpr Carried<Adornment> AdornmentCarried[] = {
+    {"Adornee", &Adornment::adornee},
+    {"Color3", &Adornment::color3},
+    {"Transparency", &Adornment::transparency},
+    {"Visible", &Adornment::visible},
+    {"CFrame", &Adornment::cframe},
+    {"AlwaysOnTop", &Adornment::alwaysOnTop},
+    {"ZIndex", &Adornment::zIndex},
+    {"Size", &Adornment::size},
+    {"Radius", &Adornment::radius},
+    {"Height", &Adornment::height},
+    {"Length", &Adornment::length},
+    {"Thickness", &Adornment::thickness},
+    {"Image", &Adornment::image},
+    {"LineThickness", &Adornment::lineThickness},
+    {"SurfaceColor3", &Adornment::surfaceColor3},
+    {"SurfaceTransparency", &Adornment::surfaceTransparency},
+};
+
 using Highlight = scene::HighlightComponent;
 constexpr Carried<Highlight> HighlightCarried[] = {
     {"Adornee", &Highlight::adornee},
@@ -1769,6 +1789,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         const Cloth* cloth = world.cloths().find(id);
         return cloth != nullptr && readCarried(ClothCarried, *cloth, field.name, out, further);
     }
+    if (field.pool == "adornments") {
+        const Adornment* adornment = world.adornments().find(id);
+        return adornment != nullptr && readCarried(AdornmentCarried, *adornment, field.name, out, further);
+    }
     if (field.pool == "highlights") {
         const Highlight* highlight = world.highlights().find(id);
         return highlight != nullptr && readCarried(HighlightCarried, *highlight, field.name, out, further);
@@ -2851,6 +2875,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         Cloth* cloth = world.cloths().find(id);
         return cloth != nullptr && writeCarried(ClothCarried, *cloth, field.name, value, further);
     }
+    if (field.pool == "adornments") {
+        Adornment* adornment = world.adornments().find(id);
+        return adornment != nullptr && writeCarried(AdornmentCarried, *adornment, field.name, value, further);
+    }
     if (field.pool == "highlights") {
         Highlight* highlight = world.highlights().find(id);
         return highlight != nullptr && writeCarried(HighlightCarried, *highlight, field.name, value, further);
@@ -3085,6 +3113,8 @@ constexpr NamedPool Pools[] = {
     // Protocol 52: a vehicle and its wheels (ADR 0213), and a cloth (ADR 0214).
     ENG_REPLICATION_POOL_DIGEST(vehicleControllers) ENG_REPLICATION_POOL_DIGEST(vehicleWheels)
         ENG_REPLICATION_POOL_DIGEST(cloths)
+    // Protocol 60: the shapes drawn on a part (ADR 0251).
+    ENG_REPLICATION_POOL_DIGEST(adornments)
     // **A pivot is known, and not
     // read**: every part and model
     // has one, nearly all at the

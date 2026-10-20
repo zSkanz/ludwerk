@@ -1063,6 +1063,32 @@ struct HighlightComponent
     bool enabled = true;
 };
 
+// **A shape drawn on a part** (ADR 0251): every `Adornment` class is one of
+// these, which of them its class says. Each class reads the fields it has --
+// a box its size, a cone its radius and height, an image its size's x and y.
+struct AdornmentComponent
+{
+    core::InstanceId adornee;
+    core::Color3 color3{0.05f, 0.41f, 0.68f};
+    f32 transparency = 0.0f;
+    bool visible = true;
+    // `HandleAdornment`: where it is on the adornee, whether it is drawn over
+    // everything, and in which order among those.
+    core::CFrameD cframe{};
+    bool alwaysOnTop = false;
+    i32 zIndex = 0;
+    core::Vec3 size{1.0f, 1.0f, 1.0f};
+    f32 radius = 1.0f;
+    f32 height = 1.0f;
+    f32 length = 5.0f;
+    f32 thickness = 0.05f;
+    core::NameAtom image;
+    // `SelectionBox` and `SelectionSphere`.
+    f32 lineThickness = 0.05f;
+    core::Color3 surfaceColor3{0.05f, 0.41f, 0.68f};
+    f32 surfaceTransparency = 1.0f;
+};
+
 struct BeamComponent
 {
     core::InstanceId attachment0;

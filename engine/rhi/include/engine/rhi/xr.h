@@ -92,6 +92,12 @@ struct HeadsetFrame
     u32 width = 0;
     u32 height = 0;
     TextureFormat format = TextureFormat::Undefined;
+    // **Whether the colour images can be read after they are drawn** -- a
+    // blit from them into a texture of the renderer's own, as an exposure
+    // meter reads what an eye showed. A runtime's images on Vulkan, asked
+    // for as transfer sources; not on Direct3D 12, where a blit draws and
+    // reads its source through a view a runtime's image does not have.
+    bool colorReadable = false;
     // **Each eye's depth image**, the size of its colour, where the runtime
     // takes depth (ADR 0244 §5); none otherwise. A frame that has them has
     // each written before it ends, as `setDepthRange` says it is.

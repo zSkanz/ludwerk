@@ -1,10 +1,10 @@
 # Highlights, beams and trails
 
-Three things every game reaches for, each one instance: an outline on what is
-selected or on an ally behind a wall, a band of light between two points, and
-the ribbon something leaves behind as it moves.
+Things every game reaches for, each one instance: an outline on what is
+selected or on an ally behind a wall, a shape drawn on a part, a band of light
+between two points, and the ribbon something leaves behind as it moves.
 
-**All three are pictures, not the world.** Nothing collides with them, a ray
+**All of them are pictures, not the world.** Nothing collides with them, a ray
 does not find them, and they are drawn on the frame rather than simulated on
 the tick -- so they cost nothing a replay or a second machine has to agree on,
 and a dedicated server draws none.
@@ -50,6 +50,41 @@ max_highlights = 64
 Past the budget the nearest win, and F3 says how many were left out. A
 highlight nested inside another -- a sword in a marked character's hand, with
 a highlight of its own -- takes its own.
+
+## Shapes drawn on a part
+
+A builder's ghost box, a ring under a selected unit, an arrow over a quest
+giver: simple shapes drawn on a part, in plain colors that the light and the
+exposure do not change, and drawn over everything when a game says so.
+
+```luau
+--!strict
+local target = workspace:WaitForChild("Objective") :: BasePart
+
+local marker = Instance.new("ConeHandleAdornment")
+marker.Adornee = target
+marker.CFrame = CFrame.new(0, 3, 0) * CFrame.fromEuler(math.pi / 2, 0, 0) -- above it, tip down
+marker.Color3 = Color3.fromRGB(255, 200, 0)
+marker.AlwaysOnTop = true -- seen through walls
+marker.Parent = target
+```
+
+- **The shapes**: `BoxHandleAdornment` (`Size`), `SphereHandleAdornment`
+  (`Radius`), `CylinderHandleAdornment` and `ConeHandleAdornment` (`Radius`,
+  `Height`, along the `CFrame`'s look direction), `LineHandleAdornment`
+  (`Length`, `Thickness`) and `ImageHandleAdornment` (`Image`, `Size`). Each
+  is placed by its `CFrame` on its `Adornee` -- a part, or a model's primary
+  part -- and has `Color3`, `Transparency` and `Visible`.
+- **Over everything or not**: with `AlwaysOnTop`, a shape is drawn over the
+  scene, and `ZIndex` (0 to 10) orders the ones that are; without it, what is
+  in front hides it.
+- **Outlines**: `SelectionBox` draws the edges of a part's or a model's
+  bounding box, `SelectionSphere` the circle its bounding sphere shows the
+  camera; `LineThickness` is the edge's width, and `SurfaceColor3` and
+  `SurfaceTransparency` fill what is inside. They are drawn over everything.
+
+A thousand of them are a handful of draws: every shape of one kind is an
+instance of one mesh. In a headset, both eyes draw them.
 
 ## A beam
 
@@ -153,7 +188,7 @@ alive.
 
 ## In a match
 
-A highlight, a beam or a trail a server-side script makes is on every machine,
+A highlight, a shape drawn on a part, a beam or a trail a server-side script makes is on every machine,
 with every property authored on it: a beam's and a trail's sequences, the two
 attachments they run between, what a highlight marks. A change to one is sent
 when it is made, and so is a trail's `Clear`. **What each draws is that
@@ -166,3 +201,5 @@ by a client's own script is drawn on that client alone
 
 - [Particles and decals](manual:rendering/particles-and-decals)
 - [`Highlight`](api:Highlight) · [`Beam`](api:Beam) · [`Trail`](api:Trail)
+- [`BoxHandleAdornment`](api:BoxHandleAdornment) · [`SelectionBox`](api:SelectionBox) ·
+  [`SelectionSphere`](api:SelectionSphere)

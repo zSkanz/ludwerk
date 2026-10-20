@@ -844,6 +844,19 @@ struct GpuSpriteExactView
 
 static_assert(sizeof(GpuSpriteExactView) == 128, "GpuSpriteExactView is a cbuffer layout");
 
+// **One shape drawn on a part** (ADR 0251), per instance in `adornment.hlsl`:
+// the model matrix's columns, the colour as it was set and its opacity, a
+// disc's inside, and how it is drawn.
+struct GpuAdornment
+{
+    core::Mat4 model;
+    f32 color[4]{};
+    f32 inner[4]{};
+    f32 params[4]{};
+};
+
+static_assert(sizeof(GpuAdornment) == 112, "GpuAdornment is a vertex stride; see adornment.hlsl");
+
 // Fragment stage, `b1 space3`, for `ui_world` (the frame's uniforms are the
 // first block): the brightness, the folded tonemap's exposure, whether drawn
 // as the display shows it, the exposure compensation's gain; then how much

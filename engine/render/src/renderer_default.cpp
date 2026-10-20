@@ -120,6 +120,10 @@ constexpr f32 kScreenReflectionStillWeight = 0.9f;
 constexpr f32 kScreenReflectionMovingWeight = 0.35f;
 constexpr f32 kContactFadeDistance = 60.0f;
 constexpr rhi::TextureFormat kLuminanceFormat = rhi::TextureFormat::R32Float;
+// A folded eye blitted down for its meter: a 4 by 4 block of it for each
+// texel of the first pass's 64 by 64, which that pass's four bilinear taps
+// read whole.
+constexpr core::u32 kFoldMeterSize = 256;
 // `engine_tonemap.hlsli`'s `EngineExposureKey`: the exposure a folded eye
 // writes with is worked out here, from the meter read back.
 constexpr f32 kExposureKey = 0.45f;
@@ -608,6 +612,8 @@ struct ViewState
     // **The exposure this view's forward pass writes with**, the tonemap
     // folded into it (ADR 0250): nought where it is not folded.
     f32 foldExposure_ = 0.0f;
+    // A folded eye blitted down for its meter, `kFoldMeterSize` square.
+    rhi::TextureHandle foldMeter_{};
     // The fragment density map that shades `msaaColor_`'s passes, and what
     // it was drawn for: the level, and the eye's own middle on the screen.
     rhi::TextureHandle densityMap_{};
@@ -1067,6 +1073,11 @@ private:
     // The layer the interface as the display shows it is drawn into apart
     // (`uiLayer_`), at the render size and the pass's samples.
     [[nodiscard]] bool ensureUiLayer(rhi::IDevice& device, u32 samples);
+    // The shapes drawn on parts (ADR 0251): their pipelines, meshes and
+    // instance buffer, on the same lazy terms as the world's interface; and
+    // the ones in the scene or the ones over it into the open pass.
+    [[nodiscard]] bool ensureAdornments(rhi::IDevice& device);
+    void drawAdornments(rhi::ICmdList& cmd, const RenderWorld& world, bool onTop);
     // The sprite pipeline and its instance buffer (the 2D layer), on the same
     // lazy terms: a world with nothing on the plane builds neither.
     [[nodiscard]] bool ensureSprites(rhi::IDevice& device);
@@ -1498,6 +1509,37 @@ private:
     // not, for `AlwaysOnTop`, and a vertex buffer of `MaxWorldUiVertices`.
     rhi::PipelineHandle worldUiPipeline_{};
     rhi::PipelineHandle worldUiOnTopPipeline_{};
+    // **The shapes drawn on parts** (ADR 0251): the unit meshes in one buffer,
+    // where each shape's indices are, this frame's instances in the order
+    // they are drawn and the runs of them one draw each, and the pipelines in
+    // the scene and over it. Made the first frame a shape is drawn.
+    rhi::PipelineHandle adornmentPipeline_{};
+    rhi::PipelineHandle adornmentOnTopPipeline_{};
+    rhi::BufferHandle adornmentVertices_{};
+    rhi::BufferHandle adornmentIndices_{};
+    rhi::BufferHandle adornmentInstances_{};
+    bool adornmentsTried_ = false;
+    bool adornmentGeometryUp_ = false;
+    std::vector<core::Vec3> adornmentCorners_;
+    std::vector<core::u16> adornmentCornerIndices_;
+    struct AdornmentShape
+    {
+        u32 firstIndex = 0;
+        u32 indexCount = 0;
+    };
+    std::array<AdornmentShape, 5> adornmentShapes_{};
+    struct AdornmentRun
+    {
+        u32 first = 0;
+        u32 count = 0;
+        AdornmentMesh mesh = AdornmentMesh::Box;
+        rhi::TextureHandle texture;
+        bool onTop = false;
+    };
+    std::vector<AdornmentRun> adornmentRuns_;
+    std::vector<GpuAdornment> adornmentStaging_;
+    std::vector<u32> adornmentOrder_;
+    u32 adornmentCount_ = 0;
     rhi::BufferHandle worldUiBuffer_{};
     bool worldUiTried_ = false;
     u32 worldUiVertexCount_ = 0;
@@ -3120,10 +3162,10 @@ void DefaultRenderer::releaseActiveView(rhi::IDevice& device)
             device.destroy(texture);
         texture = {};
     };
-    for (rhi::TextureHandle* texture :
-         {&hdr_, &depth_, &decalMask_, &decalFoliage_, &ldr_, &occlusion_, &occlusionBlur_, &contact_, &outlineMask_,
-          &spriteMask_, &luminance64_, &luminance8_, &exposure_[0], &exposure_[1], &msaaColor_, &msaaDepth_,
-          &densityMap_, &uiLayer_, &uiLayerSamples_})
+    for (rhi::TextureHandle* texture : {&hdr_,         &depth_,         &decalMask_,   &decalFoliage_,   &ldr_,
+                                        &occlusion_,   &occlusionBlur_, &contact_,     &outlineMask_,    &spriteMask_,
+                                        &luminance64_, &luminance8_,    &exposure_[0], &exposure_[1],    &msaaColor_,
+                                        &msaaDepth_,   &densityMap_,    &uiLayer_,     &uiLayerSamples_, &foldMeter_})
         release(*texture);
     for (rhi::TextureHandle& level : bloom_)
         release(level);
@@ -3442,6 +3484,8 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
                                           &decalAlphaPipeline_,
                                           &decalAddPipeline_,
                                           &worldUiPipeline_,
+                                          &adornmentPipeline_,
+                                          &adornmentOnTopPipeline_,
                                           &worldUiOnTopPipeline_,
                                           &spritePipeline_,
                                           &spriteExactPipeline_,
@@ -3499,6 +3543,13 @@ void DefaultRenderer::destroy(rhi::IDevice& device)
     if (worldUiBuffer_.valid())
         device.destroy(worldUiBuffer_);
     worldUiBuffer_ = {};
+    for (rhi::BufferHandle* buffer : {&adornmentVertices_, &adornmentIndices_, &adornmentInstances_}) {
+        if (buffer->valid())
+            device.destroy(*buffer);
+        *buffer = {};
+    }
+    adornmentsTried_ = false;
+    adornmentGeometryUp_ = false;
     if (spriteBuffer_.valid())
         device.destroy(spriteBuffer_);
     spriteBuffer_ = {};
@@ -4948,6 +4999,13 @@ void DefaultRenderer::drawWorldUi(rhi::ICmdList& cmd, const RenderWorld& world, 
     view.viewProjection = world.camera.viewProjection;
     const std::array<rhi::BufferHandle, 1> uiBuffers{worldUiBuffer_};
     for (const bool onTop : {false, true}) {
+        // The shapes drawn on parts (ADR 0251) are drawn as the display shows
+        // them: after the interface of their kind, in the scene or over it.
+        if (worldUiVertexCount_ == 0) {
+            if (runs != WorldUiRuns::AsLight)
+                drawAdornments(cmd, world, onTop);
+            continue;
+        }
         cmd.setPipeline(onTop ? worldUiOnTopPipeline_ : worldUiPipeline_);
         cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&view, sizeof(view)));
         cmd.bindUniforms(rhi::ShaderStage::Fragment, 0, asBytes(&forwardFrame_, sizeof(forwardFrame_)));
@@ -4990,7 +5048,212 @@ void DefaultRenderer::drawWorldUi(rhi::ICmdList& cmd, const RenderWorld& world, 
             cmd.draw(run.vertexCount, 1, run.firstVertex, 0);
             countDraw(DrawKind::WorldUi);
         }
+        if (runs != WorldUiRuns::AsLight)
+            drawAdornments(cmd, world, onTop);
     }
+}
+
+void DefaultRenderer::drawAdornments(rhi::ICmdList& cmd, const RenderWorld& world, bool onTop)
+{
+    if (adornmentCount_ == 0)
+        return;
+    bool bound = false;
+    for (const AdornmentRun& run : adornmentRuns_) {
+        if (run.onTop != onTop || run.count == 0)
+            continue;
+        if (!bound) {
+            cmd.setPipeline(onTop ? adornmentOnTopPipeline_ : adornmentPipeline_);
+            GpuWorldUiView view;
+            view.viewProjection = world.camera.viewProjection;
+            cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&view, sizeof(view)));
+            const std::array<rhi::BufferHandle, 2> streams{adornmentVertices_, adornmentInstances_};
+            cmd.bindVertexBuffers(0, streams);
+            cmd.bindIndexBuffer(adornmentIndices_, rhi::IndexType::U16);
+            bound = true;
+        }
+        const std::array<rhi::TextureBinding, 1> picture{
+            rhi::TextureBinding{run.texture.valid() ? run.texture : whitePixel_, linearSampler_}};
+        cmd.bindTextures(rhi::ShaderStage::Fragment, 0, picture);
+        const AdornmentShape& shape = adornmentShapes_[static_cast<usize>(run.mesh)];
+        cmd.drawIndexed(shape.indexCount, run.count, shape.firstIndex, 0, run.first);
+        countDraw(DrawKind::WorldUi);
+    }
+}
+
+namespace {
+
+// How many shapes drawn on parts a frame holds (ADR 0251): beyond it, the
+// nearest are drawn.
+constexpr u32 MaxAdornments = 8192;
+
+} // namespace
+
+bool DefaultRenderer::ensureAdornments(rhi::IDevice& device)
+{
+    if (adornmentsTried_)
+        return adornmentPipeline_.valid() && adornmentOnTopPipeline_.valid() && adornmentVertices_.valid() &&
+               adornmentIndices_.valid() && adornmentInstances_.valid();
+    adornmentsTried_ = true;
+    if (shaderLibrary_ == nullptr)
+        return false;
+    core::EngineError error;
+    const rhi::ShaderHandle vertex = shaderLibrary_->create(device, "adornment", rhi::ShaderStage::Vertex, &error);
+    const rhi::ShaderHandle fragment = shaderLibrary_->create(device, "adornment", rhi::ShaderStage::Fragment, &error);
+    for (const rhi::ShaderHandle handle : {vertex, fragment}) {
+        if (handle.valid() && shaderCount_ < std::size(shaders_))
+            shaders_[shaderCount_++] = handle;
+    }
+    if (!vertex.valid() || !fragment.valid()) {
+        core::logText(core::LogLevel::Warn, error.message);
+        return false;
+    }
+
+    // **The unit meshes**, positions alone: a box, a sphere, a cylinder and a
+    // cone at 24 segments, and a square.
+    adornmentCorners_.clear();
+    adornmentCornerIndices_.clear();
+    constexpr u32 Segments = 24;
+    constexpr u32 Rings = 12;
+    constexpr f32 Pi = 3.14159265358979f;
+    const auto begin = [&](AdornmentMesh mesh) {
+        adornmentShapes_[static_cast<usize>(mesh)].firstIndex = static_cast<u32>(adornmentCornerIndices_.size());
+    };
+    const auto end = [&](AdornmentMesh mesh) {
+        AdornmentShape& shape = adornmentShapes_[static_cast<usize>(mesh)];
+        shape.indexCount = static_cast<u32>(adornmentCornerIndices_.size()) - shape.firstIndex;
+    };
+    const auto corner = [&](f32 x, f32 y, f32 z) {
+        adornmentCorners_.push_back(core::Vec3{x, y, z});
+        return static_cast<core::u16>(adornmentCorners_.size() - 1);
+    };
+    const auto triangle = [&](core::u16 a, core::u16 b, core::u16 c) {
+        adornmentCornerIndices_.insert(adornmentCornerIndices_.end(), {a, b, c});
+    };
+    begin(AdornmentMesh::Box);
+    {
+        std::array<core::u16, 8> at{};
+        for (u32 index = 0; index < 8; ++index)
+            at[index] = corner(index & 1 ? 0.5f : -0.5f, index & 2 ? 0.5f : -0.5f, index & 4 ? 0.5f : -0.5f);
+        constexpr std::array<std::array<u32, 4>, 6> faces{
+            {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}}};
+        for (const auto& face : faces) {
+            triangle(at[face[0]], at[face[1]], at[face[2]]);
+            triangle(at[face[0]], at[face[2]], at[face[3]]);
+        }
+    }
+    end(AdornmentMesh::Box);
+    begin(AdornmentMesh::Sphere);
+    {
+        const core::u16 first = static_cast<core::u16>(adornmentCorners_.size());
+        for (u32 ring = 0; ring <= Rings; ++ring) {
+            const f32 phi = Pi * static_cast<f32>(ring) / static_cast<f32>(Rings);
+            for (u32 segment = 0; segment <= Segments; ++segment) {
+                const f32 theta = 2.0f * Pi * static_cast<f32>(segment) / static_cast<f32>(Segments);
+                (void)corner(0.5f * std::sin(phi) * std::cos(theta), 0.5f * std::cos(phi),
+                             0.5f * std::sin(phi) * std::sin(theta));
+            }
+        }
+        for (u32 ring = 0; ring < Rings; ++ring) {
+            for (u32 segment = 0; segment < Segments; ++segment) {
+                const auto a = static_cast<core::u16>(first + ring * (Segments + 1) + segment);
+                const auto b = static_cast<core::u16>(a + Segments + 1);
+                triangle(a, b, static_cast<core::u16>(a + 1));
+                triangle(static_cast<core::u16>(a + 1), b, static_cast<core::u16>(b + 1));
+            }
+        }
+    }
+    end(AdornmentMesh::Sphere);
+    const auto revolved = [&](f32 nearZ, f32 farZ, f32 farRadius) {
+        const core::u16 nearMiddle = corner(0.0f, 0.0f, nearZ);
+        const core::u16 farMiddle = corner(0.0f, 0.0f, farZ);
+        const core::u16 first = static_cast<core::u16>(adornmentCorners_.size());
+        for (u32 segment = 0; segment < Segments; ++segment) {
+            const f32 theta = 2.0f * Pi * static_cast<f32>(segment) / static_cast<f32>(Segments);
+            (void)corner(0.5f * std::cos(theta), 0.5f * std::sin(theta), nearZ);
+            (void)corner(farRadius * std::cos(theta), farRadius * std::sin(theta), farZ);
+        }
+        for (u32 segment = 0; segment < Segments; ++segment) {
+            const auto a = static_cast<core::u16>(first + 2 * segment);
+            const auto b = static_cast<core::u16>(first + 2 * ((segment + 1) % Segments));
+            triangle(a, b, static_cast<core::u16>(a + 1));
+            triangle(static_cast<core::u16>(a + 1), b, static_cast<core::u16>(b + 1));
+            triangle(nearMiddle, b, a);
+            if (farRadius > 0.0f)
+                triangle(farMiddle, static_cast<core::u16>(a + 1), static_cast<core::u16>(b + 1));
+        }
+    };
+    begin(AdornmentMesh::Cylinder);
+    revolved(-0.5f, 0.5f, 0.5f);
+    end(AdornmentMesh::Cylinder);
+    begin(AdornmentMesh::Cone);
+    revolved(0.0f, -1.0f, 0.0f);
+    end(AdornmentMesh::Cone);
+    begin(AdornmentMesh::Quad);
+    {
+        const core::u16 a = corner(-0.5f, -0.5f, 0.0f);
+        const core::u16 b = corner(0.5f, -0.5f, 0.0f);
+        const core::u16 c = corner(0.5f, 0.5f, 0.0f);
+        const core::u16 d = corner(-0.5f, 0.5f, 0.0f);
+        triangle(a, b, c);
+        triangle(a, c, d);
+    }
+    end(AdornmentMesh::Quad);
+
+    adornmentVertices_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Vertex,
+        .sizeBytes = static_cast<u32>(adornmentCorners_.size() * sizeof(core::Vec3)),
+        .debugName = "adornment-meshes",
+    });
+    adornmentIndices_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Index,
+        .sizeBytes = static_cast<u32>(adornmentCornerIndices_.size() * sizeof(core::u16)),
+        .debugName = "adornment-indices",
+    });
+    adornmentInstances_ = device.createBuffer({
+        .usage = rhi::BufferUsage::Vertex,
+        .sizeBytes = static_cast<u32>(MaxAdornments * sizeof(GpuAdornment)),
+        .debugName = "adornment-instances",
+    });
+
+    const std::array<rhi::VertexAttribute, 8> attributes{
+        rhi::VertexAttribute{.location = 0, .bufferSlot = 0, .format = rhi::VertexFormat::Float3, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 1, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 0},
+        rhi::VertexAttribute{.location = 2, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 16},
+        rhi::VertexAttribute{.location = 3, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 32},
+        rhi::VertexAttribute{.location = 4, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 48},
+        rhi::VertexAttribute{.location = 5, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 64},
+        rhi::VertexAttribute{.location = 6, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 80},
+        rhi::VertexAttribute{.location = 7, .bufferSlot = 1, .format = rhi::VertexFormat::Float4, .offsetBytes = 96},
+    };
+    const std::array<rhi::VertexBufferLayout, 2> buffers{
+        rhi::VertexBufferLayout{.slot = 0, .strideBytes = sizeof(core::Vec3)},
+        rhi::VertexBufferLayout{.slot = 1, .strideBytes = sizeof(GpuAdornment), .perInstance = true},
+    };
+    // Premultiplied, as the world's interface blends: into the 16-bit
+    // target, the interface's layer or a headset's image alike.
+    const std::array<rhi::ColorTargetDesc, 1> target{rhi::ColorTargetDesc{
+        .format = kHdrFormat,
+        .blend = {.enabled = true, .srcColor = rhi::BlendFactor::One},
+    }};
+    const auto make = [&](bool tested, const char* name) {
+        return device.createGraphicsPipeline({
+            .vertexShader = vertex,
+            .fragmentShader = fragment,
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            // Both sides: an image is seen from behind too, and a shape the
+            // camera is inside of still shows its far side.
+            .rasterizer = {.cullMode = rhi::CullMode::None},
+            .depthStencil = {.depthTest = tested, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = target,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = name,
+        });
+    };
+    adornmentPipeline_ = make(true, "adornment");
+    adornmentOnTopPipeline_ = make(false, "adornment.top");
+    return adornmentPipeline_.valid() && adornmentOnTopPipeline_.valid() && adornmentVertices_.valid() &&
+           adornmentIndices_.valid() && adornmentInstances_.valid();
 }
 
 bool DefaultRenderer::ensureUiLayer(rhi::IDevice& device, u32 samples)
@@ -9537,6 +9800,58 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         }
     }
 
+    // **This frame's shapes drawn on parts** (ADR 0251), up before any pass:
+    // those in the scene from far to near, then those over it by `ZIndex`
+    // and from far to near, in runs of one mesh and one picture.
+    adornmentCount_ = 0;
+    adornmentRuns_.clear();
+    if (!world.adornments.empty() && ensureAdornments(device)) {
+        if (!adornmentGeometryUp_) {
+            cmd.upload(adornmentVertices_,
+                       asBytes(adornmentCorners_.data(), adornmentCorners_.size() * sizeof(core::Vec3)), 0);
+            cmd.upload(adornmentIndices_,
+                       asBytes(adornmentCornerIndices_.data(), adornmentCornerIndices_.size() * sizeof(core::u16)), 0);
+            adornmentGeometryUp_ = true;
+        }
+        adornmentOrder_.resize(world.adornments.size());
+        for (u32 index = 0; index < adornmentOrder_.size(); ++index)
+            adornmentOrder_[index] = index;
+        std::sort(adornmentOrder_.begin(), adornmentOrder_.end(), [&](u32 a, u32 b) {
+            const RenderAdornment& first = world.adornments[a];
+            const RenderAdornment& second = world.adornments[b];
+            if (first.onTop != second.onTop)
+                return !first.onTop;
+            if (first.onTop && first.zIndex != second.zIndex)
+                return first.zIndex < second.zIndex;
+            if (first.distance != second.distance)
+                return first.distance > second.distance;
+            return a < b;
+        });
+        if (adornmentOrder_.size() > MaxAdornments)
+            adornmentOrder_.erase(adornmentOrder_.begin(),
+                                  adornmentOrder_.begin() +
+                                      static_cast<std::ptrdiff_t>(adornmentOrder_.size() - MaxAdornments));
+        adornmentStaging_.clear();
+        for (const u32 index : adornmentOrder_) {
+            const RenderAdornment& shape = world.adornments[index];
+            GpuAdornment gpu;
+            gpu.model = shape.model;
+            for (usize channel = 0; channel < 4; ++channel) {
+                gpu.color[channel] = shape.color[channel];
+                gpu.inner[channel] = shape.inner[channel];
+                gpu.params[channel] = shape.params[channel];
+            }
+            const u32 at = static_cast<u32>(adornmentStaging_.size());
+            if (adornmentRuns_.empty() || adornmentRuns_.back().mesh != shape.mesh ||
+                adornmentRuns_.back().texture != shape.texture || adornmentRuns_.back().onTop != shape.onTop)
+                adornmentRuns_.push_back(AdornmentRun{at, 0, shape.mesh, shape.texture, shape.onTop});
+            adornmentRuns_.back().count += 1;
+            adornmentStaging_.push_back(gpu);
+        }
+        adornmentCount_ = static_cast<u32>(adornmentStaging_.size());
+        cmd.upload(adornmentInstances_, asBytes(adornmentStaging_.data(), adornmentCount_ * sizeof(GpuAdornment)), 0);
+    }
+
     // This frame's world UI, up before any pass for the same reason.
     worldUiVertexCount_ = 0;
     if (!world.worldUiVertices.empty() && ensureWorldUi(device)) {
@@ -10195,7 +10510,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // The samples resolve into the image itself, so at its own size: an
         // eye drawn smaller (`[xr] render_scale`) is brought up by the
         // tonemap pass, and is not folded.
-        const bool intoImage = target.color.valid() &&
+        const bool intoImage = target.color.valid() && target.colorReadable &&
                                (target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
                                 target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb) &&
                                renderWidth_ == target.width && renderHeight_ == target.height;
@@ -10326,6 +10641,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             (shownAsDisplayed(run) ? uiAsDisplayed : uiAsLight) = true;
         }
     }
+    // And the shapes drawn on parts (ADR 0251), as the display shows them.
+    if (adornmentCount_ > 0)
+        uiAsDisplayed = true;
     const bool uiApart = uiAsDisplayed && foldExposure_ <= 0.0f;
     const bool uiInForward = uiAsLight || (uiAsDisplayed && !uiApart);
     const std::array<rhi::ColorAttachment, 1> samplesAttachment{rhi::ColorAttachment{
@@ -11260,6 +11578,29 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const RenderLook& look = world.look;
     // Folded, the frame is the headset's image, already tonemapped.
     rhi::TextureHandle sceneColor = foldExposure_ > 0.0f ? target.color : hdr_;
+    // **What the meter reads of a folded eye**: the image blitted down into
+    // one of the renderer's own. A runtime's image is never read where it is
+    // -- it rests as a colour target, the layout the runtime takes it back
+    // in, and a view to sample it through is one no backend makes.
+    rhi::TextureHandle meteredColor = sceneColor;
+    u32 meteredWidth = renderWidth_;
+    u32 meteredHeight = renderHeight_;
+    if (foldExposure_ > 0.0f) {
+        if (!foldMeter_.valid())
+            foldMeter_ = device.createTexture({
+                .format = rhi::TextureFormat::Rgba8UnormSrgb,
+                .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget,
+                .width = kFoldMeterSize,
+                .height = kFoldMeterSize,
+                .debugName = "eye-metered",
+            });
+        if (foldMeter_.valid()) {
+            cmd.blitTexture(target.color, foldMeter_, 0);
+            meteredColor = foldMeter_;
+            meteredWidth = kFoldMeterSize;
+            meteredHeight = kFoldMeterSize;
+        }
+    }
 
     // **A picture for a reflection probe stops here** (ADR 0202): the frame as
     // it is lit, before anything that is a camera's own -- the look, the
@@ -11370,8 +11711,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             luminance.range[0] = range.lowest;
             luminance.range[1] = range.highest;
         }
-        luminance.texelRate[0] = 1.0f / static_cast<f32>(sceneWidth);
-        luminance.texelRate[1] = 1.0f / static_cast<f32>(sceneHeight);
+        const bool meteredApart = meteredColor != sceneColor;
+        luminance.texelRate[0] = 1.0f / static_cast<f32>(meteredApart ? meteredWidth : sceneWidth);
+        luminance.texelRate[1] = 1.0f / static_cast<f32>(meteredApart ? meteredHeight : sceneHeight);
         // Folded: the meter undoes the curve and this frame's exposure.
         luminance.texelRate[3] = foldExposure_ > 0.0f ? 1.0f / foldExposure_ : 0.0f;
         // **A view seen on one side of a line is metered on that side** (ADR
@@ -11386,7 +11728,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         luminance.first[0] = std::exp2(world.environment.exposureCompensation);
         luminance.first[1] = world.environment.transparentBackground ? 1.0f : 0.0f;
         const std::array<rhi::TextureBinding, 3> hdrBinding{
-            rhi::TextureBinding{sceneColor, linearSampler_},
+            rhi::TextureBinding{meteredColor, linearSampler_},
             rhi::TextureBinding{uiLayerLive_ ? uiLayer_ : nothingPixel_, linearSampler_},
             rhi::TextureBinding{exposure_[previousExposure], pointSampler_}};
         fullscreenPass(cmd, luminanceDownPipeline_, luminance64_, 64, 64, "luminance-down", hdrBinding,

@@ -4835,6 +4835,20 @@ namespace {
     return core::CFrameD{};
 }
 
+// The frame a shape drawn on a part is placed by (ADR 0251): its adornee's,
+// or its parent's when it names none -- a part's own frame, a model's pivot.
+[[nodiscard]] core::CFrameD adornmentParentOf(const scene::World& world, core::InstanceId id,
+                                              const scene::AdornmentComponent& adornment)
+{
+    const core::InstanceId on =
+        adornment.adornee.valid() && world.alive(adornment.adornee) ? adornment.adornee : world.parentOf(id);
+    if (const scene::PartComponent* part = world.parts().find(on); part != nullptr)
+        return part->cframe;
+    if (world.models().find(on) != nullptr)
+        return scene::pivotOf(world, on);
+    return core::CFrameD{};
+}
+
 // A point with no turn of its own.
 [[nodiscard]] core::CFrameD placedAt(core::DVec3 position)
 {
@@ -4874,6 +4888,8 @@ namespace {
         return placedAt(terrain->origin);
     if (const scene::DecalComponent* decal = world.decals().find(id); decal != nullptr)
         return decalParentOf(world, id) * decal->cframe;
+    if (const scene::AdornmentComponent* adornment = world.adornments().find(id); adornment != nullptr)
+        return adornmentParentOf(world, id, *adornment) * adornment->cframe;
     if (const scene::NavigationLinkComponent* link = world.navigationLinks().find(id); link != nullptr)
         return placedAt(core::DVec3{(link->from.x + link->to.x) * 0.5, (link->from.y + link->to.y) * 0.5,
                                     (link->from.z + link->to.z) * 0.5});
@@ -7171,6 +7187,11 @@ bool Editor::driveGizmo(scene::World& world, Inspector& inspector)
                 // attachment's is, and is divided back through it the same way.
                 kind = DragKind::Attachment;
                 parent = decalParentOf(world, id);
+            }
+            else if (const scene::AdornmentComponent* adornment = world.adornments().find(id); adornment != nullptr) {
+                // So is a shape's, relative to what it is drawn on.
+                kind = DragKind::Attachment;
+                parent = adornmentParentOf(world, id, *adornment);
             }
             else if (world.waters().find(id) != nullptr) {
                 kind = DragKind::Water;

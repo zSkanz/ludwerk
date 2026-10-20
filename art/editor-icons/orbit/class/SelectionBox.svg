@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<defs><mask id="ink" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<polygon points="12,4 20,8.5 20,16.5 12,21 4,16.5 4,8.5" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="4,8.5 12,13 20,8.5" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="12,13 12,21" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="12" cy="4" r="1.5" fill="white"/>
+<circle cx="20" cy="8.5" r="1.5" fill="white"/>
+<circle cx="20" cy="16.5" r="1.5" fill="white"/>
+<circle cx="12" cy="21" r="1.5" fill="white"/>
+<circle cx="4" cy="16.5" r="1.5" fill="white"/>
+<circle cx="4" cy="8.5" r="1.5" fill="white"/>
+<circle cx="12" cy="13" r="1.5" fill="white"/>
+</mask></defs><rect width="24" height="24" fill="white" mask="url(#ink)"/>
+</svg>

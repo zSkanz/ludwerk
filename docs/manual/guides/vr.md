@@ -34,7 +34,7 @@ and under `[xr.android]` for a standalone headset, where its values replace
 | `shadow_resolution` | 256 to 2048 texels a cascade | the quality level's | 2048 |
 | `shadow_distance` | 5 to 500 meters of sun shadows | the quality level's | 20 |
 | `shadow_cascades` | 1 to 4 | the quality level's | 2 |
-| `shadow_first_split` | meters the first cascade covers | 2 | 2 |
+| `shadow_first_split` | meters the first cascade covers | 1.1 | 1.1 |
 | `screen_effects` | occlusion, contact shadows and the screen's reflections | false | false |
 | `foveation` | `"off"`, `"low"`, `"medium"`, `"high"` | `"off"` | `"medium"` |
 | `refresh_rate` | hertz, the nearest the headset offers | the headset's | 72 |

@@ -3580,6 +3580,402 @@ bool setFootPlacementEnabled(scene::World& world, core::InstanceId id, const Val
     return writeFlag(world.footPlacements().find(id), &scene::FootPlacementComponent::enabled, value);
 }
 
+// --- The shape adornments (ADR 0251) ------------------------------------------
+
+void attachAdornmentComponents(scene::World& world, core::InstanceId id)
+{
+    world.adornments().add(id, scene::AdornmentComponent{});
+}
+
+void detachAdornmentComponents(scene::World& world, core::InstanceId id)
+{
+    world.adornments().remove(id);
+}
+
+// A cone is half a meter wide and two tall, where the family's shapes are a
+// meter: an arrow's head rather than a stump.
+void attachConeHandleAdornmentComponents(scene::World& world, core::InstanceId id)
+{
+    if (scene::AdornmentComponent* self = world.adornments().find(id); self != nullptr) {
+        self->radius = 0.5f;
+        self->height = 2.0f;
+    }
+}
+
+void detachConeHandleAdornmentComponents(scene::World& world, core::InstanceId id)
+{
+    (void)world;
+    (void)id;
+}
+
+Value getAdornmentAdornee(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    if (self == nullptr || !self->adornee.valid() || !world.alive(self->adornee) || world.destroyed(self->adornee))
+        return Value{};
+    return Value{self->adornee};
+}
+
+bool setAdornmentAdornee(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    return self != nullptr && takeInstance(world, value, self->adornee);
+}
+
+Value getAdornmentColor3(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->color3};
+}
+
+bool setAdornmentColor3(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::Color3>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->color3 = *next;
+    return true;
+}
+
+Value getAdornmentTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->transparency)};
+}
+
+bool setAdornmentTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->transparency = next;
+    return true;
+}
+
+Value getAdornmentVisible(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->visible};
+}
+
+bool setAdornmentVisible(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->visible = *next;
+    return true;
+}
+
+Value getHandleAdornmentCFrame(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->cframe};
+}
+
+bool setHandleAdornmentCFrame(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::CFrameD>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->cframe = *next;
+    return true;
+}
+
+Value getHandleAdornmentAlwaysOnTop(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->alwaysOnTop};
+}
+
+bool setHandleAdornmentAlwaysOnTop(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->alwaysOnTop = *next;
+    return true;
+}
+
+Value getHandleAdornmentZIndex(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->zIndex)};
+}
+
+bool setHandleAdornmentZIndex(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 10.0f ||
+        next != static_cast<f32>(static_cast<core::i32>(next)))
+        return false;
+    self->zIndex = static_cast<core::i32>(next);
+    return true;
+}
+
+Value getBoxHandleAdornmentSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->size};
+}
+
+bool setBoxHandleAdornmentSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::Vec3>(&value);
+    if (next == nullptr || self == nullptr || !std::isfinite(next->x) || !std::isfinite(next->y) ||
+        !std::isfinite(next->z) || next->x < 0.0f || next->y < 0.0f || next->z < 0.0f)
+        return false;
+    self->size = *next;
+    return true;
+}
+
+Value getSphereHandleAdornmentRadius(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->radius)};
+}
+
+bool setSphereHandleAdornmentRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->radius = next;
+    return true;
+}
+
+Value getCylinderHandleAdornmentRadius(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->radius)};
+}
+
+bool setCylinderHandleAdornmentRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->radius = next;
+    return true;
+}
+
+Value getCylinderHandleAdornmentHeight(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->height)};
+}
+
+bool setCylinderHandleAdornmentHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->height = next;
+    return true;
+}
+
+Value getConeHandleAdornmentRadius(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->radius)};
+}
+
+bool setConeHandleAdornmentRadius(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->radius = next;
+    return true;
+}
+
+Value getConeHandleAdornmentHeight(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->height)};
+}
+
+bool setConeHandleAdornmentHeight(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->height = next;
+    return true;
+}
+
+Value getLineHandleAdornmentLength(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->length)};
+}
+
+bool setLineHandleAdornmentLength(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->length = next;
+    return true;
+}
+
+Value getLineHandleAdornmentThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->thickness)};
+}
+
+bool setLineHandleAdornmentThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->thickness = next;
+    return true;
+}
+
+Value getImageHandleAdornmentImage(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{std::string(world.atoms().text(self->image))};
+}
+
+bool setImageHandleAdornmentImage(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr || self == nullptr)
+        return false;
+    self->image = world.atoms().intern(*text);
+    return true;
+}
+
+Value getImageHandleAdornmentSize(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{core::Vec2{self->size.x, self->size.y}};
+}
+
+bool setImageHandleAdornmentSize(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::Vec2>(&value);
+    if (next == nullptr || self == nullptr || !std::isfinite(next->x) || !std::isfinite(next->y) || next->x < 0.0f ||
+        next->y < 0.0f)
+        return false;
+    self->size = core::Vec3{next->x, next->y, 0.0f};
+    return true;
+}
+
+Value getSelectionBoxLineThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lineThickness)};
+}
+
+bool setSelectionBoxLineThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->lineThickness = next;
+    return true;
+}
+
+Value getSelectionBoxSurfaceColor3(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->surfaceColor3};
+}
+
+bool setSelectionBoxSurfaceColor3(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::Color3>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->surfaceColor3 = *next;
+    return true;
+}
+
+Value getSelectionBoxSurfaceTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->surfaceTransparency)};
+}
+
+bool setSelectionBoxSurfaceTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->surfaceTransparency = next;
+    return true;
+}
+
+Value getSelectionSphereLineThickness(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->lineThickness)};
+}
+
+bool setSelectionSphereLineThickness(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f)
+        return false;
+    self->lineThickness = next;
+    return true;
+}
+
+Value getSelectionSphereSurfaceColor3(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{self->surfaceColor3};
+}
+
+bool setSelectionSphereSurfaceColor3(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    const auto* next = std::get_if<core::Color3>(&value);
+    if (next == nullptr || self == nullptr)
+        return false;
+    self->surfaceColor3 = *next;
+    return true;
+}
+
+Value getSelectionSphereSurfaceTransparency(const scene::World& world, core::InstanceId id)
+{
+    const scene::AdornmentComponent* self = world.adornments().find(id);
+    return self == nullptr ? Value{} : Value{static_cast<f64>(self->surfaceTransparency)};
+}
+
+bool setSelectionSphereSurfaceTransparency(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::AdornmentComponent* self = world.adornments().find(id);
+    f32 next = 0.0f;
+    if (self == nullptr || !takeFinite(value, next) || next < 0.0f || next > 1.0f)
+        return false;
+    self->surfaceTransparency = next;
+    return true;
+}
 void attachHighlightComponents(scene::World& world, core::InstanceId id)
 {
     world.highlights().add(id, scene::HighlightComponent{});

@@ -19,6 +19,13 @@ here.
   `servers.toml` schedules backups (`backup_every_hours`, `backup_keep`)
   and keeps the move log `moves_keep_days`, 90 by default. A dedicated
   server with no manager answers the same at its own console.
+- Shapes drawn on a part: `BoxHandleAdornment`, `SphereHandleAdornment`,
+  `CylinderHandleAdornment`, `ConeHandleAdornment`, `LineHandleAdornment` and
+  `ImageHandleAdornment`, placed by a `CFrame` on their adornee, and the
+  outlines `SelectionBox` and `SelectionSphere`. They are drawn in the colors
+  they were given, over everything with `AlwaysOnTop` and in `ZIndex` order,
+  in both eyes of a headset, and a server's show on every machine. The wire
+  protocol is 60.
 - How a headset's eyes are drawn is the project's to set: `[xr]` and
   `[xr.android]` take `msaa`, `render_scale`, the sun shadows' resolution,
   distance, cascades and first split, and `refresh_rate`, each with a
@@ -68,9 +75,26 @@ here.
 
 ### Fixed
 
+- On a standalone headset, the picture no longer washes out to pastel. Its
+  exposure meter read the headset's image through a view no backend made,
+  read black, and opened the exposure to its limit. It now reads the eye
+  blitted down into a small texture of the renderer's own. On a Quest the eye
+  images are made transfer sources for that.
+- The meter of a headset's eye with the tonemap folded in undoes the curve
+  tap by tap, and its toe exactly. A near-black pixel had read several times
+  brighter than it was, and a lit edge beside a shadow darker.
 - On a standalone headset, the sun's shadows reach as far as the project
   says: its two cascades ended at 2.7 meters of 20, and the first was not as
-  deep as asked, so nothing farther than a few steps cast a shadow.
+  deep as asked, so nothing farther than a few steps cast a shadow. The first
+  cascade is 1.1 meters deep by default (`[xr] shadow_first_split`), where the
+  hands and a table keep a shadow texel of 1.9 mm; at 2 meters the gap
+  between a crate's base and its shadow came back.
+- In a headset, the rim of a shadow seen up close is smooth. Each lit pixel
+  compares eight points on a disc 1.75 texels across, where four comparisons
+  half a texel apart had stepped along the rim of a held ball's shadow at a
+  third of a meter. Where a ball touches what it rests on, the disc narrows
+  to a texel within a centimeter and widens again by three and a half,
+  as a real shadow sharpens at the contact.
 - In a headset with the room seen through, the world's interface, glass and
   particles are drawn over the room. They had been drawn under it, so a sign
   over a crate disappeared when passthrough was on.

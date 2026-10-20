@@ -37,6 +37,14 @@ float3 meteredTap(float2 uv)
 {
     const float4 texel = SourceTexture.SampleLevel(SourceSampler, uv, 0.0f);
     const float3 scene = texel.rgb;
+    // **A picture already tonemapped** (a headset's eye with the tonemap
+    // folded in): `w` is one over the exposure it was drawn with, and what
+    // the meter wants is the scene before it -- the curve undone, then the
+    // exposure. Tap by tap, never on their average: the inverse is steepest
+    // near white, so a lit edge averaged with a shadow first read darker
+    // than it is. Nought for the 16-bit picture every other frame meters.
+    if (LuminanceTexelRate.w > 0.0f)
+        return untonemapPbrNeutral(scene) * LuminanceTexelRate.w;
     const float4 layer = UiLayerTexture.SampleLevel(UiLayerSampler, uv, 0.0f);
     // **Nothing drawn, nothing measured** (the room seen through behind a
     // headset's picture): such a pixel counts as the light measured the
@@ -86,12 +94,6 @@ float4 FragmentMain(Interpolants input) : SV_Target0
     total += meteredTap(uv + float2(texel.x, -texel.y));
     total += meteredTap(uv + float2(-texel.x, texel.y));
     total += meteredTap(uv + float2(texel.x, texel.y));
-    // **A picture already tonemapped** (a headset's eye with the tonemap
-    // folded in): `w` is one over the exposure it was drawn with, and what
-    // the meter wants is the scene before it -- the curve undone, then the
-    // exposure. Nought for the 16-bit picture every other frame meters.
-    if (LuminanceTexelRate.w > 0.0f)
-        total = untonemapPbrNeutral(total * 0.25f) * (4.0f * LuminanceTexelRate.w);
 
     // Rec.709 luminance, which is the space the tonemap operates in.
     const float luminance = dot(total * 0.25f, float3(0.2126f, 0.7152f, 0.0722f));

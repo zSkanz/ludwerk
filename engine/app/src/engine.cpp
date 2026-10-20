@@ -10231,7 +10231,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                 .width = headsetFrame.width,
                                 .height = headsetFrame.height,
                                 .view = EyeViewBase + index,
-                                .window = true};
+                                .window = true,
+                                .colorReadable = !eyesDirect || headsetFrame.colorReadable};
                             // No jitter: an eye has no temporal anti-aliasing to
                             // gather it (`RenderWorld::headsetEye`).
                             const u64 eyeStarted = platform::nowNs();

@@ -3265,6 +3265,46 @@ local HighlightFields: { Schema.Field } = {
     highlight("Enabled", 7, "Bool", "A mark the authority took off is off for everybody."),
 }
 
+-- **The shapes drawn on a part** (ADR 0251, protocol 60): looks, as a
+-- highlight is, so a server's marker shows on every machine.
+local adornment = authored("adornments")
+local AdornmentFields: { Schema.Field } = {
+    adornment("Adornee", 1, "InstanceRef", "What the shape is drawn on. A network id."),
+    adornment("Color3", 2, "Color3", "The colour it is drawn in."),
+    adornment("Transparency", 3, "F32", "How much it shows through."),
+    adornment("Visible", 4, "Bool", "A shape the authority hid is hidden for everybody."),
+    adornment("CFrame", 5, "CFrameD", "Where it is on what it is drawn on."),
+    adornment("AlwaysOnTop", 6, "Bool", "Whether it is drawn over everything."),
+    adornment("ZIndex", 7, "I32", "Its order among those."),
+}
+local BoxHandleAdornmentFields: { Schema.Field } = {
+    adornment("Size", 1, "Vector3", "How large the box is."),
+}
+local SphereHandleAdornmentFields: { Schema.Field } = {
+    adornment("Radius", 1, "F32", "How large the sphere is."),
+}
+local CylinderHandleAdornmentFields: { Schema.Field } = {
+    adornment("Radius", 1, "F32", "How wide the cylinder is."),
+    adornment("Height", 2, "F32", "How long it is."),
+}
+local ConeHandleAdornmentFields: { Schema.Field } = {
+    adornment("Radius", 1, "F32", "How wide the cone's base is."),
+    adornment("Height", 2, "F32", "How far its tip is."),
+}
+local LineHandleAdornmentFields: { Schema.Field } = {
+    adornment("Length", 1, "F32", "How long the line is."),
+    adornment("Thickness", 2, "F32", "How thick it is."),
+}
+local ImageHandleAdornmentFields: { Schema.Field } = {
+    adornment("Image", 1, "NameAtom", "The image, by content path."),
+    adornment("Size", 2, "Vector3", "Its width and height, the third nought."),
+}
+local SelectionFields: { Schema.Field } = {
+    adornment("LineThickness", 1, "F32", "How thick its edges are."),
+    adornment("SurfaceColor3", 2, "Color3", "The colour inside them."),
+    adornment("SurfaceTransparency", 3, "F32", "How much of that shows."),
+}
+
 local beam = authored("beams")
 local BeamFields: { Schema.Field } = {
     beam("Attachment0", 1, "InstanceRef", "Where it starts. A network id, written once that copy exists."),
@@ -3951,6 +3991,34 @@ local Classes: { Schema.Class } = {
             .. "draws its own.",
         Fields = HighlightFields,
     },
+    {
+        Name = "Adornment",
+        Doc = "A shape drawn on a part (ADR 0251): every kind of it carries these, and its own sizes.",
+        Fields = AdornmentFields,
+    },
+    { Name = "BoxHandleAdornment", Extends = "Adornment", Doc = "A box.", Fields = BoxHandleAdornmentFields },
+    {
+        Name = "SphereHandleAdornment",
+        Extends = "Adornment",
+        Doc = "A sphere.",
+        Fields = SphereHandleAdornmentFields,
+    },
+    {
+        Name = "CylinderHandleAdornment",
+        Extends = "Adornment",
+        Doc = "A cylinder.",
+        Fields = CylinderHandleAdornmentFields,
+    },
+    { Name = "ConeHandleAdornment", Extends = "Adornment", Doc = "A cone.", Fields = ConeHandleAdornmentFields },
+    { Name = "LineHandleAdornment", Extends = "Adornment", Doc = "A line.", Fields = LineHandleAdornmentFields },
+    {
+        Name = "ImageHandleAdornment",
+        Extends = "Adornment",
+        Doc = "An image.",
+        Fields = ImageHandleAdornmentFields,
+    },
+    { Name = "SelectionBox", Extends = "Adornment", Doc = "A bounding box's outline.", Fields = SelectionFields },
+    { Name = "SelectionSphere", Extends = "Adornment", Doc = "A bounding sphere's outline.", Fields = SelectionFields },
     {
         Name = "Beam",
         Doc = "A band drawn between two attachments (ADR 0129), with the sequences it is coloured by.",

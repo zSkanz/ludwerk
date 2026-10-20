@@ -781,6 +781,11 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     });
     // Decal images: colours, like base colours.
     world.decals().forEach([&](core::InstanceId, const scene::DecalComponent& decal) { load(decal.texture, true); });
+    // A shape's image (ADR 0251), the same.
+    world.adornments().forEach([&](core::InstanceId, const scene::AdornmentComponent& shape) {
+        if (shape.image.valid())
+            load(shape.image, true);
+    });
     // A particle's picture (ADR 0160), the same.
     world.particleEmitters().forEach(
         [&](core::InstanceId, const scene::ParticleEmitterComponent& emitter) { load(emitter.texture, true); });

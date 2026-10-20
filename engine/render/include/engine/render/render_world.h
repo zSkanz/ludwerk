@@ -566,6 +566,40 @@ struct RenderDecal
 // field of grass behind it to the horizon. 0 when there is no decal.
 [[nodiscard]] f32 decalReach(std::span<const RenderDecal> decals);
 
+// **A shape drawn on a part** (ADR 0251), as the renderer draws it: one of
+// the renderer's own unit meshes, carried to the camera-relative world.
+enum class AdornmentMesh : core::u8
+{
+    // A cube of side 1 about its middle.
+    Box,
+    // A sphere of diameter 1.
+    Sphere,
+    // A cylinder of diameter 1 along z, from -0.5 to 0.5.
+    Cylinder,
+    // A cone of diameter 1, its base at z 0 and its tip at z -1.
+    Cone,
+    // A square of side 1 in the xy plane.
+    Quad,
+};
+
+struct RenderAdornment
+{
+    Mat4 model;
+    // The colour as it was set (sRGB) and its opacity: the shader decodes it.
+    f32 color[4]{};
+    // A disc's inside (a `SelectionSphere`), as `color`.
+    f32 inner[4]{};
+    // x how it is drawn -- 0 a solid colour, 1 an image, 2 a disc with a rim --
+    // and y the rim's share of the disc's radius.
+    f32 params[4]{};
+    rhi::TextureHandle texture;
+    AdornmentMesh mesh = AdornmentMesh::Box;
+    bool onTop = false;
+    core::i32 zIndex = 0;
+    // From the camera, for the order the blended ones are drawn in.
+    f32 distance = 0.0f;
+};
+
 // One `Highlight` as drawn (ADR 0129): the colours over the shape and round
 // it, premultiplied by nothing -- the alpha is how much of each shows.
 struct RenderHighlight
@@ -993,6 +1027,8 @@ struct RenderWorld
     // This frame's highlights (ADR 0129), nearest first; a draw's `highlight`
     // is one more than its place here.
     std::vector<RenderHighlight> highlights;
+    // The shapes drawn on parts (ADR 0251), in no order: the renderer sorts.
+    std::vector<RenderAdornment> adornments;
     // How many were left out because there were more than `maxHighlights`.
     u32 highlightsDropped = 0;
     // The most drawn in a frame: the project's `[render] max_highlights`.
@@ -1069,6 +1105,7 @@ struct RenderWorld
         ribbonVertices.clear();
         ribbonRuns.clear();
         highlights.clear();
+        adornments.clear();
         highlightsDropped = 0;
         decals.clear();
         reflectionProbes.clear();

@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 59;
+inline constexpr u32 ProtocolVersion = 60;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -682,6 +682,56 @@ inline constexpr FieldDesc HighlightFields[] = {
     {"Enabled", 7, Encoding::Bool, Source::Component, "highlights"},
 };
 
+inline constexpr FieldDesc AdornmentFields[] = {
+    {"Adornee", 1, Encoding::InstanceRef, Source::Component, "adornments"},
+    {"Color3", 2, Encoding::Color3, Source::Component, "adornments"},
+    {"Transparency", 3, Encoding::F32, Source::Component, "adornments"},
+    {"Visible", 4, Encoding::Bool, Source::Component, "adornments"},
+    {"CFrame", 5, Encoding::CFrameD, Source::Component, "adornments"},
+    {"AlwaysOnTop", 6, Encoding::Bool, Source::Component, "adornments"},
+    {"ZIndex", 7, Encoding::I32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc BoxHandleAdornmentFields[] = {
+    {"Size", 1, Encoding::Vector3, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc SphereHandleAdornmentFields[] = {
+    {"Radius", 1, Encoding::F32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc CylinderHandleAdornmentFields[] = {
+    {"Radius", 1, Encoding::F32, Source::Component, "adornments"},
+    {"Height", 2, Encoding::F32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc ConeHandleAdornmentFields[] = {
+    {"Radius", 1, Encoding::F32, Source::Component, "adornments"},
+    {"Height", 2, Encoding::F32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc LineHandleAdornmentFields[] = {
+    {"Length", 1, Encoding::F32, Source::Component, "adornments"},
+    {"Thickness", 2, Encoding::F32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc ImageHandleAdornmentFields[] = {
+    {"Image", 1, Encoding::NameAtom, Source::Component, "adornments"},
+    {"Size", 2, Encoding::Vector3, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc SelectionBoxFields[] = {
+    {"LineThickness", 1, Encoding::F32, Source::Component, "adornments"},
+    {"SurfaceColor3", 2, Encoding::Color3, Source::Component, "adornments"},
+    {"SurfaceTransparency", 3, Encoding::F32, Source::Component, "adornments"},
+};
+
+inline constexpr FieldDesc SelectionSphereFields[] = {
+    {"LineThickness", 1, Encoding::F32, Source::Component, "adornments"},
+    {"SurfaceColor3", 2, Encoding::Color3, Source::Component, "adornments"},
+    {"SurfaceTransparency", 3, Encoding::F32, Source::Component, "adornments"},
+};
+
 inline constexpr FieldDesc BeamFields[] = {
     {"Attachment0", 1, Encoding::InstanceRef, Source::Component, "beams"},
     {"Attachment1", 2, Encoding::InstanceRef, Source::Component, "beams"},
@@ -879,6 +929,15 @@ inline constexpr ClassDesc Classes[] = {
     {"Cloth", ClothFields, -1, false, false},
     {"Bone", BoneFields, 28, false, false},
     {"Highlight", HighlightFields, -1, false, false},
+    {"Adornment", AdornmentFields, -1, false, false},
+    {"BoxHandleAdornment", BoxHandleAdornmentFields, 55, false, false},
+    {"SphereHandleAdornment", SphereHandleAdornmentFields, 55, false, false},
+    {"CylinderHandleAdornment", CylinderHandleAdornmentFields, 55, false, false},
+    {"ConeHandleAdornment", ConeHandleAdornmentFields, 55, false, false},
+    {"LineHandleAdornment", LineHandleAdornmentFields, 55, false, false},
+    {"ImageHandleAdornment", ImageHandleAdornmentFields, 55, false, false},
+    {"SelectionBox", SelectionBoxFields, 55, false, false},
+    {"SelectionSphere", SelectionSphereFields, 55, false, false},
     {"Beam", BeamFields, -1, false, false},
     {"Trail", TrailFields, -1, false, false},
     {"Sound", SoundFields, -1, false, false},

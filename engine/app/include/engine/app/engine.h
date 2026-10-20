@@ -496,13 +496,15 @@ struct EngineOptions
     // standalone headset): samples a pixel (1 none; 2, 4 or 8; nought the
     // profile's -- two on a standalone headset, one on a PC), and the
     // renderer's `HeadsetQuality`, nought being the level's or the measured
-    // value. The first cascade's depth in meters.
+    // value. The first cascade's depth in meters: 1.1, the reach of the hands
+    // and of a table before them, at 1.9 mm a texel of 2048 -- at 2 a texel
+    // was twice that, and so was the lift that keeps a base on its shadow.
     core::u32 xrMsaa = 0;
     core::f32 xrRenderScale = 1.0f;
     core::u32 xrShadowResolution = 0;
     core::f32 xrShadowDistance = 0.0f;
     core::u32 xrShadowCascades = 0;
-    core::f32 xrShadowFirstSplit = 2.0f;
+    core::f32 xrShadowFirstSplit = 1.1f;
     // `[xr] refresh_rate` in hertz: 72 on a standalone headset until 90 is
     // measured with foveation on, the runtime's own on a PC.
 #if defined(__ANDROID__)

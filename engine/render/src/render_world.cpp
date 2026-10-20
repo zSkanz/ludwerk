@@ -2274,6 +2274,225 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         }
     }
 
+    // --- The shapes drawn on parts (ADR 0251) -----------------------------
+    //
+    // Each placed on what it is drawn on -- a part's frame and box, or a
+    // model's: its primary part's frame for a handle, the box round all its
+    // parts for an outline -- and carried to the camera-relative world.
+    if (world.adornments().size() > 0) {
+        const auto classNamed = [&](const char* name) { return world.classes().findId(world.atoms().lookup(name)); };
+        const scene::ClassId boxClass = classNamed("BoxHandleAdornment");
+        const scene::ClassId sphereClass = classNamed("SphereHandleAdornment");
+        const scene::ClassId cylinderClass = classNamed("CylinderHandleAdornment");
+        const scene::ClassId coneClass = classNamed("ConeHandleAdornment");
+        const scene::ClassId lineClass = classNamed("LineHandleAdornment");
+        const scene::ClassId imageClass = classNamed("ImageHandleAdornment");
+        const scene::ClassId selectionBoxClass = classNamed("SelectionBox");
+        const scene::ClassId selectionSphereClass = classNamed("SelectionSphere");
+        std::vector<core::InstanceId> walk;
+        world.adornments().forEach([&](core::InstanceId id, const scene::AdornmentComponent& shape) {
+            if (!shape.visible || world.destroyed(id) || !membership.contains(id))
+                return;
+            const core::InstanceId adornee =
+                shape.adornee.valid() && world.alive(shape.adornee) && !world.destroyed(shape.adornee)
+                    ? shape.adornee
+                    : world.parentOf(id);
+            if (!adornee.valid())
+                return;
+            // What it is drawn on: a frame, and a box in that frame.
+            core::CFrameD frame;
+            core::Vec3 extent{};
+            if (const scene::PartComponent* part = world.parts().find(adornee); part != nullptr) {
+                frame = posed.part(adornee);
+                extent = part->size;
+            }
+            else if (const scene::ModelComponent* model = world.models().find(adornee); model != nullptr) {
+                // The box round every part in it, along the world's axes.
+                DVec3 lowest{1e300, 1e300, 1e300};
+                DVec3 highest{-1e300, -1e300, -1e300};
+                walk.clear();
+                walk.push_back(adornee);
+                while (!walk.empty()) {
+                    const core::InstanceId at = walk.back();
+                    walk.pop_back();
+                    for (core::InstanceId child = world.firstChild(at); child.valid(); child = world.nextSibling(child))
+                        walk.push_back(child);
+                    const scene::PartComponent* piece = world.parts().find(at);
+                    if (piece == nullptr || at == adornee)
+                        continue;
+                    const core::CFrameD placed = posed.part(at);
+                    for (int corner = 0; corner < 8; ++corner) {
+                        const core::Vec3 local{(corner & 1 ? 0.5f : -0.5f) * piece->size.x,
+                                               (corner & 2 ? 0.5f : -0.5f) * piece->size.y,
+                                               (corner & 4 ? 0.5f : -0.5f) * piece->size.z};
+                        const DVec3 point = core::transformPoint(placed, core::toDVec3(local));
+                        lowest = DVec3{std::min(lowest.x, point.x), std::min(lowest.y, point.y),
+                                       std::min(lowest.z, point.z)};
+                        highest = DVec3{std::max(highest.x, point.x), std::max(highest.y, point.y),
+                                        std::max(highest.z, point.z)};
+                    }
+                }
+                if (lowest.x > highest.x)
+                    return;
+                const scene::ClassId drawnAs = world.classOf(id);
+                const bool outline = drawnAs == selectionBoxClass || drawnAs == selectionSphereClass;
+                if (!outline && model->primaryPart.valid() && world.parts().find(model->primaryPart) != nullptr) {
+                    frame = posed.part(model->primaryPart);
+                    extent = world.parts().find(model->primaryPart)->size;
+                }
+                else {
+                    frame = core::CFrameD{
+                        DVec3{(lowest.x + highest.x) * 0.5, (lowest.y + highest.y) * 0.5, (lowest.z + highest.z) * 0.5},
+                        core::Mat3{}};
+                    extent = core::Vec3{static_cast<f32>(highest.x - lowest.x), static_cast<f32>(highest.y - lowest.y),
+                                        static_cast<f32>(highest.z - lowest.z)};
+                }
+            }
+            else {
+                return;
+            }
+
+            const scene::ClassId kind = world.classOf(id);
+            const f32 opacity = std::clamp(1.0f - shape.transparency, 0.0f, 1.0f);
+            RenderAdornment drawn;
+            drawn.color[0] = shape.color3.r;
+            drawn.color[1] = shape.color3.g;
+            drawn.color[2] = shape.color3.b;
+            drawn.color[3] = opacity;
+            drawn.onTop = shape.alwaysOnTop;
+            drawn.zIndex = shape.zIndex;
+            const auto place = [&](const core::CFrameD& at, core::Vec3 scale, AdornmentMesh mesh) {
+                drawn.model = core::toRenderMatrixScaled(at, origin, scale);
+                drawn.mesh = mesh;
+                drawn.distance = core::length(core::toVec3(at.position - origin));
+                out.adornments.push_back(drawn);
+            };
+            const core::CFrameD placed = frame * shape.cframe; // raw: an offset, never simulated
+            const auto along = [&](const core::CFrameD& at, f32 z) {
+                return at * core::CFrameD{DVec3{0.0, 0.0, static_cast<f64>(z)}, core::Mat3{}};
+            };
+            if (kind == boxClass) {
+                if (opacity > 0.0f)
+                    place(placed, shape.size, AdornmentMesh::Box);
+            }
+            else if (kind == sphereClass) {
+                if (opacity > 0.0f)
+                    place(placed, core::Vec3{1.0f, 1.0f, 1.0f} * (2.0f * shape.radius), AdornmentMesh::Sphere);
+            }
+            else if (kind == cylinderClass) {
+                if (opacity > 0.0f)
+                    place(placed, core::Vec3{2.0f * shape.radius, 2.0f * shape.radius, shape.height},
+                          AdornmentMesh::Cylinder);
+            }
+            else if (kind == coneClass) {
+                if (opacity > 0.0f)
+                    place(placed, core::Vec3{2.0f * shape.radius, 2.0f * shape.radius, shape.height},
+                          AdornmentMesh::Cone);
+            }
+            else if (kind == lineClass) {
+                // From its frame along its look direction (-z), as long as it says.
+                if (opacity > 0.0f)
+                    place(along(placed, -0.5f * shape.length),
+                          core::Vec3{shape.thickness, shape.thickness, shape.length}, AdornmentMesh::Box);
+            }
+            else if (kind == imageClass) {
+                if (opacity > 0.0f) {
+                    drawn.params[0] = 1.0f;
+                    drawn.texture = materials != nullptr && shape.image.valid() ? materials->find(shape.image)
+                                                                                : rhi::TextureHandle{};
+                    place(placed, core::Vec3{shape.size.x, shape.size.y, 1.0f}, AdornmentMesh::Quad);
+                }
+            }
+            else if (kind == selectionBoxClass) {
+                // The faces first, then the twelve edges over them; an outline
+                // is drawn over everything.
+                drawn.onTop = true;
+                const f32 surface = std::clamp(1.0f - shape.surfaceTransparency, 0.0f, 1.0f);
+                if (surface > 0.0f) {
+                    RenderAdornment faces = drawn;
+                    faces.color[0] = shape.surfaceColor3.r;
+                    faces.color[1] = shape.surfaceColor3.g;
+                    faces.color[2] = shape.surfaceColor3.b;
+                    faces.color[3] = surface;
+                    faces.model = core::toRenderMatrixScaled(frame, origin, extent);
+                    faces.mesh = AdornmentMesh::Box;
+                    faces.distance = core::length(core::toVec3(frame.position - origin));
+                    out.adornments.push_back(faces);
+                }
+                if (opacity > 0.0f && shape.lineThickness > 0.0f) {
+                    const f32 t = shape.lineThickness;
+                    const core::Vec3 half = extent * 0.5f;
+                    for (int axis = 0; axis < 3; ++axis) {
+                        for (int edge = 0; edge < 4; ++edge) {
+                            core::Vec3 offset{};
+                            core::Vec3 scale{t, t, t};
+                            const f32 a = edge & 1 ? 1.0f : -1.0f;
+                            const f32 b = edge & 2 ? 1.0f : -1.0f;
+                            if (axis == 0) {
+                                offset = core::Vec3{0.0f, a * half.y, b * half.z};
+                                scale.x = extent.x + t;
+                            }
+                            else if (axis == 1) {
+                                offset = core::Vec3{a * half.x, 0.0f, b * half.z};
+                                scale.y = extent.y + t;
+                            }
+                            else {
+                                offset = core::Vec3{a * half.x, b * half.y, 0.0f};
+                                scale.z = extent.z + t;
+                            }
+                            place(frame * core::CFrameD{core::toDVec3(offset), core::Mat3{}}, scale,
+                                  AdornmentMesh::Box);
+                        }
+                    }
+                }
+            }
+            else if (kind == selectionSphereClass) {
+                // **The circle a sphere shows the camera**: a square facing it,
+                // as wide as the sphere's outline seen from here, its rim
+                // `LineThickness` wide.
+                drawn.onTop = true;
+                const f32 radius = 0.5f * core::length(extent);
+                const core::Vec3 centre = core::toVec3(frame.position - origin);
+                const f32 distance = core::length(centre);
+                if (distance <= radius * 1.0001f || radius <= 0.0f)
+                    return;
+                const f32 seen = radius * distance / std::sqrt(distance * distance - radius * radius);
+                const core::Vec3 toward = centre * (1.0f / distance);
+                const core::Vec3 worldUp{0.0f, 1.0f, 0.0f};
+                core::Vec3 right = core::cross(toward, worldUp);
+                if (core::length(right) < 1e-4f)
+                    right = core::Vec3{1.0f, 0.0f, 0.0f};
+                right = core::normalize(right);
+                const core::Vec3 up = core::cross(right, toward);
+                Mat4 model;
+                for (auto& column : model.m) {
+                    for (f32& value : column)
+                        value = 0.0f;
+                }
+                for (int row = 0; row < 3; ++row) {
+                    model.m[0][row] = (row == 0 ? right.x : row == 1 ? right.y : right.z) * 2.0f * seen;
+                    model.m[1][row] = (row == 0 ? up.x : row == 1 ? up.y : up.z) * 2.0f * seen;
+                    model.m[2][row] = -(row == 0 ? toward.x : row == 1 ? toward.y : toward.z);
+                }
+                model.m[3][0] = centre.x;
+                model.m[3][1] = centre.y;
+                model.m[3][2] = centre.z;
+                model.m[3][3] = 1.0f;
+                drawn.model = model;
+                drawn.mesh = AdornmentMesh::Quad;
+                drawn.params[0] = 2.0f;
+                drawn.params[1] = std::clamp(shape.lineThickness / std::max(seen, 1e-4f), 0.0f, 1.0f);
+                drawn.inner[0] = shape.surfaceColor3.r;
+                drawn.inner[1] = shape.surfaceColor3.g;
+                drawn.inner[2] = shape.surfaceColor3.b;
+                drawn.inner[3] = std::clamp(1.0f - shape.surfaceTransparency, 0.0f, 1.0f);
+                drawn.distance = distance;
+                if (opacity > 0.0f || drawn.inner[3] > 0.0f)
+                    out.adornments.push_back(drawn);
+            }
+        });
+    }
+
     out.sortScratch.resize(out.draws.size());
     for (usize index = 0; index < out.draws.size(); ++index)
         out.sortScratch[index] = RenderWorld::SortEntry{out.draws[index].sortKey, static_cast<u32>(index)};

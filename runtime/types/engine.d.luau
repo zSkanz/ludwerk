@@ -2856,6 +2856,84 @@ declare extern type Highlight extends Instance with
     Enabled: boolean
 end
 
+declare extern type Adornment extends Instance with
+    --- The part or model the shape is drawn on. With nil, its parent is used if the parent is one of
+    --- those. A shape with neither is not drawn.
+    Adornee: (BasePart | Model)?
+    --- The color the shape is drawn in, as it was set, by day and by night.
+    Color3: Color3
+    --- How transparent the shape is, from 0 (solid) to 1 (not drawn).
+    Transparency: number
+    --- Whether the shape is drawn.
+    Visible: boolean
+end
+
+declare extern type HandleAdornment extends Adornment with
+    --- Where the shape is, relative to the adornee: its middle, and how it is turned.
+    CFrame: CFrame
+    --- Whether the shape is drawn over everything. When it is off, objects in front of it hide it.
+    AlwaysOnTop: boolean
+    --- The order of the shapes drawn over everything, from 0 to 10: a higher one is drawn over a lower
+    --- one, and of two with the same, the nearer.
+    ZIndex: number
+end
+
+declare extern type BoxHandleAdornment extends HandleAdornment with
+    --- The box's width, height and depth, in meters.
+    Size: vector
+end
+
+declare extern type SphereHandleAdornment extends HandleAdornment with
+    --- The sphere's radius, in meters.
+    Radius: number
+end
+
+declare extern type CylinderHandleAdornment extends HandleAdornment with
+    --- The cylinder's radius, in meters.
+    Radius: number
+    --- The cylinder's length along its axis, in meters.
+    Height: number
+end
+
+declare extern type ConeHandleAdornment extends HandleAdornment with
+    --- The radius of the cone's base, in meters.
+    Radius: number
+    --- How far the tip is from the base, in meters.
+    Height: number
+end
+
+declare extern type LineHandleAdornment extends HandleAdornment with
+    --- How long the line is, in meters.
+    Length: number
+    --- How thick the line is, in meters.
+    Thickness: number
+end
+
+declare extern type ImageHandleAdornment extends HandleAdornment with
+    --- The image, by its content path.
+    Image: Content
+    --- The image's width and height, in meters.
+    Size: Vector2
+end
+
+declare extern type SelectionBox extends Adornment with
+    --- How thick the edges are, in meters.
+    LineThickness: number
+    --- The color of the faces inside the edges.
+    SurfaceColor3: Color3
+    --- How transparent the faces are, from 0 (solid) to 1 (only the edges are drawn).
+    SurfaceTransparency: number
+end
+
+declare extern type SelectionSphere extends Adornment with
+    --- How thick the rim is, in meters.
+    LineThickness: number
+    --- The color inside the rim.
+    SurfaceColor3: Color3
+    --- How transparent the inside is, from 0 (solid) to 1 (only the rim is drawn).
+    SurfaceTransparency: number
+end
+
 declare extern type Beam extends Instance with
     --- The attachment where the beam starts.
     Attachment0: Attachment?
@@ -7962,6 +8040,14 @@ type InstanceClasses = {
     SubWorld: SubWorld,
     ParticleEmitter: ParticleEmitter,
     Highlight: Highlight,
+    BoxHandleAdornment: BoxHandleAdornment,
+    SphereHandleAdornment: SphereHandleAdornment,
+    CylinderHandleAdornment: CylinderHandleAdornment,
+    ConeHandleAdornment: ConeHandleAdornment,
+    LineHandleAdornment: LineHandleAdornment,
+    ImageHandleAdornment: ImageHandleAdornment,
+    SelectionBox: SelectionBox,
+    SelectionSphere: SelectionSphere,
     Beam: Beam,
     Trail: Trail,
     SpotLight: SpotLight,

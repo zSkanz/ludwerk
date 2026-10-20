@@ -2446,6 +2446,432 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     highlightDesc.detachComponents = native::detachHighlightComponents;
     classes.registerClass(highlightDesc);
 
+    // --- Adornment ---
+    static std::array<scene::PropertyDesc, 4> adornmentProperties;
+    adornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Adornee"),
+            .type = scene::ValueType::Instance,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The part or model the shape is drawn on. With nil, its parent is used if the parent is one of those. A shape with neither is not drawn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_instance"),
+            .get = native::getAdornmentAdornee,
+            .set = native::setAdornmentAdornee,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Color3"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The color the shape is drawn in, as it was set, by day and by night.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getAdornmentColor3,
+            .set = native::setAdornmentColor3,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Transparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How transparent the shape is, from 0 (solid) to 1 (not drawn).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getAdornmentTransparency,
+            .set = native::setAdornmentTransparency,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Visible"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the shape is drawn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getAdornmentVisible,
+            .set = native::setAdornmentVisible,
+        },
+    }};
+    scene::ClassDescriptor adornmentDesc;
+    adornmentDesc.name = atoms.intern("Adornment");
+    adornmentDesc.super = instanceClass;
+    adornmentDesc.flags = scene::ClassFlags::Abstract;
+    adornmentDesc.defaultName = atoms.intern("Adornment");
+    adornmentDesc.doc = "The base class of the shapes drawn on a part: plain colors, not lit and not exposed with the scene, drawn where the part is. They are visual only: nothing collides with them, and raycasts do not hit them.";
+    adornmentDesc.properties = adornmentProperties;
+    adornmentDesc.attachComponents = native::attachAdornmentComponents;
+    adornmentDesc.detachComponents = native::detachAdornmentComponents;
+    const scene::ClassId adornmentClass = classes.registerClass(adornmentDesc);
+
+    // --- HandleAdornment ---
+    static std::array<scene::PropertyDesc, 3> handleAdornmentProperties;
+    handleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("CFrame"),
+            .type = scene::ValueType::CFrame,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Where the shape is, relative to the adornee: its middle, and how it is turned.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getHandleAdornmentCFrame,
+            .set = native::setHandleAdornmentCFrame,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("AlwaysOnTop"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether the shape is drawn over everything. When it is off, objects in front of it hide it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getHandleAdornmentAlwaysOnTop,
+            .set = native::setHandleAdornmentAlwaysOnTop,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ZIndex"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The order of the shapes drawn over everything, from 0 to 10: a higher one is drawn over a lower one, and of two with the same, the nearer.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.adornment_zindex"),
+            .get = native::getHandleAdornmentZIndex,
+            .set = native::setHandleAdornmentZIndex,
+        },
+    }};
+    scene::ClassDescriptor handleAdornmentDesc;
+    handleAdornmentDesc.name = atoms.intern("HandleAdornment");
+    handleAdornmentDesc.super = adornmentClass;
+    handleAdornmentDesc.flags = scene::ClassFlags::Abstract;
+    handleAdornmentDesc.defaultName = atoms.intern("HandleAdornment");
+    handleAdornmentDesc.doc = "The base class of the shapes placed by a `CFrame` on their adornee: boxes, spheres, cylinders, cones, lines and images.";
+    handleAdornmentDesc.properties = handleAdornmentProperties;
+    const scene::ClassId handleAdornmentClass = classes.registerClass(handleAdornmentDesc);
+
+    // --- BoxHandleAdornment ---
+    static std::array<scene::PropertyDesc, 1> boxHandleAdornmentProperties;
+    boxHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Size"),
+            .type = scene::ValueType::Vector3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The box's width, height and depth, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getBoxHandleAdornmentSize,
+            .set = native::setBoxHandleAdornmentSize,
+        },
+    }};
+    scene::ClassDescriptor boxHandleAdornmentDesc;
+    boxHandleAdornmentDesc.name = atoms.intern("BoxHandleAdornment");
+    boxHandleAdornmentDesc.super = handleAdornmentClass;
+    boxHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    boxHandleAdornmentDesc.defaultName = atoms.intern("BoxHandleAdornment");
+    boxHandleAdornmentDesc.doc = "A box drawn on a part: a builder's ghost of what is about to be placed, or a zone on the ground.";
+    static constexpr std::array<std::string_view, 5> boxHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    boxHandleAdornmentDesc.parents = boxHandleAdornmentParents;
+    boxHandleAdornmentDesc.properties = boxHandleAdornmentProperties;
+    classes.registerClass(boxHandleAdornmentDesc);
+
+    // --- SphereHandleAdornment ---
+    static std::array<scene::PropertyDesc, 1> sphereHandleAdornmentProperties;
+    sphereHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The sphere's radius, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSphereHandleAdornmentRadius,
+            .set = native::setSphereHandleAdornmentRadius,
+        },
+    }};
+    scene::ClassDescriptor sphereHandleAdornmentDesc;
+    sphereHandleAdornmentDesc.name = atoms.intern("SphereHandleAdornment");
+    sphereHandleAdornmentDesc.super = handleAdornmentClass;
+    sphereHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    sphereHandleAdornmentDesc.defaultName = atoms.intern("SphereHandleAdornment");
+    sphereHandleAdornmentDesc.doc = "A sphere drawn on a part: a marker over a target, or a radius around it.";
+    static constexpr std::array<std::string_view, 5> sphereHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    sphereHandleAdornmentDesc.parents = sphereHandleAdornmentParents;
+    sphereHandleAdornmentDesc.properties = sphereHandleAdornmentProperties;
+    classes.registerClass(sphereHandleAdornmentDesc);
+
+    // --- CylinderHandleAdornment ---
+    static std::array<scene::PropertyDesc, 2> cylinderHandleAdornmentProperties;
+    cylinderHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The cylinder's radius, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCylinderHandleAdornmentRadius,
+            .set = native::setCylinderHandleAdornmentRadius,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Height"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The cylinder's length along its axis, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getCylinderHandleAdornmentHeight,
+            .set = native::setCylinderHandleAdornmentHeight,
+        },
+    }};
+    scene::ClassDescriptor cylinderHandleAdornmentDesc;
+    cylinderHandleAdornmentDesc.name = atoms.intern("CylinderHandleAdornment");
+    cylinderHandleAdornmentDesc.super = handleAdornmentClass;
+    cylinderHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    cylinderHandleAdornmentDesc.defaultName = atoms.intern("CylinderHandleAdornment");
+    cylinderHandleAdornmentDesc.doc = "A cylinder drawn on a part, along its `CFrame`'s look direction: a column of light over an objective, or a disc on the ground.";
+    static constexpr std::array<std::string_view, 5> cylinderHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    cylinderHandleAdornmentDesc.parents = cylinderHandleAdornmentParents;
+    cylinderHandleAdornmentDesc.properties = cylinderHandleAdornmentProperties;
+    classes.registerClass(cylinderHandleAdornmentDesc);
+
+    // --- ConeHandleAdornment ---
+    static std::array<scene::PropertyDesc, 2> coneHandleAdornmentProperties;
+    coneHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Radius"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The radius of the cone's base, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getConeHandleAdornmentRadius,
+            .set = native::setConeHandleAdornmentRadius,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Height"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How far the tip is from the base, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getConeHandleAdornmentHeight,
+            .set = native::setConeHandleAdornmentHeight,
+        },
+    }};
+    scene::ClassDescriptor coneHandleAdornmentDesc;
+    coneHandleAdornmentDesc.name = atoms.intern("ConeHandleAdornment");
+    coneHandleAdornmentDesc.super = handleAdornmentClass;
+    coneHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    coneHandleAdornmentDesc.defaultName = atoms.intern("ConeHandleAdornment");
+    coneHandleAdornmentDesc.doc = "A cone drawn on a part, its tip along its `CFrame`'s look direction: an arrow's head over a quest giver.";
+    static constexpr std::array<std::string_view, 5> coneHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    coneHandleAdornmentDesc.parents = coneHandleAdornmentParents;
+    coneHandleAdornmentDesc.properties = coneHandleAdornmentProperties;
+    coneHandleAdornmentDesc.attachComponents = native::attachConeHandleAdornmentComponents;
+    coneHandleAdornmentDesc.detachComponents = native::detachConeHandleAdornmentComponents;
+    classes.registerClass(coneHandleAdornmentDesc);
+
+    // --- LineHandleAdornment ---
+    static std::array<scene::PropertyDesc, 2> lineHandleAdornmentProperties;
+    lineHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Length"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How long the line is, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getLineHandleAdornmentLength,
+            .set = native::setLineHandleAdornmentLength,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Thickness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How thick the line is, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getLineHandleAdornmentThickness,
+            .set = native::setLineHandleAdornmentThickness,
+        },
+    }};
+    scene::ClassDescriptor lineHandleAdornmentDesc;
+    lineHandleAdornmentDesc.name = atoms.intern("LineHandleAdornment");
+    lineHandleAdornmentDesc.super = handleAdornmentClass;
+    lineHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    lineHandleAdornmentDesc.defaultName = atoms.intern("LineHandleAdornment");
+    lineHandleAdornmentDesc.doc = "A line drawn on a part, from its `CFrame` along its look direction: a pointer, or a path between two places.";
+    static constexpr std::array<std::string_view, 5> lineHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    lineHandleAdornmentDesc.parents = lineHandleAdornmentParents;
+    lineHandleAdornmentDesc.properties = lineHandleAdornmentProperties;
+    classes.registerClass(lineHandleAdornmentDesc);
+
+    // --- ImageHandleAdornment ---
+    static std::array<scene::PropertyDesc, 2> imageHandleAdornmentProperties;
+    imageHandleAdornmentProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Image"),
+            .type = scene::ValueType::String,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The image, by its content path.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getImageHandleAdornmentImage,
+            .set = native::setImageHandleAdornmentImage,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Size"),
+            .type = scene::ValueType::Vector2,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The image's width and height, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getImageHandleAdornmentSize,
+            .set = native::setImageHandleAdornmentSize,
+        },
+    }};
+    scene::ClassDescriptor imageHandleAdornmentDesc;
+    imageHandleAdornmentDesc.name = atoms.intern("ImageHandleAdornment");
+    imageHandleAdornmentDesc.super = handleAdornmentClass;
+    imageHandleAdornmentDesc.flags = scene::ClassFlags::None;
+    imageHandleAdornmentDesc.defaultName = atoms.intern("ImageHandleAdornment");
+    imageHandleAdornmentDesc.doc = "An image drawn on a part, facing along its `CFrame`'s look direction: a sign, an icon or a decal that shows through walls.";
+    static constexpr std::array<std::string_view, 5> imageHandleAdornmentParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    imageHandleAdornmentDesc.parents = imageHandleAdornmentParents;
+    imageHandleAdornmentDesc.properties = imageHandleAdornmentProperties;
+    classes.registerClass(imageHandleAdornmentDesc);
+
+    // --- SelectionBox ---
+    static std::array<scene::PropertyDesc, 3> selectionBoxProperties;
+    selectionBoxProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("LineThickness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How thick the edges are, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSelectionBoxLineThickness,
+            .set = native::setSelectionBoxLineThickness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SurfaceColor3"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The color of the faces inside the edges.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getSelectionBoxSurfaceColor3,
+            .set = native::setSelectionBoxSurfaceColor3,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SurfaceTransparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How transparent the faces are, from 0 (solid) to 1 (only the edges are drawn).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSelectionBoxSurfaceTransparency,
+            .set = native::setSelectionBoxSurfaceTransparency,
+        },
+    }};
+    scene::ClassDescriptor selectionBoxDesc;
+    selectionBoxDesc.name = atoms.intern("SelectionBox");
+    selectionBoxDesc.super = adornmentClass;
+    selectionBoxDesc.flags = scene::ClassFlags::None;
+    selectionBoxDesc.defaultName = atoms.intern("SelectionBox");
+    selectionBoxDesc.doc = "The outline of a part's or a model's bounding box: its twelve edges in `Color3`, and its faces in `SurfaceColor3`.";
+    static constexpr std::array<std::string_view, 5> selectionBoxParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    selectionBoxDesc.parents = selectionBoxParents;
+    selectionBoxDesc.properties = selectionBoxProperties;
+    classes.registerClass(selectionBoxDesc);
+
+    // --- SelectionSphere ---
+    static std::array<scene::PropertyDesc, 3> selectionSphereProperties;
+    selectionSphereProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("LineThickness"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How thick the rim is, in meters.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_at_least_zero"),
+            .get = native::getSelectionSphereLineThickness,
+            .set = native::setSelectionSphereLineThickness,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SurfaceColor3"),
+            .type = scene::ValueType::Color3,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The color inside the rim.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_color3"),
+            .get = native::getSelectionSphereSurfaceColor3,
+            .set = native::setSelectionSphereSurfaceColor3,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("SurfaceTransparency"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How transparent the inside is, from 0 (solid) to 1 (only the rim is drawn).",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
+            .get = native::getSelectionSphereSurfaceTransparency,
+            .set = native::setSelectionSphereSurfaceTransparency,
+        },
+    }};
+    scene::ClassDescriptor selectionSphereDesc;
+    selectionSphereDesc.name = atoms.intern("SelectionSphere");
+    selectionSphereDesc.super = adornmentClass;
+    selectionSphereDesc.flags = scene::ClassFlags::None;
+    selectionSphereDesc.defaultName = atoms.intern("SelectionSphere");
+    selectionSphereDesc.doc = "The outline of a part's or a model's bounding sphere: the circle it shows the camera, its rim in `Color3` and its inside in `SurfaceColor3`.";
+    static constexpr std::array<std::string_view, 5> selectionSphereParents{{"Workspace", "Model", "BasePart", "ReplicatedStorage", "ServerStorage"}};
+    selectionSphereDesc.parents = selectionSphereParents;
+    selectionSphereDesc.properties = selectionSphereProperties;
+    classes.registerClass(selectionSphereDesc);
+
     // --- Beam ---
     static std::array<scene::PropertyDesc, 18> beamProperties;
     beamProperties = {{

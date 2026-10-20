@@ -549,6 +549,76 @@ bool setHighlightEnabled(scene::World& world, core::InstanceId id, const scene::
 void attachHighlightComponents(scene::World& world, core::InstanceId id);
 void detachHighlightComponents(scene::World& world, core::InstanceId id);
 
+// Adornment
+scene::Value getAdornmentAdornee(const scene::World& world, core::InstanceId id);
+bool setAdornmentAdornee(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAdornmentColor3(const scene::World& world, core::InstanceId id);
+bool setAdornmentColor3(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAdornmentTransparency(const scene::World& world, core::InstanceId id);
+bool setAdornmentTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAdornmentVisible(const scene::World& world, core::InstanceId id);
+bool setAdornmentVisible(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachAdornmentComponents(scene::World& world, core::InstanceId id);
+void detachAdornmentComponents(scene::World& world, core::InstanceId id);
+
+// HandleAdornment
+scene::Value getHandleAdornmentCFrame(const scene::World& world, core::InstanceId id);
+bool setHandleAdornmentCFrame(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHandleAdornmentAlwaysOnTop(const scene::World& world, core::InstanceId id);
+bool setHandleAdornmentAlwaysOnTop(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getHandleAdornmentZIndex(const scene::World& world, core::InstanceId id);
+bool setHandleAdornmentZIndex(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// BoxHandleAdornment
+scene::Value getBoxHandleAdornmentSize(const scene::World& world, core::InstanceId id);
+bool setBoxHandleAdornmentSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// SphereHandleAdornment
+scene::Value getSphereHandleAdornmentRadius(const scene::World& world, core::InstanceId id);
+bool setSphereHandleAdornmentRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// CylinderHandleAdornment
+scene::Value getCylinderHandleAdornmentRadius(const scene::World& world, core::InstanceId id);
+bool setCylinderHandleAdornmentRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getCylinderHandleAdornmentHeight(const scene::World& world, core::InstanceId id);
+bool setCylinderHandleAdornmentHeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// ConeHandleAdornment
+scene::Value getConeHandleAdornmentRadius(const scene::World& world, core::InstanceId id);
+bool setConeHandleAdornmentRadius(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getConeHandleAdornmentHeight(const scene::World& world, core::InstanceId id);
+bool setConeHandleAdornmentHeight(scene::World& world, core::InstanceId id, const scene::Value& value);
+void attachConeHandleAdornmentComponents(scene::World& world, core::InstanceId id);
+void detachConeHandleAdornmentComponents(scene::World& world, core::InstanceId id);
+
+// LineHandleAdornment
+scene::Value getLineHandleAdornmentLength(const scene::World& world, core::InstanceId id);
+bool setLineHandleAdornmentLength(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getLineHandleAdornmentThickness(const scene::World& world, core::InstanceId id);
+bool setLineHandleAdornmentThickness(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// ImageHandleAdornment
+scene::Value getImageHandleAdornmentImage(const scene::World& world, core::InstanceId id);
+bool setImageHandleAdornmentImage(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getImageHandleAdornmentSize(const scene::World& world, core::InstanceId id);
+bool setImageHandleAdornmentSize(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// SelectionBox
+scene::Value getSelectionBoxLineThickness(const scene::World& world, core::InstanceId id);
+bool setSelectionBoxLineThickness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSelectionBoxSurfaceColor3(const scene::World& world, core::InstanceId id);
+bool setSelectionBoxSurfaceColor3(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSelectionBoxSurfaceTransparency(const scene::World& world, core::InstanceId id);
+bool setSelectionBoxSurfaceTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+
+// SelectionSphere
+scene::Value getSelectionSphereLineThickness(const scene::World& world, core::InstanceId id);
+bool setSelectionSphereLineThickness(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSelectionSphereSurfaceColor3(const scene::World& world, core::InstanceId id);
+bool setSelectionSphereSurfaceColor3(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getSelectionSphereSurfaceTransparency(const scene::World& world, core::InstanceId id);
+bool setSelectionSphereSurfaceTransparency(scene::World& world, core::InstanceId id, const scene::Value& value);
+
 // Beam
 scene::Value getBeamAttachment0(const scene::World& world, core::InstanceId id);
 bool setBeamAttachment0(scene::World& world, core::InstanceId id, const scene::Value& value);

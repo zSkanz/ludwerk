@@ -62,6 +62,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 
 | Class | Inherits | Summary |
 |---|---|---|
+| [`Adornment`](adornment.md) | [`Instance`](instance.md) | The base class of the shapes drawn on a part: plain colors, not lit and not exposed with the scene, drawn where the part is. |
 | [`AlignOrientation`](alignorientation.md) | [`Constraint`](constraint.md) | Turns `Attachment0` toward an orientation and holds it there. |
 | [`AlignPosition`](alignposition.md) | [`Constraint`](constraint.md) | Pulls `Attachment0` toward a position and holds it there. |
 | [`AngularVelocity`](angularvelocity.md) | [`Constraint`](constraint.md) | Keeps the part that `Attachment0` is on spinning at a set rate, using up to `MaxTorque`. |
@@ -77,6 +78,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`BloomEffect`](bloomeffect.md) | [`PostEffect`](posteffect.md) | Controls the glow that bright light spreads onto what is around it. |
 | [`BlurEffect`](blureffect.md) | [`PostEffect`](posteffect.md) | Blurs the whole picture of the world, for example behind a pause menu. |
 | [`Bone`](bone.md) | [`Attachment`](attachment.md) | An attachment that follows one joint of the skinned `MeshPart` it is parented to. |
+| [`BoxHandleAdornment`](boxhandleadornment.md) | [`HandleAdornment`](handleadornment.md) | A box drawn on a part: a builder's ghost of what is about to be placed, or a zone on the ground. |
 | [`Camera`](camera.md) | [`PVInstance`](pvinstance.md) | The viewpoint the world is drawn from. |
 | [`CameraTexture`](cameratexture.md) | [`Instance`](instance.md) | Draws what a camera sees into a texture. |
 | [`CanvasGroup`](canvasgroup.md) | [`Frame`](frame.md) | A `Frame` whose descendants are drawn together into one image, which is then shown as a whole. |
@@ -87,8 +89,10 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`Cloth`](cloth.md) | [`Instance`](instance.md) | Makes the `MeshPart` it is parented to hang, sway and fold like cloth: a cape, a flag, a skirt or a banner. |
 | [`ColorCorrectionEffect`](colorcorrectioneffect.md) | [`PostEffect`](posteffect.md) | Adjusts the color of the whole picture: its brightness, contrast, saturation and tint. |
 | [`CompressorSoundEffect`](compressorsoundeffect.md) | [`SoundEffect`](soundeffect.md) | Reduces the loud parts of a sound so that the whole can be made louder. |
+| [`ConeHandleAdornment`](conehandleadornment.md) | [`HandleAdornment`](handleadornment.md) | A cone drawn on a part, its tip along its `CFrame`'s look direction: an arrow's head over a quest giver. |
 | [`Constraint`](constraint.md) | [`Instance`](instance.md) | The abstract base class of physics joints. |
 | [`Constraint2D`](constraint2d.md) | [`Instance`](instance.md) | The base class of the joints between two `Part2D`s. |
+| [`CylinderHandleAdornment`](cylinderhandleadornment.md) | [`HandleAdornment`](handleadornment.md) | A cylinder drawn on a part, along its `CFrame`'s look direction: a column of light over an objective, or a disc on the ground. |
 | [`DataModel`](datamodel.md) | [`Instance`](instance.md) | The root of the instance tree, available as the global `game`. |
 | [`Decal`](decal.md) | [`Instance`](instance.md) | An image projected onto every surface inside a box: a scorch mark, a footprint, a poster or a crack. |
 | [`DepthOfFieldEffect`](depthoffieldeffect.md) | [`PostEffect`](posteffect.md) | Blurs the picture by distance, as a camera lens does: a band of the world is in focus, and what is nearer or farther is blurred. |
@@ -101,18 +105,21 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`FoliageMesh`](foliagemesh.md) | [`Instance`](instance.md) | One mesh that a `FoliageLayer` grows. |
 | [`FootPlacement`](footplacement.md) | [`Instance`](instance.md) | Places a character's feet on the ground under them, such as a stair, a slope or a rock, and lowers the hips to match. |
 | [`Frame`](frame.md) | [`UIObject`](uiobject.md) | A plain rectangle: a background and a container for other UI objects. |
+| [`HandleAdornment`](handleadornment.md) | [`Adornment`](adornment.md) | The base class of the shapes placed by a `CFrame` on their adornee: boxes, spheres, cylinders, cones, lines and images. |
 | [`HighPassSoundEffect`](highpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Removes low frequencies and keeps high ones, for a telephone or a small speaker. |
 | [`Highlight`](highlight.md) | [`Instance`](instance.md) | Draws an outline and a tint over a part or a model, to mark what is selected, what can be picked up, or an ally behind a wall. |
 | [`HingeConstraint`](hingeconstraint.md) | [`Constraint`](constraint.md) | A joint that lets two parts rotate about one axis, such as a door, a lid or an elbow. |
 | [`HingeConstraint2D`](hingeconstraint2d.md) | [`Constraint2D`](constraint2d.md) | Joins two parts at a point that both can rotate about: a door, a wheel, a pendulum or a lever. |
 | [`IKControl`](ikcontrol.md) | [`Instance`](instance.md) | Bends a limb so its end reaches a target, or turns a head to look at one, on top of the animation that is playing. |
 | [`ImageButton`](imagebutton.md) | [`ImageLabel`](imagelabel.md) | An `ImageLabel` meant to be pressed. |
+| [`ImageHandleAdornment`](imagehandleadornment.md) | [`HandleAdornment`](handleadornment.md) | An image drawn on a part, facing along its `CFrame`'s look direction: a sign, an icon or a decal that shows through walls. |
 | [`ImageLabel`](imagelabel.md) | [`UIObject`](uiobject.md) | A UI object that shows an image. |
 | [`InputAction`](inputaction.md) | [`Instance`](instance.md) | A named action the player can take, separate from the input that triggers it. |
 | [`InputBinding`](inputbinding.md) | [`Instance`](instance.md) | One physical input that drives its parent `InputAction`. |
 | [`InputContext`](inputcontext.md) | [`Instance`](instance.md) | A group of `InputAction` children that are enabled and disabled together. |
 | [`Instance`](instance.md) | — | The base class of every object in the tree. |
 | [`IrradianceVolume`](irradiancevolume.md) | [`Instance`](instance.md) | Adds bounced light to an area: the light a surface receives from other surfaces instead of directly from a light, such as from a sunlit wall or a red carpet. |
+| [`LineHandleAdornment`](linehandleadornment.md) | [`HandleAdornment`](handleadornment.md) | A line drawn on a part, from its `CFrame` along its look direction: a pointer, or a path between two places. |
 | [`LinearVelocity`](linearvelocity.md) | [`Constraint`](constraint.md) | Keeps the part that `Attachment0` is on moving at a set velocity, using up to `MaxForce`. |
 | [`LipSync`](lipsync.md) | [`Instance`](instance.md) | Moves a character's mouth to match speech. |
 | [`LowPassSoundEffect`](lowpasssoundeffect.md) | [`SoundEffect`](soundeffect.md) | Removes high frequencies and keeps low ones, for a sound heard under water, behind a door or while the game is paused. |
@@ -142,11 +149,14 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`ScreenGui`](screengui.md) | [`Instance`](instance.md) | The root of a tree of UI drawn on the screen. |
 | [`Script`](script.md) | [`BaseScript`](basescript.md) | Luau code that runs. |
 | [`ScrollFrame`](scrollframe.md) | [`UIObject`](uiobject.md) | A `Frame` whose contents can be larger than it is, and that scrolls to show them. |
+| [`SelectionBox`](selectionbox.md) | [`Adornment`](adornment.md) | The outline of a part's or a model's bounding box: its twelve edges in `Color3`, and its faces in `SurfaceColor3`. |
+| [`SelectionSphere`](selectionsphere.md) | [`Adornment`](adornment.md) | The outline of a part's or a model's bounding sphere: the circle it shows the camera, its rim in `Color3` and its inside in `SurfaceColor3`. |
 | [`SequenceBinding`](sequencebinding.md) | [`Instance`](instance.md) | Tells a `SequencePlayer` which instance one of its sequence's names refers to. |
 | [`SequencePlayer`](sequenceplayer.md) | [`Instance`](instance.md) | Plays a sequence: a cutscene stored as a file of tracks over time. |
 | [`Sky`](sky.md) | [`Instance`](instance.md) | Sets what the sky shows: six images around the world, the appearance of the sun and the moon, stars and clouds. |
 | [`Sound`](sound.md) | [`Instance`](instance.md) | Plays an audio file. |
 | [`SoundEffect`](soundeffect.md) | [`Instance`](instance.md) | The base class of audio effects, which process a sound before it reaches the speakers. |
+| [`SphereHandleAdornment`](spherehandleadornment.md) | [`HandleAdornment`](handleadornment.md) | A sphere drawn on a part: a marker over a target, or a radius around it. |
 | [`SpotLight`](spotlight.md) | [`Instance`](instance.md) | A light that shines in a cone around its forward direction. |
 | [`SpringBone`](springbone.md) | [`Instance`](instance.md) | Makes a chain of joints swing and settle behind the body that carries it, for a cape, a tail, hair or a tassel. |
 | [`SpringCollider`](springcollider.md) | [`Instance`](instance.md) | A sphere or capsule attached to a joint that the `SpringBone` chains and the `Cloth` of the same `MeshPart` cannot pass through. |

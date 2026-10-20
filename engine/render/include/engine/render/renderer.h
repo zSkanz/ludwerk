@@ -62,6 +62,10 @@ struct RenderTarget
     // How many pixels past the line are still drawn: the line's own half
     // width, and what a filter reads across it.
     core::f32 sideMargin = 0.0f;
+    // **Whether `color` can be blitted from** once drawn (`rhi::HeadsetFrame::
+    // colorReadable`): a headset's eye is drawn with the tonemap folded in
+    // only where its meter can read what the eye showed.
+    bool colorReadable = false;
 };
 
 // **One player's view and where it goes in the window** (ADR 0205): a picture
