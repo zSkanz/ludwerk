@@ -46,7 +46,8 @@ public:
     // that is none of them.
     [[nodiscard]] std::optional<Answer> run(std::string_view line, DataBroker& data, std::int64_t nowUnix);
     // Once a frame: a backup's next pages, one that is due, and the move
-    // log's next oldest lines let go of.
+    // log's next oldest lines let go of -- each a job on the store's thread,
+    // one at a time, so the frame never waits for the disk.
     void frame(DataBroker& data, std::int64_t nowUnix);
 
     // A backup's file name, `<game>-YYYYMMDD-HHMMSS.db` in UTC, and the time
@@ -57,6 +58,9 @@ public:
 private:
     void prune() const;
     [[nodiscard]] std::int64_t newestBackup() const;
+    [[nodiscard]] std::optional<Answer> runOn(IDataStore& store, std::string_view line, core::i64 held,
+                                              std::int64_t nowUnix);
+    void stepped(const DataBackupProgress& progress);
 
     Options m_options;
     // A backup copying, and whether the schedule asked for it.
@@ -72,6 +76,8 @@ private:
     std::int64_t m_nextForget = 0;
     bool m_forgetting = false;
     core::i64 m_forgotten = 0;
+    // A job of `frame`'s on the store's thread, not yet answered.
+    bool m_working = false;
 };
 
 } // namespace engine::app

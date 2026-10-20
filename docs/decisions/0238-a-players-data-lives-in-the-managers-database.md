@@ -298,3 +298,46 @@ purpose), and copying backups off the machine, which is the operator's.
   for that write (§2).
 - **Not yet**: a game's own backend (§5), with the same tests against the
   reference backend.
+
+## As built, a game's own backend (2026-10-20)
+
+- **The store off the manager's loop.** One thread, the data worker, owns
+  the store and does what it is asked in the order asked; the manager posts
+  a job and takes the answers each frame. A world's write is ahead of its
+  next read, and a record let go of is read by its next holder as written.
+  The record locks stay on the manager's loop. The queue holds 4,096 jobs;
+  past that a job is refused, said in the log and counted, and the world is
+  answered `Unavailable`. `data` at the console says what waits, the longest
+  wait since it was last asked, and what was refused. A dedicated server's
+  own database is on such a thread too, and so are the console's commands,
+  its scheduled backup and the move log's forgetting.
+- **Accounts stay the manager's**, in its own database on a connection of
+  their own, with a backend or without. A game that wants accounts in its
+  own backend is a later extension, not this one.
+- **The contract**: `POST <backend>/v1/data`, one operation a request, in
+  exactly the JSON the engine's own store reads and answers
+  (`engine/app/src/data_ops.cpp`) plus a record's `load` and `write`, each
+  with `request`, 128 random bits. `Authorization: Bearer` with the token
+  read from the environment variable `[data] backend_token_env` names.
+- **Retries and idempotency**: a request with no answer is sent again with
+  the same id, at most three tries in ten seconds, a quarter, then half a
+  second apart; then the operation is `Unavailable`, and a list or a balance
+  read is never handed back empty in its place. A backend applies a change
+  once per id and gives its first answer again.
+- **`http://`** only to `localhost` or an address written out that is
+  loopback, RFC 1918 or link-local (127/8, 10/8, 172.16/12, 192.168/16,
+  169.254/16, ::1, fe80::/10): a name could resolve anywhere. Anything else
+  refuses `servers.toml`, saying the host.
+- **The reference backend** is `examples/47-realms/backend/backend.luau`, on
+  Lute's own HTTP server, with no new dependency: everything in memory, or
+  in a file with `--state`; `--idle-exit` for a test.
+- **Proved**: `data_backend` -- the reference backend and a manager with two
+  worlds: a thousand trades of a sword for its price (five swords and a
+  thousand gold after them), a shared value counted from both worlds at once
+  to 100, a record changed in one world and loaded in the other, all
+  through the backend; then the same `transact` sent twice moving once, and
+  a new id moving again. The worker's tests: order, the bound and its count,
+  the worst wait; the backend store's: one id sent twice on a lost answer, a
+  new id each request, three tries and `Unavailable`; the `http://` rule.
+  The run takes three minutes: each request is a connection of its own to
+  the backend, as the HTTP client closes each.

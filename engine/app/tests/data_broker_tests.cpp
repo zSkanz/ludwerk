@@ -17,11 +17,41 @@
 using engine::app::DataBroker;
 using engine::app::StoredRecord;
 
+namespace {
+
+// **The store is the worker's**: what was asked is done once the queue is
+// drained to here, and its answers are taken by `pump`.
+[[nodiscard]] std::vector<DataBroker::Answer> settled(DataBroker& broker)
+{
+    broker.wait([](engine::app::IDataStore&) {});
+    broker.pump();
+    return broker.takeAnswers();
+}
+
+// Something of the store's, done on its thread, and what it returned.
+template <typename F>
+[[nodiscard]] auto onStore(DataBroker& data, F&& f)
+{
+    decltype(f(std::declval<engine::app::IDataStore&>())) out{};
+    data.wait([&](engine::app::IDataStore& store) { out = f(store); });
+    return out;
+}
+
+// A console's frame, and the answer of the job it asked for.
+void frameOf(engine::app::DataConsole& console, DataBroker& data, std::int64_t now)
+{
+    console.frame(data, now);
+    data.wait([](engine::app::IDataStore&) {});
+    data.pump();
+}
+
+} // namespace
+
 TEST_CASE("data broker > a record is given to the world that asks, with what was written")
 {
     DataBroker broker(engine::app::makeMemoryDataStore());
     broker.load("town", 1, "ana", 0);
-    std::vector<DataBroker::Answer> answers = broker.takeAnswers();
+    std::vector<DataBroker::Answer> answers = settled(broker);
     REQUIRE(answers.size() == 1);
     CHECK(answers[0].ok);
     CHECK(answers[0].world == "town");
@@ -31,7 +61,7 @@ TEST_CASE("data broker > a record is given to the world that asks, with what was
     CHECK(broker.write("town", "ana", StoredRecord{"level=2", 3.0}, true, 10));
     CHECK(broker.holder("ana").empty());
     broker.load("field", 2, "ana", 20);
-    answers = broker.takeAnswers();
+    answers = settled(broker);
     REQUIRE(answers.size() == 1);
     REQUIRE(answers[0].record.has_value());
     CHECK(answers[0].record->body == "level=2");
@@ -42,12 +72,12 @@ TEST_CASE("data broker > a second world waits for the record, and is given it wh
 {
     DataBroker broker(engine::app::makeMemoryDataStore());
     broker.load("town:1", 1, "ana", 0);
-    (void)broker.takeAnswers();
+    (void)settled(broker);
     broker.load("town:2", 7, "ana", 100);
     broker.tick(5'000);
-    CHECK(broker.takeAnswers().empty());
+    CHECK(settled(broker).empty());
     CHECK(broker.write("town:1", "ana", StoredRecord{"gold=5", 1.0}, true, 6'000));
-    const std::vector<DataBroker::Answer> answers = broker.takeAnswers();
+    const std::vector<DataBroker::Answer> answers = settled(broker);
     REQUIRE(answers.size() == 1);
     CHECK(answers[0].world == "town:2");
     CHECK(answers[0].id == 7);
@@ -60,12 +90,12 @@ TEST_CASE("data broker > a world that waits ten seconds is refused as busy")
 {
     DataBroker broker(engine::app::makeMemoryDataStore());
     broker.load("town:1", 1, "ana", 0);
-    (void)broker.takeAnswers();
+    (void)settled(broker);
     broker.load("town:2", 2, "ana", 1'000);
     broker.tick(10'999);
-    CHECK(broker.takeAnswers().empty());
+    CHECK(settled(broker).empty());
     broker.tick(11'000);
-    const std::vector<DataBroker::Answer> answers = broker.takeAnswers();
+    const std::vector<DataBroker::Answer> answers = settled(broker);
     REQUIRE(answers.size() == 1);
     CHECK(answers[0].busy);
     CHECK_FALSE(answers[0].ok);
@@ -78,11 +108,11 @@ TEST_CASE("data broker > a world that dies lets go of its records, and its late 
     broker.load("dungeon", 1, "ana", 0);
     broker.load("dungeon", 2, "bo", 0);
     CHECK(broker.write("dungeon", "ana", StoredRecord{"before", 1.0}, false, 10));
-    (void)broker.takeAnswers();
+    (void)settled(broker);
     broker.load("town", 3, "ana", 20);
     broker.worldGone("dungeon", 30);
     CHECK(broker.held() == 1);
-    const std::vector<DataBroker::Answer> answers = broker.takeAnswers();
+    const std::vector<DataBroker::Answer> answers = settled(broker);
     REQUIRE(answers.size() == 1);
     CHECK(answers[0].world == "town");
     REQUIRE(answers[0].record.has_value());
@@ -490,9 +520,9 @@ TEST_CASE("data console > data and moves are answered, and an undo refused says 
     CHECK_FALSE(console.run("data", data, now)->failed);
     CHECK_FALSE(console.run("moves", data, now)->failed);
 
-    const std::optional<engine::core::i64> sword = data.store().createItem("town", "ana", "Sword", "");
+    const std::optional<engine::core::i64> sword = onStore(data, [&](engine::app::IDataStore& store) { return store.createItem("town", "ana", "Sword", ""); });
     REQUIRE(sword.has_value());
-    const engine::app::DataTransaction gift = data.store().transact("town", {DataMove{*sword, "", 0, "ana", "bo"}});
+    const engine::app::DataTransaction gift = onStore(data, [&](engine::app::IDataStore& store) { return store.transact("town", {DataMove{*sword, "", 0, "ana", "bo"}}); });
     REQUIRE(gift.ok);
     const std::optional<engine::app::DataConsole::Answer> lines = console.run("moves bo", data, now);
     REQUIRE(lines.has_value());
@@ -504,7 +534,7 @@ TEST_CASE("data console > data and moves are answered, and an undo refused says 
 
     CHECK(console.run("data undo", data, now)->failed);
     CHECK_FALSE(console.run("data undo " + std::to_string(gift.id), data, now)->failed);
-    CHECK(data.store().items("ana").size() == 1);
+    CHECK(onStore(data, [&](engine::app::IDataStore& store) { return store.items("ana"); }).size() == 1);
     CHECK(console.run("data undo " + std::to_string(gift.id), data, now)->failed);
     // A store in memory has no file to back up.
     CHECK(console.run("data backup", data, now)->failed);
@@ -516,17 +546,17 @@ TEST_CASE("data console > the move log's lines past their days are let go of by 
     using engine::app::DataMove;
     DataBroker data(engine::app::makeMemoryDataStore());
     engine::app::DataConsole console(consoleOptions({}, "game", 0.0, 7, 1));
-    REQUIRE(data.store().transact("town", {DataMove{0, "Gold", 5, "", "ana"}}).ok);
+    REQUIRE(onStore(data, [&](engine::app::IDataStore& store) { return store.transact("town", {DataMove{0, "Gold", 5, "", "ana"}}); }).ok);
     const std::int64_t now = secondsNow();
     // Within its day: kept.
-    console.frame(data, now);
-    console.frame(data, now);
-    CHECK(data.store().counts().moves == 1);
+    frameOf(console, data, now);
+    frameOf(console, data, now);
+    CHECK(onStore(data, [&](engine::app::IDataStore& store) { return store.counts(); }).moves == 1);
     // Two days on -- past the next hourly read -- it goes.
     for (int frame = 0; frame < 3; ++frame)
-        console.frame(data, now + 2 * 86400);
-    CHECK(data.store().counts().moves == 0);
-    CHECK(data.store().balance("ana", "Gold") == 5);
+        frameOf(console, data, now + 2 * 86400);
+    CHECK(onStore(data, [&](engine::app::IDataStore& store) { return store.counts(); }).moves == 0);
+    CHECK(onStore(data, [&](engine::app::IDataStore& store) { return store.balance("ana", "Gold"); }) == 5);
 }
 
 #if ENG_ENABLE_DATA
@@ -549,7 +579,7 @@ TEST_CASE("data console > a scheduled backup is taken, counted from the newest, 
     DataConsole console(consoleOptions(folder / "backups", "g", 2.0, 2, 90));
     // The newest is under three hours old, two hours a period: one is due.
     for (int frame = 0; frame < 50; ++frame)
-        console.frame(data, now);
+        frameOf(console, data, now);
     const auto names = [&]() {
         std::vector<std::string> found;
         for (const auto& entry : std::filesystem::directory_iterator(folder / "backups"))
@@ -564,7 +594,7 @@ TEST_CASE("data console > a scheduled backup is taken, counted from the newest, 
     CHECK(kept[2] == "notes.txt");
     // The next is two hours after this one, not before.
     for (int frame = 0; frame < 5; ++frame)
-        console.frame(data, now + 3600);
+        frameOf(console, data, now + 3600);
     CHECK(names().size() == 3);
 }
 #endif

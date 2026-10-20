@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -68,6 +69,9 @@ struct ProcessOptions
 // Whether the environment sets `name` to something: anything but nothing at
 // all, the empty string and `0`.
 [[nodiscard]] bool environmentFlag(const char* name) noexcept;
+// What the environment sets `name` to; none where it is not set. For a
+// secret a configuration file names but must not hold.
+[[nodiscard]] std::optional<std::string> environmentValue(const char* name);
 [[nodiscard]] ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options);
 
 // **A program that runs beside this one, and whose output is read while it

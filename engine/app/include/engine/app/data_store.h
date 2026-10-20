@@ -142,12 +142,31 @@ struct DataBackupProgress
     std::string error;
 };
 
+// What reading a record found: the record, or none for an account with none
+// yet -- or that the store could not be read, which a world is told as such
+// rather than handed an empty record to write over the real one.
+struct RecordRead
+{
+    bool ok = true;
+    std::optional<StoredRecord> record;
+};
+
 class IDataStore
 {
 public:
     virtual ~IDataStore() = default;
     // The record kept for `account`; none for an account with no record yet.
     [[nodiscard]] virtual std::optional<StoredRecord> loadRecord(std::string_view account) = 0;
+    // The same, saying when the store could not be read: a database on this
+    // machine always can, a game's backend may not answer.
+    [[nodiscard]] virtual RecordRead readRecord(std::string_view account) { return RecordRead{true, loadRecord(account)}; }
+    // **Whether the move log, backups and counts are this store's**: a game's
+    // own backend keeps its own, and the console says so.
+    [[nodiscard]] virtual bool keepsItsLog() const { return true; }
+    // **Whether the last call could not reach the store** -- a backend that
+    // did not answer -- so what it returned is no answer at all: a list of
+    // no items is not an empty inventory.
+    [[nodiscard]] virtual bool unavailable() const { return false; }
     // Replaces it, durably before it returns; false where the store could not.
     [[nodiscard]] virtual bool writeRecord(std::string_view account, const StoredRecord& record) = 0;
 

@@ -71,11 +71,13 @@ std::vector<std::string> WorldManager::keysOf(const std::vector<std::string>& me
     return keys;
 }
 
-core::f64 WorldManager::rating(std::string_view name, std::string_view member)
+// **Ratings, on the store's thread** (the data worker's): what the manager's
+// loop asks of them is a job, and the answer comes back to it.
+namespace {
+
+core::f64 ratingIn(IDataStore& store, std::string_view name, std::string_view member)
 {
-    if (m_data == nullptr)
-        return StartingRating;
-    const SharedDatum held = m_data->store().getShared(RatingScope, ratingKey(name, member));
+    const SharedDatum held = store.getShared(RatingScope, ratingKey(name, member));
     script::SaveSlotData slot;
     if (held.version == 0 || !script::SaveStore::decode(held.value, slot))
         return StartingRating;
@@ -85,16 +87,44 @@ core::f64 WorldManager::rating(std::string_view name, std::string_view member)
     return std::get<core::f64>(found->second.scalar);
 }
 
-void WorldManager::setRating(std::string_view name, std::string_view member, core::f64 value)
+void setRatingIn(IDataStore& store, std::string_view name, std::string_view member, core::f64 value)
 {
-    if (m_data == nullptr)
-        return;
     const std::string key = ratingKey(name, member);
     const std::string text = savedText(script::SaveValue{scene::Value{value}, nullptr});
-    // Only this thread writes the manager's store: the version read is the
-    // version written over.
-    const SharedDatum held = m_data->store().getShared(RatingScope, key);
-    (void)m_data->store().setShared(RatingScope, key, text, held.version);
+    // Only the store's thread writes it: the version read is the version
+    // written over.
+    const SharedDatum held = store.getShared(RatingScope, key);
+    (void)store.setShared(RatingScope, key, text, held.version);
+}
+
+[[nodiscard]] std::string refusal(std::string_view reason)
+{
+    core::JsonWriter answer(core::JsonLayout::Compact);
+    answer.beginObject();
+    answer.field("ok", false);
+    answer.field("reason", reason);
+    answer.endObject();
+    return answer.text();
+}
+
+} // namespace
+
+void WorldManager::matchAnswer(const std::string& world, core::u32 id, const std::string& answer)
+{
+    if (id == 0)
+        return;
+    const auto found = std::find_if(m_worlds.begin(), m_worlds.end(), [&](const std::unique_ptr<World>& one) {
+        return one->config.name == world && one->process != nullptr;
+    });
+    if (found == m_worlds.end())
+        return;
+    core::JsonWriter result(core::JsonLayout::Compact);
+    result.beginObject();
+    result.field("type", "match-result");
+    result.field("id", static_cast<core::i64>(id));
+    result.field("answer", std::string_view{answer});
+    result.endObject();
+    send(**found, result);
 }
 
 void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u64 nowNs)
@@ -108,6 +138,14 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
     const std::string_view op = request["op"].asString();
     const std::string member(request["member"].asString());
     MatchBook& book = *m_matches;
+    const std::string askerName = asker.config.name;
+    // **Asked of the store**: answered when the job is back, not here.
+    bool deferred = false;
+    const auto onStore = [&](DataWorker::Job job) {
+        deferred = true;
+        if (m_data == nullptr || !m_data->post(std::move(job)))
+            matchAnswer(askerName, id, refusal("Unavailable"));
+    };
     core::JsonWriter answer(core::JsonLayout::Compact);
     answer.beginObject();
     if (op == "define") {
@@ -146,19 +184,32 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
             answer.field("reason", "NoParty");
         }
         else {
-            core::f64 mean = 0.0;
-            if (const MatchQueue* queue = book.queue(queueName); queue != nullptr && !queue->rating.empty()) {
-                for (const std::string& one : members)
-                    mean += rating(queue->rating, one);
-                mean /= static_cast<core::f64>(members.size());
-            }
+            const MatchQueue* queue = book.queue(queueName);
+            const std::string ratingName = queue != nullptr ? queue->rating : std::string{};
             const std::string_view named = request["region"].asString();
-            const std::string_view region = named.empty() ? std::string_view{m_options.config.region} : named;
-            const MatchBook::Answer done = book.enqueue(queueName, std::move(members), mean, region, nowNs);
-            answer.field("ok", done.ok);
-            answer.field("reason", std::string_view{done.reason});
-            if (done.ticket.has_value())
-                answer.field("ticket", std::string_view{done.ticket->id});
+            const std::string region(named.empty() ? std::string_view{m_options.config.region} : named);
+            // **The ticket's rating is its members' mean**, read on the
+            // store's thread; the ticket is made here once it is known.
+            onStore([this, askerName, id, queueName, ratingName, region, members,
+                     nowNs](IDataStore& store) mutable -> DataWorker::Then {
+                core::f64 mean = 0.0;
+                if (!ratingName.empty()) {
+                    for (const std::string& one : members)
+                        mean += ratingIn(store, ratingName, one);
+                    mean /= static_cast<core::f64>(members.size());
+                }
+                return [this, askerName, id, queueName, region, members = std::move(members), mean, nowNs]() mutable {
+                    const MatchBook::Answer done = m_matches->enqueue(queueName, std::move(members), mean, region, nowNs);
+                    core::JsonWriter queued(core::JsonLayout::Compact);
+                    queued.beginObject();
+                    queued.field("ok", done.ok);
+                    queued.field("reason", std::string_view{done.reason});
+                    if (done.ticket.has_value())
+                        queued.field("ticket", std::string_view{done.ticket->id});
+                    queued.endObject();
+                    matchAnswer(askerName, id, queued.text());
+                };
+            });
         }
     }
     else if (op == "cancel") {
@@ -193,23 +244,41 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
             answer.field("reason", "Invalid");
         }
         else {
-            // **Elo, from the ratings as they are now**, written back each.
-            std::map<std::string, core::f64> ratings;
-            for (const std::string& one : everyone(*match))
-                ratings[one] = rating(queue->rating, one);
-            applyElo(*match, static_cast<core::u32>(team), ratings);
-            for (const auto& [one, value] : ratings)
-                setRating(queue->rating, one, value);
-            answer.field("ok", true);
+            // **Elo, from the ratings as they are now**, written back each --
+            // read and written on the store's thread, one job, so no other
+            // write of theirs comes between.
+            onStore([this, askerName, id, played = *match, ratingName = queue->rating,
+                     winner = static_cast<core::u32>(team)](IDataStore& store) -> DataWorker::Then {
+                std::map<std::string, core::f64> ratings;
+                for (const std::string& one : everyone(played))
+                    ratings[one] = ratingIn(store, ratingName, one);
+                applyElo(played, winner, ratings);
+                for (const auto& [one, value] : ratings)
+                    setRatingIn(store, ratingName, one, value);
+                return [this, askerName, id]() { matchAnswer(askerName, id, R"({"ok":true})"); };
+            });
         }
     }
     else if (op == "getRating") {
-        answer.field("ok", true);
-        answer.field("rating", rating(request["rating"].asString(), member));
+        onStore([this, askerName, id, name = std::string(request["rating"].asString()),
+                 member](IDataStore& store) -> DataWorker::Then {
+            const core::f64 value = ratingIn(store, name, member);
+            return [this, askerName, id, value]() {
+                core::JsonWriter rated(core::JsonLayout::Compact);
+                rated.beginObject();
+                rated.field("ok", true);
+                rated.field("rating", value);
+                rated.endObject();
+                matchAnswer(askerName, id, rated.text());
+            };
+        });
     }
     else if (op == "setRating") {
-        setRating(request["rating"].asString(), member, request["value"].asNumber(StartingRating));
-        answer.field("ok", true);
+        onStore([this, askerName, id, name = std::string(request["rating"].asString()), member,
+                 value = request["value"].asNumber(StartingRating)](IDataStore& store) -> DataWorker::Then {
+            setRatingIn(store, name, member, value);
+            return [this, askerName, id]() { matchAnswer(askerName, id, R"({"ok":true})"); };
+        });
     }
     else if (op == "createLobby") {
         const auto size = static_cast<core::u32>(std::clamp<core::f64>(request["size"].asNumber(8.0), 1.0, 100.0));
@@ -252,15 +321,8 @@ void WorldManager::matchOp(World& asker, const ManagerMessage& message, core::u6
         answer.field("reason", "Invalid");
     }
     answer.endObject();
-    if (id != 0) {
-        core::JsonWriter result(core::JsonLayout::Compact);
-        result.beginObject();
-        result.field("type", "match-result");
-        result.field("id", static_cast<core::i64>(id));
-        result.field("answer", std::string_view{answer.text()});
-        result.endObject();
-        send(asker, result);
-    }
+    if (!deferred)
+        matchAnswer(askerName, id, answer.text());
     matchNotices();
 }
 

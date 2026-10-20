@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "engine/app/data_store.h"
+#include "engine/app/data_worker.h"
 #include "engine/core/types.h"
 
 namespace engine::app {
@@ -24,7 +25,9 @@ public:
     // refused as busy.
     static constexpr core::i64 BusyAfterMs = 10'000;
 
-    explicit DataBroker(std::unique_ptr<IDataStore> store);
+    // **The store is the worker's** (`DataWorker`): every read and write is
+    // done on its thread, and its answers are taken by `pump`.
+    explicit DataBroker(std::unique_ptr<IDataStore> store, core::usize most = DataWorker::DefaultMost);
 
     // **An answer to a world's `load`**: the record, where it was given --
     // none for an account that has none yet -- or `busy` where another world
@@ -44,9 +47,24 @@ public:
     void load(std::string_view world, core::u32 id, std::string_view account, core::i64 nowMs);
     // A world's write of a record it holds, and whether it lets it go with it.
     // False, and nothing written, where the world does not hold it -- a world
-    // that lost it to `worldGone` and came back -- or the store failed.
+    // that lost it to `worldGone` and came back -- or the queue is full; a
+    // write the store then fails is said in the log.
     [[nodiscard]] bool write(std::string_view world, std::string_view account, const StoredRecord& record, bool release,
                              core::i64 nowMs);
+    // **A request of `runDataOp`'s** -- a transaction, items, money, a shared
+    // value -- done on the store's thread and answered on this one by `done`
+    // with its answer's text; false, and nothing done, when the queue is full.
+    using Answered = std::function<void(std::string)>;
+    [[nodiscard]] bool ask(std::string world, std::string request, Answered done);
+    // Anything else, on the store's thread; what it returns runs here.
+    [[nodiscard]] bool post(DataWorker::Job job) { return m_worker.post(std::move(job)); }
+    // Done before it returns: a console's command, a test.
+    void wait(const std::function<void(IDataStore&)>& job) { m_worker.wait(job); }
+    // The store's answers since, each on this thread: records given, writes
+    // that failed, requests answered.
+    void pump() { m_worker.pump(); }
+    [[nodiscard]] DataWorker::Stats stats() const { return m_worker.stats(); }
+    core::f64 takeWorst() { return m_worker.takeWorst(); }
     // Lets go of every record `world` held: it stopped, or died, and what it
     // had not written is lost.
     void worldGone(std::string_view world, core::i64 nowMs);
@@ -57,15 +75,11 @@ public:
     // The world holding `account`'s record, or empty.
     [[nodiscard]] std::string_view holder(std::string_view account) const;
     [[nodiscard]] std::size_t held() const noexcept { return m_holders.size(); }
-    // The database itself, for what holds no record: items, money and
-    // transactions (ADR 0238 §3).
-    [[nodiscard]] IDataStore& store() noexcept { return *m_store; }
 
 private:
     void give(std::string world, core::u32 id, std::string account);
     void released(std::string_view account, core::i64 nowMs);
 
-    std::unique_ptr<IDataStore> m_store;
     std::map<std::string, std::string, std::less<>> m_holders;
     struct Waiting
     {
@@ -76,6 +90,8 @@ private:
     };
     std::deque<Waiting> m_waiting;
     std::vector<Answer> m_answers;
+    // Last: it stops first, finishing what was asked while the rest is whole.
+    DataWorker m_worker;
 };
 
 } // namespace engine::app

@@ -1,5 +1,7 @@
 #include "engine/app/servers_config.h"
 
+#include "engine/app/backend_data_store.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -120,6 +122,18 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
         config.backupEveryHours = *hours;
     }
     count("data.backup_keep", 1, 1000, config.backupKeep);
+    // **A game's own backend** (ADR 0238 §5): an address it may use, or the
+    // file is refused with why.
+    if (const std::optional<std::string_view> backend = document.string("data.backend")) {
+        std::string why;
+        if (!backendUrlAllowed(*backend, why)) {
+            error = problem(ENG_TR("manager.err.servers_value"), source, why);
+            return std::nullopt;
+        }
+        config.backend = std::string(*backend);
+    }
+    if (const std::optional<std::string_view> token = document.string("data.backend_token_env"))
+        config.backendTokenEnv = std::string(*token);
     count("data.moves_keep_days", 0, 36500, config.movesKeepDays);
     count("parties.size", 2, 100, config.partySize);
     config.accounts = document.boolean("accounts.enabled").value_or(false);

@@ -50,6 +50,11 @@ struct ServersConfig
     core::f64 backupEveryHours = 0.0;
     core::u32 backupKeep = 7;
     core::u32 movesKeepDays = 90;
+    // `[data] backend` (ADR 0238 §5): a game's own service keeps its data,
+    // empty for the manager's database; and the environment variable that
+    // holds the token it is asked with.
+    std::string backend;
+    std::string backendTokenEnv;
 
     // `[accounts]` (ADR 0237): the front door signs players in, and lets in
     // only those it signed in; whether a player may make an account

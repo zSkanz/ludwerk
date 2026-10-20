@@ -209,7 +209,35 @@ std::optional<std::int64_t> DataConsole::backupTime(std::string_view game, std::
 std::optional<DataConsole::Answer> DataConsole::run(std::string_view line, DataBroker& data, std::int64_t nowUnix)
 {
     const auto [verb, rest] = split(line);
-    IDataStore& store = data.store();
+    if (verb != "moves" && verb != "data")
+        return std::nullopt;
+    // **An operator's command waits for the store**, after what was asked
+    // before it: it is one line typed, not a frame.
+    const auto held = static_cast<core::i64>(data.held());
+    std::optional<Answer> answer;
+    data.wait([&](IDataStore& store) { answer = runOn(store, line, held, nowUnix); });
+    // **How the store keeps up**, under `data`: what waits, the worst wait
+    // since the last time this was asked, and what was refused.
+    if (answer.has_value() && verb == "data" && split(rest).first.empty()) {
+        const DataWorker::Stats stats = data.stats();
+        std::array<char, 24> worst{};
+        std::snprintf(worst.data(), worst.size(), "%.1f", data.takeWorst());
+        const std::array<core::I18nArg, 4> args{core::I18nArg{"queued", static_cast<core::i64>(stats.queued)},
+                                                core::I18nArg{"most", static_cast<core::i64>(stats.most)},
+                                                core::I18nArg{"worst", std::string_view{worst.data()}},
+                                                core::I18nArg{"refused", static_cast<core::i64>(stats.refused)}};
+        answer->text += "\n" + phrase(ENG_TR("data.status_queue"), args);
+    }
+    return answer;
+}
+
+std::optional<DataConsole::Answer> DataConsole::runOn(IDataStore& store, std::string_view line, core::i64 held,
+                                                      std::int64_t nowUnix)
+{
+    const auto [verb, rest] = split(line);
+    // A game's own backend keeps its log, its counts and its backups.
+    if (!store.keepsItsLog())
+        return Answer{phrase(ENG_TR("data.backend_keeps")), false};
     if (verb == "moves") {
         DataMoveQuery query;
         const auto [what, value] = split(rest);
@@ -243,7 +271,7 @@ std::optional<DataConsole::Answer> DataConsole::run(std::string_view line, DataB
                       static_cast<double>(counts.bytes) / (1024.0 * 1024.0));
         const std::array<core::I18nArg, 8> args{
             core::I18nArg{"schema", counts.schema},   core::I18nArg{"accounts", counts.accounts},
-            core::I18nArg{"records", counts.records}, core::I18nArg{"held", static_cast<core::i64>(data.held())},
+            core::I18nArg{"records", counts.records}, core::I18nArg{"held", held},
             core::I18nArg{"items", counts.items},     core::I18nArg{"transactions", counts.transactions},
             core::I18nArg{"moves", counts.moves},     core::I18nArg{"megabytes", std::string_view{megabytes.data()}}};
         std::string text = phrase(counts.bytes > 0 ? ENG_TR("data.status") : ENG_TR("data.status_memory"), args);
@@ -294,29 +322,45 @@ std::optional<DataConsole::Answer> DataConsole::run(std::string_view line, DataB
     return Answer{phrase(ENG_TR("console.usage.data")), true};
 }
 
+void DataConsole::stepped(const DataBackupProgress& progress)
+{
+    m_copied = progress.copied;
+    m_total = progress.total;
+    if (progress.state == DataBackupProgress::State::Copying)
+        return;
+    const std::string path = m_copyingTo.string();
+    if (progress.state == DataBackupProgress::State::Done) {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
+                                                core::I18nArg{"pages", progress.total}};
+        core::log(core::LogLevel::Info, ENG_TR("data.info.backup_done"), args);
+        if (m_scheduled)
+            prune();
+    }
+    else {
+        const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
+                                                core::I18nArg{"why", std::string_view{progress.error}}};
+        core::log(core::LogLevel::Error, ENG_TR("data.err.backup_failed"), args);
+    }
+    m_copying = false;
+}
+
 void DataConsole::frame(DataBroker& data, std::int64_t nowUnix)
 {
-    IDataStore& store = data.store();
+    // **One job at a time**, answered before the next is asked.
+    if (m_working)
+        return;
+    const auto post = [&](DataWorker::Job job) {
+        m_working = data.post(std::move(job));
+    };
     if (m_copying) {
-        const DataBackupProgress progress = store.stepBackup(PagesAFrame);
-        m_copied = progress.copied;
-        m_total = progress.total;
-        if (progress.state != DataBackupProgress::State::Copying) {
-            const std::string path = m_copyingTo.string();
-            if (progress.state == DataBackupProgress::State::Done) {
-                const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
-                                                        core::I18nArg{"pages", progress.total}};
-                core::log(core::LogLevel::Info, ENG_TR("data.info.backup_done"), args);
-                if (m_scheduled)
-                    prune();
-            }
-            else {
-                const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
-                                                        core::I18nArg{"why", std::string_view{progress.error}}};
-                core::log(core::LogLevel::Error, ENG_TR("data.err.backup_failed"), args);
-            }
-            m_copying = false;
-        }
+        post([this](IDataStore& store) -> DataWorker::Then {
+            const DataBackupProgress progress = store.stepBackup(PagesAFrame);
+            return [this, progress]() {
+                m_working = false;
+                stepped(progress);
+            };
+        });
+        return;
     }
 
     // **A backup every so many hours**, counted from the newest one in the
@@ -331,20 +375,29 @@ void DataConsole::frame(DataBroker& data, std::int64_t nowUnix)
         if (nowUnix >= *m_nextBackup) {
             m_nextBackup = nowUnix + period;
             const std::filesystem::path to = m_options.backups / backupName(m_options.game, nowUnix);
-            std::string why;
-            if (store.startBackup(to, why)) {
-                m_copying = true;
-                m_scheduled = true;
-                m_copyingTo = to;
-                m_copied = 0;
-                m_total = 0;
-            }
-            else {
-                const std::string path = to.string();
-                const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
-                                                        core::I18nArg{"why", std::string_view{why}}};
-                core::log(core::LogLevel::Error, ENG_TR("data.err.backup_failed"), args);
-            }
+            post([this, to](IDataStore& store) -> DataWorker::Then {
+                // A game's own backend backs itself up.
+                if (!store.keepsItsLog())
+                    return [this]() { m_working = false; };
+                std::string why;
+                const bool started = store.startBackup(to, why);
+                return [this, to, started, why]() {
+                    m_working = false;
+                    if (started) {
+                        m_copying = true;
+                        m_scheduled = true;
+                        m_copyingTo = to;
+                        m_copied = 0;
+                        m_total = 0;
+                        return;
+                    }
+                    const std::string path = to.string();
+                    const std::array<core::I18nArg, 2> args{core::I18nArg{"path", std::string_view{path}},
+                                                            core::I18nArg{"why", std::string_view{why}}};
+                    core::log(core::LogLevel::Error, ENG_TR("data.err.backup_failed"), args);
+                };
+            });
+            return;
         }
     }
 
@@ -357,18 +410,23 @@ void DataConsole::frame(DataBroker& data, std::int64_t nowUnix)
         }
         if (m_forgetting) {
             const std::int64_t before = nowUnix - static_cast<std::int64_t>(m_options.movesKeepDays) * SecondsADay;
-            const core::i64 gone = store.forgetMovesBefore(before, ForgetAtOnce);
-            m_forgotten += gone;
-            if (gone == 0) {
-                m_forgetting = false;
-                m_nextForget = nowUnix + ForgetEverySeconds;
-                if (m_forgotten > 0) {
-                    const std::array<core::I18nArg, 2> args{
-                        core::I18nArg{"lines", m_forgotten},
-                        core::I18nArg{"days", static_cast<core::i64>(m_options.movesKeepDays)}};
-                    core::log(core::LogLevel::Info, ENG_TR("data.info.moves_forgotten"), args);
-                }
-            }
+            post([this, before, nowUnix](IDataStore& store) -> DataWorker::Then {
+                const core::i64 gone = store.keepsItsLog() ? store.forgetMovesBefore(before, ForgetAtOnce) : 0;
+                return [this, gone, nowUnix]() {
+                    m_working = false;
+                    m_forgotten += gone;
+                    if (gone != 0)
+                        return;
+                    m_forgetting = false;
+                    m_nextForget = nowUnix + ForgetEverySeconds;
+                    if (m_forgotten > 0) {
+                        const std::array<core::I18nArg, 2> args{
+                            core::I18nArg{"lines", m_forgotten},
+                            core::I18nArg{"days", static_cast<core::i64>(m_options.movesKeepDays)}};
+                        core::log(core::LogLevel::Info, ENG_TR("data.info.moves_forgotten"), args);
+                    }
+                };
+            });
         }
     }
 }

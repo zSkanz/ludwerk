@@ -3401,10 +3401,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             (void)localData->write("self", write.account, StoredRecord{write.body, write.version}, write.release,
                                    nowMs);
         state.dataWrites.clear();
-        for (const scene::EngineState::DataOp& op : state.dataOps)
-            state.dataResults.push_back(
-                scene::EngineState::DataResult{op.id, runDataOp(localData->store(), "self", op.request)});
+        // **Done on the store's thread**, answered here when done.
+        for (const scene::EngineState::DataOp& op : state.dataOps) {
+            const core::u32 id = op.id;
+            if (!localData->ask("self", op.request, [&host, id](const std::string& answer) {
+                    host->world().engineState().dataResults.push_back(scene::EngineState::DataResult{id, answer});
+                }))
+                state.dataResults.push_back(
+                    scene::EngineState::DataResult{id, R"({"ok":false,"reason":"Unavailable"})"});
+        }
         state.dataOps.clear();
+        localData->pump();
         localData->tick(nowMs);
         for (DataBroker::Answer& answer : localData->takeAnswers()) {
             scene::EngineState::DataAnswer given;

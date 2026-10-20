@@ -555,6 +555,51 @@ A dedicated server with no manager keeps its database in its saves folder,
 and its own console answers `data` and `moves` the same way, with its
 backups in `backups` there.
 
+### A game's own backend
+
+A game that keeps its data in a service of its own -- its database, its
+company's accounts, its web shop -- points the manager at it, and the data
+service's operations go there instead of to the manager's database:
+
+```toml
+# servers.toml
+[data]
+backend = "https://data.example.com/game"
+backend_token_env = "GAME_BACKEND_TOKEN"   # the token's environment variable; never the token
+```
+
+Scripts do not change: `LoadAsync`, `TransactAsync`, `UpdateAsync` and the
+rest are the same calls. The manager sends each one as
+`POST <backend>/v1/data` with a JSON body -- `op` (`load`, `write`,
+`transact`, `create`, `destroy`, `items`, `balance`, `get`, `set`), what
+it names, and `request`, an id of its own -- with `Authorization: Bearer`
+and the token, and expects the answer the engine's own database gives, in
+JSON. `examples/47-realms/backend/backend.luau` is a complete one, in
+Luau run by Lute:
+
+```
+lute examples/47-realms/backend/backend.luau --port=7860 --state=realms.json
+```
+
+- **An answer lost is asked again with the same `request`**, up to three
+  times in ten seconds, so a backend must do a `transact` (and any change)
+  once per id and answer it again as it did. Past that the operation is
+  `Unavailable`: the script's call fails and says so, and nothing was half
+  done.
+- `https://` to anywhere; `http://` only to this machine or the local
+  network -- `localhost`, `127.x`, `10.x`, `172.16-31.x`, `192.168.x`,
+  `169.254.x`, `::1`, `fe80::` -- and `servers.toml` is refused otherwise.
+- **Accounts stay the manager's** (see [Signing players in](#signing-players-in)),
+  in its own database, whatever keeps the game's data.
+- The backend keeps its own log, counts and backups: `data`, `moves`,
+  `data undo` and `data backup` say so.
+
+Whatever keeps the data, the manager never waits for it: every request is
+done on a thread of its own, in the order asked, and answered when it is
+done. `data` at the console ends with how that thread keeps up -- the
+requests waiting, the longest wait since `data` was last asked, and how
+many were refused because 4,096 were already waiting.
+
 ## Parties, guilds and chat
 
 **A party** is the manager's: players who play together, wherever each of
@@ -1038,7 +1083,7 @@ yours to answer for.
   in, and those already in a world stay.
 - Recovering an account by e-mail, and signing in in two steps: the engine
   sends no mail, and a game's own backend does both.
-- A game's own backend in place of the database: the rest of the data
-  service is still to come.
+- Accounts kept by a game's own backend: a game's backend keeps its data,
+  and the front door's accounts are the manager's (a later extension).
 - Copying backups to another machine: that is the operator's, with whatever
   the machine already uses.

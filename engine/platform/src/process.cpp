@@ -141,6 +141,24 @@ bool graphicsDriverNamed() noexcept
 #endif
 }
 
+std::optional<std::string> environmentValue(const char* name)
+{
+#if defined(_WIN32)
+    const DWORD needed = GetEnvironmentVariableA(name, nullptr, 0);
+    if (needed == 0)
+        return std::nullopt;
+    std::string value(needed, ' ');
+    const DWORD length = GetEnvironmentVariableA(name, value.data(), needed);
+    value.resize(length);
+    return value;
+#else
+    const char* value = std::getenv(name);
+    if (value == nullptr)
+        return std::nullopt;
+    return std::string(value);
+#endif
+}
+
 bool environmentFlag(const char* name) noexcept
 {
 #if defined(_WIN32)

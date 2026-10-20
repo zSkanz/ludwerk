@@ -292,6 +292,9 @@ private:
     // database's answers sent to the worlds that asked.
     [[nodiscard]] static std::string dataName(const World& world);
     void dataAnswers(core::u64 nowNs);
+    // A data service request's answer, to the run of the world `dataName`
+    // names, if it is still there.
+    void dataResult(const std::string& world, core::i64 id, const std::string& answer);
 
     Options m_options;
     core::Ed25519Pair m_signing;
@@ -303,6 +306,7 @@ private:
     // **Signing players in** (ADR 0237), where `[accounts]` says so; the
     // tickets the front door has taken; and the account each player is known
     // by, by key -- what every pass names (amendment C).
+    std::unique_ptr<IDataStore> m_accountStore;
     std::unique_ptr<AccountDoor> m_accounts;
     core::TicketReplay m_tickets;
     std::map<std::string, std::string> m_accountOf;
@@ -320,8 +324,9 @@ private:
     void matchReady(World& instance);
     void sendToMatch(const Match& match, const World& instance, const std::vector<std::string>& members);
     [[nodiscard]] std::vector<std::string> keysOf(const std::vector<std::string>& members) const;
-    [[nodiscard]] core::f64 rating(std::string_view name, std::string_view member);
-    void setRating(std::string_view name, std::string_view member, core::f64 value);
+    // A matchmaking answer, sent to the world named -- when it is still there:
+    // one that waited on the store may have gone meanwhile.
+    void matchAnswer(const std::string& world, core::u32 id, const std::string& answer);
     void partyOp(World& asker, const ManagerMessage& message, core::u64 nowNs);
     void partyNotices();
     void partyTravel(const ManagerMessage& message);

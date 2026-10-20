@@ -1,0 +1,10 @@
+# The data service against a game's own backend (ADR 0238 §5): what the
+# manager's database does, done by a service the game runs -- here the
+# reference one, `examples/47-realms/backend/backend.luau`.
+
+[project]
+name = "Data Backend"
+id = "dev.ludwerk.data-backend"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/town.scene.json"

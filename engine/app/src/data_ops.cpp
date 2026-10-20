@@ -129,6 +129,10 @@ std::string runDataOp(IDataStore& store, std::string_view world, std::string_vie
     else {
         return refused("Invalid");
     }
+    // **Nothing that did not reach the store is an answer**: the world is
+    // told the store is away, and asks again or tells its player.
+    if (store.unavailable())
+        return refused("Unavailable");
     answer.endObject();
     return answer.text();
 }

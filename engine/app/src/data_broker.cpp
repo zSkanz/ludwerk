@@ -4,23 +4,56 @@
 #include <array>
 #include <utility>
 
+#include "engine/app/data_ops.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 
 namespace engine::app {
 
-DataBroker::DataBroker(std::unique_ptr<IDataStore> store) : m_store(std::move(store))
+DataBroker::DataBroker(std::unique_ptr<IDataStore> store, core::usize most) : m_worker(std::move(store), most)
 {}
 
 void DataBroker::give(std::string world, core::u32 id, std::string account)
 {
-    Answer answer;
-    answer.world = world;
-    answer.id = id;
-    answer.ok = true;
-    answer.record = m_store->loadRecord(account);
-    m_holders.insert_or_assign(std::move(account), std::move(world));
-    m_answers.push_back(std::move(answer));
+    // **Held at once, read on the store's thread**: a write the last holder
+    // sent is ahead of this read in the queue, so it reads what was written.
+    m_holders.insert_or_assign(account, world);
+    const bool queued = m_worker.post([this, world, id, account](IDataStore& store) -> DataWorker::Then {
+        RecordRead read = store.readRecord(account);
+        return [this, world, id, read = std::move(read)]() mutable {
+            Answer answer;
+            answer.world = world;
+            answer.id = id;
+            answer.ok = read.ok;
+            answer.record = std::move(read.record);
+            m_answers.push_back(std::move(answer));
+        };
+    });
+    if (!queued) {
+        m_holders.erase(account);
+        Answer refused;
+        refused.world = std::move(world);
+        refused.id = id;
+        m_answers.push_back(std::move(refused));
+        const std::array<core::I18nArg, 1> args{
+            core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
+        core::log(core::LogLevel::Error, ENG_TR("data.err.queue_full"), args);
+    }
+}
+
+bool DataBroker::ask(std::string world, std::string request, Answered done)
+{
+    const bool queued =
+        m_worker.post([world = std::move(world), request = std::move(request), done](IDataStore& store) mutable {
+            std::string answer = runDataOp(store, world, request);
+            return DataWorker::Then([done, answer = std::move(answer)]() { done(answer); });
+        });
+    if (!queued) {
+        const std::array<core::I18nArg, 1> args{
+            core::I18nArg{"most", static_cast<core::i64>(m_worker.stats().most)}};
+        core::log(core::LogLevel::Error, ENG_TR("data.err.queue_full"), args);
+    }
+    return queued;
 }
 
 void DataBroker::load(std::string_view world, core::u32 id, std::string_view account, core::i64 nowMs)
@@ -42,8 +75,16 @@ bool DataBroker::write(std::string_view world, std::string_view account, const S
         core::log(core::LogLevel::Warn, ENG_TR("data.warn.write_not_held"), args);
         return false;
     }
-    const bool written = m_store->writeRecord(account, record);
-    if (!written) {
+    const bool queued =
+        m_worker.post([account = std::string(account), record](IDataStore& store) -> DataWorker::Then {
+            if (store.writeRecord(account, record))
+                return {};
+            return [account]() {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"account", std::string_view{account}}};
+                core::log(core::LogLevel::Error, ENG_TR("data.err.write_failed"), args);
+            };
+        });
+    if (!queued) {
         const std::array<core::I18nArg, 1> args{core::I18nArg{"account", account}};
         core::log(core::LogLevel::Error, ENG_TR("data.err.write_failed"), args);
     }
@@ -51,7 +92,7 @@ bool DataBroker::write(std::string_view world, std::string_view account, const S
         m_holders.erase(holding);
         released(account, nowMs);
     }
-    return written;
+    return queued;
 }
 
 void DataBroker::released(std::string_view account, core::i64 nowMs)

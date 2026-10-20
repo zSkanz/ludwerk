@@ -47,9 +47,10 @@ foreach(run RANGE 1 6)
     endif()
     math(EXPR killed "${killed} + 1")
 endforeach()
-# The last count, from a run that is not killed.
+# The last count, from a run that is not killed -- the frames of the first:
+# the database answers on its own thread, a frame or so after it is asked.
 execute_process(
-    COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves" --frames=5 --exit
+    COMMAND "${HOST}" "${PROJECT}" --headless "--serve=${PORT}" "--saves=${WORKDIR}/saves" --frames=60 --exit
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)

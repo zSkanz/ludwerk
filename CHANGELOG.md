@@ -11,6 +11,15 @@ here.
 
 ### Added
 
+- A game's own backend can keep its data: `[data] backend` in
+  `servers.toml` sends every operation of the data service -- records,
+  transactions, items, money, shared values -- to the game's service as
+  JSON, with an id per request, so a request sent again after a lost answer
+  is done once. The manager never waits for it: the game's database, its own
+  or a backend, is asked on a thread of its own, and `data` at the console
+  says how it keeps up. A complete backend in Luau comes with the realms
+  example.
+
 - Matchmaking and lobbies for an online game. `MatchmakingService` keeps a
   game's queues in its manager: a player or a whole party queues from any
   world, teams fill from tickets whose ratings are close -- a window that

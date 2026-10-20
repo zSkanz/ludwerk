@@ -8,6 +8,7 @@
 #include <span>
 #include <utility>
 
+#include "engine/app/backend_data_store.h"
 #include "engine/app/data_ops.h"
 #include "engine/app/match_keys.h"
 #include "engine/app/travel_pass.h"
@@ -243,23 +244,42 @@ std::optional<core::EngineError> WorldManager::start()
     // **The game's data** (ADR 0238 §1): one database, this process's alone.
     // One that cannot be opened is said, and the game runs on with its data
     // kept in memory -- and lost when the manager stops.
-    std::unique_ptr<IDataStore> store;
-    if (m_options.dataStore) {
-        store = m_options.dataStore();
-    }
-    else {
+    // Opened twice where accounts are on: the data service's connection is
+    // its worker's, on its own thread, and the front door's is this loop's.
+    const auto openStore = [this]() -> std::unique_ptr<IDataStore> {
+        if (m_options.dataStore)
+            return m_options.dataStore();
         const std::filesystem::path file =
             m_options.root / "data" /
             ((m_options.projectId.empty() ? std::string{"game"} : m_options.projectId) + ".db");
         std::string why;
-        store = openDataStore(file, why);
-        if (store == nullptr) {
+        std::unique_ptr<IDataStore> opened = openDataStore(file, why);
+        if (opened == nullptr) {
             const std::array<core::I18nArg, 2> args{core::I18nArg{"path", file.string()},
                                                     core::I18nArg{"why", std::string_view{why}}};
             core::log(core::LogLevel::Error, ENG_TR("data.err.not_opened"), args);
+            return makeMemoryDataStore();
         }
+        return opened;
+    };
+    // **A game's own backend keeps its data** where `[data] backend` names
+    // one (ADR 0238 §5); its accounts stay this manager's, below.
+    if (!m_options.config.backend.empty()) {
+        BackendOptions backend;
+        backend.url = m_options.config.backend;
+        if (const std::string& name = m_options.config.backendTokenEnv; !name.empty()) {
+            if (const std::optional<std::string> token = platform::environmentValue(name.c_str()))
+                backend.token = *token;
+            else {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{name}}};
+                core::log(core::LogLevel::Warn, ENG_TR("data.err.backend_token"), args);
+            }
+        }
+        m_data = std::make_unique<DataBroker>(makeBackendDataStore(std::move(backend)));
     }
-    m_data = std::make_unique<DataBroker>(store != nullptr ? std::move(store) : makeMemoryDataStore());
+    else {
+        m_data = std::make_unique<DataBroker>(openStore());
+    }
     DataConsole::Options dataOptions;
     dataOptions.backups = m_options.root / "data" / "backups";
     dataOptions.game = m_options.projectId.empty() ? std::string{"game"} : m_options.projectId;
@@ -286,7 +306,8 @@ std::optional<core::EngineError> WorldManager::start()
         accounts.namePattern = m_options.config.accountsNamePattern;
         accounts.unixClock = m_options.unixClock;
         accounts.clock = m_options.clock;
-        m_accounts = std::make_unique<AccountDoor>(m_data->store(), std::move(accounts));
+        m_accountStore = openStore();
+        m_accounts = std::make_unique<AccountDoor>(*m_accountStore, std::move(accounts));
     }
 
     for (const ServersConfig::World& config : m_options.config.worlds) {
@@ -781,10 +802,28 @@ std::string WorldManager::dataName(const World& world)
     return world.config.name + "#" + std::to_string(world.dataRun);
 }
 
+void WorldManager::dataResult(const std::string& world, core::i64 id, const std::string& answer)
+{
+    const auto found = std::find_if(m_worlds.begin(), m_worlds.end(), [&](const std::unique_ptr<World>& one) {
+        return one->process != nullptr && dataName(*one) == world;
+    });
+    if (found == m_worlds.end())
+        return;
+    core::JsonWriter result(core::JsonLayout::Compact);
+    result.beginObject();
+    result.field("type", "data-result");
+    result.field("id", id);
+    result.field("answer", std::string_view{answer});
+    result.endObject();
+    send(**found, result);
+}
+
 void WorldManager::dataAnswers(core::u64 nowNs)
 {
     if (m_data == nullptr)
         return;
+    // What the store's thread has done since: records read, requests answered.
+    m_data->pump();
     m_data->tick(static_cast<core::i64>(nowNs / 1'000'000u));
     for (const DataBroker::Answer& answer : m_data->takeAnswers()) {
         const auto world = std::find_if(m_worlds.begin(), m_worlds.end(), [&](const std::unique_ptr<World>& one) {
@@ -1264,16 +1303,19 @@ void WorldManager::handle(World& world, const ManagerMessage& message)
                 exitAfter = true;
             }
         }
-        const std::string answer = runDataOp(m_data->store(), dataName(world), root["request"].asString());
-        if (exitAfter)
-            std::_Exit(KilledAtTransaction);
-        core::JsonWriter result(core::JsonLayout::Compact);
-        result.beginObject();
-        result.field("type", "data-result");
-        result.field("id", root["id"].asInteger(0));
-        result.field("answer", std::string_view{answer});
-        result.endObject();
-        send(world, result);
+        // **Done on the store's thread**, answered to the run of the world
+        // that asked -- one that stopped meanwhile, or started again, is not
+        // given an answer to a question it never asked.
+        const core::i64 id = root["id"].asInteger(0);
+        const std::string name = dataName(world);
+        const bool queued = m_data->ask(dataName(world), std::string(root["request"].asString()),
+                                        [this, name, id, exitAfter](const std::string& answer) {
+                                            if (exitAfter)
+                                                std::_Exit(KilledAtTransaction);
+                                            dataResult(name, id, answer);
+                                        });
+        if (!queued)
+            dataResult(name, id, R"({"ok":false,"reason":"Unavailable"})");
         return;
     }
     if (type == "data-write" && m_data != nullptr) {

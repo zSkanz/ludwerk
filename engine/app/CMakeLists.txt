@@ -16,6 +16,8 @@ engine_add_module(app
         src/data_console.cpp
         src/data_ops.cpp
         src/data_store.cpp
+        src/data_worker.cpp
+        src/backend_data_store.cpp
         src/match_book.cpp
         src/world_manager_matches.cpp
         src/party_book.cpp
@@ -430,6 +432,7 @@ engine_add_module_tests(app
         tests/world_manager_tests.cpp
         tests/account_door_tests.cpp
         tests/data_broker_tests.cpp
+        tests/data_worker_tests.cpp
         tests/match_book_tests.cpp
         tests/party_book_tests.cpp
         tests/sub_world_tests.cpp
@@ -902,6 +905,24 @@ if(ENG_BUILD_TESTS)
         set_tests_properties(data_travel PROPERTIES
             PASS_REGULAR_EXPRESSION "the record changed in the tick of the hop is the one the next world loads"
             TIMEOUT 200)
+        # **A game's own backend** (ADR 0238 §5): the reference backend, a
+        # manager whose data it keeps, a thousand trades, a shared value from
+        # two worlds at once, a record across them -- and a request sent twice
+        # done once.
+        add_test(NAME data_backend
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/backend
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-backend
+                    -DPORT=47886
+                    -DBACKEND_PORT=47889
+                    -DBACKEND=${CMAKE_SOURCE_DIR}/examples/47-realms/backend/backend.luau
+                    -DTWICE=${CMAKE_SOURCE_DIR}/tests/data/backend-twice/twice.luau
+                    -DSOURCE=${CMAKE_SOURCE_DIR}
+                    -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_backend.cmake)
+        set_tests_properties(data_backend PROPERTIES
+            PASS_REGULAR_EXPRESSION "a game's own backend keeps its records, trades and shared values"
+            TIMEOUT 400)
         # **Accounts at the front door** (ADR 0237): made, refused each way
         # a sign-in can be, signed in, and known by both worlds -- a
         # traveller's account carried in the pass; the
