@@ -1569,6 +1569,13 @@ void WorldHost::tick()
     if (state.paused)
         return;
 
+    // **The pools closed up**, where nothing holds a component: what the
+    // last scene change, or any run of destruction, left behind.
+    {
+        ENG_PROFILE_SCOPE("scene.compact");
+        m_world->compactPools();
+    }
+
     // Before anything else in the tick: a track loaded by a script this tick has
     // to find the skeleton its mesh names, and a headless replay has no render
     // loop to have loaded it.

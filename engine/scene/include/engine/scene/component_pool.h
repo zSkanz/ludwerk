@@ -13,7 +13,8 @@
 //   3. **Removal does not reorder.** A swap-and-pop would be faster and would
 //      make iteration order depend on removal history, which is exactly the
 //      dependency (1) rules out. Removal leaves a hole, and compaction happens
-//      only at a FrameStart safe point where nothing is mid-iteration.
+//      only at a FrameStart safe point where nothing is mid-iteration
+//      (`World::compactPools`, at the start of a tick).
 #pragma once
 
 #include <vector>
@@ -69,9 +70,12 @@ public:
         const u32 slot = m_sparse[id.index];
         m_sparse[id.index] = Absent;
         // The hole keeps its position. `m_owners[slot]` is invalidated so the
-        // slot reads as dead to iteration and to `find`, and the payload is
-        // left alone rather than destroyed early -- these are POD components,
-        // and a value nobody can reach is not a leak.
+        // slot reads as dead to iteration and to `find`, and **what the payload
+        // holds goes now**: a terrain's field, a script's source, a mesh's
+        // list. Left in a hole it was held until the pool was compacted, and
+        // the pools never were -- every instance a scene change destroyed kept
+        // its strings and buffers, and a game grew tens of megabytes a scene.
+        m_dense[slot] = T{};
         m_owners[slot] = core::InstanceId{};
         --m_liveCount;
         return true;
@@ -119,6 +123,8 @@ public:
 
     [[nodiscard]] usize size() const noexcept { return m_liveCount; }
     [[nodiscard]] usize denseSize() const noexcept { return m_dense.size(); }
+    // Slots a removal left, until `compact`.
+    [[nodiscard]] usize holes() const noexcept { return m_dense.size() - m_liveCount; }
 
     void clear() noexcept
     {

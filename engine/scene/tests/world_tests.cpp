@@ -1249,3 +1249,38 @@ TEST_CASE("the world hash changes when anything observable does")
         CHECK(fixture.world.worldHash() == base);
     }
 }
+
+TEST_CASE("scene after scene, the pools hold the scene and not every scene before it")
+{
+    Fixture fixture;
+    World& world = fixture.world;
+    // What stays across scenes, and is walked in the same order before and after.
+    const InstanceId kept = fixture.part("Kept");
+    const InstanceId keptToo = fixture.part("KeptToo");
+    std::vector<InstanceId> scene;
+    for (int load = 0; load < 50; ++load) {
+        for (const InstanceId id : scene)
+            (void)world.destroy(id);
+        world.retireDestroyed();
+        world.compactPools();
+        scene.clear();
+        for (int at = 0; at < 200; ++at)
+            scene.push_back(fixture.part("Piece"));
+    }
+    // A scene's worth of holes at most, between one compaction and the next.
+    CHECK(world.parts().size() == 202);
+    CHECK(world.parts().denseSize() <= 2 * 202);
+
+    // Closing the holes keeps every live part where it was in the walk, and
+    // the world's hash with it.
+    for (const InstanceId id : scene)
+        (void)world.destroy(id);
+    world.retireDestroyed();
+    const u64 before = world.worldHash();
+    world.compactPools();
+    CHECK(world.parts().holes() == 0);
+    CHECK(world.worldHash() == before);
+    std::vector<InstanceId> order;
+    world.parts().forEach([&](InstanceId id, const engine::scene::PartComponent&) { order.push_back(id); });
+    CHECK(order == std::vector<InstanceId>{kept, keptToo});
+}

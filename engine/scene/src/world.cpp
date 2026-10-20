@@ -198,6 +198,18 @@ void World::retireDestroyed()
     sweepMaterialClones();
 }
 
+void World::compactPools()
+{
+    const auto compactOne = [](auto& pool) {
+        const usize holes = pool.holes();
+        if (holes >= 64 && holes * 2 >= pool.denseSize())
+            pool.compact();
+    };
+#define ENG_SCENE_POOL_COMPACT(Type, Name) compactOne(m_##Name);
+    ENG_SCENE_POOL_LIST(ENG_SCENE_POOL_COMPACT)
+#undef ENG_SCENE_POOL_COMPACT
+}
+
 bool World::alive(core::InstanceId id) const noexcept
 {
     return m_instances.find(id) != nullptr;

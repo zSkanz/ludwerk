@@ -2,6 +2,7 @@
 
 // doctest stringifies whatever a CHECK compares, and that needs the stream
 // operators for std::string and std::string_view to be visible here.
+#include <memory>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -211,4 +212,23 @@ TEST_CASE("a non-trivial payload survives the pool")
 
     REQUIRE(pool.find(b) != nullptr);
     CHECK(*pool.find(b) == "second");
+}
+
+TEST_CASE("what a removed component held is let go at once, not when the pool is compacted")
+{
+    Ids ids;
+    ComponentPool<std::shared_ptr<int>> pool;
+    const InstanceId a = ids.next();
+    const InstanceId b = ids.next();
+    auto held = std::make_shared<int>(7);
+    const std::weak_ptr<int> watch = held;
+    pool.add(a, std::move(held));
+    pool.add(b, std::make_shared<int>(8));
+
+    pool.remove(a);
+    // The hole is still there; what was in it is not.
+    CHECK(pool.holes() == 1);
+    CHECK(watch.expired());
+    REQUIRE(pool.find(b) != nullptr);
+    CHECK(**pool.find(b) == 8);
 }

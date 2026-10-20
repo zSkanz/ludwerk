@@ -2751,6 +2751,19 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A scene loaded again and again keeps no more than one of itself**:
+    # what destroyed instances held went with them, and the component pools
+    # are closed up behind them. See the driver.
+    add_test(NAME scene_reload_memory
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/scenereload
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/scene-reload
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_scene_reload_memory.cmake)
+    set_tests_properties(scene_reload_memory PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind

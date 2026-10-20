@@ -1,0 +1,16 @@
+# A scene loaded again and again keeps no more than one of itself: ground its
+# code writes, parts it makes and a script of its own, loaded thirty times.
+# A project because scenes and their code are files; the driver is
+# `run_scene_reload_memory.cmake`.
+
+[project]
+name = "Ludwerk Scene Reload"
+id = "dev.ludwerk.scenereload"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/field.scene.json"
+
+[window]
+title = "Ludwerk — Scene Reload"
+width = 320
+height = 180

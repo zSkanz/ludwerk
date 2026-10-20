@@ -1564,6 +1564,14 @@ public:
     // which is the whole reason the signal exists.
     void retireDestroyed();
 
+    // **The holes destroyed instances left in the component pools, closed**
+    // -- a pool's, once they are half of it and at least 64. Live components
+    // keep their order, so iteration and the world's hash are what they were;
+    // they move, so this runs only where nothing holds a component across it:
+    // the start of a tick. Without it every instance a scene ever had kept a
+    // slot in each pool it was in, and every walk of a pool walked them.
+    void compactPools();
+
     [[nodiscard]] bool alive(core::InstanceId id) const noexcept;
 
     // Whether `destroy` has been called and the retirement has not happened
