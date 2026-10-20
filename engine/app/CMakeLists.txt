@@ -105,6 +105,7 @@ engine_add_module(app
         src/language_packs.cpp
         src/baked_light.cpp
         src/indirect_light.cpp
+        src/lightmap_bake.cpp
         src/mesh_rays.cpp
         src/sequences.cpp
         src/timeline.cpp
@@ -477,6 +478,7 @@ engine_add_module_tests(app
         tests/script_complete_tests.cpp
         tests/language_packs_tests.cpp
         tests/indirect_light_tests.cpp
+        tests/lightmap_bake_tests.cpp
         tests/mesh_rays_tests.cpp
         tests/sequences_tests.cpp
         tests/profile_history_tests.cpp

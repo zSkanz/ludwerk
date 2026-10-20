@@ -74,7 +74,9 @@ struct Builder
         const u32 count = chart + 1;
         const u32 columns = static_cast<u32>(std::ceil(std::sqrt(static_cast<f32>(count))));
         const u32 rows = (count + columns - 1) / columns;
-        constexpr f32 Margin = 0.04f;
+        constexpr f32 Margin = kPrimitiveChartMargin;
+        mesh.lightmapColumns = columns;
+        mesh.lightmapRows = rows;
         mesh.lightmapUvs.resize(mesh.vertices.size());
         for (usize at = 0; at < mesh.vertices.size(); ++at) {
             const u32 cell = charts[at];

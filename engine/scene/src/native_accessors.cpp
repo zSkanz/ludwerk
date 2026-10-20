@@ -1520,6 +1520,38 @@ bool setBasePartShowsRoom(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getBasePartBakedLight(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{part->bakedLight};
+}
+
+bool setBasePartBakedLight(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* flag = std::get_if<bool>(&value);
+    PartComponent* part = writePart(world, id);
+    if (flag == nullptr || part == nullptr)
+        return false;
+    part->bakedLight = *flag;
+    return true;
+}
+
+Value getBasePartLightmapScale(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{static_cast<f64>(part->lightmapScale)};
+}
+
+bool setBasePartLightmapScale(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* number = std::get_if<f64>(&value);
+    PartComponent* part = writePart(world, id);
+    if (number == nullptr || part == nullptr || !(*number > 0.0 && *number <= 1.0e3))
+        return false;
+    part->lightmapScale = static_cast<f32>(*number);
+    return true;
+}
+
 Value getBasePartFade(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);

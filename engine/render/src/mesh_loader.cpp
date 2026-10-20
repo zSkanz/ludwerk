@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -820,6 +821,25 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
     return loaded;
 }
 
+namespace {
+
+// **What the lightmap bake lays its texels by** (ADR 0253), where the mesh has
+// a lightmap's coordinates: each vertex's normal and its place in the map.
+void giveLightmap(MeshLibrary::Entry& entry, std::span<const asset::Vertex> vertices,
+                  std::span<const asset::LightmapUv> uvs)
+{
+    if (uvs.empty() || uvs.size() != vertices.size())
+        return;
+    entry.normals.reserve(vertices.size());
+    entry.lightmapUvs.reserve(vertices.size());
+    for (core::usize at = 0; at < vertices.size(); ++at) {
+        entry.normals.push_back(vertices[at].normal);
+        entry.lightmapUvs.push_back(core::Vec2{uvs[at].u, uvs[at].v});
+    }
+}
+
+} // namespace
+
 void MeshLoader::syncPrimitives(rhi::IDevice& device, rhi::ICmdList& cmd, scene::World& world, MeshCache& cache,
                                 MeshLibrary& library)
 {
@@ -858,6 +878,9 @@ void MeshLoader::syncPrimitives(rhi::IDevice& device, rhi::ICmdList& cmd, scene:
         entry.positions.reserve(mesh.vertices.size());
         for (const asset::Vertex& vertex : mesh.vertices)
             entry.positions.push_back(vertex.position);
+        giveLightmap(entry, mesh.vertices, mesh.lightmapUvs);
+        entry.lightmapColumns = mesh.lightmapColumns;
+        entry.lightmapRows = mesh.lightmapRows;
         entry.triangles = mesh.indices;
         entry.bounces.push_back(MeshLibrary::Entry::Bounce{
             .firstIndex = 0,
@@ -1160,6 +1183,7 @@ u32 MeshLoader::sync(rhi::IDevice& device, rhi::ICmdList& cmd, const scene::Worl
             entry.positions.reserve(geometry.vertices.size());
             for (const asset::Vertex& vertex : geometry.vertices)
                 entry.positions.push_back(vertex.position);
+            giveLightmap(entry, geometry.vertices, compiled.lightmapUvs);
             if (skinned && compiled.skin.size() == geometry.vertices.size() &&
                 geometry.vertices.size() <= kClothMaxVertices)
                 entry.skin = compiled.skin;
@@ -1318,6 +1342,7 @@ bool MeshLoader::uploadModel(rhi::IDevice& device, rhi::ICmdList& cmd, const ass
     entry.positions.reserve(model.mesh.vertices.size());
     for (const asset::Vertex& vertex : model.mesh.vertices)
         entry.positions.push_back(vertex.position);
+    giveLightmap(entry, model.mesh.vertices, model.mesh.lightmapUvs);
     if (model.skinned() && model.skin.size() == model.mesh.vertices.size() &&
         model.mesh.vertices.size() <= kClothMaxVertices)
         entry.skin = model.skin;

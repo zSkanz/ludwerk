@@ -205,6 +205,16 @@ local BasePartFields: { Schema.Field } = {
         Doc = "Whether the part is a window onto the room seen through (protocol 59). A look, like `CastShadow`.",
     },
     {
+        Name = "BakedLight",
+        Id = 32,
+        Encoding = "Bool",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Whether the part's light is baked (protocol 63, ADR 0253). A look: a replica draws a baked "
+            .. "part with the light the bake kept for it, and leaves it out of the sun's map where the bake's "
+            .. "mask holds.",
+    },
+    {
         Name = "CollisionGroup",
         Id = 18,
         Encoding = "NameAtom",
@@ -3575,6 +3585,11 @@ local Classes: { Schema.Class } = {
                     .. "collide with all of it -- which is what this decides for them on the authority "
                     .. "(ADR 0231). Players outside the phase are never sent the part.",
             },
+            {
+                Name = "LightmapScale",
+                Reason = "Read by the bake alone, which runs in the editor or from the command line, never "
+                    .. "in a match (ADR 0253). What it decided travels as the bake's file.",
+            },
         },
     },
     {
@@ -3623,6 +3638,13 @@ local Classes: { Schema.Class } = {
             .. "It is never spawned -- every world has one from boot, on both ends -- so it travels under "
             .. "a fixed id and a replica writes its own.",
         Fields = LightingFields,
+        Withheld = {
+            {
+                Name = "LightmapDensity",
+                Reason = "Read by the bake alone, which runs in the editor or from the command line, never "
+                    .. "in a match (ADR 0253). What it decided travels as the bake's file.",
+            },
+        },
     },
     {
         Name = "Decal",

@@ -933,6 +933,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, part->showsRoom);
             return true;
         }
+        if (field.name == "BakedLight") {
+            setBool(out, part->bakedLight);
+            return true;
+        }
         if (field.name == "ReceivesDecals") {
             setBool(out, part->receivesDecals);
             return true;
@@ -2385,6 +2389,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "ShowsRoom") {
             part->showsRoom = asBool(value);
+            return true;
+        }
+        if (field.name == "BakedLight") {
+            part->bakedLight = asBool(value);
             return true;
         }
         if (field.name == "ReceivesDecals") {

@@ -1248,6 +1248,19 @@ declare extern type BasePart extends PVInstance with
     --- it for a real desk under a virtual one, or a portal out of the game. Anywhere else the part is
     --- drawn as it otherwise would be. It casts no shadow.
     ShowsRoom: boolean
+    --- Whether this part's light is baked: worked out ahead, once, and kept. Set it on anchored scenery
+    --- that never moves, such as the walls, floor and furniture of a level, then bake the lighting in
+    --- the editor or with `engine-host <project> --bake-lighting`. A baked part gets the light that
+    --- bounces onto it and sharp shadows from the other baked parts at no cost per frame, which matters
+    --- most on a headset or a phone. The bake keeps where the sun was. A part that is not anchored, or
+    --- one that moves, is resized or is destroyed after the bake, is lit as an ordinary part until the
+    --- next bake, and the light it left stays where it was. A `MeshPart` is baked with the second set
+    --- of texture coordinates in its file, or with a set the import makes when the file has none.
+    BakedLight: boolean
+    --- How much detail the bake gives this part's light, relative to `Lighting.LightmapDensity`. 2
+    --- gives it twice as many texels each way, for a surface seen up close such as a table a hand rests
+    --- on; 0.5 half as many, for one seen only from afar. Only a part with `BakedLight` on reads it.
+    LightmapScale: number
     --- Whether this part is fixed in place. An anchored part is not moved by gravity, forces or
     --- collisions, but other parts still collide with it. Setting it keeps the part's position and
     --- orientation.
@@ -5075,6 +5088,11 @@ declare extern type Lighting extends Instance with
     --- only where nothing is drawn; at 1 only the room is seen. Tween it for a portal or a fade between
     --- the room and the game.
     XRPassthroughOpacity: number
+    --- How many texels a meter the bake gives the light of parts with `BasePart.BakedLight` on. At 16,
+    --- the default, a texel is about six centimeters across. A scene whose baked parts ask for more
+    --- than four pages of 1024 by 1024 texels is baked at a lower density, and the bake says so. Read
+    --- only by the bake.
+    LightmapDensity: number
     --- The unit vector that points from the world toward the sun. It is computed only from `ClockTime`
     --- and `GeographicLatitude`, so the same values always give the same direction.
     read SunDirection: vector

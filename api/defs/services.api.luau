@@ -1033,6 +1033,18 @@ local Classes: { Schema.Class } = {
                     .. "fade between the room and the game.",
             },
             {
+                Name = "LightmapDensity",
+                Type = "number",
+                Default = "16",
+                Presentation = true,
+                ErrorKey = "scene.err.number_above_zero",
+                Records = { "ADR 0253" },
+                Doc = "How many texels a meter the bake gives the light of parts with `BasePart.BakedLight` on. "
+                    .. "At 16, the default, a texel is about six centimeters across. A scene whose baked parts "
+                    .. "ask for more than four pages of 1024 by 1024 texels is baked at a lower density, and the "
+                    .. "bake says so. Read only by the bake.",
+            },
+            {
                 Name = "SunDirection",
                 Type = "vector",
                 ReadOnly = true,

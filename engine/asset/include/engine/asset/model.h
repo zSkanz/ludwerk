@@ -146,6 +146,12 @@ struct Mesh
     AABB bounds;
     // One a vertex, parallel to `vertices`, or none.
     std::vector<LightmapUv> lightmapUvs;
+    // **The grid a primitive's lightmap charts stand in** (ADR 0253), one
+    // chart a cell, row by row, each inside its cell's margin: what lets a
+    // bake give each face a rectangle of its own, sized by that face. Nought
+    // for a mesh charted as one square.
+    core::u32 lightmapColumns = 0;
+    core::u32 lightmapRows = 0;
 };
 
 // What an importer produces from one file: the mesh, the materials it names,

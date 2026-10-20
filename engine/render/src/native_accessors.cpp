@@ -2874,6 +2874,17 @@ bool setLightingXRPassthroughOpacity(scene::World& world, core::InstanceId id, c
     return writeNumber(world.lighting(), id, value, &scene::LightingComponent::xrPassthroughOpacity, 0.0f, 1.0f);
 }
 
+Value getLightingLightmapDensity(const scene::World& world, core::InstanceId id)
+{
+    return readNumber(world.lighting(), id, &scene::LightingComponent::lightmapDensity);
+}
+
+bool setLightingLightmapDensity(scene::World& world, core::InstanceId id, const Value& value)
+{
+    // Above nought: a density of none is no bake at all.
+    return writeNumber(world.lighting(), id, value, &scene::LightingComponent::lightmapDensity, 1.0e-3f, 1.0e3f);
+}
+
 Value getLightingGlobalShadows(const scene::World& world, core::InstanceId id)
 {
     return readValue(world.lighting(), id, &scene::LightingComponent::globalShadows);

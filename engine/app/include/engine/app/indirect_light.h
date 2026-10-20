@@ -39,6 +39,9 @@
 
 namespace engine::app {
 
+class LightmapBake;
+struct LightmapBakeResult;
+
 // The renderer's view every probe's pictures are drawn as (ADR 0107): one,
 // since they are all one size and none keeps a history. Far from the numbers
 // the camera textures count up from.
@@ -91,6 +94,15 @@ struct BakeLight
     // was lit by (`VolumeBake::litBy`). Nought is no light at all.
     core::u64 stamp = 0;
 };
+
+// **The light the sun and the lamps put on a matte surface** at `place`,
+// facing `normal`, over pi -- what it gives back for each unit of its
+// colour, as the shader lights it: each by how squarely it lands, the sun
+// past what stands in its way and a lamp by the engine's falloff and cone,
+// past what stands in its way where it casts shadows. `place` is already off
+// the surface.
+[[nodiscard]] core::Color3 bakeDirectLight(const core::DVec3& place, core::Vec3 normal, const BakeLight& light,
+                                           const BakeTrace& trace);
 
 // How a box is sampled: how many points along each side, and how far apart
 // they came out. `coarser` when the spacing asked for would have been more
@@ -322,6 +334,10 @@ public:
         // of every volume. On a machine whose settings work no volume out it
         // is the only one worked out: the rest stay their files' colour.
         core::InstanceId bakingOne{};
+        // **Baking the light of what stands still** (ADR 0253): every
+        // anchored part with `BakedLight` on, a share a frame, for as long as
+        // this holds. Let go of, a bake half done is dropped.
+        bool bakingLightmaps = false;
     };
     // Once a frame, after the main view is extracted and before any is drawn.
     void update(const Frame& frame);
@@ -360,6 +376,13 @@ public:
     // before is given the new read** at once, without anybody asking.
     void forgetBaked() noexcept { m_kept.clear(); }
     void forgetBaked(std::span<const core::NameAtom> urns);
+
+    // **The light baked into what stands still, once whole** (ADR 0253):
+    // true once, with `out` given what the bake made; the next frame that
+    // asks begins another. How far the one under way is, from 0 to 1, or -1
+    // with none.
+    [[nodiscard]] bool takeLightmapBake(LightmapBakeResult& out);
+    [[nodiscard]] core::f32 lightmapProgress() const noexcept;
     // **What stands in a volume's box, as one number**: every part that does
     // not move and is in or against the box -- where it stands in the box's
     // own space, how it is turned and how large it is, to the millimetre. The
@@ -567,6 +590,8 @@ private:
     };
     std::vector<Surface> m_surfaces;
     void readSurfaces(const Frame& frame);
+    void stepLightmaps(const Frame& frame);
+    void beginLightmaps(const Frame& frame);
 
     // A mesh's triangles as a tree, made the first time a volume is begun
     // with the mesh in the world and kept: by its content, and remade if the
@@ -629,6 +654,12 @@ private:
     rhi::TextureHandle m_faces[6]{};
     core::u32 m_faceSize = 0;
     Stats m_stats;
+
+    // The bake of what stands still under way, and what the last one made
+    // until it is taken (ADR 0253).
+    std::shared_ptr<LightmapBake> m_lightmap;
+    std::shared_ptr<LightmapBakeResult> m_lightmapDone;
+    std::vector<core::InstanceId> m_lightmapParts;
 };
 
 } // namespace engine::app

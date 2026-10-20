@@ -1307,6 +1307,16 @@ public:
             bool clear = false;
         };
         std::vector<Bounce> bounces;
+        // **What the lightmap bake lays its texels by** (ADR 0253): one
+        // normal and one place in the lightmap a vertex of `positions`, for a
+        // primitive and for a mesh that carries a lightmap's coordinates --
+        // which the import gives only a mesh a baked part draws. Empty for
+        // every other mesh.
+        std::vector<Vec3> normals;
+        std::vector<core::Vec2> lightmapUvs;
+        // A primitive's grid of charts (`asset::Mesh::lightmapColumns`).
+        u32 lightmapColumns = 0;
+        u32 lightmapRows = 0;
 
         // The mesh's morph targets (ADR 0196), in the file's order: what each
         // is called and the weight the file gives it at rest. Empty for

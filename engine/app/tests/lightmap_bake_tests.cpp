@@ -1,0 +1,446 @@
+// Light baked into what stands still (ADR 0253): the rectangles a page is
+// cut into, and a bake's light and mask against a world whose answers are
+// known.
+#include <algorithm>
+#include <cmath>
+#include <doctest/doctest.h>
+#include <optional>
+#include <vector>
+
+#include "class_descriptors.gen.h"
+#include "engine/app/indirect_light.h"
+#include "engine/app/lightmap_bake.h"
+#include "engine/asset/primitives.h"
+#include "engine/audio/scene_types.h"
+#include "engine/physics/backends.h"
+#include "engine/render/renderer.h"
+#include "engine/render/scene_types.h"
+#include "engine/scene/physics_sync.h"
+
+using engine::app::BakeHit;
+using engine::app::BakeLight;
+using engine::app::BakeTrace;
+using engine::app::LightmapBake;
+using engine::app::LightmapLayout;
+using engine::app::LightmapRect;
+using engine::app::LightmapSurface;
+using engine::core::Color3;
+using engine::core::DVec3;
+using engine::core::f32;
+using engine::core::u32;
+using engine::core::usize;
+using engine::core::Vec2;
+using engine::core::Vec3;
+
+namespace {
+
+// A square of floor, `side` metres, facing up, its lightmap the whole square.
+struct Floor
+{
+    std::vector<Vec3> positions;
+    std::vector<Vec3> normals;
+    std::vector<Vec2> uvs;
+    std::vector<u32> indices{0, 2, 1, 0, 3, 2};
+
+    explicit Floor(f32 side)
+    {
+        const f32 half = side * 0.5f;
+        positions = {{-half, 0.0f, -half}, {half, 0.0f, -half}, {half, 0.0f, half}, {-half, 0.0f, half}};
+        normals.assign(4, Vec3{0.0f, 1.0f, 0.0f});
+        uvs = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    }
+
+    [[nodiscard]] LightmapSurface surface(LightmapRect rect) const
+    {
+        LightmapSurface out;
+        out.positions = positions;
+        out.normals = normals;
+        out.uvs = uvs;
+        out.indices = indices;
+        out.rects = {rect};
+        return out;
+    }
+};
+
+[[nodiscard]] BakeLight skyOf(Color3 sky)
+{
+    BakeLight light;
+    light.sunDirection = Vec3{0.0f, 1.0f, 0.0f};
+    light.sunRadiance = Color3{0.0f, 0.0f, 0.0f};
+    light.sky = [sky](Vec3) { return sky; };
+    return light;
+}
+
+[[nodiscard]] bool nearly(f32 a, f32 b, f32 within = 1.0e-4f)
+{
+    return std::fabs(a - b) < within;
+}
+
+// The page's light at a texel.
+[[nodiscard]] Color3 lightAt(const engine::app::LightmapPage& page, u32 x, u32 y)
+{
+    const f32* at = &page.light[(static_cast<usize>(y) * page.size + x) * 4];
+    return Color3{at[0], at[1], at[2]};
+}
+
+} // namespace
+
+TEST_CASE("every chart is given a rectangle of its own, as long each way as it is, and none overlaps another")
+{
+    const std::vector<Vec2> sizes{{1.0f, 1.0f}, {2.0f, 2.0f}, {0.5f, 0.5f}, {3.0f, 3.0f},
+                                  {1.0f, 1.0f}, {0.1f, 0.1f}, {4.0f, 0.2f}};
+    const std::vector<f32> scales{1.0f, 1.0f, 2.0f, 1.0f, 0.5f, 1.0f, 1.0f};
+    const LightmapLayout layout = engine::app::layOutLightmaps(sizes, scales, 16.0f, 256, 4);
+    REQUIRE(layout.rects.size() == sizes.size());
+    CHECK_FALSE(layout.lowered);
+    CHECK(layout.rects[1].width == 32);
+    CHECK(layout.rects[2].width == 16);
+    CHECK(layout.rects[4].width == 8);
+    // The smallest a rectangle is.
+    CHECK(layout.rects[5].width == 4);
+    // A wall's edge: long one way, a few texels the other.
+    CHECK(layout.rects[6].width == 64);
+    CHECK(layout.rects[6].height == 4);
+    for (usize a = 0; a < layout.rects.size(); ++a) {
+        const LightmapRect& one = layout.rects[a];
+        CHECK(one.x + one.width <= 256);
+        CHECK(one.y + one.height <= 256);
+        for (usize b = a + 1; b < layout.rects.size(); ++b) {
+            const LightmapRect& two = layout.rects[b];
+            if (one.page != two.page)
+                continue;
+            // Apart by the padding at least.
+            const bool apart = one.x + one.width + engine::app::kLightmapPadding <= two.x ||
+                               two.x + two.width + engine::app::kLightmapPadding <= one.x ||
+                               one.y + one.height + engine::app::kLightmapPadding <= two.y ||
+                               two.y + two.height + engine::app::kLightmapPadding <= one.y;
+            CHECK(apart);
+        }
+    }
+}
+
+TEST_CASE("surfaces that ask for more than the pages hold are given less density, and the layout says so")
+{
+    const std::vector<Vec2> sizes(64, Vec2{4.0f, 4.0f});
+    const std::vector<f32> scales(64, 1.0f);
+    const LightmapLayout layout = engine::app::layOutLightmaps(sizes, scales, 16.0f, 256, 1);
+    CHECK(layout.lowered);
+    CHECK(layout.density < 16.0f);
+    CHECK(layout.pages == 1);
+}
+
+TEST_CASE("a floor under an open sky is lit by the sky alone, and sees the whole sun")
+{
+    const Floor floor(2.0f);
+    const LightmapSurface surface = floor.surface(LightmapRect{0, 4, 4, 32, 32});
+    LightmapBake bake;
+    bake.begin(std::span<const LightmapSurface>(&surface, 1), 64, 1, 1);
+    const BakeTrace nothing = [](const DVec3&, Vec3, f32) { return BakeHit{}; };
+    REQUIRE(bake.step(nothing, skyOf(Color3{0.5f, 0.25f, 1.0f}), 0));
+    CHECK(bake.texelCount() == 32u * 32u);
+    const auto& page = bake.pages()[0];
+    // A sky the same every way gives a surface facing it that light, over
+    // pi: the mean of what its rays see.
+    for (const u32 y : {4u, 20u, 35u}) {
+        for (const u32 x : {4u, 20u, 35u}) {
+            const Color3 light = lightAt(page, x, y);
+            CHECK(nearly(light.r, 0.5f));
+            CHECK(nearly(light.g, 0.25f));
+            CHECK(nearly(light.b, 1.0f));
+            CHECK(page.mask[static_cast<usize>(y) * 64 + x] == 1.0f);
+        }
+    }
+    // The gaps beyond the padding are no surface.
+    CHECK(page.light[(0 * 64 + 0) * 4 + 3] == 0.0f);
+    CHECK(page.light[(20 * 64 + 50) * 4 + 3] == 0.0f);
+    // The padding is filled from the chart's edge.
+    CHECK(page.light[(20 * 64 + 3) * 4 + 3] == 1.0f);
+}
+
+TEST_CASE("a roof over half the floor shades that half in the mask, and darkens its light")
+{
+    const Floor floor(2.0f);
+    const LightmapSurface surface = floor.surface(LightmapRect{0, 0, 0, 32, 32});
+    LightmapBake bake;
+    bake.begin(std::span<const LightmapSurface>(&surface, 1), 32, 1, 0);
+    // A black roof a metre up over x < 0, as far as the rays go.
+    const BakeTrace roof = [](const DVec3& origin, Vec3 direction, f32 reach) {
+        BakeHit met;
+        if (direction.y <= 1.0e-6f)
+            return met;
+        const auto along = static_cast<f32>((1.0 - origin.y) / static_cast<double>(direction.y));
+        if (along < 0.0f || along > reach)
+            return met;
+        const f32 x = static_cast<f32>(origin.x) + direction.x * along;
+        if (x >= 0.0f)
+            return met;
+        met.hit = true;
+        met.position =
+            origin + engine::core::toDVec3(Vec3{direction.x * along, direction.y * along, direction.z * along});
+        met.normal = Vec3{0.0f, -1.0f, 0.0f};
+        met.albedo = Color3{0.0f, 0.0f, 0.0f};
+        return met;
+    };
+    BakeLight light = skyOf(Color3{1.0f, 1.0f, 1.0f});
+    light.sunDirection = Vec3{0.0f, 1.0f, 0.0f};
+    light.sunRadiance = Color3{3.0f, 3.0f, 3.0f};
+    REQUIRE(bake.step(roof, light, 0));
+    const auto& page = bake.pages()[0];
+    // Well under the roof, and well clear of it.
+    CHECK(page.mask[16 * 32 + 4] == 0.0f);
+    CHECK(page.mask[16 * 32 + 28] == 1.0f);
+    CHECK(lightAt(page, 4, 16).r < 0.6f);
+    CHECK(lightAt(page, 28, 16).r > lightAt(page, 4, 16).r);
+    CHECK(bake.sunDirection().y == 1.0f);
+}
+
+TEST_CASE("a bake in pieces under a budget comes out as the bake done whole")
+{
+    const Floor floor(2.0f);
+    const LightmapSurface surface = floor.surface(LightmapRect{0, 0, 0, 64, 64});
+    const BakeTrace slope = [](const DVec3& origin, Vec3 direction, f32) {
+        BakeHit met;
+        // Ground beyond x > 0.5 seen from a ray going that way, lit grey.
+        if (direction.x > 0.3f && origin.x > 0.0) {
+            met.hit = true;
+            met.position = origin + engine::core::toDVec3(direction);
+            met.normal = Vec3{-1.0f, 0.0f, 0.0f};
+            met.albedo = Color3{0.5f, 0.5f, 0.5f};
+            met.emissive = Color3{0.2f, 0.1f, 0.0f};
+        }
+        return met;
+    };
+    const BakeLight light = skyOf(Color3{0.3f, 0.3f, 0.3f});
+    LightmapBake whole;
+    whole.begin(std::span<const LightmapSurface>(&surface, 1), 64, 1, 2);
+    REQUIRE(whole.step(slope, light, 0));
+    LightmapBake pieces;
+    pieces.begin(std::span<const LightmapSurface>(&surface, 1), 64, 1, 2);
+    u32 steps = 0;
+    while (!pieces.step(slope, light, 1)) {
+        ++steps;
+        CHECK(pieces.progress() <= 1.0f);
+        REQUIRE(steps < 100000);
+    }
+    CHECK(steps > 0);
+    CHECK(pieces.pages()[0].light == whole.pages()[0].light);
+    CHECK(pieces.pages()[0].mask == whole.pages()[0].mask);
+}
+
+namespace {
+
+// A renderer that draws nothing: a frame of the indirect light asks one for
+// its settings.
+class SettingsOnly final : public engine::render::IRenderer
+{
+public:
+    std::optional<engine::core::EngineError> create(engine::rhi::IDevice&, const engine::render::ShaderLibrary&,
+                                                    engine::rhi::TextureFormat) override
+    {
+        return std::nullopt;
+    }
+    void destroy(engine::rhi::IDevice&) override {}
+    void render(engine::rhi::IDevice&, engine::rhi::ICmdList&, const engine::render::RenderTarget&,
+                const engine::render::RenderWorld&, const engine::render::MeshCache&) override
+    {}
+    [[nodiscard]] bool valid() const noexcept override { return true; }
+    [[nodiscard]] f32 shadowRadius() const noexcept override { return 0.0f; }
+    void setSettings(const engine::render::GraphicsSettings& settings) override { m_settings = settings; }
+    [[nodiscard]] const engine::render::GraphicsSettings& settings() const noexcept override { return m_settings; }
+    [[nodiscard]] engine::render::RendererStats stats() const noexcept override { return {}; }
+
+private:
+    engine::render::GraphicsSettings m_settings;
+};
+
+// A floor of baked blocks under a noon sun, and what the bake of it says.
+struct Scene
+{
+    engine::core::AtomTable atoms;
+    engine::scene::ClassRegistry classes;
+    engine::scene::EnumRegistry enums;
+    std::optional<engine::scene::World> world;
+    engine::physics::PhysicsResult backend;
+    std::optional<engine::scene::PhysicsSync> physics;
+    engine::core::InstanceId workspace;
+    engine::render::MeshLibrary meshes;
+    SettingsOnly renderer;
+    engine::render::RenderWorld snapshot;
+    engine::app::IndirectLight light;
+    engine::core::u64 tick = 0;
+
+    Scene()
+    {
+        using namespace engine;
+        scene::generated::registerClasses(classes, atoms);
+        audio::registerSceneTypes(classes, atoms);
+        render::registerSceneTypes(classes, atoms);
+        scene::generated::registerEnums(enums, atoms);
+        world.emplace(classes, enums, atoms, 1u);
+        workspace = make("Folder", {});
+        backend = physics::createJoltPhysics();
+        REQUIRE(backend != nullptr);
+        physics.emplace(*world, *backend);
+        physics->setWorkspace(workspace);
+        render::GraphicsSettings settings;
+        settings.indirectLight = false;
+        settings.reflectionProbes = 0;
+        renderer.setSettings(settings);
+        snapshot.camera.valid = true;
+        snapshot.environment.sunDirection = Vec3{0.0f, 1.0f, 0.0f};
+        // The block as the mesh loader gives it, its lightmap with it.
+        const asset::Mesh block = asset::makePrimitive(asset::PrimitiveShape::Block);
+        render::MeshLibrary::Entry entry;
+        // Uploaded, as far as a lookup can tell: nothing here draws it.
+        entry.mesh = render::MeshHandle{0, 1};
+        entry.bounds = block.bounds;
+        for (const asset::Vertex& vertex : block.vertices) {
+            entry.positions.push_back(vertex.position);
+            entry.normals.push_back(vertex.normal);
+        }
+        for (const asset::LightmapUv& uv : block.lightmapUvs)
+            entry.lightmapUvs.push_back(Vec2{uv.u, uv.v});
+        entry.lightmapColumns = block.lightmapColumns;
+        entry.lightmapRows = block.lightmapRows;
+        entry.triangles = block.indices;
+        entry.bounces.push_back(render::MeshLibrary::Entry::Bounce{
+            .firstIndex = 0,
+            .indexCount = static_cast<u32>(block.indices.size()),
+            .albedo = Color3{1.0f, 1.0f, 1.0f},
+            .emissive = Color3{0.0f, 0.0f, 0.0f},
+            .clear = false,
+        });
+        meshes.set(atoms.intern(render::primitiveContent(static_cast<engine::core::i32>(asset::PrimitiveShape::Block))),
+                   entry);
+    }
+
+    engine::core::InstanceId make(const char* className, engine::core::InstanceId parent)
+    {
+        const engine::scene::ClassId id = classes.findId(atoms.intern(className));
+        REQUIRE(id != engine::scene::InvalidClass);
+        const engine::core::InstanceId made = world->create(id);
+        if (parent.valid())
+            REQUIRE_FALSE(world->setParent(made, parent).has_value());
+        return made;
+    }
+
+    // An anchored block, asked of by its own triangles rather than by the
+    // physics world, which this scene never steps.
+    engine::core::InstanceId block(DVec3 at, Vec3 size, bool baked, bool anchored = true)
+    {
+        const engine::core::InstanceId id = make("Part", workspace);
+        engine::scene::PartComponent& part = *world->parts().find(id);
+        part.cframe.position = at;
+        part.size = size;
+        part.bakedLight = baked;
+        if (engine::scene::RigidBodyComponent* body = world->rigidBodies().find(id); body != nullptr) {
+            body->anchored = anchored;
+            body->canQuery = false;
+        }
+        return id;
+    }
+
+    // Frames until the bake is whole, and what it made.
+    [[nodiscard]] engine::app::LightmapBakeResult bake()
+    {
+        engine::app::LightmapBakeResult out;
+        for (int frame = 0; frame < 2000; ++frame) {
+            engine::app::IndirectLight::Frame asked;
+            asked.world = &*world;
+            asked.physics = &*physics;
+            asked.renderer = &renderer;
+            asked.snapshot = &snapshot;
+            asked.workspace = workspace;
+            asked.meshes = &meshes;
+            asked.tick = tick++;
+            asked.bakingLightmaps = true;
+            light.update(asked);
+            if (light.takeLightmapBake(out))
+                return out;
+        }
+        FAIL("the bake never finished");
+        return out;
+    }
+};
+
+// How many texels of a page see the whole sun.
+[[nodiscard]] usize sunlit(const engine::app::LightmapBakeResult& baked)
+{
+    usize count = 0;
+    for (const engine::app::LightmapPage& page : baked.pages) {
+        for (usize at = 0; at < page.mask.size(); ++at) {
+            if (page.light[at * 4 + 3] > 0.0f && page.mask[at] >= 1.0f)
+                ++count;
+        }
+    }
+    return count;
+}
+
+} // namespace
+
+TEST_CASE("the parts set to be baked are laid out and baked, and a roof over half of one shades that half")
+{
+    Scene open;
+    const engine::core::InstanceId floor = open.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    // Not anchored, and not set: neither is baked.
+    (void)open.block(DVec3{10.0, 0.0, 0.0}, Vec3{1.0f, 1.0f, 1.0f}, true, false);
+    (void)open.block(DVec3{-10.0, 0.0, 0.0}, Vec3{1.0f, 1.0f, 1.0f}, false);
+    // A mesh with no lightmap coordinates is said, and not baked.
+    const engine::core::InstanceId mesh = open.make("MeshPart", open.workspace);
+    open.world->parts().find(mesh)->bakedLight = true;
+    if (engine::scene::RigidBodyComponent* body = open.world->rigidBodies().find(mesh); body != nullptr)
+        body->anchored = true;
+    const engine::app::LightmapBakeResult whole = open.bake();
+    REQUIRE(whole.parts.size() == 1);
+    CHECK(whole.parts[0].id == floor);
+    // A block's six faces, each its own rectangle: the top four metres by
+    // four, the edges four by a fifth.
+    REQUIRE(whole.parts[0].rects.size() == 6);
+    u32 broad = 0;
+    for (const LightmapRect& rect : whole.parts[0].rects)
+        broad += rect.width >= 55 && rect.height >= 55 ? 1u : 0u;
+    CHECK(broad == 2);
+    REQUIRE(whole.unmapped.size() == 1);
+    CHECK(whole.unmapped[0] == mesh);
+    REQUIRE(whole.pages.size() == 1);
+    CHECK(whole.texels > 0);
+    CHECK(whole.sunDirection.y > 0.99f);
+    // The floor's top, four metres by four at sixteen texels a metre.
+    const usize lit = sunlit(whole);
+    CHECK(lit > 3000);
+
+    Scene shaded;
+    (void)shaded.block(DVec3{0.0, 0.0, 0.0}, Vec3{4.0f, 0.2f, 4.0f}, true);
+    // Over the half of it where x is below nought, a metre up.
+    (void)shaded.block(DVec3{-1.0, 1.5, 0.0}, Vec3{2.0f, 0.2f, 6.0f}, false);
+    const usize under = sunlit(shaded.bake());
+    CHECK(under < lit * 3 / 4);
+    CHECK(under > lit / 4);
+}
+
+TEST_CASE("each face of a stretched block is as long each way as the block is stretched")
+{
+    const engine::asset::Mesh block = engine::asset::makePrimitive(engine::asset::PrimitiveShape::Block);
+    std::vector<Vec3> positions;
+    for (const engine::asset::Vertex& vertex : block.vertices)
+        positions.push_back(vertex.position);
+    std::vector<Vec2> uvs;
+    for (const engine::asset::LightmapUv& uv : block.lightmapUvs)
+        uvs.push_back(Vec2{uv.u, uv.v});
+    REQUIRE(block.lightmapColumns * block.lightmapRows == 6);
+    const std::vector<Vec2> sizes = engine::app::chartSizes(positions, uvs, block.indices, Vec3{4.0f, 3.0f, 0.2f},
+                                                            block.lightmapColumns, block.lightmapRows);
+    REQUIRE(sizes.size() == 6);
+    // Each face's two sides are two of the block's three, the cell's margin
+    // and all: a 4 by 3 face twice, a 4 by 0.2 twice and a 3 by 0.2 twice.
+    const f32 cell = 1.0f / (1.0f - 2.0f * engine::asset::kPrimitiveChartMargin);
+    u32 broad = 0;
+    for (const Vec2 size : sizes) {
+        const f32 longer = std::max(size.x, size.y) / cell;
+        const f32 shorter = std::min(size.x, size.y) / cell;
+        if (nearly(longer, 4.0f, 1.0e-3f) && nearly(shorter, 3.0f, 1.0e-3f))
+            ++broad;
+        CHECK(shorter > 0.19f);
+    }
+    CHECK(broad == 2);
+}

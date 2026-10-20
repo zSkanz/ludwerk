@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <string>
 
+#include "engine/app/lightmap_bake.h"
+#include "engine/asset/primitives.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/jobs/jobs.h"
@@ -617,54 +620,57 @@ void VolumeBake::lightSample(usize sample, const BakeTrace& trace)
     // Carried here under this same light: what it put on these is kept.
     if (m_lightFreshOnly && m_fresh[sample] == 0)
         return;
-    const BakeLight& light = m_lit;
-    const bool sun = light.sunRadiance.r + light.sunRadiance.g + light.sunRadiance.b > 0.0f;
     for (u32 index = 0; index < kBakeRays; ++index) {
         Ray& ray = m_rays[sample * kBakeRays + index];
         if (ray.met != 1)
             continue;
-        Color3 direct{0.0f, 0.0f, 0.0f};
         const DVec3 place =
             core::transformPoint(m_box, core::toDVec3(ray.place)) +
             core::toDVec3(Vec3{ray.normal.x * kOffSurface, ray.normal.y * kOffSurface, ray.normal.z * kOffSurface});
-        // As the shader lights a matte surface: what the light gives, by how
-        // squarely it lands, over pi.
-        if (sun) {
-            const f32 facing = core::dot(ray.normal, light.sunDirection);
-            if (facing > 0.0f && !trace(place, light.sunDirection, kBakeReach).hit)
-                direct = direct + light.sunRadiance * (facing / kPi);
-        }
-        for (const BakeLamp& lamp : light.lamps) {
-            const Vec3 toLamp = core::toVec3(lamp.position - place);
-            const f32 distanceSquared = std::max(core::dot(toLamp, toLamp), 1.0e-6f);
-            const f32 ratio = distanceSquared / (lamp.range * lamp.range);
-            if (ratio >= 1.0f)
-                continue;
-            const f32 distance = std::sqrt(distanceSquared);
-            const Vec3 towards{toLamp.x / distance, toLamp.y / distance, toLamp.z / distance};
-            const f32 facing = core::dot(ray.normal, towards);
-            if (facing <= 0.0f)
-                continue;
-            // The engine's own falloff and cone (`engine_brdf.hlsli`).
-            const f32 window = std::clamp(1.0f - ratio * ratio, 0.0f, 1.0f);
-            const f32 falloff = window * window / (1.0f + 25.0f * ratio);
-            const f32 cosInner = lamp.cosOuter + (1.0f - lamp.cosOuter) * 0.1f;
-            const f32 along = -core::dot(lamp.direction, towards);
-            // A lamp that shines every way has no cone (as the shader).
-            const f32 cone =
-                lamp.cosOuter <= -1.0f
-                    ? 1.0f
-                    : std::clamp((along - lamp.cosOuter) / std::max(cosInner - lamp.cosOuter, 1.0e-6f), 0.0f, 1.0f);
-            if (falloff * cone <= 0.0f)
-                continue;
-            // A lamp that casts no shadow in the picture casts none here: the
-            // light a wall bounces is the light the wall is drawn with.
-            if (lamp.shadows && trace(place, towards, std::max(distance - 2.0f * kOffSurface, 0.0f)).hit)
-                continue;
-            direct = direct + lamp.radiance * (falloff * cone * facing / kPi);
-        }
-        ray.direct = direct;
+        ray.direct = bakeDirectLight(place, ray.normal, m_lit, trace);
     }
+}
+
+Color3 bakeDirectLight(const DVec3& place, Vec3 normal, const BakeLight& light, const BakeTrace& trace)
+{
+    Color3 direct{0.0f, 0.0f, 0.0f};
+    // As the shader lights a matte surface: what the light gives, by how
+    // squarely it lands, over pi.
+    if (light.sunRadiance.r + light.sunRadiance.g + light.sunRadiance.b > 0.0f) {
+        const f32 facing = core::dot(normal, light.sunDirection);
+        if (facing > 0.0f && !trace(place, light.sunDirection, kBakeReach).hit)
+            direct = direct + light.sunRadiance * (facing / kPi);
+    }
+    for (const BakeLamp& lamp : light.lamps) {
+        const Vec3 toLamp = core::toVec3(lamp.position - place);
+        const f32 distanceSquared = std::max(core::dot(toLamp, toLamp), 1.0e-6f);
+        const f32 ratio = distanceSquared / (lamp.range * lamp.range);
+        if (ratio >= 1.0f)
+            continue;
+        const f32 distance = std::sqrt(distanceSquared);
+        const Vec3 towards{toLamp.x / distance, toLamp.y / distance, toLamp.z / distance};
+        const f32 facing = core::dot(normal, towards);
+        if (facing <= 0.0f)
+            continue;
+        // The engine's own falloff and cone (`engine_brdf.hlsli`).
+        const f32 window = std::clamp(1.0f - ratio * ratio, 0.0f, 1.0f);
+        const f32 falloff = window * window / (1.0f + 25.0f * ratio);
+        const f32 cosInner = lamp.cosOuter + (1.0f - lamp.cosOuter) * 0.1f;
+        const f32 along = -core::dot(lamp.direction, towards);
+        // A lamp that shines every way has no cone (as the shader).
+        const f32 cone =
+            lamp.cosOuter <= -1.0f
+                ? 1.0f
+                : std::clamp((along - lamp.cosOuter) / std::max(cosInner - lamp.cosOuter, 1.0e-6f), 0.0f, 1.0f);
+        if (falloff * cone <= 0.0f)
+            continue;
+        // A lamp that casts no shadow in the picture casts none here: the
+        // light a wall bounces is the light the wall is drawn with.
+        if (lamp.shadows && trace(place, towards, std::max(distance - 2.0f * kOffSurface, 0.0f)).hit)
+            continue;
+        direct = direct + lamp.radiance * (falloff * cone * facing / kPi);
+    }
+    return direct;
 }
 
 Color3 VolumeBake::lookUp(std::span<const f32> from, Vec3 place, Vec3 normal) const noexcept
@@ -1224,8 +1230,13 @@ void IndirectLight::update(const Frame& frame)
     m_stats.volumes = static_cast<u32>(m_volumes.size());
 
     // --- The work ---------------------------------------------------------------
-    if (frame.loadersIdle)
+    if (frame.loadersIdle) {
         stepVolumes(frame);
+        stepLightmaps(frame);
+    }
+    else if (!frame.bakingLightmaps) {
+        m_lightmap.reset();
+    }
     // What arrives while the world is watched comes in over a moment.
     for (ProbeState& state : m_probeStates)
         state.presence = std::min(1.0f, state.presence + frame.seconds * kFadeRate);
@@ -1789,6 +1800,137 @@ void IndirectLight::readSurfaces(const Frame& frame)
         highs.push_back(traced.high);
     }
     m_tracedBoxes.build(lows, highs);
+}
+
+void IndirectLight::beginLightmaps(const Frame& frame)
+{
+    const scene::World& world = *frame.world;
+    readSurfaces(frame);
+    f32 density = kLightmapDensity;
+    world.lighting().forEach(
+        [&](InstanceId, const scene::LightingComponent& lighting) { density = lighting.lightmapDensity; });
+
+    auto done = std::make_shared<LightmapBakeResult>();
+    std::vector<LightmapSurface> surfaces;
+    // Every chart of every surface, as the layout is asked for them.
+    std::vector<core::Vec2> sizes;
+    std::vector<f32> scales;
+    m_lightmapParts.clear();
+    world.parts().forEach([&](InstanceId id, const scene::PartComponent& part) {
+        if (!part.bakedLight || !inWorkspace(world, id, frame.workspace))
+            return;
+        // **What is baked stands still**: a part that is not anchored is lit
+        // as a moving thing is, whatever it asks.
+        const scene::RigidBodyComponent* body = world.rigidBodies().find(id);
+        if ((body != nullptr && !body->anchored) || world.characterBodies().find(id) != nullptr)
+            return;
+        const render::MeshLibrary::Entry* entry = nullptr;
+        Vec3 stretch{1.0f, 1.0f, 1.0f};
+        if (const scene::MeshPartComponent* shaped = world.meshParts().find(id); shaped != nullptr) {
+            if (shaped->meshContent.valid() && frame.meshes != nullptr)
+                entry = frame.meshes->find(shaped->meshContent);
+            stretch = Vec3{part.size.x / shaped->meshSize.x, part.size.y / shaped->meshSize.y,
+                           part.size.z / shaped->meshSize.z};
+        }
+        else if (frame.meshes != nullptr) {
+            const render::PartShape shape = render::partShapeOf(world, *frame.meshes, id, part);
+            entry = shape.entry;
+            stretch = shape.stretch;
+        }
+        if (entry == nullptr || entry->lightmapUvs.size() != entry->positions.size() ||
+            entry->normals.size() != entry->positions.size() || entry->triangles.empty()) {
+            done->unmapped.push_back(id);
+            return;
+        }
+        LightmapSurface surface;
+        surface.place = part.cframe;
+        surface.stretch = stretch;
+        surface.positions = entry->positions;
+        surface.normals = entry->normals;
+        surface.uvs = entry->lightmapUvs;
+        surface.indices = entry->triangles;
+        const bool grid = entry->lightmapColumns != 0 && entry->lightmapRows != 0;
+        surface.columns = grid ? entry->lightmapColumns : 0;
+        surface.rows = grid ? entry->lightmapRows : 0;
+        surface.margin = grid ? asset::kPrimitiveChartMargin : 0.0f;
+        for (const core::Vec2 size : chartSizes(entry->positions, entry->lightmapUvs, entry->triangles, stretch,
+                                                surface.columns, surface.rows)) {
+            // A chart's own margin is texels the rectangle need not have.
+            const f32 inner = 1.0f - 2.0f * surface.margin;
+            sizes.push_back(core::Vec2{size.x * inner, size.y * inner});
+            scales.push_back(part.lightmapScale);
+        }
+        surfaces.push_back(surface);
+        m_lightmapParts.push_back(id);
+    });
+    const LightmapLayout layout = layOutLightmaps(sizes, scales, density, kLightmapPageSize, kLightmapMaxPages);
+    usize next = 0;
+    for (usize index = 0; index < surfaces.size(); ++index) {
+        LightmapSurface& surface = surfaces[index];
+        const usize charts = surface.columns == 0 ? 1 : static_cast<usize>(surface.columns) * surface.rows;
+        surface.rects.assign(layout.rects.begin() + static_cast<std::ptrdiff_t>(next),
+                             layout.rects.begin() + static_cast<std::ptrdiff_t>(next + charts));
+        next += charts;
+        done->parts.push_back(LightmapBakeResult::Part{
+            .id = m_lightmapParts[index],
+            .columns = surface.columns,
+            .rows = surface.rows,
+            .rects = surface.rects,
+        });
+    }
+    done->density = layout.density;
+    done->lowered = layout.lowered;
+    m_lightmapDone = std::move(done);
+    m_lightmap = std::make_shared<LightmapBake>();
+    m_lightmap->begin(surfaces, kLightmapPageSize, surfaces.empty() ? 0 : layout.pages, kLightmapBounces);
+}
+
+void IndirectLight::stepLightmaps(const Frame& frame)
+{
+    if (!frame.bakingLightmaps) {
+        m_lightmap.reset();
+        return;
+    }
+    if (frame.physics == nullptr || frame.world == nullptr)
+        return;
+    if (!m_lightmap) {
+        // Whole and not yet taken: nothing more until it is.
+        if (m_lightmapDone && !m_lightmapDone->pages.empty())
+            return;
+        beginLightmaps(frame);
+    }
+    if (m_lightmap->whole())
+        return;
+    const BakeTrace trace =
+        traceOf(*frame.world, *frame.physics, m_surfaces, m_traced, m_tracedBoxes, m_tracedBodies, frame.textures);
+    if (!m_lightmap->step(trace, m_light, kCurtainBudgetNs))
+        return;
+    LightmapBakeResult& done = *m_lightmapDone;
+    done.pages.assign(m_lightmap->pages().begin(), m_lightmap->pages().end());
+    done.sunDirection = m_lightmap->sunDirection();
+    done.texels = m_lightmap->texelCount();
+    done.inside = m_lightmap->insideCount();
+    // A scene with nothing to bake still finishes: with no pages.
+    if (done.pages.empty())
+        done.pages.push_back(LightmapPage{});
+}
+
+bool IndirectLight::takeLightmapBake(LightmapBakeResult& out)
+{
+    if (!m_lightmap || !m_lightmap->whole() || !m_lightmapDone)
+        return false;
+    out = std::move(*m_lightmapDone);
+    // An empty page stood for "whole" in a scene with nothing baked.
+    if (out.pages.size() == 1 && out.pages.front().size == 0)
+        out.pages.clear();
+    m_lightmapDone.reset();
+    m_lightmap.reset();
+    return true;
+}
+
+f32 IndirectLight::lightmapProgress() const noexcept
+{
+    return m_lightmap ? m_lightmap->progress() : -1.0f;
 }
 
 void IndirectLight::planProbe(const Frame& frame)

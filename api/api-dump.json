@@ -575,6 +575,11 @@
           "ReadOnly": true
         },
         {
+          "Name": "BakedLight",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
           "Name": "Buoyant",
           "Type": "boolean",
           "Default": "true"
@@ -643,6 +648,11 @@
           "Name": "LagCompensated",
           "Type": "boolean",
           "Default": "false"
+        },
+        {
+          "Name": "LightmapScale",
+          "Type": "number",
+          "Default": "1"
         },
         {
           "Name": "LinearDamping",
@@ -4881,6 +4891,11 @@
           "Name": "GlobalShadows",
           "Type": "boolean",
           "Default": "true"
+        },
+        {
+          "Name": "LightmapDensity",
+          "Type": "number",
+          "Default": "16"
         },
         {
           "Name": "OutdoorAmbient",

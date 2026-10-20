@@ -685,6 +685,34 @@ local Classes: { Schema.Class } = {
                     .. "part is drawn as it otherwise would be. It casts no shadow.",
             },
             {
+                Name = "BakedLight",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Records = { "ADR 0253" },
+                Doc = "Whether this part's light is baked: worked out ahead, once, and kept. Set it on anchored "
+                    .. "scenery that never moves, such as the walls, floor and furniture of a level, then bake "
+                    .. "the lighting in the editor or with `engine-host <project> --bake-lighting`. A baked part "
+                    .. "gets the light that bounces onto it and sharp shadows from the other baked parts at no "
+                    .. "cost per frame, which matters most on a headset or a phone.\n\n"
+                    .. "The bake keeps where the sun was. A part that is not anchored, or one that moves, is "
+                    .. "resized or is destroyed after the bake, is lit as an ordinary part until the next bake, "
+                    .. "and the light it left stays where it was. A `MeshPart` is baked with the second set of "
+                    .. "texture coordinates in its file, or with a set the import makes when the file has none.",
+            },
+            {
+                Name = "LightmapScale",
+                Type = "number",
+                Default = "1",
+                Presentation = true,
+                ErrorKey = "scene.err.number_above_zero",
+                Records = { "ADR 0253" },
+                Doc = "How much detail the bake gives this part's light, relative to `Lighting.LightmapDensity`. "
+                    .. "2 gives it twice as many texels each way, for a surface seen up close such as a table "
+                    .. "a hand rests on; 0.5 half as many, for one seen only from afar. Only a part with "
+                    .. "`BakedLight` on reads it.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Default = "false",

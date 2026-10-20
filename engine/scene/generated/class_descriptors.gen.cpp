@@ -491,7 +491,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 32> basePartProperties;
+    static std::array<PropertyDesc, 34> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -663,6 +663,30 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
             .get = native::getBasePartShowsRoom,
             .set = native::setBasePartShowsRoom,
+        },
+        PropertyDesc{
+            .name = atoms.intern("BakedLight"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether this part's light is baked: worked out ahead, once, and kept. Set it on anchored scenery that never moves, such as the walls, floor and furniture of a level, then bake the lighting in the editor or with `engine-host <project> --bake-lighting`. A baked part gets the light that bounces onto it and sharp shadows from the other baked parts at no cost per frame, which matters most on a headset or a phone.\012\012The bake keeps where the sun was. A part that is not anchored, or one that moves, is resized or is destroyed after the bake, is lit as an ordinary part until the next bake, and the light it left stays where it was. A `MeshPart` is baked with the second set of texture coordinates in its file, or with a set the import makes when the file has none.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getBasePartBakedLight,
+            .set = native::setBasePartBakedLight,
+        },
+        PropertyDesc{
+            .name = atoms.intern("LightmapScale"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How much detail the bake gives this part's light, relative to `Lighting.LightmapDensity`. 2 gives it twice as many texels each way, for a surface seen up close such as a table a hand rests on; 0.5 half as many, for one seen only from afar. Only a part with `BakedLight` on reads it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getBasePartLightmapScale,
+            .set = native::setBasePartLightmapScale,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),

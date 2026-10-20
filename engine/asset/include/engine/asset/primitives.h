@@ -72,6 +72,10 @@ inline constexpr core::u32 kCapsuleCapRings = 6;
 // look is its own properties, not a file's.
 [[nodiscard]] Mesh makePrimitive(PrimitiveShape shape);
 
+// The margin round a primitive's lightmap chart inside its cell
+// (`Mesh::lightmapColumns`), a fraction of the cell a side.
+inline constexpr core::f32 kPrimitiveChartMargin = 0.04f;
+
 // **A flat square of `segments` x `segments` quads** (ADR 0091): one metre
 // across in x and z, facing up, uv 0..1 -- what a surface shader displaces
 // into water or cloth. Its bounds are a metre tall, centred on the plane, so

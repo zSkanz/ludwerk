@@ -4384,7 +4384,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(foliageMeshDesc);
 
     // --- Lighting ---
-    static std::array<scene::PropertyDesc, 18> lightingProperties;
+    static std::array<scene::PropertyDesc, 19> lightingProperties;
     lightingProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("ClockTime"),
@@ -4573,6 +4573,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_zero_to_one"),
             .get = native::getLightingXRPassthroughOpacity,
             .set = native::setLightingXRPassthroughOpacity,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LightmapDensity"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "How many texels a meter the bake gives the light of parts with `BasePart.BakedLight` on. At 16, the default, a texel is about six centimeters across. A scene whose baked parts ask for more than four pages of 1024 by 1024 texels is baked at a lower density, and the bake says so. Read only by the bake.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
+            .get = native::getLightingLightmapDensity,
+            .set = native::setLightingLightmapDensity,
         },
         scene::PropertyDesc{
             .name = atoms.intern("SunDirection"),

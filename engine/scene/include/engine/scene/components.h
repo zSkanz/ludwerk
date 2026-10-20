@@ -100,6 +100,12 @@ struct PartComponent
     bool receivesDecals = true;
     // `BasePart.ShowsRoom`: a window onto the room seen through, in a headset.
     bool showsRoom = false;
+    // `BasePart.BakedLight` (ADR 0253): static scenery, whose light the bake
+    // works out ahead and keeps.
+    bool bakedLight = false;
+    // `BasePart.LightmapScale`: how much detail the bake gives it, against
+    // `Lighting.LightmapDensity`.
+    f32 lightmapScale = 1.0f;
     // `BasePart.Fade`: how much of the part this machine leaves out of its
     // own picture, 0 to 1. This machine's alone: never on the wire, never in
     // a file, never in the world's hash.
@@ -1234,6 +1240,9 @@ struct LightingComponent
     // **In a headset showing the room** (ADR 0247): how much the room shows
     // through what the game draws, 0 to 1. Presentation only.
     f32 xrPassthroughOpacity = 0.0f;
+    // `Lighting.LightmapDensity` (ADR 0253): texels a metre the bake gives a
+    // baked part. Read by the bake alone.
+    f32 lightmapDensity = 16.0f;
     bool globalShadows = true;
     bool autoExposure = true;
 };
