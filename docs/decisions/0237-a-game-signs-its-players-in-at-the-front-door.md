@@ -233,7 +233,11 @@ the account's own player and never shut them out.
   other timed tests, holds a wrong password, a name with no account and a
   taken name within a tenth of a right one's time -- measured a round of
   all four at a time, so the machine's drift falls on each alike -- and
-  signs 200 in at twenty a second or more on a pool of four. **Measured**
+  signs 200 in on a pool of four at half again one thread's rate or more,
+  one thread's measured beside it on the same machine -- a floor in sign-ins
+  a second failed on a shared runner, at 19.8 against 20, where four cores
+  held three other tests too. Each hash takes 64 MB, so four share the
+  memory's bandwidth: quiet, the pool makes about twice one thread's. **Measured**
   on a machine of twenty threads, quiet, three runs: each kind's median 46.5
   to 47.1 ms, within 1.3% of a right one's; 44.5 to 48.2 sign-ins a second
   on four threads, the process's resident memory 14 MB before and 271 MB at

@@ -605,7 +605,7 @@ if(ENG_BUILD_TESTS)
     # a pool of four. They measure time, so they run with the other timed
     # tests and nowhere else; in the suite they are skipped.
     add_test(NAME accounts_timed
-        COMMAND engine_app_tests "--test-case=*take a right one's time*,*twenty sign-ins a second*")
+        COMMAND engine_app_tests "--test-case=*take a right one's time*,*a pool of four signs in*")
     set_tests_properties(accounts_timed PROPERTIES ENVIRONMENT "ENG_TIMED_TESTS=1" TIMEOUT 300 LABELS perf)
     set_tests_properties(editor_shell PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
