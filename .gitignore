@@ -30,6 +30,10 @@ content/cache/
 /samples/triangle/android/local.properties
 /platforms/android/player/.gradle/
 /platforms/android/player/local.properties
+# And under a vendored project that ships a Gradle build of its own, opened
+# the same way (the OpenXR loader's): never ours, and a file the affected-test
+# selection would otherwise read as a change to the build.
+/third_party/**/.gradle/
 
 # IDE / editor cruft
 .vs/
