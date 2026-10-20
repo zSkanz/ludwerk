@@ -60,8 +60,17 @@ Frame FrameScheduler::beginFrame(u64 nowNs) noexcept
     // tick owed is lent the rest of it; one more with hardly anything over
     // holds it back. Not a frame that was clamped, and not where the frames
     // have no count of their own.
+    //
+    // **And only a frame as long as theirs**, give or take twice the slack:
+    // one whose start fell early or late. A frame half again as long -- a
+    // hitch on a loaded machine -- owes its second tick, and held back it
+    // was drawn at the end of its tick, a millisecond and a half behind its
+    // time, and caught up in the frame after: a car at forty kilometres an
+    // hour drawn stopping and leaping twenty millimetres.
     const f64 slack = timing_.fixedDt * TickSlack;
-    if (!frame.clamped && steadyTicks_ > 0) {
+    const f64 theirs = timing_.fixedDt * static_cast<f64>(steadyTicks_);
+    const bool likeTheirs = std::abs(frame.renderDt * timeScale_ - theirs) <= 2.0 * slack;
+    if (!frame.clamped && steadyTicks_ > 0 && likeTheirs) {
         if (frame.simTicks + 1 == steadyTicks_ && accumulator_ >= timing_.fixedDt - slack) {
             accumulator_ -= timing_.fixedDt;
             ++frame.simTicks;

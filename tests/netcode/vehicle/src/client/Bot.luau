@@ -237,7 +237,19 @@ task.spawn(function()
     local frameAt = os.clock()
     local lastFrameLength = 0
     local ticksThisFrame = 0
+    local hitchCount = 0
     local framing = RunService.PreRender:Connect(function()
+        -- **A loaded machine's frames, made the same everywhere** (`hitch`):
+        -- every ninth nine milliseconds longer, as a runner that shares its
+        -- cores draws them -- one long frame, then a short one catching up.
+        if Condition.Mode == "hitch" then
+            hitchCount += 1
+            if hitchCount % 9 == 0 then
+                local from = os.clock()
+                while os.clock() - from < 0.009 do
+                end
+            end
+        end
         local now = os.clock()
         local length = now - frameAt
         frameAt = now

@@ -37,6 +37,12 @@
 # correction must be that half metre. A run that said nought here would be a
 # measure that cannot see a correction, and every nought above with it.
 #
+# **A loaded machine** (`hitch`, 150 ms): every ninth frame of the
+# driver's machine is nine milliseconds longer, and the next one short. A
+# frame that long owes its second tick, and is drawn where its time is: a
+# scheduler that held the tick back drew the car behind and then leaping, on
+# a hosted runner and nowhere else until this row made the frames.
+#
 # **A stall** (`stall`, 150 ms): the driver's machine stops for 120 ms in the
 # straight, well inside the quarter second a client catches up
 # (`StallCatchUpSeconds`). It catches the ticks up and goes on as before: no
@@ -81,6 +87,7 @@ set(conditions
     "stall|75|20|2|stall|1"
     "stalllong|75|20|2|stalllong|1"
     "late|75|20|2|late|1"
+    "hitch|75|20|2|hitch|1"
     "duel|75|20|2|duel|2")
 
 file(REMOVE_RECURSE "${STAGE}")

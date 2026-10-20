@@ -133,6 +133,39 @@ TEST_CASE("frames that keep the ticks' rate run one tick each, however their sta
     CHECK(notTwo == 0);
 }
 
+TEST_CASE("a frame half again as long as the others runs the ticks it owes, and is drawn where its time is")
+{
+    // Frames of one tick each, and then a hitch of 25.7 ms -- a loaded
+    // machine -- that leaves just over two ticks owed. Held back to one, it
+    // was drawn at the end of its tick, behind its time, and the frame after
+    // drew the car leaping forward to catch up.
+    app::FrameScheduler scheduler;
+    engine::core::u64 now = 3'000'000'000ull;
+    const engine::core::u64 start = now;
+    (void)scheduler.beginFrame(now);
+    // Nine milliseconds and a quarter into a tick, and frames of one tick
+    // each from there: each drawn a little past the middle of its tick.
+    now += 9'250'000ull;
+    (void)scheduler.beginFrame(now);
+    for (int frame = 0; frame < 10; ++frame) {
+        now += 16'666'667ull;
+        CHECK(scheduler.beginFrame(now).simTicks == 1);
+    }
+    now += 25'690'000ull;
+    const app::Frame hitch = scheduler.beginFrame(now);
+    CHECK(hitch.simTicks == 2);
+    // Drawn where its time is: the ticks run and the place between them add
+    // up to the time since the start, and so in the short frame after.
+    const auto drawnAt = [&](const app::Frame& frame) {
+        return (static_cast<double>(scheduler.totalTicks()) + static_cast<double>(frame.alpha)) / 60.0;
+    };
+    const double since = static_cast<double>(now - start) / 1.0e9;
+    CHECK(drawnAt(hitch) == doctest::Approx(since).epsilon(0.0005));
+    now += 6'010'000ull;
+    const app::Frame after = scheduler.beginFrame(now);
+    CHECK(drawnAt(after) == doctest::Approx(static_cast<double>(now - start) / 1.0e9).epsilon(0.0005));
+}
+
 TEST_CASE("no time is made or lost by it, and frames at another rate are counted as they were")
 {
     // A display a hair slower than the simulation: the ticks it owes are

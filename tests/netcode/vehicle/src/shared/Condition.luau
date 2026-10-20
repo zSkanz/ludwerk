@@ -12,6 +12,10 @@ export type Mode =
     | "nudge"
     -- Two players, each driving at the other with a wheel that wanders.
     | "duel"
+    -- As `drive`, and every ninth frame of the driver's machine nine
+    -- milliseconds longer: a loaded machine's frames, the same on every
+    -- machine that runs it.
+    | "hitch"
 
 export type Condition = {
     Name: string,
