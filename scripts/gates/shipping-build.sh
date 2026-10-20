@@ -79,6 +79,32 @@ cmake --preset "$editorPreset"
 echo "== build (engine_host) =="
 cmake --build --preset "$editorPreset" --target engine_host
 
+# **What the three profiles ship names no machine**: the source tree, the
+# build tree and the user's folder of the machine that built them, read for in
+# each binary's bytes (`binary_paths.py`). The root CMakeLists trims them off
+# at compile time; this is what says it held.
+echo "== the shipped binaries name no machine =="
+python="$(command -v python3 || command -v python)"
+forbid=(--forbid "$PWD" --forbid "$ENG_BUILD_ROOT")
+if [[ -n "${USERPROFILE:-}" ]]; then
+    forbid+=(--forbid "$USERPROFILE")
+fi
+case "${HOME:-}" in
+/home/* | /Users/*) forbid+=(--forbid "$HOME") ;;
+esac
+binaries=()
+for profile in "$preset" "$playerPreset" "$editorPreset"; do
+    # The `.exe` first: Git Bash says a name without one exists when the
+    # one with it does.
+    for name in engine-host.exe engine-host; do
+        if [[ -f "$ENG_BUILD_ROOT/$profile/engine/app/$name" ]]; then
+            binaries+=("$ENG_BUILD_ROOT/$profile/engine/app/$name")
+            break
+        fi
+    done
+done
+"$python" scripts/gates/binary_paths.py "${binaries[@]}" "${forbid[@]}"
+
 # **The Linux export, played from its archive** (ADR 0104 stage 2). Here
 # rather than in the Linux stage because this is where `linux-clang-player` --
 # what `ludwerk build --target=linux` packages -- has just been built. The

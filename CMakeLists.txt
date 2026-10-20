@@ -151,6 +151,28 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-ffp-contract=off)
 endif()
 
+# **A shipped binary names no machine.** `__FILE__` in an assertion -- Jolt's,
+# SDL's, ours -- is the path a file was compiled at, and a player carried the
+# build machine's folders and its user's name 181 times; so did every game
+# exported with it. The profiles a release ships compile every file as if
+# from the root of its tree: the source and build trees are trimmed off, and
+# a program database is named without its folder. A development build keeps
+# the whole path, which is what a debugger and a crash report there want.
+# `scripts/gates/binary_paths.py` reads the shipped binaries for any of it.
+if(ENG_PROFILE STREQUAL "player" OR ENG_PROFILE STREQUAL "shipping" OR ENG_PROFILE STREQUAL "editor")
+    if(MSVC)
+        file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/" engineSourcePrefix)
+        file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/" engineBinaryPrefix)
+        add_compile_options("/d1trimfile:${engineSourcePrefix}" "/d1trimfile:${engineBinaryPrefix}")
+        add_link_options("/PDBALTPATH:%_PDB%")
+    else()
+        # Without a trailing separator: the debug information's compile
+        # directory is the build tree itself, which a map ending in `/` never
+        # matches.
+        add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}=." "-ffile-prefix-map=${CMAKE_BINARY_DIR}=.")
+    endif()
+endif()
+
 add_subdirectory(third_party)
 
 # Modules are added in layer order; engine_add_module() refuses a dependency it

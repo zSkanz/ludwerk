@@ -225,7 +225,10 @@ if(ENG_DEBUG_UI)
     # shadercross is where a dev build finds it; a package puts one beside the
     # editor, which is looked for first.
     target_sources(engine_app PRIVATE src/surface_compiler.cpp)
-    if(ENG_SHADER_TOOLCHAIN)
+    # Not in the `editor` profile, which ships: a released editor finds the
+    # one beside it, and the build tree is a folder of the machine it was
+    # built on.
+    if(ENG_SHADER_TOOLCHAIN AND NOT ENG_PROFILE STREQUAL "editor")
         target_compile_definitions(engine_app PRIVATE
             ENG_DEV_SHADERCROSS="${CMAKE_BINARY_DIR}/host-tools/shadercross${CMAKE_EXECUTABLE_SUFFIX}")
     else()
@@ -239,9 +242,10 @@ endif()
 # every profile, which is what keeps the frame loop free of #ifdefs.
 target_compile_definitions(engine_app PUBLIC ENG_DEBUG_UI=$<BOOL:${ENG_DEBUG_UI}>)
 # **The repository this build came from**: where a development
-# editor finds the CLI its Export window runs. Empty in the profiles that ship,
-# which find theirs beside the executable.
-if(ENG_DEBUG_UI)
+# editor finds the CLI its Export window runs. Empty in the profiles that ship
+# -- the released editor's among them -- which find theirs beside the
+# executable.
+if(ENG_DEBUG_UI AND NOT ENG_PROFILE STREQUAL "editor")
     target_compile_definitions(engine_app PRIVATE ENG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 else()
     target_compile_definitions(engine_app PRIVATE ENG_SOURCE_DIR="")
