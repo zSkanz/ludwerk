@@ -309,6 +309,12 @@ struct EngineState
     u32 nextLocalPlayerId = 0x80000000u;
     // Host configuration, not replicated simulation state (ADR 0188).
     std::vector<std::string> enabledIntegrations;
+    // **The game's Nakama** (ADR 0242), where its integration is on: the
+    // server's address and its client key, from `[integrations.nakama]
+    // configuration`; and the session this machine signed in with.
+    std::string nakamaUrl;
+    std::string nakamaServerKey;
+    std::string nakamaSession;
 
     // Seconds, constant for the whole tick and advanced by the scheduler
     // (api-design.md §2.1).
@@ -1129,6 +1135,8 @@ struct EngineState
         std::string name;
         std::string password;
         bool registering = false;
+        // A session of the game's Nakama in `password` (ADR 0242).
+        bool nakama = false;
     };
     std::vector<SignInAsk> signInAsks;
     struct SignInAnswer

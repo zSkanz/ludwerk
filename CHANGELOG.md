@@ -11,6 +11,15 @@ here.
 
 ### Added
 
+- A game can sign its players in with Nakama and keep its data there.
+  `NakamaService` signs a player in to the game's Nakama and turns that
+  session into a ticket at the game's front door, which asks Nakama who the
+  session is; the player is `nakama:<user id>` in every world. With `[data]
+  backend = "nakama"` the game's records, trades and shared values are kept in
+  Nakama's storage, each change written whole. The integration is off unless a
+  project turns it on, and needs no SDK: a Lua module for Nakama comes with
+  the engine. The wire protocol is 62.
+
 - A game's own backend can keep its data: `[data] backend` in
   `servers.toml` sends every operation of the data service -- records,
   transactions, items, money, shared values -- to the game's service as

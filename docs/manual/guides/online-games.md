@@ -600,6 +600,68 @@ done. `data` at the console ends with how that thread keeps up -- the
 requests waiting, the longest wait since `data` was last asked, and how
 many were refused because 4,096 were already waiting.
 
+### The game's Nakama
+
+A studio that runs [Nakama](https://heroiclabs.com/nakama/) -- an open-source
+game backend -- puts the game behind it with no glue of its own: players sign
+in to Nakama, and the game's data is kept in Nakama's storage. Nothing of it
+is in a game that does not turn it on.
+
+On Nakama, put `integrations/nakama/modules/engine.lua` in its `modules`
+folder. In `servers.toml`:
+
+```toml
+# servers.toml
+[nakama]
+url = "https://nakama.example.com"
+http_key_env = "NAKAMA_HTTP_KEY"   # the server's runtime HTTP key, from the environment
+
+[accounts]
+enabled = true
+
+[data]
+backend = "nakama"                 # optional: the data in Nakama's storage too
+```
+
+In the game, turn the integration on, with the server's address and its
+client key:
+
+```toml
+# project.toml
+[integrations]
+enabled = ["nakama"]
+
+[integrations.nakama]
+configuration = "https://defaultkey@nakama.example.com"
+```
+
+The player's machine signs in to Nakama, and turns that session into a
+ticket at the game's front door:
+
+```luau
+--!strict
+local NakamaService = game:GetService("NakamaService")
+local NetworkService = game:GetService("NetworkService")
+
+local signedIn, why = NakamaService:AuthenticateAsync("device", deviceId) -- or "email", "custom"
+if signedIn then
+    local result = NakamaService:GetTicketAsync("play.example.com")
+    if result.Ok then
+        NetworkService:Join("play.example.com", { Ticket = result.Ticket })
+    end
+end
+```
+
+The front door asks Nakama who the session is -- the module's
+`engine_whoami`, with the session as its bearer -- and signs the engine's own
+ticket for the account `nakama:<user id>`, which is `Player.AccountId` in
+every world; no key is shared between Nakama and the game. With `[data]
+backend = "nakama"`, the data service's operations go to the module's
+`engine_data` as they would to [a game's own backend](#a-games-own-backend),
+each change one write of Nakama's storage, whole or not at all.
+`scripts/localgate.ps1 -Only nakama` runs the game against a real Nakama in
+containers.
+
 ## Parties, guilds and chat
 
 **A party** is the manager's: players who play together, wherever each of

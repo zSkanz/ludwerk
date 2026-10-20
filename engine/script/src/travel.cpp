@@ -240,21 +240,29 @@ int signIn(lua_State* L, bool registering)
     const char* name = luaL_checklstring(L, 3, &nameLength);
     const char* password = luaL_checklstring(L, 4, &passwordLength);
     requireYieldable(L, registering ? "RegisterAsync" : "SignInAsync");
+    return askFrontDoor(L, std::string_view(address, addressLength), std::string_view(name, nameLength),
+                        std::string(password, passwordLength), registering, false);
+}
+
+} // namespace
+
+int askFrontDoor(lua_State* L, std::string_view address, std::string_view name, std::string secret, bool registering,
+                 bool nakama)
+{
     scene::EngineState& state = world(L).engineState();
     scene::EngineState::SignInAsk ask;
     ask.id = state.nextSignIn++;
-    ask.address.assign(address, addressLength);
-    ask.name.assign(name, nameLength);
-    ask.password.assign(password, passwordLength);
+    ask.address.assign(address);
+    ask.name.assign(name);
+    ask.password = std::move(secret);
     ask.registering = registering;
+    ask.nakama = nakama;
     lua_pushthread(L);
     services(L).signInWaiters.push_back(ServiceState::InstanceWaiter{ask.id, lua_ref(L, -1)});
     lua_pop(L, 1);
     state.signInAsks.push_back(std::move(ask));
     return lua_yield(L, 0);
 }
-
-} // namespace
 
 int networkServiceSignInAsync(lua_State* L)
 {

@@ -1,0 +1,17 @@
+# The data service and the front door against the game's Nakama (ADR
+# 0242): the player signs in to Nakama, turns that session into a ticket at
+# the front door, and joins; the game's data is kept in Nakama's storage.
+# Run by `scripts/localgate.ps1 -Only nakama`, which starts a Nakama.
+
+[project]
+name = "Data Nakama"
+id = "dev.ludwerk.data-nakama"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/town.scene.json"
+
+[integrations]
+enabled = ["nakama"]
+
+[integrations.nakama]
+configuration = "http://defaultkey@127.0.0.1:47350"

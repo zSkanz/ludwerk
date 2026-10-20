@@ -387,6 +387,61 @@ local Classes: { Schema.Class } = {
         } :: { Schema.Method },
     },
     {
+        Name = "NakamaService",
+        Extends = "Instance",
+        Module = "scene",
+        Integration = "nakama",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Records = { "ADR 0242" },
+        Doc = "Signs this player in to the game's Nakama, and turns that session into a ticket to join the "
+            .. 'game\'s servers with. An optional integration: on with `[integrations] enabled = ["nakama"]` '
+            .. "in `project.toml`, and `[integrations.nakama] configuration` the server's address with its "
+            .. "client key, `http://defaultkey@127.0.0.1:7350`. No SDK: Nakama is asked over HTTP.\n\n"
+            .. "The servers check the session with Nakama themselves (`[nakama] url` in `servers.toml`), and "
+            .. "the account a player then has is `nakama:` and their Nakama user id. Call it on the player's "
+            .. "machine.",
+        Properties = {
+            {
+                Name = "Session",
+                Type = "string",
+                ReadOnly = true,
+                Transient = true,
+                HostFact = true,
+                ThreadSafety = "Safe",
+                Doc = "The Nakama session token this player signed in with; empty before `AuthenticateAsync`.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "AuthenticateAsync",
+                Parameters = {
+                    { Name = "kind", Type = "string" },
+                    { Name = "id", Type = "string" },
+                    { Name = "password", Type = "string?", Default = "nil" },
+                },
+                Returns = { "boolean", "string?" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Signs in to the game's Nakama, making the account the first time. `kind` is `device` "
+                    .. "(`id` a device's id), `email` (`id` the address, with `password`) or `custom` (`id` the "
+                    .. "game's own). Returns whether it did, and why not: `IntegrationDisabled`, "
+                    .. "`NotConfigured`, `InvalidArgument`, `Refused` (Nakama said no) or `Unreachable`.",
+            },
+            {
+                Name = "GetTicketAsync",
+                Parameters = { { Name = "address", Type = "string" } },
+                Returns = { "{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }" },
+                ThreadSafety = "Unsafe",
+                Yields = true,
+                Doc = "Turns the session into a ticket at the game's front door `address`, as "
+                    .. "`NetworkService:SignInAsync` does a password: pass it to `NetworkService:Join`. The "
+                    .. "session crosses the network only encrypted, and the servers ask Nakama whose it is. A "
+                    .. "player not signed in to Nakama, or a session it no longer knows, is "
+                    .. "`WrongNameOrPassword`.",
+            },
+        } :: { Schema.Method },
+    },
+    {
         Name = "XboxService",
         Extends = "Instance",
         Module = "scene",

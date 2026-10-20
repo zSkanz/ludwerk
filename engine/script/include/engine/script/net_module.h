@@ -5,7 +5,10 @@
 // `net_module.cpp`, beside the code it governs.
 #pragma once
 
+#include <functional>
+
 #include "engine/core/types.h"
+#include "engine/net/async_client.h"
 
 struct lua_State;
 
@@ -25,6 +28,11 @@ int openStdNet(lua_State* L);
 // frame safe point, exactly like `resumeAreaWaiters`: a completion arriving on a
 // worker thread must not enter game code where it landed (R10).
 void resumeNetWaiters(lua_State* L);
+// **A request of a service's own**, on the same client and resumed at the
+// same safe point: the calling thread yields, and `answer` pushes what it is
+// given back. Raises where the client is closed.
+int awaitHttp(lua_State* L, net::HttpRequest request,
+              std::function<int(lua_State* co, const net::NetResult& result)> answer);
 // `net.websocket`'s sockets, at the frame's safe point: one that opened or
 // failed, what arrived, and one that closed.
 void pumpWebSockets(lua_State* L);

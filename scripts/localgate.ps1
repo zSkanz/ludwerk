@@ -18,6 +18,8 @@
 #   scripts/localgate.ps1 -Only lavapipe      # the real-image goldens, on Mesa's
 #                                             # software rasterizer, opt-in
 #   scripts/localgate.ps1 -Only lavapipe -Record   # ...rewrite those goldens
+#   scripts/localgate.ps1 -Only nakama        # the game's Nakama in containers, pinned,
+#                                             # and the Windows build against it; opt-in
 #   scripts/localgate.ps1 -Only android       # the engine cross-built for Android
 #                                             # arm64 with the pinned NDK; part of
 #                                             # every run once scripts/install-android.ps1
@@ -68,7 +70,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipLinux,
-    [ValidateSet('docs', 'luau', 'format', 'windows', 'linux', 'shipping', 'asan', 'winprofiles', 'lavapipe', 'android', 'perf')]
+    [ValidateSet('docs', 'luau', 'format', 'windows', 'linux', 'shipping', 'asan', 'winprofiles', 'lavapipe', 'android', 'nakama', 'perf')]
     [string]$Only,
     # Only meaningful with -Only format: reformat in place rather than report.
     # Off by default, because a gate that edits your tree without being asked is
@@ -908,6 +910,81 @@ Invoke-Stage 'lavapipe' {
         -v "${buildVolume}:/build" `
         engine-tier2:latest @arguments
     if ($LASTEXITCODE -ne 0) { throw "the lavapipe goldens did not match" }
+}
+
+# **The game's Nakama** (ADR 0242): a real Nakama and its database in
+# containers, both pinned by digest, the integration's module mounted into it;
+# then the engine's own build against it -- players signed in to Nakama, a
+# session turned into a ticket at the front door, a thousand trades kept in
+# Nakama's storage, and a request sent twice done once. Opt-in: it pulls two
+# images and starts two containers, which a gate run every push should not.
+# Run with the Windows build there (`-Only windows` first).
+#
+# **The images are a test's, never the engine's**: pulled here, run here, and
+# shipped nowhere -- Nakama is Apache-2.0, PostgreSQL its own permissive
+# license -- each pinned by digest (R5). The containers and their network are
+# named by this run's process, never as the gate's own (`engine-tier2-*`,
+# `engine-lavapipe-gate`), and removed whatever happens.
+$NakamaImage = 'heroiclabs/nakama:3.41.0@sha256:ca9f3fe65c90f56860fe5d7cd024868a395cb1a001abb9912bf87ef47d605349'
+$NakamaDatabase = 'postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297'
+Invoke-Stage 'nakama' {
+    if (-not $Only) {
+        Write-Host '[gate] nakama: skipped (opt-in; run scripts/localgate.ps1 -Only nakama)' -ForegroundColor DarkGray
+        $script:stageSkipped = $true
+        return
+    }
+    if (-not $env:ENG_BUILD_ROOT) {
+        $env:ENG_BUILD_ROOT = Join-Path $env:LOCALAPPDATA "$BrandName\build"
+    }
+    $engineHost = Join-Path $env:ENG_BUILD_ROOT 'win-msvc-dev\engine\app\engine-host.exe'
+    if (-not (Test-Path $engineHost)) { throw "no engine-host at ${engineHost}: run -Only windows first" }
+    $network = "engine-nakama-$PID"
+    $database = "engine-nakama-db-$PID"
+    $server = "engine-nakama-$PID"
+    $key = 'engine-test-http-key'
+    $address = "postgres:localdb@${database}:5432/nakama"
+    try {
+        docker network create $network | Out-Null
+        docker run -d --name $database --network $network -e POSTGRES_PASSWORD=localdb -e POSTGRES_DB=nakama `
+            $NakamaDatabase | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Nakama's database did not start" }
+        # The database is migrated once it answers; then Nakama, its module
+        # loaded from the folder mounted where it looks.
+        $start = "until /nakama/nakama migrate up --database.address $address; do sleep 1; done; " +
+            "exec /nakama/nakama --name engine --database.address $address --runtime.http_key $key " +
+            "--socket.server_key defaultkey"
+        docker run -d --name $server --network $network -p 47350:7350 `
+            -v "${repo}/integrations/nakama/modules:/nakama/data/modules" `
+            --entrypoint /bin/sh $NakamaImage -ec $start | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Nakama did not start" }
+        $ready = $false
+        foreach ($try in 1..120) {
+            try {
+                $answer = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:47350/healthcheck'
+                if ($answer.StatusCode -eq 200) { $ready = $true; break }
+            }
+            catch {}
+            Start-Sleep -Seconds 1
+        }
+        if (-not $ready) {
+            docker logs $server
+            throw "Nakama did not answer its health check in two minutes"
+        }
+        $env:ENG_NAKAMA_HTTP_KEY = $key
+        & cmake "-DHOST=$engineHost" "-DPROJECT=$repo/tests/data/nakama" `
+            "-DWORKDIR=$env:ENG_BUILD_ROOT/win-msvc-dev/nakama-test" -DPORT=47896 `
+            '-DNAKAMA=http://127.0.0.1:47350' "-DTWICE=$repo/tests/data/backend-twice/twice.luau" `
+            "-DSOURCE=$repo" -P "$repo/tests/data/run_data_nakama.cmake"
+        if ($LASTEXITCODE -ne 0) {
+            docker logs --tail 80 $server
+            throw "the game did not keep its data and its players in Nakama"
+        }
+    }
+    finally {
+        Remove-Item Env:ENG_NAKAMA_HTTP_KEY -ErrorAction SilentlyContinue
+        docker rm -f $server $database 2>&1 | Out-Null
+        docker network rm $network 2>&1 | Out-Null
+    }
 }
 
 # **The engine cross-built for Android** (arm64, the pinned NDK), which only the

@@ -429,6 +429,23 @@ void registerStdModules(lua_State* L)
     registerNativeModule(L, "@std/json", openStdJson);
 }
 
+int awaitHttp(lua_State* L, net::HttpRequest request,
+              std::function<int(lua_State* co, const net::NetResult& result)> answer)
+{
+    const net::NetTicket ticket = client(L).submit(std::move(request));
+    if (!ticket.valid()) {
+        raise(L, ENG_TR("script.err.net_client_closed"));
+    }
+    ServiceState::NetWaiter waiter;
+    waiter.ticket = ticket;
+    waiter.answer = std::move(answer);
+    lua_pushthread(L);
+    waiter.threadRef = lua_ref(L, -1);
+    lua_pop(L, 1);
+    services(L).netWaiters.push_back(std::move(waiter));
+    return lua_yield(L, 0);
+}
+
 void resumeNetWaiters(lua_State* L)
 {
     ServiceState& state = services(L);
@@ -443,6 +460,7 @@ void resumeNetWaiters(lua_State* L)
     {
         int threadRef = -1;
         net::NetResult result;
+        std::function<int(lua_State*, const net::NetResult&)> answer;
     };
     std::vector<Ready> ready;
 
@@ -452,7 +470,7 @@ void resumeNetWaiters(lua_State* L)
             ++index;
             continue;
         }
-        ready.push_back({state.netWaiters[index].threadRef, std::move(result)});
+        ready.push_back({state.netWaiters[index].threadRef, std::move(result), state.netWaiters[index].answer});
         state.netWaiters.erase(state.netWaiters.begin() + static_cast<std::ptrdiff_t>(index));
     }
 
@@ -464,8 +482,14 @@ void resumeNetWaiters(lua_State* L)
             (void)lua_unref(L, entry.threadRef);
             continue;
         }
-        pushResult(co, entry.result);
-        (void)resumeScheduled(L, co, 1);
+        if (entry.answer) {
+            const int count = entry.answer(co, entry.result);
+            (void)resumeScheduled(L, co, count);
+        }
+        else {
+            pushResult(co, entry.result);
+            (void)resumeScheduled(L, co, 1);
+        }
         lua_pop(L, 1);
         // Whatever the thread did: one that parks again took its
         // own reference where it waits.

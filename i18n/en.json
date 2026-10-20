@@ -691,6 +691,7 @@
   "manager.err.servers_missing": "There is no servers.toml at {path}.",
   "manager.err.servers_name": "{path}: {detail} is not a world's name: one lowercase word of letters, digits, - and _, not starting with i-, and each name once.",
   "manager.err.servers_unreadable": "{path} could not be read: {detail}",
+  "manager.err.nakama_url": "{path}: [data] backend = \"nakama\" keeps the game's data in its Nakama, and [nakama] url names none ({detail}).",
   "manager.err.servers_value": "{path}: {detail} is not a value it can take.",
   "manager.err.unknown_command": "There is no command {name}. help lists every one.",
   "manager.err.update_folder": "No game in {path}: the update was not started, and every world goes on as it is.",

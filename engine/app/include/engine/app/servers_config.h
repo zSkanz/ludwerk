@@ -55,6 +55,11 @@ struct ServersConfig
     // holds the token it is asked with.
     std::string backend;
     std::string backendTokenEnv;
+    // `[nakama]` (ADR 0242): the game's Nakama, whose sessions the front
+    // door takes and, with `[data] backend = "nakama"`, whose storage keeps
+    // the data; and the environment variable with its server's HTTP key.
+    std::string nakamaUrl;
+    std::string nakamaHttpKeyEnv;
 
     // `[accounts]` (ADR 0237): the front door signs players in, and lets in
     // only those it signed in; whether a player may make an account

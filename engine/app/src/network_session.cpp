@@ -678,7 +678,11 @@ void NetworkSession::signIns(scene::EngineState& state)
         opened = opened && !one->transport->open(config).has_value() &&
                  !one->transport->connect(host, port, one->peer).has_value();
         one->message = replication::signInMessage(
-            replication::SignInFields{.registering = ask.registering, .name = ask.name, .password = ask.password});
+            replication::SignInFields{.kind = ask.nakama        ? replication::SignInKind::NakamaSession
+                                              : ask.registering ? replication::SignInKind::Register
+                                                                : replication::SignInKind::SignIn,
+                                      .name = ask.name,
+                                      .password = ask.password});
         core::wipe(ask.password);
         if (!opened) {
             core::wipe(ask.password);

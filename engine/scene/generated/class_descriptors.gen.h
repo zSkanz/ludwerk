@@ -945,6 +945,9 @@ Value getXRAnchorCFrame(const World& world, core::InstanceId id);
 Value getXRAnchorTracked(const World& world, core::InstanceId id);
 Value getXRAnchorId(const World& world, core::InstanceId id);
 
+// NakamaService
+Value getNakamaServiceSession(const World& world, core::InstanceId id);
+
 // DataModel
 Value getDataModelEngineVersion(const World& world, core::InstanceId id);
 Value getDataModelLuauVersion(const World& world, core::InstanceId id);

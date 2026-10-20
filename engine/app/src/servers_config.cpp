@@ -124,7 +124,24 @@ std::optional<ServersConfig> readServersConfig(std::string_view text, std::strin
     count("data.backup_keep", 1, 1000, config.backupKeep);
     // **A game's own backend** (ADR 0238 §5): an address it may use, or the
     // file is refused with why.
-    if (const std::optional<std::string_view> backend = document.string("data.backend")) {
+    if (const std::optional<std::string_view> nakama = document.string("nakama.url")) {
+        std::string why;
+        if (!backendUrlAllowed(*nakama, why)) {
+            error = problem(ENG_TR("manager.err.servers_value"), source, why);
+            return std::nullopt;
+        }
+        config.nakamaUrl = std::string(*nakama);
+    }
+    if (const std::optional<std::string_view> key = document.string("nakama.http_key_env"))
+        config.nakamaHttpKeyEnv = std::string(*key);
+    if (const std::optional<std::string_view> backend = document.string("data.backend"); backend == "nakama") {
+        if (config.nakamaUrl.empty()) {
+            error = problem(ENG_TR("manager.err.nakama_url"), source, "data.backend");
+            return std::nullopt;
+        }
+        config.backend = "nakama";
+    }
+    else if (backend.has_value()) {
         std::string why;
         if (!backendUrlAllowed(*backend, why)) {
             error = problem(ENG_TR("manager.err.servers_value"), source, why);

@@ -308,6 +308,48 @@ TEST_CASE("account door > a wrong name, a wrong password and a taken name do a r
     CHECK(refused[0].cost.empty());
 }
 
+TEST_CASE("account door > a session of the game's Nakama is asked of it, and signed for as nakama:<user>")
+{
+    // **Nakama, as the door's whoami sees it**: one session it knows.
+    std::atomic<int> asked{0};
+    AccountDoor::Options options;
+    options.whoami = [&asked](const std::string& session) -> std::optional<std::string> {
+        asked += 1;
+        if (session == "good-session")
+            return std::string("4ec4f126-3f9d-11e7-84ef-b7c182b36521");
+        return std::nullopt;
+    };
+    Door door(options);
+    const auto session = [&](std::string token, std::string_view address = "10.0.0.1") {
+        door.door->ask(1, address, {}, std::move(token), AccountDoor::Kind::Session);
+        return door.answer();
+    };
+    const AccountDoor::Result good = session("good-session");
+    REQUIRE(good.failure == Failure::None);
+    CHECK(good.account == "nakama:4ec4f126-3f9d-11e7-84ef-b7c182b36521");
+    std::string why;
+    engine::core::TicketReplay replay;
+    const std::optional<engine::core::TicketClaims> claims =
+        engine::core::verifyTicket(good.ticket, door.key.pub, Game, unixNow(), &replay, why);
+    REQUIRE_MESSAGE(claims.has_value(), why);
+    CHECK(claims->subject == good.account);
+
+    // One Nakama does not know, and none at all: the same answer as a wrong
+    // password, and only the first asked of Nakama.
+    CHECK(session("stale-session").failure == Failure::WrongNameOrPassword);
+    CHECK(session("").failure == Failure::WrongNameOrPassword);
+    CHECK(asked == 2);
+    // An address that keeps trying sessions Nakama refuses is refused itself.
+    for (int at = 0; at < 5; ++at)
+        (void)session("stale-" + std::to_string(at), "10.9.9.9");
+    CHECK(session("stale-x", "10.9.9.9").failure == Failure::Refused);
+
+    // A door with no Nakama refuses a session outright.
+    Door plain;
+    plain.door->ask(1, "10.0.0.2", {}, "good-session", AccountDoor::Kind::Session);
+    CHECK(plain.answer().failure == Failure::Refused);
+}
+
 TEST_CASE("account door > a wrong name, a wrong password and a taken name take a right one's time" *
           doctest::skip(!engine::platform::environmentFlag("ENG_TIMED_TESTS")))
 {

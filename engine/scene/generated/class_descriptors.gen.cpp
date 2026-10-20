@@ -5374,6 +5374,49 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     identityServiceDesc.methods = identityServiceMethods;
     classes.registerClass(identityServiceDesc);
 
+    // --- NakamaService ---
+    static std::array<PropertyDesc, 1> nakamaServiceProperties;
+    nakamaServiceProperties = {{
+        PropertyDesc{
+            .name = atoms.intern("Session"),
+            .type = ValueType::String,
+            .threadSafety = ThreadSafety::Safe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The Nakama session token this player signed in with; empty before `AuthenticateAsync`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getNakamaServiceSession,
+            .set = nullptr,
+        },
+    }};
+    static std::array<MethodDesc, 2> nakamaServiceMethods;
+    nakamaServiceMethods = {{
+        MethodDesc{
+            .name = atoms.intern("AuthenticateAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Signs in to the game's Nakama, making the account the first time. `kind` is `device` (`id` a device's id), `email` (`id` the address, with `password`) or `custom` (`id` the game's own). Returns whether it did, and why not: `IntegrationDisabled`, `NotConfigured`, `InvalidArgument`, `Refused` (Nakama said no) or `Unreachable`.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetTicketAsync"),
+            .yields = true,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Turns the session into a ticket at the game's front door `address`, as `NetworkService:SignInAsync` does a password: pass it to `NetworkService:Join`. The session crosses the network only encrypted, and the servers ask Nakama whose it is. A player not signed in to Nakama, or a session it no longer knows, is `WrongNameOrPassword`.",
+        },
+    }};
+    ClassDescriptor nakamaServiceDesc;
+    nakamaServiceDesc.name = atoms.intern("NakamaService");
+    nakamaServiceDesc.super = instanceClass;
+    nakamaServiceDesc.flags = ClassFlags::Service | ClassFlags::NotCreatable;
+    nakamaServiceDesc.integration = "nakama";
+    nakamaServiceDesc.defaultName = atoms.intern("NakamaService");
+    nakamaServiceDesc.doc = "Signs this player in to the game's Nakama, and turns that session into a ticket to join the game's servers with. An optional integration: on with `[integrations] enabled = [\"nakama\"]` in `project.toml`, and `[integrations.nakama] configuration` the server's address with its client key, `http://defaultkey@127.0.0.1:7350`. No SDK: Nakama is asked over HTTP.\012\012The servers check the session with Nakama themselves (`[nakama] url` in `servers.toml`), and the account a player then has is `nakama:` and their Nakama user id. Call it on the player's machine.";
+    nakamaServiceDesc.properties = nakamaServiceProperties;
+    nakamaServiceDesc.methods = nakamaServiceMethods;
+    classes.registerClass(nakamaServiceDesc);
+
     // --- XboxService ---
     static std::array<MethodDesc, 6> xboxServiceMethods;
     xboxServiceMethods = {{

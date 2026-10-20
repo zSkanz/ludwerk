@@ -15,6 +15,7 @@
 #include "engine/app/data_broker.h"
 #include "engine/app/data_ops.h"
 #include "engine/app/data_worker.h"
+#include "engine/app/servers_config.h"
 #include "engine/core/json.h"
 
 using engine::app::DataWorker;
@@ -152,4 +153,26 @@ TEST_CASE("backend > an answer lost is asked again with the same id; none at all
     CHECK(sent.size() == 3);
     CHECK(answer.find("Unavailable") != std::string::npos);
     CHECK_FALSE(store->readRecord("ana").ok);
+}
+
+TEST_CASE("backend > the game's Nakama: its storage by the module's RPC, and servers.toml that names it")
+{
+    CHECK(engine::app::nakamaDataEndpoint("http://127.0.0.1:7350/", "a key&more") ==
+          "http://127.0.0.1:7350/v2/rpc/engine_data?unwrap&http_key=a%20key%26more");
+    std::optional<core::EngineError> error;
+    const std::string head = "[manager]\nport = 7777\nworld_ports = \"7800-7801\"\n[[world]]\nname = \"town\"\nentry = true\n";
+    const auto read = [&](const std::string& extra) {
+        error.reset();
+        return engine::app::readServersConfig(head + extra, "servers.toml", error);
+    };
+    const std::optional<engine::app::ServersConfig> nakama = read(
+        "[nakama]\nurl = \"https://nakama.example.com\"\nhttp_key_env = \"KEY\"\n[data]\nbackend = \"nakama\"\n");
+    REQUIRE(nakama.has_value());
+    CHECK(nakama->backend == "nakama");
+    CHECK(nakama->nakamaHttpKeyEnv == "KEY");
+    // Nakama's storage with no Nakama named, and Nakama in the clear past
+    // this network: refused.
+    CHECK_FALSE(read("[data]\nbackend = \"nakama\"\n").has_value());
+    CHECK_FALSE(read("[nakama]\nurl = \"http://nakama.example.com\"\n").has_value());
+    CHECK(read("[nakama]\nurl = \"http://192.168.1.20:7350\"\n").has_value());
 }

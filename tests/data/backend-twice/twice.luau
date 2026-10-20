@@ -5,20 +5,33 @@
 -- a new id moves again.
 --
 --     lute tests/data/backend-twice/twice.luau --port=N
+--     lute tests/data/backend-twice/twice.luau --url=ENDPOINT [--owner=NAME]
+--
+-- `--url` asks another backend at its own address -- the game's Nakama, by
+-- its module's RPC -- and `--owner` names whose gold moves, so a backend
+-- that keeps what it had is asked about an owner of this run's own.
 
 local json = require("@std/json")
 local net = require("@lute/net")
 local process = require("@lute/process")
 local task = require("@lute/task")
 
-local Port = 0
+local Url = ""
+local Owner = "twice"
 for _, argument in process.args do
     local port = string.match(argument, "^%-%-port=(%d+)$")
     if port then
-        Port = tonumber(port) :: number
+        Url = `http://127.0.0.1:{port}/v1/data`
+    end
+    local url = string.match(argument, "^%-%-url=(.+)$")
+    if url then
+        Url = url
+    end
+    local owner = string.match(argument, "^%-%-owner=(.+)$")
+    if owner then
+        Owner = owner
     end
 end
-local Url = `http://127.0.0.1:{Port}/v1/data`
 
 local function ask(request: { [string]: any }): { [string]: any }?
     local metadata: net.Metadata = { method = "POST", body = json.serialize(request :: any) }
@@ -32,7 +45,7 @@ end
 -- The backend starts beside this: asked until it answers.
 local balance: { [string]: any }? = nil
 for _ = 1, 100 do
-    balance = ask({ request = "probe", op = "balance", owner = "twice", currency = "Gold" })
+    balance = ask({ request = "probe", op = "balance", owner = Owner, currency = "Gold" })
     if balance then
         break
     end
@@ -47,14 +60,14 @@ local pay = {
     request = "the-same-id",
     op = "transact",
     world = "town",
-    moves = { { currency = "Gold", amount = 5, from = "", to = "twice" } },
+    moves = { { currency = "Gold", amount = 5, from = "", to = Owner } },
 }
 local first = ask(pay)
 local second = ask(pay)
-local once = (ask({ request = "after-two", op = "balance", owner = "twice", currency = "Gold" }) :: any).balance
+local once = (ask({ request = "after-two", op = "balance", owner = Owner, currency = "Gold" }) :: any).balance
 pay.request = "another-id"
 local third = ask(pay)
-local twice = (ask({ request = "after-three", op = "balance", owner = "twice", currency = "Gold" }) :: any).balance
+local twice = (ask({ request = "after-three", op = "balance", owner = Owner, currency = "Gold" }) :: any).balance
 
 local same = first ~= nil and second ~= nil and json.serialize(first :: any) == json.serialize(second :: any)
 if same and once == 5 and third ~= nil and twice == 10 then

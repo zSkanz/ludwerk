@@ -5258,17 +5258,24 @@ local Messages: { Schema.Message } = {
         Channel = "Control",
         Direction = "ToAuthority",
         Layout = {
-            { Name = "register", Type = "u8", Doc = "1 to make the account first, 0 to sign in to one." },
-            { Name = "name", Type = "text", Doc = "The login name, at most 64 bytes." },
+            {
+                Name = "kind",
+                Type = "u8",
+                Doc = "0 to sign in to an account, 1 to make the account first, 2 a session of the game's Nakama "
+                    .. "(protocol 62, ADR 0242) in `password`'s place.",
+            },
+            { Name = "name", Type = "text", Doc = "The login name, at most 64 bytes; empty for a session." },
             {
                 Name = "password",
                 Type = "text",
-                Doc = "At most 128 bytes. Crosses the network only inside the match's encryption, and is "
-                    .. "never kept: the front door hashes or checks it and lets it go.",
+                Doc = "At most 128 bytes, or a session's token of at most 4096. Crosses the network only inside "
+                    .. "the match's encryption, and is never kept: the front door hashes or checks it and lets "
+                    .. "it go.",
             },
         },
         Doc = "Sign this player in (ADR 0237): sent to a manager's front door, on a connection opened for it, "
-            .. "and answered with a `SignedIn`.",
+            .. "and answered with a `SignedIn`. A Nakama session is checked with Nakama, and the ticket is "
+            .. "the engine's own, for the account `nakama:<user id>`.",
     },
     {
         Name = "SignedIn",

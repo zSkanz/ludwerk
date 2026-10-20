@@ -521,6 +521,88 @@ TEST_CASE("ADR 0237: with accounts on, the front door refuses who did not sign i
     }
 }
 
+TEST_CASE("ADR 0242: a Nakama session is turned into the engine's ticket at the front door, and the player is "
+          "nakama:<user> in every world")
+{
+    Captured log;
+    auto wire = net::createMemoryNetwork();
+    std::optional<core::EngineError> error;
+    const std::optional<app::ServersConfig> config = app::readServersConfig(
+        std::string(Servers) + "\n[accounts]\nenabled = true\nregister = false\n\n[nakama]\nurl = \"http://127.0.0.1:7350\"\n",
+        "servers.toml", error);
+    REQUIRE(config.has_value());
+    CHECK(config->nakamaUrl == "http://127.0.0.1:7350");
+    const std::string town = R"(
+        local NetworkService = game:GetService("NetworkService")
+        NetworkService.TravelArrived:Connect(function(player)
+            print(`town-account:{player.AccountId}`)
+        end)
+    )";
+    Project root;
+    std::map<std::string, std::unique_ptr<WorldMachine>> worlds;
+    core::u64 now = 1;
+    app::WorldManager::Options options;
+    options.config = *config;
+    options.root = root.root;
+    // A ticket is for one game: its id is the audience the door checks.
+    options.projectId = "dev.ludwerk.nakama-test";
+    options.prologue = std::vector<core::u8>{};
+    options.dataStore = []() { return app::makeMemoryDataStore(); };
+    // **Nakama, as the door asks it**: one session it knows.
+    options.nakamaWhoami = [](const std::string& session) -> std::optional<std::string> {
+        if (session == "a-nakama-session")
+            return std::string("4ec4f126-3f9d-11e7-84ef-b7c182b36521");
+        return std::nullopt;
+    };
+    options.launcher = [&](const app::WorldLaunch& launch) -> std::unique_ptr<app::WorldProcess> {
+        auto& machine = worlds[launch.name];
+        machine = std::make_unique<WorldMachine>();
+        machine->boot(wire, launch, town);
+        return std::make_unique<FakeProcess>(*machine);
+    };
+    options.transports = [wire]() { return net::createMemoryTransport(wire); };
+    options.clock = [&now]() { return now; };
+    options.unixClock = []() { return unixNow(); };
+    app::WorldManager manager(std::move(options));
+    REQUIRE_FALSE(manager.start().has_value());
+
+    // The player's machine, signed in to Nakama already: its session as
+    // `AuthenticateAsync` would have kept it.
+    const std::string joiner = R"(
+        local NetworkService = game:GetService("NetworkService")
+        local NakamaService = game:GetService("NakamaService")
+        NetworkService.JoinFailed:Connect(function(reason)
+            print(`joiner-failed:{reason}`)
+        end)
+        task.wait(0.2)
+        local result = NakamaService:GetTicketAsync("memory:47981")
+        print(`nakama-ticket:{result.Ok}:{result.Reason}`)
+        if result.Ok then
+            NetworkService:Join("memory:47981", { Ticket = result.Ticket })
+        end
+    )";
+    Client client;
+    client.boot(wire, joiner);
+    client.host->world().engineState().enabledIntegrations.push_back("nakama");
+    client.host->world().engineState().nakamaSession = "a-nakama-session";
+    // And one whose session Nakama no longer knows.
+    Client stale;
+    stale.boot(wire, joiner);
+    stale.host->world().engineState().enabledIntegrations.push_back("nakama");
+    stale.host->world().engineState().nakamaSession = "an-expired-session";
+    for (int at = 0; at < 400; ++at) {
+        now += 16'000'000ull;
+        manager.frame();
+        for (auto& [name, machine] : worlds)
+            machine->frame();
+        client.frame();
+        stale.frame();
+    }
+    CHECK(log.contains("nakama-ticket:true:nil"));
+    CHECK(log.contains("nakama-ticket:false:Enum.SignInFailure.WrongNameOrPassword"));
+    CHECK(log.contains("town-account:nakama:4ec4f126-3f9d-11e7-84ef-b7c182b36521"));
+}
+
 TEST_CASE("ADR 0240: a party crosses worlds -- invited where its member is, heard in each, and sent together")
 {
     Captured log;

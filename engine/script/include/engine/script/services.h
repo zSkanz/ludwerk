@@ -420,6 +420,10 @@ public:
     {
         net::NetTicket ticket;
         int threadRef = -1;
+        // What the thread is given back, where it is not the response itself:
+        // a service's own answer made of it (`NakamaService`). Pushes onto the
+        // thread and says how many.
+        std::function<int(lua_State* co, const net::NetResult& result)> answer;
     };
     std::vector<NetWaiter> netWaiters;
 

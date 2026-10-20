@@ -2543,6 +2543,11 @@ Value getNetworkServiceWorldName(const World& world, core::InstanceId)
     return Value{colon == std::string::npos ? name : name.substr(0, colon)};
 }
 
+Value getNakamaServiceSession(const World& world, core::InstanceId)
+{
+    return Value{world.engineState().nakamaSession};
+}
+
 Value getNetworkServiceChannel(const World& world, core::InstanceId)
 {
     return Value{static_cast<f64>(world.engineState().networkChannel)};

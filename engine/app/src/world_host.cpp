@@ -395,6 +395,26 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_testRun = options.testRun;
     m_world->engineState().enabledIntegrations = options.enabledIntegrations;
     m_integrationConfigurations = options.integrationConfigurations;
+    // **The game's Nakama** (ADR 0242): `http://<client key>@host:port`, the
+    // key taken out of the address it is asked at.
+    if (std::find(options.enabledIntegrations.begin(), options.enabledIntegrations.end(), "nakama") !=
+        options.enabledIntegrations.end()) {
+        if (const auto found = options.integrationConfigurations.find("nakama");
+            found != options.integrationConfigurations.end()) {
+            std::string url = found->second;
+            std::string key;
+            if (const std::size_t scheme = url.find("://"); scheme != std::string::npos) {
+                const std::size_t at = url.find('@', scheme + 3);
+                const std::size_t slash = url.find('/', scheme + 3);
+                if (at != std::string::npos && (slash == std::string::npos || at < slash)) {
+                    key = url.substr(scheme + 3, at - scheme - 3);
+                    url.erase(scheme + 3, at - scheme - 2);
+                }
+            }
+            m_world->engineState().nakamaUrl = std::move(url);
+            m_world->engineState().nakamaServerKey = std::move(key);
+        }
+    }
     m_platformServices = options.platformServices;
     m_sceneCloseGrace = options.sceneCloseGrace;
     m_scriptMemoryMb = options.scriptMemoryMb;

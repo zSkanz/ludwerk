@@ -27,6 +27,9 @@ struct BackendOptions
     // `https://...` anywhere; `http://` only to this machine or the local
     // network (see `backendUrlAllowed`).
     std::string url;
+    // The whole address asked, where it is not `<url>/v1/data`: Nakama's
+    // RPC (`nakamaDataEndpoint`).
+    std::string endpoint;
     // Sent as `Authorization: Bearer <token>`; empty for none.
     std::string token;
     // Each try's time, and all tries' together.
@@ -48,5 +51,12 @@ struct BackendOptions
 [[nodiscard]] bool backendUrlAllowed(std::string_view url, std::string& why);
 
 [[nodiscard]] std::unique_ptr<IDataStore> makeBackendDataStore(BackendOptions options);
+
+// **The game's Nakama** (ADR 0242): the module's `engine_data` RPC, asked
+// with the server's HTTP key and its body as the payload (`unwrap`); and who
+// a player's session is, by `engine_whoami` with the session as its bearer --
+// none for one Nakama refuses or that did not answer.
+[[nodiscard]] std::string nakamaDataEndpoint(std::string_view url, std::string_view httpKey);
+[[nodiscard]] std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami(std::string url);
 
 } // namespace engine::app

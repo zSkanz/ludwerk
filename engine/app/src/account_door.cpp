@@ -153,6 +153,13 @@ std::string AccountDoor::ticketFor(const DataAccount& account) const
 void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view name, std::string password,
                       bool registering)
 {
+    ask(peer, address, name, std::move(password), registering ? Kind::Register : Kind::SignIn);
+}
+
+void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view name, std::string password,
+                      Kind kind)
+{
+    const bool registering = kind == Kind::Register;
     const core::u64 now = nowNs();
     const auto refuse = [&](Failure failure, core::u32 retryAfter) {
         core::wipe(password);
@@ -170,6 +177,32 @@ void AccountDoor::ask(core::u32 peer, std::string_view address, std::string_view
     }
     if (registering && !m_options.registration) {
         refuse(Failure::Refused, 0);
+        return;
+    }
+    // **A session of the game's Nakama** (ADR 0242): no name, no hash --
+    // Nakama is asked whose it is, on the pool, under the address's limit.
+    if (kind == Kind::Session) {
+        if (!m_options.whoami) {
+            refuse(Failure::Refused, 0);
+            return;
+        }
+        // No session is no account: the same answer as a wrong one.
+        if (password.empty()) {
+            refuse(Failure::WrongNameOrPassword, 0);
+            return;
+        }
+        if (m_delayed.size() + m_inPool.size() >= m_options.most) {
+            refuse(Failure::Busy, 1);
+            return;
+        }
+        Asked asked;
+        asked.peer = peer;
+        asked.address = std::string(address);
+        asked.session = true;
+        asked.job.id = m_nextJob++;
+        asked.job.session = true;
+        asked.job.password = std::move(password);
+        m_delayed.push_back(std::move(asked));
         return;
     }
     const std::optional<std::string> skeleton = skeletonOf(name);
@@ -271,6 +304,18 @@ void AccountDoor::failed(const Asked& asked)
 void AccountDoor::finish(Asked& asked, const Done& done)
 {
     const std::int64_t unixNow = m_options.unixClock ? m_options.unixClock() : 0;
+    if (asked.session) {
+        if (!done.ok) {
+            // A session Nakama does not know counts against its address.
+            m_addressFailures[asked.address].push_back(nowNs());
+            answer(Result{asked.peer, Failure::WrongNameOrPassword, {}, {}, 0}, done.hashes, done.cost);
+            return;
+        }
+        DataAccount account;
+        account.id = "nakama:" + done.user;
+        answer(Result{asked.peer, Failure::None, ticketFor(account), account.id, 0}, done.hashes, done.cost);
+        return;
+    }
     if (asked.registering) {
         if (!done.ok) {
             answer(Result{asked.peer, Failure::Busy, {}, {}, 1}, done.hashes, done.cost);
@@ -335,9 +380,15 @@ void AccountDoor::work()
         Done done;
         done.id = job.id;
         // **Counted where it is made**: a hash checked that no Argon2 ran
-        // for -- an empty decoy, a stored hash not one of ours -- costs
+        // for -- an empty decoy, a stored hash not one of ours, a session of Nakama's -- costs
         // nothing and says so.
-        if (job.hashing) {
+        if (job.session) {
+            const std::optional<std::string> user = m_options.whoami(job.password);
+            done.ok = user.has_value() && !user->empty();
+            if (done.ok)
+                done.user = *user;
+        }
+        else if (job.hashing) {
             done.hash = core::hashPassword(job.password);
             done.ok = !done.hash.empty();
             done.cost = core::passwordCost(done.hash);

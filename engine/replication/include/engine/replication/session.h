@@ -294,14 +294,24 @@ inline constexpr u32 NoEstimate = 0xFFFFFFFFu;
 // **Signing in at the front door** (ADR 0237): what a player's machine sends
 // on a connection opened for it, and the door's answer. Nothing for bytes
 // that are not one.
+// What a `SignIn` asks (protocol 62): an account signed in to or made, or a
+// session of the game's Nakama checked (ADR 0242).
+enum class SignInKind : u8
+{
+    SignIn = 0,
+    Register = 1,
+    NakamaSession = 2,
+};
 struct SignInFields
 {
-    bool registering = false;
+    SignInKind kind = SignInKind::SignIn;
     std::string name;
+    // The password, or a session's token.
     std::string password;
 };
 inline constexpr usize MaxSignInNameBytes = 64;
 inline constexpr usize MaxSignInPasswordBytes = 128;
+inline constexpr usize MaxSignInSessionBytes = 4096;
 [[nodiscard]] std::vector<u8> signInMessage(const SignInFields& fields);
 [[nodiscard]] std::optional<SignInFields> readSignIn(std::span<const u8> payload);
 struct SignedInFields

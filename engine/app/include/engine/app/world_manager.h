@@ -120,6 +120,8 @@ public:
         // **The game's data** (ADR 0238): absent, the database in `data/`
         // under `root`, named after the project; a test gives one in memory.
         std::function<std::unique_ptr<IDataStore>()> dataStore;
+        // Who a Nakama session is, for a test; none for the HTTP call.
+        std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami;
         // **A test's kill in the middle of a trade** (ADR 0238 §3): the
         // process ends, as a kill ends it, at the Nth transaction a world
         // asks for -- before it runs, or once it is on the disk and before its

@@ -628,9 +628,9 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // its items, money and transactions; 387: its shared values; 389:
     // `NetworkService:SignInAsync` and `RegisterAsync` (ADR 0237); 398:
     // `PartyService`'s nine (ADR 0240); 411: `MatchmakingService`'s thirteen
-    // (ADR 0243); 412: `XRService:MarkCut` (ADR 0252).
-    CHECK(coverage.declared == 412);
-    CHECK(coverage.bound == 412);
+    // (ADR 0243); 412: `XRService:MarkCut` (ADR 0252); 414: `NakamaService`'s two (ADR 0242).
+    CHECK(coverage.declared == 414);
+    CHECK(coverage.bound == 414);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

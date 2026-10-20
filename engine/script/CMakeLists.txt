@@ -39,6 +39,7 @@ engine_add_module(script
         src/join_request.cpp
         src/server_console.cpp
         src/matchmaking_service.cpp
+        src/nakama_service.cpp
         src/party_service.cpp
         src/travel.cpp
         src/scenes.cpp

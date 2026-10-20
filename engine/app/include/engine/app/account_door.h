@@ -64,6 +64,18 @@ public:
         // **What each answer cost the pool**, kept for `takeWork`: off, so a
         // door nobody asks keeps nothing.
         bool keepWork = false;
+        // **Who a session of the game's Nakama is** (ADR 0242, as amended):
+        // its user's id, or none for a session Nakama does not know. Asked
+        // on the pool's threads; none here, and a session is refused.
+        std::function<std::optional<std::string>(const std::string& session)> whoami;
+    };
+
+    // What is asked: an account signed in to or made, or a session checked.
+    enum class Kind : core::u8
+    {
+        SignIn,
+        Register,
+        Session,
     };
 
     struct Result
@@ -95,6 +107,9 @@ public:
     // later `take`, after the same work whichever way it goes. `password` is
     // wiped once it has been hashed or checked.
     void ask(core::u32 peer, std::string_view address, std::string_view name, std::string password, bool registering);
+    // The same, or a session of the game's Nakama (`password` its token):
+    // answered with the engine's own ticket for the account `nakama:<user id>`.
+    void ask(core::u32 peer, std::string_view address, std::string_view name, std::string password, Kind kind);
     // Once a pass: the asks whose delay is over handed to the pool, and what
     // the pool finished turned into answers.
     void frame();
@@ -131,6 +146,8 @@ private:
     {
         core::u64 id = 0;
         bool hashing = false;
+        // A session's token in `password`, asked of Nakama.
+        bool session = false;
         std::string password;
         std::string hash;
     };
@@ -142,6 +159,8 @@ private:
         // The Argon2 evaluations made, and at what cost.
         core::u32 hashes = 0;
         std::string cost;
+        // A session's user, as Nakama said.
+        std::string user;
     };
     // What waits for the pool, and what it is for.
     struct Asked
@@ -151,6 +170,7 @@ private:
         std::string name;
         std::string skeleton;
         bool registering = false;
+        bool session = false;
         // The account found by name for a sign-in; none, and the hash made at
         // start checked instead.
         std::optional<DataAccount> account;

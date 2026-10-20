@@ -4796,6 +4796,21 @@ declare extern type IdentityService extends Instance with
     function SignInAsync(self): (boolean, string?)
 end
 
+declare extern type NakamaService extends Instance with
+    --- The Nakama session token this player signed in with; empty before `AuthenticateAsync`.
+    read Session: string
+    --- Signs in to the game's Nakama, making the account the first time. `kind` is `device` (`id` a
+    --- device's id), `email` (`id` the address, with `password`) or `custom` (`id` the game's own).
+    --- Returns whether it did, and why not: `IntegrationDisabled`, `NotConfigured`, `InvalidArgument`,
+    --- `Refused` (Nakama said no) or `Unreachable`.
+    function AuthenticateAsync(self, kind: string, id: string, password: string?): (boolean, string?)
+    --- Turns the session into a ticket at the game's front door `address`, as
+    --- `NetworkService:SignInAsync` does a password: pass it to `NetworkService:Join`. The session
+    --- crosses the network only encrypted, and the servers ask Nakama whose it is. A player not signed
+    --- in to Nakama, or a session it no longer knows, is `WrongNameOrPassword`.
+    function GetTicketAsync(self, address: string): { Ok: boolean, Ticket: string?, Reason: EnumSignInFailure?, RetryAfter: number }
+end
+
 declare extern type XboxService extends Instance with
     --- Returns whether an enabled Xbox provider is available. It is false when the SDK is not
     --- installed.
@@ -4831,6 +4846,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "StoreService"): StoreService
     function GetService(self, name: "AchievementService"): AchievementService
     function GetService(self, name: "IdentityService"): IdentityService
+    function GetService(self, name: "NakamaService"): NakamaService
     function GetService(self, name: "XboxService"): XboxService
     function GetService(self, name: "Workspace"): Workspace
     function GetService(self, name: "Lighting"): Lighting

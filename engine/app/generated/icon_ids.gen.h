@@ -207,6 +207,7 @@ inline constexpr std::string_view ClassMaterial = "class.Material";
 inline constexpr std::string_view ClassMeshPart = "class.MeshPart";
 inline constexpr std::string_view ClassModel = "class.Model";
 inline constexpr std::string_view ClassModuleScript = "class.ModuleScript";
+inline constexpr std::string_view ClassNakamaService = "class.NakamaService";
 inline constexpr std::string_view ClassNavigationAgent = "class.NavigationAgent";
 inline constexpr std::string_view ClassNavigationArea = "class.NavigationArea";
 inline constexpr std::string_view ClassNavigationLink = "class.NavigationLink";

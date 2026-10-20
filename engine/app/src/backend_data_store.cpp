@@ -117,10 +117,15 @@ public:
                 return std::move(response.body);
             };
         }
-        m_endpoint = m_options.url;
-        while (!m_endpoint.empty() && m_endpoint.back() == '/')
-            m_endpoint.pop_back();
-        m_endpoint += "/v1/data";
+        if (!m_options.endpoint.empty()) {
+            m_endpoint = m_options.endpoint;
+        }
+        else {
+            m_endpoint = m_options.url;
+            while (!m_endpoint.empty() && m_endpoint.back() == '/')
+                m_endpoint.pop_back();
+            m_endpoint += "/v1/data";
+        }
     }
 
     [[nodiscard]] bool keepsItsLog() const override { return false; }
@@ -366,6 +371,66 @@ bool backendUrlAllowed(std::string_view url, std::string& why)
 std::unique_ptr<IDataStore> makeBackendDataStore(BackendOptions options)
 {
     return std::make_unique<BackendDataStore>(std::move(options));
+}
+
+namespace {
+
+[[nodiscard]] std::string trimmed(std::string_view url)
+{
+    std::string out(url);
+    while (!out.empty() && out.back() == '/')
+        out.pop_back();
+    return out;
+}
+
+// A query string's value, escaped as RFC 3986 asks of one.
+[[nodiscard]] std::string escaped(std::string_view text)
+{
+    static constexpr char Hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (const char c : text) {
+        const auto byte = static_cast<unsigned char>(c);
+        if ((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') ||
+            byte == '-' || byte == '_' || byte == '.' || byte == '~') {
+            out.push_back(c);
+            continue;
+        }
+        out.push_back('%');
+        out.push_back(Hex[byte >> 4]);
+        out.push_back(Hex[byte & 15]);
+    }
+    return out;
+}
+
+} // namespace
+
+std::string nakamaDataEndpoint(std::string_view url, std::string_view httpKey)
+{
+    return trimmed(url) + "/v2/rpc/engine_data?unwrap&http_key=" + escaped(httpKey);
+}
+
+std::function<std::optional<std::string>(const std::string& session)> nakamaWhoami(std::string url)
+{
+    return [endpoint = trimmed(url) + "/v2/rpc/engine_whoami?unwrap"](
+               const std::string& session) -> std::optional<std::string> {
+        net::HttpRequest request;
+        request.url = endpoint;
+        request.method = "POST";
+        request.body = "{}";
+        request.timeoutMs = 5000;
+        request.headers.push_back({"Content-Type", "application/json"});
+        request.headers.push_back({"Authorization", "Bearer " + session});
+        net::HttpResponse response;
+        if (net::performHttp(request, response).has_value() || !response.ok || response.statusCode != 200)
+            return std::nullopt;
+        core::JsonDocument answer;
+        if (!answer.parse(response.body, "nakama"))
+            return std::nullopt;
+        const std::string_view user = answer.root()["user_id"].asString();
+        if (user.empty())
+            return std::nullopt;
+        return std::string(user);
+    };
 }
 
 } // namespace engine::app

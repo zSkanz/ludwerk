@@ -264,7 +264,23 @@ std::optional<core::EngineError> WorldManager::start()
     };
     // **A game's own backend keeps its data** where `[data] backend` names
     // one (ADR 0238 §5); its accounts stay this manager's, below.
-    if (!m_options.config.backend.empty()) {
+    if (m_options.config.backend == "nakama") {
+        // **Nakama's storage, through the module's `engine_data`** (ADR
+        // 0242), with the server's HTTP key from the environment.
+        BackendOptions backend;
+        std::string key;
+        if (const std::string& name = m_options.config.nakamaHttpKeyEnv; !name.empty()) {
+            if (const std::optional<std::string> value = platform::environmentValue(name.c_str()))
+                key = *value;
+            else {
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{name}}};
+                core::log(core::LogLevel::Warn, ENG_TR("data.err.backend_token"), args);
+            }
+        }
+        backend.endpoint = nakamaDataEndpoint(m_options.config.nakamaUrl, key);
+        m_data = std::make_unique<DataBroker>(makeBackendDataStore(std::move(backend)));
+    }
+    else if (!m_options.config.backend.empty()) {
         BackendOptions backend;
         backend.url = m_options.config.backend;
         if (const std::string& name = m_options.config.backendTokenEnv; !name.empty()) {
@@ -306,6 +322,14 @@ std::optional<core::EngineError> WorldManager::start()
         accounts.namePattern = m_options.config.accountsNamePattern;
         accounts.unixClock = m_options.unixClock;
         accounts.clock = m_options.clock;
+        // **A session of the game's Nakama** is asked of Nakama (ADR 0242):
+        // `engine_whoami` with the session as its bearer.
+        if (!m_options.config.nakamaUrl.empty()) {
+            if (m_options.nakamaWhoami)
+                accounts.whoami = m_options.nakamaWhoami;
+            else
+                accounts.whoami = nakamaWhoami(m_options.config.nakamaUrl);
+        }
         m_accountStore = openStore();
         m_accounts = std::make_unique<AccountDoor>(*m_accountStore, std::move(accounts));
     }
@@ -1535,8 +1559,12 @@ void WorldManager::frame()
                 if (const std::size_t colon = address.rfind(':'); colon != std::string::npos)
                     address.resize(colon);
                 m_door->waiting.erase(event.peer.value);
-                m_accounts->ask(event.peer.value, address, signIn->name, std::move(signIn->password),
-                                signIn->registering);
+                const AccountDoor::Kind kind = signIn->kind == replication::SignInKind::NakamaSession
+                                                   ? AccountDoor::Kind::Session
+                                               : signIn->kind == replication::SignInKind::Register
+                                                   ? AccountDoor::Kind::Register
+                                                   : AccountDoor::Kind::SignIn;
+                m_accounts->ask(event.peer.value, address, signIn->name, std::move(signIn->password), kind);
                 continue;
             }
             const std::optional<replication::HelloFields> hello = replication::readHello(event.payload);

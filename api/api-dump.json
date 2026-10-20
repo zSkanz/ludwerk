@@ -5454,6 +5454,57 @@
       "Events": []
     },
     {
+      "Name": "NakamaService",
+      "Extends": "Instance",
+      "Integration": "nakama",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "Session",
+          "Type": "string",
+          "ReadOnly": true,
+          "ThreadSafety": "Safe",
+          "Transient": true
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "AuthenticateAsync",
+          "Parameters": [
+            {
+              "Name": "kind",
+              "Type": "string"
+            },
+            {
+              "Name": "id",
+              "Type": "string"
+            },
+            {
+              "Name": "password",
+              "Type": "string?",
+              "Default": "nil"
+            }
+          ],
+          "Returns": ["boolean", "string?"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        },
+        {
+          "Name": "GetTicketAsync",
+          "Parameters": [
+            {
+              "Name": "address",
+              "Type": "string"
+            }
+          ],
+          "Returns": ["{ Ok: boolean, Ticket: string?, Reason: Enum.SignInFailure?, RetryAfter: number }"],
+          "Yields": true,
+          "ThreadSafety": "Unsafe"
+        }
+      ],
+      "Events": []
+    },
+    {
       "Name": "NavigationAgent",
       "Extends": "Instance",
       "Tags": [],
