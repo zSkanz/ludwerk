@@ -41,7 +41,7 @@ enum class ClassFlags : u8
     Abstract = 1 << 1,
     // `Instance.new` refuses it (`scene.err.not_creatable`).
     NotCreatable = 1 << 2,
-    // Compiled out of shipping builds.
+    // Not registered in the player and shipping profiles: a game's own build.
     DevOnly = 1 << 3,
 };
 

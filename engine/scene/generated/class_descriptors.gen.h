@@ -1169,6 +1169,7 @@ void detachPlayerComponents(World& world, core::InstanceId id);
 // RunService
 Value getRunServiceTimeDilation(const World& world, core::InstanceId id);
 Value getRunServicePlatform(const World& world, core::InstanceId id);
+Value getRunServiceExported(const World& world, core::InstanceId id);
 Value getRunServiceSimTime(const World& world, core::InstanceId id);
 
 // StreamingService

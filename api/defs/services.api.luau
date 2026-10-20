@@ -4550,6 +4550,19 @@ local Classes: { Schema.Class } = {
                     .. "On a dedicated server, it is the server's operating system.",
             },
             {
+                Name = "Exported",
+                Type = "boolean",
+                ReadOnly = true,
+                Transient = true,
+                -- A fact of the build that runs the game, never of the world.
+                HostFact = true,
+                Doc = "Whether this game is running as an exported game. It is true in a game made with "
+                    .. "`ludwerk build` or the Export window, a dedicated server's package included. It is false "
+                    .. "while the game runs from its project: in the editor, under `ludwerk dev` and in tests. Use "
+                    .. "it to leave out what a game has for its developers only, such as a cheat menu or a level "
+                    .. "select. `HotReloadService` exists only where this is false.",
+            },
+            {
                 Name = "SimTime",
                 Type = "number",
                 ReadOnly = true,

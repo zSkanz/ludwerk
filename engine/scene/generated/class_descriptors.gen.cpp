@@ -8385,7 +8385,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(playerDesc);
 
     // --- RunService ---
-    static std::array<PropertyDesc, 3> runServiceProperties;
+    static std::array<PropertyDesc, 4> runServiceProperties;
     runServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("TimeDilation"),
@@ -8411,6 +8411,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .doc = "The operating system this machine runs: `Windows`, `Linux`, `MacOS`, `Android` or `IOS`. On a dedicated server, it is the server's operating system.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getRunServicePlatform,
+            .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Exported"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether this game is running as an exported game. It is true in a game made with `ludwerk build` or the Export window, a dedicated server's package included. It is false while the game runs from its project: in the editor, under `ludwerk dev` and in tests. Use it to leave out what a game has for its developers only, such as a cheat menu or a level select. `HotReloadService` exists only where this is false.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getRunServiceExported,
             .set = nullptr,
         },
         PropertyDesc{

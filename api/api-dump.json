@@ -7595,6 +7595,12 @@
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
         {
+          "Name": "Exported",
+          "Type": "boolean",
+          "ReadOnly": true,
+          "Transient": true
+        },
+        {
           "Name": "Platform",
           "Type": "Enum.Platform",
           "ReadOnly": true,

@@ -1,6 +1,9 @@
 #include "engine/scene/class_registry.h"
 
 #include <limits>
+#include <string_view>
+
+#include "engine/core/build_info.h"
 
 namespace engine::scene {
 namespace {
@@ -28,8 +31,27 @@ ClassRegistry::ClassRegistry()
     m_classes.emplace_back();
 }
 
+namespace {
+
+// **A development class is not in a game** (`ClassFlags::DevOnly`). The
+// player and shipping profiles are what a game is made of, and a class whose
+// whole subject is the development loop -- `HotReloadService` -- is not
+// registered there: `GetService` and `FindService` do not find it, as its
+// reference page and the shipping guide say. The flag was set and nothing
+// read it, and every exported game had the service. Classes travel and are
+// saved by name, so a class this build leaves out moves no id another
+// machine reads.
+constexpr bool developmentClasses() noexcept
+{
+    return std::string_view(ENG_PROFILE_NAME) != "player" && std::string_view(ENG_PROFILE_NAME) != "shipping";
+}
+
+} // namespace
+
 ClassId ClassRegistry::registerClass(const ClassDescriptor& descriptor)
 {
+    if (!developmentClasses() && hasFlag(descriptor.flags, ClassFlags::DevOnly))
+        return InvalidClass;
     if (descriptor.super != InvalidClass && find(descriptor.super) == nullptr)
         return InvalidClass;
     if (m_byName.find(descriptor.name.id) != m_byName.end())

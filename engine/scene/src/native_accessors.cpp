@@ -19,6 +19,7 @@
 #include "../generated/class_descriptors.gen.h"
 #include "engine/asset/terrain.h"
 #include "engine/asset/terrain_layers.h"
+#include "engine/core/build_info.h"
 #include "engine/core/finite.h"
 #include "engine/core/host_platform.h"
 #include "engine/physics/types.h"
@@ -2658,6 +2659,14 @@ Value getRunServicePlatform(const World&, core::InstanceId)
 {
     // A fact of the build.
     return Value{EnumValue{generated::PlatformEnumId, static_cast<i32>(core::ThisPlatform)}};
+}
+
+Value getRunServiceExported(const World&, core::InstanceId)
+{
+    // A fact of the build: the player and shipping profiles are what a game
+    // is exported with, and every other profile runs a project.
+    const std::string_view profile = ENG_PROFILE_NAME;
+    return Value{profile == "player" || profile == "shipping"};
 }
 
 Value getRunServiceSimTime(const World& world, core::InstanceId)
