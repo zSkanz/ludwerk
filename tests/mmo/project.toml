@@ -1,0 +1,13 @@
+# The online game end to end (MMO Phase C's proof): three players make
+# accounts at the front door and sign in; a guild of the three, its chat
+# heard across three worlds; one sent to a dungeon of their own, two matched
+# into an arena; the two trade there until the manager is killed in the
+# middle of a trade, and the next run of the servers finds nothing
+# duplicated or lost. Run by `tests/mmo/run_mmo_end_to_end.cmake`.
+
+[project]
+name = "MMO End to End"
+id = "dev.ludwerk.mmo-end-to-end"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/town.scene.json"

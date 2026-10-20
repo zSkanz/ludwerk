@@ -774,7 +774,9 @@ past that, the line goes nowhere and its speaker is told `TooFast`. A player
 muted at the console (`mute`) is told `Muted`, and the filter sees each line
 on the server of the world it was said in before it goes anywhere. A player
 who joins a world is sent its last 50 lines of `world` chat, and of their
-party's and guild's. The engine draws nothing: `47-realms` shows the lines
+party's and guild's; a line their machine already heard, in the world they
+left, is not heard again (`message.Id` says which line it is). The engine
+draws nothing: `47-realms` shows the lines
 and a box to type them in, `/w name` to whisper.
 
 ## Matchmaking and lobbies
@@ -1068,6 +1070,46 @@ several worlds can give each fewer:
 physics_threads = 1   # 0 steps everything on the server's own thread
 ```
 
+## How much a server sends
+
+**Each player is sent at most a budget** of the world's state: 48 kilobytes
+(bytes, not bits) a second by default, what matters most to that player
+first -- their own character and what is within reach of it at once, then
+what has waited longest, then the rest by how near it is and how much the
+game said it matters ([A budget for each player](manual:guides/multiplayer#a-budget-for-each-player)).
+A remote's messages, the answers to a player's own input and what a player
+is sent when they arrive are outside it, and small beside it.
+
+So a world's upload is at most its players times the budget, and the
+machine's is the sum of its worlds'. Measured with three hundred players in
+one 80 m square, all near one another:
+
+- with no budget, 14.3 MB a second out, 47.5 KiB each;
+- at the default 48 KB a second, 13.4 MB a second;
+- at 16 KB a second, 5.5 MB a second, and every player's own character
+  corrected no more than with no budget in the same crowd.
+
+48 KB a second is 384 kilobits: a hundred players in a world is about 38
+megabits a second at most, before the transport's headers. Spread out, a
+player is near less and is sent less; crowded, it is the budget that holds.
+
+What a game can turn:
+
+- the budget, for every player under `[network]` in `project.toml`
+  (`client_budget_kb_per_second`), or for one, `Player.ReplicationBudget` --
+  a phone, a spectator;
+- `max_players` of a world, and its channels: a full town opens another of
+  itself rather than crowd the one ([Channels](#channels-a-full-world-opens-another-of-itself));
+- `BasePart.ReplicationPriority` and `Player:SetReplicationPriority`, so a
+  crowd's bytes go to what the player is looking at;
+- what nobody is near sleeps and sends nothing ([What no player is near
+  sleeps](#what-no-player-is-near-sleeps)).
+
+What it sent is in three places: the load test's report (`out`, below),
+each world's `GET /metrics` (`deferred_per_second`, the changes the budget
+held back), and `NetworkService:GetStats()` on the server (`BudgetUsed`, 0 to
+1, and `Deferred`).
+
 ## How many players it holds: a load test
 
 `ludwerk server loadtest` sends bots at a running server and reports what the
@@ -1170,7 +1212,9 @@ yours to answer for.
   in, and those already in a world stay.
 - Recovering an account by e-mail, and signing in in two steps: the engine
   sends no mail, and a game's own backend does both.
-- Accounts kept by a game's own backend: a game's backend keeps its data,
-  and the front door's accounts are the manager's (a later extension).
+- Accounts kept by a game's own HTTP backend: such a backend keeps the
+  game's data, and the front door's accounts stay the manager's. A game on
+  Nakama signs its players in with Nakama's sessions instead ([The game's
+  Nakama](#the-games-nakama)).
 - Copying backups to another machine: that is the operator's, with whatever
   the machine already uses.

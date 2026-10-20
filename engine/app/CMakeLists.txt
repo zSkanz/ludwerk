@@ -939,6 +939,20 @@ if(ENG_BUILD_TESTS)
         set_tests_properties(data_accounts PROPERTIES
             PASS_REGULAR_EXPRESSION "an account made, signed in, and known by both worlds"
             TIMEOUT 240)
+        # **An online game, end to end** (the MMO phase's proof): accounts at
+        # the front door, travel, a guild's chat in three worlds, a dungeon, a
+        # match into an arena, and a trade there cut by the manager's end --
+        # nothing duplicated or lost on the next run.
+        add_test(NAME mmo_end_to_end
+            COMMAND ${CMAKE_COMMAND}
+                    -DHOST=$<TARGET_FILE:engine_host>
+                    -DPROJECT=${CMAKE_SOURCE_DIR}/tests/mmo
+                    -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/mmo-end-to-end
+                    -DPORT=${ENG_PORT_47600}
+                    -P ${CMAKE_SOURCE_DIR}/tests/mmo/run_mmo_end_to_end.cmake)
+        set_tests_properties(mmo_end_to_end PROPERTIES
+            PASS_REGULAR_EXPRESSION "an online game, end to end"
+            TIMEOUT 480)
     endif()
     # **Anchors kept between sessions** (ADR 0247 §3): one run pins and
     # saves an anchor, a second run of the simulated headset loads it at the
