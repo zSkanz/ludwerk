@@ -16,6 +16,7 @@
 
 #include "engine/core/i18n.h"
 #include "engine/net/transport.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 using namespace engine::net;
@@ -29,10 +30,10 @@ void seedCatalog()
 }
 
 // A port nobody standardised on, high enough to need no privilege. Fixed rather
-// than drawn at random: a random port makes a failure unreproducible, and two
-// concurrent runs of this suite on one machine is not a case that arises -- CTest
-// runs one binary at a time and this is the only test in it that binds.
-constexpr u16 EchoPort = 47921;
+// than drawn at random: a random port makes a failure unreproducible. Two
+// checkouts running this suite at once each move it into a block of their own
+// (`engine_test_ports.h`).
+constexpr u16 EchoPort = engine::testing::port(47921);
 
 [[nodiscard]] std::vector<u8> bytesOf(std::string_view text)
 {

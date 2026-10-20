@@ -127,6 +127,7 @@ include(${ENG_CMAKE_DIR}/engine_warnings.cmake)
 include(${ENG_CMAKE_DIR}/engine_sanitizers.cmake)
 include(${ENG_CMAKE_DIR}/engine_provenance.cmake)
 include(${ENG_CMAKE_DIR}/engine_module.cmake)
+include(${ENG_CMAKE_DIR}/engine_test_ports.cmake)
 include(${ENG_CMAKE_DIR}/engine_device_tests.cmake)
 
 # The shader toolchain, before third_party/: engine_dxc.cmake fetches and

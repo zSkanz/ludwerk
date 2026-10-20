@@ -16,6 +16,7 @@
 #include "engine/replication/replication.h"
 #include "engine/scene/players.h"
 #include "engine/scene/world.h"
+#include "engine_test_ports.h"
 #include "project_fixture.h"
 
 using namespace engine;
@@ -418,7 +419,8 @@ TEST_CASE("a server whose input is an open pipe nobody writes still ends when it
     platform::ProcessOptions options;
     options.pipeInput = true;
     std::unique_ptr<platform::ChildProcess> server = platform::ChildProcess::start(
-        {ENG_TEST_HOST, project.root.string(), "--serve=47977", "--headless", "--rhi=null", "--frames=30", "--exit"},
+        {ENG_TEST_HOST, project.root.string(), "--serve=" + std::to_string(engine::testing::port(47977)), "--headless",
+         "--rhi=null", "--frames=30", "--exit"},
         options);
     REQUIRE(server != nullptr);
     bool ended = false;

@@ -41,6 +41,7 @@
 #include "engine/scene/players.h"
 #include "engine/scene/swarm.h"
 #include "engine/scene/world.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 using namespace engine::replication;
@@ -4362,11 +4363,11 @@ TEST_CASE("a server takes more than eight players of one address, and refuses on
     // a school or a carrier's NAT as a lost connection. Twelve from one
     // address: all welcomed under the default; with a limit of ten, ten
     // welcomed and two told why, in their own words -- not dropped.
-    const OneAddress plenty = joinFromOneAddress(47944, DefaultPeersPerAddress, 12);
+    const OneAddress plenty = joinFromOneAddress(engine::testing::port(47944), DefaultPeersPerAddress, 12);
     CHECK(plenty.welcomed == 12);
     CHECK(plenty.refusedForAddress == 0);
 
-    const OneAddress some = joinFromOneAddress(47945, 10, 12);
+    const OneAddress some = joinFromOneAddress(engine::testing::port(47945), 10, 12);
     CHECK(some.welcomed == 10);
     CHECK(some.refusedForAddress == 2);
 }
@@ -4412,7 +4413,7 @@ TEST_CASE("a joiner whose Luau flags are not the server's is told so, and one wh
 
 TEST_CASE("a server with no limit on an address takes every player of it")
 {
-    const OneAddress all = joinFromOneAddress(47946, 0, 12);
+    const OneAddress all = joinFromOneAddress(engine::testing::port(47946), 0, 12);
     CHECK(all.welcomed == 12);
     CHECK(all.refusedForAddress == 0);
 }
@@ -4744,7 +4745,7 @@ TEST_CASE("a fifteen-kilobyte unreliable message crosses the real transport whol
     // Past a packet the transport sends it in fragments, on the channel that
     // is never sent again: thirteen of them here, and all arrive on a link
     // that loses nothing.
-    EnetMatch match(47943);
+    EnetMatch match(engine::testing::port(47943));
     const core::InstanceId fast =
         match.server.world.create(match.server.classes.findId(match.server.atoms.intern("UnreliableRemoteEvent")));
     REQUIRE(fast.valid());
@@ -4780,7 +4781,7 @@ TEST_CASE("a world of ten thousand parts is joined in seconds, over the real tra
     // on the loopback with nothing lost -- the first snapshot whole,
     // unreliable and fragmented, resent every other tick, and past a
     // megabyte never sent at all.
-    EnetMatch match(47941);
+    EnetMatch match(engine::testing::port(47941));
     for (int index = 0; index < 10000; ++index) {
         const core::InstanceId id =
             match.server.world.create(match.server.classes.findId(match.server.atoms.intern("Part")));
@@ -5443,7 +5444,7 @@ TEST_CASE("ground the server rewrites whole reaches a joined replica as the serv
     // character collided with ground the host did not have. Sixty-four of
     // those chunks were a megabyte and over, more than the host's own ceiling
     // on a message: ENet refused the send, and the edit was gone.
-    EnetMatch match(47942);
+    EnetMatch match(engine::testing::port(47942));
     const core::InstanceId ground = makeTerrain(match.server);
     match.server.world.terrains().find(ground)->field =
         asset::TerrainField(asset::FieldSettings{.voxelSize = 1.0f, .minHeight = -8.0f, .maxHeight = 64.0f});

@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "engine/app/match_launcher.h"
+#include "engine_test_ports.h"
 #include "project_fixture.h"
 
 using namespace engine;
@@ -98,7 +99,7 @@ TEST_CASE("a match starts real processes, names what each says, and Stop ends th
     plan.host = ENG_TEST_HOST;
     plan.project = project.root;
     plan.players = 2;
-    plan.port = 47201;
+    plan.port = engine::testing::port(47201);
     plan.logDirectory = project.root / "logs";
     plan.extraArguments = {"--headless", "--frames=100000", "--rhi=null"};
 
@@ -153,14 +154,15 @@ TEST_CASE("a game's worlds play on one machine: each world's lines, the table, a
 {
     Project project;
     project.write("project.toml", "[project]\nname = \"worlds\"\nid = \"test.worlds\"\n");
-    project.write("servers.toml", "[manager]\nport = 47211\n\n[[world]]\nname = \"town\"\nentry = true\n");
+    project.write("servers.toml",
+                  engine::testing::ports("[manager]\nport = 47211\n\n[[world]]\nname = \"town\"\nentry = true\n"));
     project.write("src/server/hello.luau", "print('world-hello')");
 
     app::MatchPlan plan;
     plan.host = ENG_TEST_HOST;
     plan.project = project.root;
     plan.players = 1;
-    plan.port = 47211;
+    plan.port = engine::testing::port(47211);
     plan.servers = project.root / "servers.toml";
     plan.playRoot = project.root / ".engine" / "play";
     plan.logDirectory = project.root / "logs";

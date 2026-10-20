@@ -147,6 +147,8 @@ function(engine_add_module_tests name)
     # not a module: nothing in `engine/` may depend on it, and it must not be
     # able to acquire a link-time half.
     target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/tests/support)
+    # This checkout's block of ports (`engine_test_ports.cmake`).
+    target_compile_definitions(${target} PRIVATE ENG_TEST_PORT_SHIFT=${ENG_TEST_PORT_SHIFT})
 
     foreach(module IN LISTS ARG_MODULES)
         target_link_libraries(${target} PRIVATE engine::${module})

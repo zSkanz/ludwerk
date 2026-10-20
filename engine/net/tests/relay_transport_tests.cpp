@@ -16,6 +16,7 @@
 #include "engine/core/i18n.h"
 #include "engine/net/relay_service.h"
 #include "engine/net/transport.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 using namespace engine::net;
@@ -29,7 +30,7 @@ void seedCatalog()
 }
 
 // The host's port. Fixed, as `transport_tests.cpp` says of its own.
-constexpr u16 HostPort = 47925;
+constexpr u16 HostPort = engine::testing::port(47925);
 
 [[nodiscard]] std::vector<u8> bytesOf(std::string_view text)
 {

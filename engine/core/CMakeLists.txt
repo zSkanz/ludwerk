@@ -53,6 +53,7 @@ engine_add_module_tests(core
         tests/crypto_tests.cpp
         tests/ticket_tests.cpp
         tests/dmath_tests.cpp
+        tests/test_ports_tests.cpp
         tests/text_key_tests.cpp
         tests/i18n_tests.cpp
         tests/json_tests.cpp

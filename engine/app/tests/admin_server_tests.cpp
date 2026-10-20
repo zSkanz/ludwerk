@@ -12,13 +12,14 @@
 #include "engine/app/admin_server.h"
 #include "engine/core/crypto.h"
 #include "engine/core/log.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 
 namespace {
 
 // Test ports are 47xxx, never a game's.
-constexpr core::u16 AdminTestPort = 47811;
+constexpr core::u16 AdminTestPort = engine::testing::port(47811);
 
 struct Admin
 {

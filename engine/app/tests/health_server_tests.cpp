@@ -6,13 +6,14 @@
 
 #include "engine/app/health_server.h"
 #include "engine/net/tcp.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 
 namespace {
 
 // Test ports are 47xxx, never a game's.
-constexpr core::u16 HealthTestPort = 47831;
+constexpr core::u16 HealthTestPort = engine::testing::port(47831);
 
 std::string ask(core::u16 port, std::string_view request)
 {

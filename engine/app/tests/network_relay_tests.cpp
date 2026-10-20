@@ -14,6 +14,7 @@
 #include "engine/net/relay_service.h"
 #include "engine/replication/replication.h"
 #include "engine/scene/world.h"
+#include "engine_test_ports.h"
 #include "project_fixture.h"
 
 using namespace engine;
@@ -28,7 +29,7 @@ constexpr core::i32 Offline = 0;
 constexpr core::i32 Connected = 2;
 constexpr core::i32 Hosting = 3;
 // The host's port; `relay_transport_tests.cpp` has the one before it.
-constexpr core::u16 HostPort = 47926;
+constexpr core::u16 HostPort = engine::testing::port(47926);
 
 struct Machine
 {

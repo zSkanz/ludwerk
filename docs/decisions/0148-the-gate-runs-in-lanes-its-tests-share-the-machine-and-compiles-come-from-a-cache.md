@@ -128,3 +128,24 @@ with `-Perf`. A `quiet` claim is never the only proof of its property: what
 it measures is also shown without a clock, in a test that runs everywhere
 -- for the sign-ins, each way an ask can go counted at one Argon2
 evaluation of one cost.
+
+## Amended 2026-10-20: a block of ports for each checkout
+
+Two checkouts of the repository on one machine, each running its own gate,
+ran the same network suite at once: the tests bind ports written in them, all
+in 47000-47999, and one checkout's case failed, unnamed, on a port the other
+held. A port of the system's choosing does not fit them: the transport's seam
+reads a zero port as a client, and a world manager gives its worlds a range
+before any of them starts.
+
+So each checkout takes a **block**: `cmake/engine_test_ports.cmake` moves
+every port a test writes down by the same thousand -- block 0 is 47000-47999
+as written, up to block 5, 42000-42999. The blocks are the machine's to give:
+a list beside the brand's other per-machine files names each checkout's, a
+checkout new to it gets the lowest block nobody holds, and a checkout whose
+folder is gone gives its block back. A hash of the path did not do: it gave
+the two checkouts of one machine the same block of six. A test names its
+port as written, through `engine::testing::port` and `ports`
+(`tests/support/engine_test_ports.h`) in C++ and `${ENG_PORT_<written>}` in
+CMake. `-DENG_TEST_PORT_BLOCK` chooses a block. A container and a hosted
+runner, alone on their network, are block 0.

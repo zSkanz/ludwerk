@@ -9,13 +9,14 @@
 #include "engine/core/i18n.h"
 #include "engine/net/memory_transport.h"
 #include "engine/net/secure_transport.h"
+#include "engine_test_ports.h"
 
 using namespace engine;
 using namespace engine::net;
 
 namespace {
 
-constexpr u16 Port = 47960;
+constexpr u16 Port = engine::testing::port(47960);
 
 std::vector<u8> bytesOf(std::string_view text)
 {

@@ -658,7 +658,7 @@ if(ENG_BUILD_TESTS)
     # is where a match's results are saved. Port 47913 so it cannot meet a
     # developer's own server on the default.
     add_test(NAME serve_ends_on_match
-        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/match_over.luau" --serve=47913 --rhi=null)
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/match_over.luau" --serve=${ENG_PORT_47913} --rhi=null)
     set_tests_properties(serve_ends_on_match PROPERTIES
         PASS_REGULAR_EXPRESSION "server closed after the match"
         TIMEOUT 60)
@@ -669,7 +669,7 @@ if(ENG_BUILD_TESTS)
     # rest" that took all of it. A server, because a served match is on the
     # real clock and a headless run is not.
     add_test(NAME long_frame_names_its_phases
-        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/long_frame.luau" --serve=47914 --rhi=null)
+        COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/serve/long_frame.luau" --serve=${ENG_PORT_47914} --rhi=null)
     set_tests_properties(long_frame_names_its_phases PROPERTIES
         PASS_REGULAR_EXPRESSION "simulation and its scripts [1-9][0-9][0-9][.][0-9]+ ms"
         TIMEOUT 60)
@@ -848,7 +848,7 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/data/record
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-record
-                    -DPORT=47812
+                    -DPORT=${ENG_PORT_47812}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_record.cmake)
         set_tests_properties(data_record PROPERTIES
             PASS_REGULAR_EXPRESSION "the record is kept between runs of the server"
@@ -860,11 +860,11 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/trade
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-trade
-                    -DPORT=47813
+                    -DPORT=${ENG_PORT_47813}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_trade.cmake)
         # **Shared values and a record migrated** (ADR 0238 §2, §4).
         add_test(NAME data_shared
-            COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/data/shared" --headless --frames=3000 --exit --serve=47814
+            COMMAND engine_host "${CMAKE_SOURCE_DIR}/tests/data/shared" --headless --frames=3000 --exit --serve=${ENG_PORT_47814}
                     "--saves=${CMAKE_CURRENT_BINARY_DIR}/data-shared")
         set_tests_properties(data_shared PROPERTIES
             PASS_REGULAR_EXPRESSION "\\[shared\\] value=600 writes=600 stale=false"
@@ -875,7 +875,7 @@ if(ENG_BUILD_TESTS)
                     -DV1=${CMAKE_SOURCE_DIR}/tests/data/migrate/v1
                     -DV2=${CMAKE_SOURCE_DIR}/tests/data/migrate/v2
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-migrate
-                    -DPORT=47815
+                    -DPORT=${ENG_PORT_47815}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_migrate.cmake)
         set_tests_properties(data_migrate PROPERTIES
             PASS_REGULAR_EXPRESSION "the record was migrated once, and kept at the new version"
@@ -890,7 +890,7 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/trade
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-manager-killed
-                    -DPORT=47860
+                    -DPORT=${ENG_PORT_47860}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_manager_killed.cmake)
         set_tests_properties(data_manager_killed PROPERTIES
             PASS_REGULAR_EXPRESSION "managers ended while trading, and nothing was duplicated or lost"
@@ -902,7 +902,7 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/travel
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-travel
-                    -DPORT=47880
+                    -DPORT=${ENG_PORT_47880}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_travel.cmake)
         set_tests_properties(data_travel PROPERTIES
             PASS_REGULAR_EXPRESSION "the record changed in the tick of the hop is the one the next world loads"
@@ -916,8 +916,8 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/backend
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-backend
-                    -DPORT=47900
-                    -DBACKEND_PORT=47904
+                    -DPORT=${ENG_PORT_47900}
+                    -DBACKEND_PORT=${ENG_PORT_47904}
                     -DBACKEND=${CMAKE_SOURCE_DIR}/examples/47-realms/backend/backend.luau
                     -DTWICE=${CMAKE_SOURCE_DIR}/tests/data/backend-twice/twice.luau
                     -DSOURCE=${CMAKE_SOURCE_DIR}
@@ -934,7 +934,7 @@ if(ENG_BUILD_TESTS)
                     -DHOST=$<TARGET_FILE:engine_host>
                     -DPROJECT=${CMAKE_SOURCE_DIR}/tests/data/accounts
                     -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}/data-accounts
-                    -DPORT=47884
+                    -DPORT=${ENG_PORT_47884}
                     -P ${CMAKE_SOURCE_DIR}/tests/data/run_data_accounts.cmake)
         set_tests_properties(data_accounts PROPERTIES
             PASS_REGULAR_EXPRESSION "an account made, signed in, and known by both worlds"
@@ -1179,7 +1179,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/acceptance
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-acceptance
-            -DPORT=47960
+            -DPORT=${ENG_PORT_47960}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_acceptance.cmake)
     # Alone: two real-time processes held to a tick are measured, and the rest
     # of the suite beside them on a CI runner's cores is what they would measure.
@@ -1197,7 +1197,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/acceptance
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-acceptance-guest
-            -DPORT=47970
+            -DPORT=${ENG_PORT_47970}
             -DGUEST=1
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_acceptance.cmake)
     set_tests_properties(netcode_acceptance_guest PROPERTIES TIMEOUT 600 LABELS "netcode" RUN_SERIAL TRUE)
@@ -1212,7 +1212,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/vehicle
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-vehicle
-            -DPORT=47920
+            -DPORT=${ENG_PORT_47920}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_netcode_vehicle.cmake)
     # **A timing test, and run alone** (`perf`): it measures how a car is
     # drawn tick by tick at 300 ms, which a machine building another tier
@@ -1228,7 +1228,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/fracture
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-fracture
-            -DPORT=47928
+            -DPORT=${ENG_PORT_47928}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_fracture.cmake)
     set_tests_properties(netcode_fracture PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1242,7 +1242,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/examples/15-multiplayer
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/example-multiplayer-guest
-            -DPORT=47980
+            -DPORT=${ENG_PORT_47980}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_example_guest.cmake)
     set_tests_properties(example_multiplayer_guest PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1263,7 +1263,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/grab
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-grab
-            -DPORT=47940
+            -DPORT=${ENG_PORT_47940}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_grab.cmake)
     set_tests_properties(netcode_grab PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1272,7 +1272,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/carried
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-carried
-            -DPORT=47970
+            -DPORT=${ENG_PORT_47970}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_carried.cmake)
     # Alone, as the acceptance gate is: two processes that wait on each other
     # in real time.
@@ -1302,7 +1302,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/animated
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-animated
-            -DPORT=47980
+            -DPORT=${ENG_PORT_47980}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_animated.cmake)
     set_tests_properties(netcode_animated PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1318,7 +1318,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/dubbed
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-dubbed
-            -DPORT=47990
+            -DPORT=${ENG_PORT_47990}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_dubbed.cmake)
     set_tests_properties(netcode_dubbed PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1332,7 +1332,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/cutscene
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-cutscene
-            -DPORT=47950
+            -DPORT=${ENG_PORT_47950}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_cutscene.cmake)
     set_tests_properties(netcode_cutscene PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
@@ -1346,7 +1346,7 @@ if(ENG_BUILD_TESTS)
             -DHOST=$<TARGET_FILE:engine_host>
             -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/guests
             -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-guests
-            -DPORT=47930
+            -DPORT=${ENG_PORT_47930}
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_guests.cmake)
     set_tests_properties(netcode_guests PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 

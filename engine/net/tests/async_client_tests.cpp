@@ -12,6 +12,7 @@
 #include "engine/core/i18n.h"
 #include "engine/net/async_client.h"
 #include "engine/net/tcp.h"
+#include "engine_test_ports.h"
 #include "loopback_server.h"
 
 using namespace engine;
@@ -29,7 +30,7 @@ void seedCatalog()
 // Nothing is listening here, so a connection is refused. Which is the point:
 // "refused" is the fastest possible network answer, and anything slow about it
 // is ours.
-constexpr u16 DeadPort = 47189;
+constexpr u16 DeadPort = engine::testing::port(47189);
 
 // How long the slow-server handler takes to answer. At namespace scope because
 // a lambda that names a function-local constant odr-uses it, and Clang wants it
@@ -145,8 +146,8 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
     // took 752 to give two threads their turn, once. A client that sent one
     // after the other fails this whatever the machine is doing: the second
     // server hears nothing until the first has answered.
-    testing::LoopbackServer first;
-    testing::LoopbackServer second;
+    net::testing::LoopbackServer first;
+    net::testing::LoopbackServer second;
     using Moment = std::chrono::steady_clock::time_point;
     struct Heard
     {
@@ -156,7 +157,7 @@ TEST_CASE("two requests are in flight at once rather than one after the other")
     Heard heardFirst;
     Heard heardSecond;
     const auto slowHandler = [](Heard& heard) {
-        return [&heard](testing::Connection& connection) {
+        return [&heard](net::testing::Connection& connection) {
             (void)connection.readUntil("\r\n\r\n");
             heard.asked.store(std::chrono::steady_clock::now().time_since_epoch().count());
             std::this_thread::sleep_for(std::chrono::milliseconds(SlowReplyMs));
