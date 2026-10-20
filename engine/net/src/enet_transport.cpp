@@ -760,6 +760,7 @@ public:
             enet_peer_disconnect_now(entry.second, 0);
         }
         m_peers.clear();
+        m_leaving.clear();
         m_paths.clear();
         m_dialling.clear();
         // The relay is told last: its joiners' goodbyes crossed it first.
@@ -852,8 +853,20 @@ public:
         }
         std::lock_guard lock(m_mutex);
         const auto at = m_peers.find(peer.value);
+        // **A peer that is leaving is not a peer unknown**. The service
+        // thread forgets a peer the moment its goodbye arrives, and the game
+        // learns of it at its next `poll`: a message sent in between was
+        // refused as if for a peer that never was, and a server said a
+        // reliable message was lost when it was only for a player who had
+        // gone. It is said for what it is, until the game has taken the
+        // leaving -- and so is one for a peer ENet is closing.
         if (at == m_peers.end()) {
+            if (m_leaving.contains(peer.value))
+                return core::makeError(ENG_TR("net.err.transport_peer_leaving"));
             return core::makeError(ENG_TR("net.err.transport_unknown_peer"));
+        }
+        if (at->second->state != ENET_PEER_STATE_CONNECTED) {
+            return core::makeError(ENG_TR("net.err.transport_peer_leaving"));
         }
         if (channel >= m_channels) {
             const I18nArg args[] = {{"channel", static_cast<core::i64>(channel)},
@@ -920,6 +933,8 @@ public:
         usize bytes = 0;
         while (!m_inbox.empty() && events < MaxEventsPerPoll && bytes < MaxBytesPerPoll) {
             TransportEvent& event = m_inbox.front();
+            if (event.kind == TransportEvent::Kind::Disconnected)
+                m_leaving.erase(event.peer.value);
             bytes += event.payload.size();
             m_inboxBytes -= event.payload.size();
             out.push_back(std::move(event));
@@ -1340,6 +1355,7 @@ private:
             // the path did not open in time.
             const bool never = m_dialling.erase(id.value) != 0;
             forget(event.peer);
+            m_leaving.insert(id.value);
             m_inbox.push_back(TransportEvent{.kind = TransportEvent::Kind::Disconnected,
                                              .peer = id,
                                              .payload = {},
@@ -1429,6 +1445,8 @@ private:
     // Ids start at one, so a default-constructed `PeerId` is never a peer.
     u32 m_nextId = 1;
     std::unordered_map<u32, ENetPeer*> m_peers;
+    // Peers gone whose leaving waits in `m_inbox` for the game to take it.
+    std::unordered_set<u32> m_leaving;
 
     // **Every ENet call is under this lock**: ENet is not thread-safe, and the
     // service thread and the frame both reach it.

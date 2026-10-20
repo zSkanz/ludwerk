@@ -10,6 +10,7 @@
 // than it is.
 #include <chrono>
 #include <doctest/doctest.h>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -365,6 +366,56 @@ TEST_CASE("a peer that closes tells the other end at once")
     }
     CHECK(told);
     CHECK(server->peerCount() == 0);
+}
+
+TEST_CASE("a message for a peer that has just left is refused as for one leaving, until its leaving is taken")
+{
+    // The service thread forgets a peer as its goodbye arrives; the game
+    // learns of it at its next poll. A server that sent in between was told
+    // the peer was unknown, and said a reliable message was lost.
+    seedCatalog();
+    auto server = createEnetTransport();
+    auto client = createEnetTransport();
+    REQUIRE_FALSE(server->open({.port = EchoPort, .maxPeers = 4, .channels = 2}).has_value());
+    REQUIRE_FALSE(client->open({.port = 0, .maxPeers = 4, .channels = 2}).has_value());
+    PeerId toServer;
+    REQUIRE_FALSE(client->connect("127.0.0.1", EchoPort, toServer).has_value());
+    std::vector<TransportEvent> serverEvents;
+    std::vector<TransportEvent> clientEvents;
+    REQUIRE(pumpUntil(*server, *client, serverEvents, clientEvents, [&] {
+        return has(serverEvents, TransportEvent::Kind::Connected) && has(clientEvents, TransportEvent::Kind::Connected);
+    }));
+    PeerId toClient;
+    for (const TransportEvent& event : serverEvents) {
+        if (event.kind == TransportEvent::Kind::Connected)
+            toClient = event.peer;
+    }
+    REQUIRE(toClient.valid());
+
+    client->close();
+    // The server is not polled: its thread takes the goodbye on its own.
+    // Ten seconds bounds a wait that loopback ends within milliseconds.
+    std::optional<core::EngineError> refused;
+    const auto asked = std::chrono::steady_clock::now();
+    while (!refused && std::chrono::steady_clock::now() - asked < std::chrono::seconds(10)) {
+        refused = server->send(toClient, bytesOf("after"), Delivery::Reliable, 0);
+        if (!refused)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(refused.has_value());
+    CHECK(refused->key.hash == ENG_TR("net.err.transport_peer_leaving").hash);
+
+    // Once the leaving is taken, the peer is one this transport does not know.
+    serverEvents.clear();
+    bool told = false;
+    for (int round = 0; round < 50 && !told; ++round) {
+        REQUIRE_FALSE(server->poll(serverEvents, 10).has_value());
+        told = has(serverEvents, TransportEvent::Kind::Disconnected);
+    }
+    REQUIRE(told);
+    const std::optional<core::EngineError> after = server->send(toClient, bytesOf("later"), Delivery::Reliable, 0);
+    REQUIRE(after.has_value());
+    CHECK(after->key.hash == ENG_TR("net.err.transport_unknown_peer").hash);
 }
 
 TEST_CASE("the round trip is the link's, not the frame rate's")

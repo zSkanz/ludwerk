@@ -853,6 +853,7 @@
   "net.err.join_code_malformed": "{code} is not a join code. A join code is eight letters and digits, without 0, 1, I or O.",
   "net.err.transport_no_peer_slot": "No peer slot was free for a connection to {host}:{port}. The host already has as many peers as it was configured for.",
   "net.err.transport_unknown_peer": "That peer is not connected to this transport.",
+  "net.err.transport_peer_leaving": "That peer is leaving, so nothing more is sent to it.",
   "net.err.transport_bad_channel": "Channel {channel} does not exist. This transport was opened with {channels}.",
   "net.err.transport_send_failed": "The message could not be queued for sending.",
   "net.err.handshake_failed": "The WebSocket handshake failed: {detail}.",

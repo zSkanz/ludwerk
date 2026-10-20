@@ -708,12 +708,14 @@ void countBytes(Stats& stats, std::span<const u8> bytes)
 bool sendBytes(net::ITransport& transport, net::PeerId peer, const std::vector<u8>& bytes, net::Delivery delivery,
                u8 channel, Stats& stats)
 {
-    if (transport.send(peer, bytes, delivery, channel).has_value()) {
+    if (const std::optional<core::EngineError> error = transport.send(peer, bytes, delivery, channel)) {
         stats.sendFailures += 1;
         // **A reliable message refused is said**: it is not sent again,
         // and what it carried -- an edit to the ground -- was lost without a
-        // word while a replica drifted from the authority.
-        if (delivery == net::Delivery::Reliable) {
+        // word while a replica drifted from the authority. Not one for a
+        // peer that is leaving: there is no replica left to drift, and its
+        // leaving is what this session takes next.
+        if (delivery == net::Delivery::Reliable && error->key.hash != ENG_TR("net.err.transport_peer_leaving").hash) {
             const core::I18nArg args[] = {{"bytes", static_cast<core::i64>(bytes.size())},
                                           {"type", static_cast<core::i64>(bytes.empty() ? 0 : bytes[0])}};
             core::log(core::LogLevel::Warn, ENG_TR("net.warn.reliable_refused"), args);
