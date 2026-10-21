@@ -123,6 +123,14 @@ endfunction()
 # cases matching a doctest pattern as `name_suffix`, and `SHARD_FILES
 # "suffix|pattern"` the cases of the source files matching one; `name` runs
 # what is left. Every case runs once, in exactly one of them.
+#
+# **A test that hangs fails, and says where**: each runs for at most
+# `ENG_MODULE_TEST_TIMEOUT` seconds, well inside a CI job's limit -- one that
+# never ended took the whole job with it, and its log named no case -- and
+# every executable carries `tests/support/doctest_progress.cpp`, which names
+# each case as it starts when `ENG_TEST_PROGRESS` is set.
+set(ENG_MODULE_TEST_TIMEOUT 900 CACHE STRING "Seconds a module's test executable may run before ctest stops it")
+
 function(engine_add_module_tests name)
     if(NOT ENG_BUILD_TESTS)
         return()
@@ -137,7 +145,7 @@ function(engine_add_module_tests name)
     endif()
 
     set(target "engine_${name}_tests")
-    add_executable(${target} ${ARG_SOURCES})
+    add_executable(${target} ${ARG_SOURCES} ${CMAKE_SOURCE_DIR}/tests/support/doctest_progress.cpp)
     target_link_libraries(${target} PRIVATE
         engine::warnings
         doctest::doctest_with_main
@@ -154,12 +162,14 @@ function(engine_add_module_tests name)
         target_link_libraries(${target} PRIVATE engine::${module})
     endforeach()
 
+    set(made "")
     set(cases "")
     foreach(shard IN LISTS ARG_SHARD_CASES)
         string(REPLACE "|" ";" parts "${shard}")
         list(GET parts 0 suffix)
         list(GET parts 1 pattern)
         add_test(NAME ${name}_${suffix} COMMAND ${target} "--test-case=${pattern}")
+        list(APPEND made ${name}_${suffix})
         list(APPEND cases "${pattern}")
     endforeach()
     string(JOIN "," caseFilter ${cases})
@@ -173,6 +183,7 @@ function(engine_add_module_tests name)
             list(APPEND arguments "--test-case-exclude=${caseFilter}")
         endif()
         add_test(NAME ${name}_${suffix} COMMAND ${target} ${arguments})
+        list(APPEND made ${name}_${suffix})
         list(APPEND files "${pattern}")
     endforeach()
     string(JOIN "," fileFilter ${files})
@@ -184,4 +195,5 @@ function(engine_add_module_tests name)
         list(APPEND rest "--source-file-exclude=${fileFilter}")
     endif()
     add_test(NAME ${name} COMMAND ${target} ${rest})
+    set_tests_properties(${name} ${made} PROPERTIES TIMEOUT ${ENG_MODULE_TEST_TIMEOUT})
 endfunction()

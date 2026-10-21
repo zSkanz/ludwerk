@@ -1157,14 +1157,33 @@ jobs:
           name: shaders-for-macos
           path: ${{ env.ENG_BUILD_ROOT }}/macos-clang-dev/engine/app/content/shaders
 
+      # **A test that hangs is named and sampled** (`hang-sample.sh`): every
+      # case is printed as it starts, and a test executable still running
+      # after ten minutes has its threads' stacks taken before ctest's
+      # timeout stops it -- `engine_app_tests` has hung here, now and then,
+      # and took the job's 45 minutes with it, its log naming no case.
       - name: Test
         shell: bash
+        env:
+          ENG_TEST_PROGRESS: "1"
         run: |
           set +e
+          scripts/gates/hang-sample.sh "${RUNNER_TEMP}/hang-samples" 600 &
+          sampler=$!
           ctest --preset macos-clang-dev -LE "gpu-golden|netcode|quiet" --no-tests=error --output-on-failure -j 4 2>&1 | tee ctest.log
           status=${PIPESTATUS[0]}
+          kill "$sampler" 2>/dev/null
           set -e
           exit "$status"
+
+      - name: The stacks of a test that hung (macOS)
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-hang-samples
+          path: ${{ runner.temp }}/hang-samples
+          if-no-files-found: ignore
+          retention-days: 7
 
       # What a soak saw, frame by frame, kept when the macOS run fails: a
       # timing gate on a shared runner is the test most likely to fail there
