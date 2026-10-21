@@ -55,6 +55,10 @@ struct DeviceDesc
     // **A headset, when there is one** (ADR 0244): the device is made on the
     // adapter its runtime asks for, and `IDevice::headset` answers it.
     XrRequest xr = {};
+    // **Where the pipelines a run made are kept for the next** (ADR 0257):
+    // a file, UTF-8, the device reads as it is made and keeps as it runs;
+    // empty keeps none. A Vulkan device's alone.
+    std::string pipelineCacheFile = {};
 };
 
 // **What the device holds, in bytes**: every texture and every buffer made
@@ -356,6 +360,12 @@ public:
     // refused (false, and said). Asked on the device's own thread, which is
     // where what a job made is taken in.
     [[nodiscard]] virtual std::optional<bool> pipelineMade(PipelineHandle pipeline) { return pipeline.valid(); }
+
+    // **The pipelines made so far, kept on disk now** (ADR 0257): what an
+    // app calls as it goes to the background or loses focus -- a phone or a
+    // headset may end it at any moment after, and never say. A device that
+    // keeps none has nothing to do.
+    virtual void keepPipelines() {}
 
     // **A texture's texels a few frames later, never waiting** (a headset
     // eye's exposure, folded into its forward pass): the top-left `width` by

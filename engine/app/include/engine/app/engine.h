@@ -437,6 +437,10 @@ struct EngineOptions
     // pipelines are made. Unsaid, off the frame with a window and on it
     // headless.
     std::optional<bool> offFramePipelines;
+    // **`--pipeline-cache=FILE`** (ADR 0257): where the pipelines a run makes
+    // are kept for the next, UTF-8; `--pipeline-cache=` keeps none. Unsaid,
+    // `pipelines.vulkan.cache` in the user's folder.
+    std::optional<std::string> pipelineCacheFile;
     // **`--gpu-least`: the device a GPU with the fewest features is given**
     // -- no depth clamping -- on a GPU that has more: how a desk draws
     // as such a phone does.

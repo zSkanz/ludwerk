@@ -48,11 +48,19 @@ loading screen stopped instead.
    a capture, a golden, a measured frame -- and what a frame shows has to be
    the same every run. `--pipelines=off-frame|on-frame` says otherwise.
 5. **On disk, on Vulkan.** SDL's Vulkan backend made every pipeline with no
-   `VkPipelineCache`. Patch 0011 gives it one, seeded from a file at device
-   creation and written back when the device is destroyed, under the user's
-   cache folder and keyed by the device and its driver version, so a second
-   run -- the second session of a phone or a headset -- compiles nothing
-   it compiled before. On Direct3D 12 the driver keeps its own compiled
+   `VkPipelineCache`. Patch 0011 gives it one, seeded from a file in the
+   user's folder at device creation, so a second run -- the second session
+   of a phone or a headset -- compiles nothing it compiled before. **Kept as
+   the run goes** (patch 0012, `SDL_SaveGPUPipelineCache`), because a phone,
+   a headset or a player with a task manager ends a game without a word and
+   a device destroyed is the one moment that never comes there: five seconds
+   after the last new pipeline, on a job; at once when the app goes to the
+   background or loses focus, and when a headset stops running. Written
+   beside the file and moved over it, so a kill mid-write leaves the last
+   whole copy. The file carries a header of its own -- a mark, its size and a
+   CRC -- and is read only whole and only when Vulkan's own header names this
+   device and this driver's cache; anything else starts empty, and the log
+   says how many bytes were read. On Direct3D 12 the driver keeps its own compiled
    pipelines on disk across runs, as every desktop driver does; the API's
    own `ID3D12PipelineLibrary` is left for a measured need.
 

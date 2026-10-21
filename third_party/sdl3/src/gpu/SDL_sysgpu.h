@@ -1110,6 +1110,10 @@ struct SDL_GPUDevice
         SDL_GPUTextureFormat format,
         SDL_GPUSampleCount desiredSampleCount);
 
+    // Ludwerk (patch 0012): the pipeline cache written to its file now; NULL
+    // for a driver that keeps none.
+    bool (*SavePipelineCache)(SDL_GPURenderer *driverData);
+
     // Opaque pointer for the Driver
     SDL_GPURenderer *driverData;
 

@@ -771,6 +771,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuDebug = true;
             continue;
         }
+        if (arg.starts_with("--pipeline-cache=")) {
+            options.pipelineCacheFile = std::string(arg.substr(arg.find('=') + 1));
+            continue;
+        }
         if (arg == "--pipelines=off-frame" || arg == "--pipelines=on-frame") {
             options.offFramePipelines = arg == "--pipelines=off-frame";
             continue;

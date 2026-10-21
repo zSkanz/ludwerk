@@ -3504,6 +3504,17 @@ bool SDL_CancelGPUCommandBuffer(
         command_buffer);
 }
 
+bool SDL_SaveGPUPipelineCache(
+    SDL_GPUDevice *device)
+{
+    CHECK_DEVICE_MAGIC(device, false);
+
+    if (device->SavePipelineCache == NULL) {
+        return true;
+    }
+    return device->SavePipelineCache(device->driverData);
+}
+
 bool SDL_WaitForGPUIdle(
     SDL_GPUDevice *device)
 {

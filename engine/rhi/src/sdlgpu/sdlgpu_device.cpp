@@ -20,7 +20,6 @@
 #include <cctype>
 #include <cstddef>
 #include <cstring>
-#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,7 +28,6 @@
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
 #include "engine/jobs/jobs.h"
-#include "engine/platform/platform.h"
 #include "engine/platform/process.h"
 #include "engine/platform/sdl_interop.h"
 #include "engine/rhi/backends.h"
@@ -440,6 +438,9 @@ public:
 
         SDL_WaitForGPUIdle(device_);
         releaseInFlight();
+        // A keeping in flight ends first; destroying the device keeps them
+        // once more.
+        waitForKeeping();
         // What is still being made is waited for and released with the rest.
         for (const std::unique_ptr<OffFramePipeline>& task : offFrame_)
             takeIn(*task);
@@ -1042,6 +1043,27 @@ public:
 
     [[nodiscard]] ICmdList* beginFrame() override
     {
+        // **Kept a few seconds after the last new pipeline** (ADR 0257), on a
+        // job: a player whose game is ended rather than quit keeps what this
+        // session made.
+        if (keepsPipelines_ && !lost_) {
+            constexpr Uint64 KeepAfterNs = 5'000'000'000ull;
+            if (pipelinesUnkept_ && SDL_GetTicksNS() - lastPipelineNs_ >= KeepAfterNs && jobs::initialized() &&
+                (!keepJob_.valid() || jobs::finished(keepJob_))) {
+                pipelinesUnkept_ = false;
+                SDL_GPUDevice* device = device_;
+                keepJob_ = jobs::schedule("pipeline.keep", jobs::Domain::AssetIo,
+                                          [device]() noexcept { (void)SDL_SaveGPUPipelineCache(device); });
+            }
+            // A headset taken off, or its app put behind another, is a session
+            // that may not come back.
+            if (headset_ != nullptr) {
+                const bool running = headset_->state() == HeadsetState::Running;
+                if (headsetRan_ && !running)
+                    keepPipelines();
+                headsetRan_ = running;
+            }
+        }
         // **A frame begins by asking its device whether it is still there**
         // (the fifth sighting). Until here a removal was learned from
         // the first call that failed and said so -- and a frame is made of
@@ -1141,6 +1163,29 @@ public:
 
     [[nodiscard]] PipelineHandle createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
                                                                 std::span<const PipelineVariant> variants) override;
+    void keepPipelinesOnDisk() noexcept { keepsPipelines_ = true; }
+    // A pipeline made: kept a few seconds after the last one (`beginFrame`).
+    void notePipelineMade() noexcept
+    {
+        pipelinesUnkept_ = true;
+        lastPipelineNs_ = SDL_GetTicksNS();
+    }
+    void waitForKeeping()
+    {
+        if (keepJob_.valid() && jobs::initialized())
+            jobs::wait(keepJob_);
+        keepJob_ = {};
+    }
+    void keepPipelines() override
+    {
+        // On this thread: the system is about to suspend the app, and a job
+        // may not run before it does.
+        if (lost_ || !keepsPipelines_)
+            return;
+        waitForKeeping();
+        pipelinesUnkept_ = false;
+        (void)SDL_SaveGPUPipelineCache(device_);
+    }
     [[nodiscard]] std::optional<bool> pipelineMade(PipelineHandle pipeline) override
     {
         return pipelineMade(pipeline, false);
@@ -1386,6 +1431,8 @@ public:
                 core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
             }
             recipe->formatTwins.push_back(PipelineRecipe::FormatTwin{format, at, made});
+            if (made != nullptr)
+                notePipelineMade();
             return made;
         }
         if (!recipe->tried[at]) {
@@ -1411,6 +1458,9 @@ public:
                 const core::I18nArg args[] = {{"name", std::string_view{recipe->name}},
                                               {"detail", std::string_view{SDL_GetError()}}};
                 core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
+            }
+            else {
+                notePipelineMade();
             }
         }
         return recipe->twins[at];
@@ -1499,6 +1549,15 @@ private:
     std::vector<PipelineRecipe> recipes_;
     // Pipelines being made off the frame, each with its slot held empty.
     std::vector<std::unique_ptr<OffFramePipeline>> offFrame_;
+    // **Kept on disk as the run goes** (ADR 0257): whether this device keeps
+    // its pipelines, whether some were made since they were last kept and
+    // when the last was, the job keeping them, and whether the headset was
+    // running last frame.
+    bool keepsPipelines_ = false;
+    bool pipelinesUnkept_ = false;
+    Uint64 lastPipelineNs_ = 0;
+    jobs::JobHandle keepJob_{};
+    bool headsetRan_ = false;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
     std::unique_ptr<IHeadset> headset_;
@@ -1619,6 +1678,7 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
     }
     if (pipeline == nullptr)
         return {};
+    notePipelineMade();
     // Kept for a twin at another sample count (`pipelineAt`).
     recipes_.push_back(PipelineRecipe{.vertexBuffers = std::move(vertexBuffers),
                                       .attributes = std::move(attributes),
@@ -1693,6 +1753,7 @@ void SdlGpuDevice::takeIn(OffFramePipeline& task)
         core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
         return;
     }
+    notePipelineMade();
     for (usize at = 0; at < task.variants.size() && at < task.twins.size(); ++at) {
         const PipelineVariant& variant = task.variants[at];
         const SDL_GPUTextureFormat format = task.formats[at];
@@ -3029,15 +3090,12 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, depthClamp);
-        // **The pipelines the last run made** (ADR 0257, SDL patch 0011): on
-        // Vulkan, read as the device is made and kept as it goes, in the
-        // user's own folder. Another GPU's or another driver's, the driver
-        // ignores; with no folder, the cache lasts the session.
-        if (const std::filesystem::path& user = platform::paths().userDir; !user.empty()) {
-            const std::u8string file = (user / "pipelines.vulkan.cache").u8string();
-            const std::string text(reinterpret_cast<const char*>(file.data()), file.size());
-            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING, text.c_str());
-        }
+        // **The pipelines the last run made** (ADR 0257, SDL patches 0011 and
+        // 0012): on Vulkan, read as the device is made and kept as it runs.
+        // Another GPU's or driver's, or a file not whole, is not read.
+        if (!desc.pipelineCacheFile.empty())
+            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING,
+                                  desc.pipelineCacheFile.c_str());
 #if ENG_SDLGPU_XR
         if (xrAsk != nullptr)
             xrAsk->apply(props, desc.xr);
@@ -3131,6 +3189,17 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
 
     auto made =
         std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);
+    // **What the last run's pipelines seeded this one with** (ADR 0257): a
+    // Vulkan device's alone, which says it, and keeps them as it runs.
+    if (!desc.pipelineCacheFile.empty()) {
+        const Sint64 seeded = SDL_GetNumberProperty(SDL_GetGPUDeviceProperties(device),
+                                                    SDL_PROP_GPU_DEVICE_VULKAN_PIPELINE_CACHE_SEEDED_NUMBER, -1);
+        if (seeded >= 0) {
+            made->keepPipelinesOnDisk();
+            const core::I18nArg args[] = {{"bytes", static_cast<core::i64>(seeded)}};
+            core::log(core::LogLevel::Info, ENG_TR("rhi.info.pipeline_cache_seeded"), args);
+        }
+    }
 #if ENG_SDLGPU_XR
     if (forHeadset)
         made->attachHeadset(xrAskMade);

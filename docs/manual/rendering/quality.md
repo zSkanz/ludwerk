@@ -544,7 +544,10 @@ still being made waits unseen before it is drawn with the built-in surface:
 250 by default, 0 for the built-in surface at once (see
 [Surface shaders](manual:rendering/surface-shaders#compiling)). The host flag
 `--pipelines=on-frame` makes them on the frame that first draws them, as a
-headless run does; `--pipelines=off-frame` makes them off it there too.
+headless run does; `--pipelines=off-frame` makes them off it there too. On
+Vulkan, the pipelines a run makes are kept in `pipelines.vulkan.cache` in the
+user's folder and read by the next run; `--pipeline-cache=FILE` keeps them
+elsewhere, and `--pipeline-cache=` keeps none.
 
 ## What a script can see
 

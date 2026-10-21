@@ -1171,6 +1171,8 @@ struct VulkanRenderer
      * `pipelineCacheFile` across runs (patch 0011). */
     VkPipelineCache pipelineCache;
     char *pipelineCacheFile;
+    /* One writer of the file at a time (patch 0012). */
+    SDL_Mutex *pipelineCacheLock;
     Uint8 integratedMemoryNotification;
     Uint8 outOfDeviceLocalMemoryWarning;
     Uint8 outofBARMemoryWarning;
@@ -5050,6 +5052,126 @@ static bool VULKAN_INTERNAL_EndCommandBuffer(
     return true;
 }
 
+/* Ludwerk: the file a pipeline cache is kept in (patches 0011, 0012) -- a
+ * header of its own, a mark, a version, the driver's data's size and its CRC,
+ * and the driver's data after it. A file cut short or written over by
+ * something else is told apart from one that is whole. */
+#define VULKAN_PIPELINE_CACHE_MARK    "SDLGPUPC"
+#define VULKAN_PIPELINE_CACHE_VERSION 1u
+
+typedef struct VulkanPipelineCacheFileHeader
+{
+    char mark[8];
+    Uint32 version;
+    Uint32 size;
+    Uint32 crc;
+    Uint32 reserved;
+} VulkanPipelineCacheFileHeader;
+
+/* The driver's data in a kept file, if the file is whole and the data is this
+ * device's: Vulkan's own header says the vendor, the device and the driver's
+ * cache identity, which changes with the driver. NULL otherwise. */
+static const Uint8 *VULKAN_INTERNAL_PipelineCacheSeed(
+    VulkanRenderer *renderer,
+    const Uint8 *file,
+    size_t fileSize,
+    size_t *seedSize)
+{
+    VulkanPipelineCacheFileHeader header;
+    const Uint8 *payload;
+    Uint32 headerLength, headerVersion, vendorID, deviceID;
+
+    *seedSize = 0;
+    if (file == NULL || fileSize < sizeof(header)) {
+        return NULL;
+    }
+    SDL_memcpy(&header, file, sizeof(header));
+    if (SDL_memcmp(header.mark, VULKAN_PIPELINE_CACHE_MARK, sizeof(header.mark)) != 0 ||
+        header.version != VULKAN_PIPELINE_CACHE_VERSION ||
+        (size_t)header.size != fileSize - sizeof(header)) {
+        return NULL;
+    }
+    payload = file + sizeof(header);
+    if (SDL_crc32(0, payload, header.size) != header.crc) {
+        return NULL;
+    }
+    /* VkPipelineCacheHeaderVersionOne: its length, its version, the vendor,
+     * the device, then the cache's identity. */
+    if (header.size < 16 + VK_UUID_SIZE) {
+        return NULL;
+    }
+    SDL_memcpy(&headerLength, payload, 4);
+    SDL_memcpy(&headerVersion, payload + 4, 4);
+    SDL_memcpy(&vendorID, payload + 8, 4);
+    SDL_memcpy(&deviceID, payload + 12, 4);
+    if (headerLength < 16 + VK_UUID_SIZE ||
+        headerVersion != VK_PIPELINE_CACHE_HEADER_VERSION_ONE ||
+        vendorID != renderer->physicalDeviceProperties.properties.vendorID ||
+        deviceID != renderer->physicalDeviceProperties.properties.deviceID ||
+        SDL_memcmp(payload + 16, renderer->physicalDeviceProperties.properties.pipelineCacheUUID, VK_UUID_SIZE) != 0) {
+        return NULL;
+    }
+    *seedSize = header.size;
+    return payload;
+}
+
+static bool VULKAN_SavePipelineCache(
+    SDL_GPURenderer *driverData)
+{
+    VulkanRenderer *renderer = (VulkanRenderer *)driverData;
+    bool saved = false;
+
+    if (renderer->pipelineCache == VK_NULL_HANDLE || renderer->pipelineCacheFile == NULL) {
+        return true;
+    }
+    SDL_LockMutex(renderer->pipelineCacheLock);
+    /* Asked twice: once for the size, once for the data. A pipeline made in
+     * between grows it, and the data then comes back incomplete; asked again. */
+    for (int attempt = 0; attempt < 3 && !saved; attempt += 1) {
+        size_t size = 0;
+        Uint8 *data;
+        VkResult result;
+        VulkanPipelineCacheFileHeader header;
+        char *partial = NULL;
+
+        if (renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, NULL) != VK_SUCCESS ||
+            size == 0 || size > 0x7fffffff) {
+            break;
+        }
+        data = (Uint8 *)SDL_malloc(sizeof(header) + size);
+        if (data == NULL) {
+            break;
+        }
+        result = renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, data + sizeof(header));
+        if (result != VK_SUCCESS) {
+            SDL_free(data);
+            continue;
+        }
+        SDL_zero(header);
+        SDL_memcpy(header.mark, VULKAN_PIPELINE_CACHE_MARK, sizeof(header.mark));
+        header.version = VULKAN_PIPELINE_CACHE_VERSION;
+        header.size = (Uint32)size;
+        header.crc = SDL_crc32(0, data + sizeof(header), size);
+        SDL_memcpy(data, &header, sizeof(header));
+        /* Beside the file and then over it: a process that ends mid-write
+         * leaves the last whole copy, and two processes do not share a name. */
+        if (SDL_asprintf(&partial, "%s.%" SDL_PRIu64 ".%" SDL_PRIu64 ".partial", renderer->pipelineCacheFile,
+                         (Uint64)SDL_GetCurrentThreadID(), SDL_GetTicksNS()) > 0) {
+            if (SDL_SaveFile(partial, data, sizeof(header) + size)) {
+                saved = SDL_RenamePath(partial, renderer->pipelineCacheFile);
+                if (!saved) {
+                    SDL_RemovePath(partial);
+                }
+            }
+            SDL_free(partial);
+        }
+        SDL_free(data);
+        break;
+    }
+    SDL_UnlockMutex(renderer->pipelineCacheLock);
+    return saved;
+}
+
 static void VULKAN_DestroyDevice(
     SDL_GPUDevice *device)
 {
@@ -5146,31 +5268,16 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->descriptorSetLayoutFetchLock);
     SDL_DestroyMutex(renderer->windowLock);
 
-    /* Ludwerk: the pipelines this run made, kept for the next (patch 0011).
-     * Written beside the file and moved over it, so a run that ends while
-     * another is writing never leaves half of one. */
+    /* Ludwerk: the pipelines this run made, kept for the next (patches 0011,
+     * 0012). */
     if (renderer->pipelineCache != VK_NULL_HANDLE) {
-        if (renderer->pipelineCacheFile != NULL) {
-            size_t size = 0;
-            if (renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, NULL) == VK_SUCCESS && size > 0) {
-                void *data = SDL_malloc(size);
-                if (data != NULL && renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, data) == VK_SUCCESS) {
-                    char *partial = NULL;
-                    if (SDL_asprintf(&partial, "%s.%" SDL_PRIu64 ".partial", renderer->pipelineCacheFile, (Uint64)SDL_GetCurrentThreadID()) > 0) {
-                        if (SDL_SaveFile(partial, data, size)) {
-                            if (!SDL_RenamePath(partial, renderer->pipelineCacheFile)) {
-                                SDL_RemovePath(partial);
-                            }
-                        }
-                        SDL_free(partial);
-                    }
-                }
-                SDL_free(data);
-            }
-        }
+        (void)VULKAN_SavePipelineCache((SDL_GPURenderer *)renderer);
         renderer->vkDestroyPipelineCache(renderer->logicalDevice, renderer->pipelineCache, NULL);
     }
     SDL_free(renderer->pipelineCacheFile);
+    if (renderer->pipelineCacheLock != NULL) {
+        SDL_DestroyMutex(renderer->pipelineCacheLock);
+    }
 
     renderer->vkDestroyDevice(renderer->logicalDevice, NULL);
     renderer->vkDestroyInstance(renderer->instance, NULL);
@@ -13784,27 +13891,35 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
      * it ignores; a cache that cannot be made at all is none, as before. */
     renderer->pipelineCache = VK_NULL_HANDLE;
     renderer->pipelineCacheFile = NULL;
+    renderer->pipelineCacheLock = SDL_CreateMutex();
     {
         const char *file = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING, NULL);
-        void *seed = NULL;
+        void *loaded = NULL;
+        size_t loadedSize = 0;
+        const Uint8 *seed = NULL;
         size_t seedSize = 0;
         VkPipelineCacheCreateInfo cacheInfo;
         SDL_zero(cacheInfo);
         cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
         if (file != NULL && *file != '\0') {
             renderer->pipelineCacheFile = SDL_strdup(file);
-            seed = SDL_LoadFile(file, &seedSize);
+            loaded = SDL_LoadFile(file, &loadedSize);
+            /* Whole, and this device's and driver's, or not read at all
+             * (patch 0012). */
+            seed = VULKAN_INTERNAL_PipelineCacheSeed(renderer, (const Uint8 *)loaded, loadedSize, &seedSize);
         }
         cacheInfo.initialDataSize = seed != NULL ? seedSize : 0;
         cacheInfo.pInitialData = seed;
         if (renderer->vkCreatePipelineCache(renderer->logicalDevice, &cacheInfo, NULL, &renderer->pipelineCache) != VK_SUCCESS) {
             cacheInfo.initialDataSize = 0;
             cacheInfo.pInitialData = NULL;
+            seedSize = 0;
             if (renderer->vkCreatePipelineCache(renderer->logicalDevice, &cacheInfo, NULL, &renderer->pipelineCache) != VK_SUCCESS) {
                 renderer->pipelineCache = VK_NULL_HANDLE;
             }
         }
-        SDL_free(seed);
+        SDL_SetNumberProperty(renderer->props, SDL_PROP_GPU_DEVICE_VULKAN_PIPELINE_CACHE_SEEDED_NUMBER, (Sint64)(seed != NULL ? seedSize : 0));
+        SDL_free(loaded);
     }
 
     if (renderer->supportsFragmentDensityMap) {
@@ -13817,6 +13932,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
     // FIXME: just move this into this function
     result = (SDL_GPUDevice *)SDL_calloc(1, sizeof(SDL_GPUDevice));
     ASSIGN_DRIVER(VULKAN)
+    result->SavePipelineCache = VULKAN_SavePipelineCache; /* Ludwerk: patch 0012 */
 
     result->driverData = (SDL_GPURenderer *)renderer;
     result->shader_formats = SDL_GPU_SHADERFORMAT_SPIRV;

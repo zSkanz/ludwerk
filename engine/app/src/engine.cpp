@@ -1273,6 +1273,23 @@ bool scheduledAhead(bool headless, bool editor, bool networked, bool measuring) 
     return !headless || networked || measuring;
 }
 
+namespace {
+
+// **Where a run's pipelines are kept for the next** (ADR 0257): what the run
+// was told, or the user's own folder, as UTF-8 -- or nowhere, with no folder.
+std::string pipelineCacheFileOf(const EngineOptions& options)
+{
+    if (options.pipelineCacheFile.has_value())
+        return *options.pipelineCacheFile;
+    const std::filesystem::path& user = platform::paths().userDir;
+    if (user.empty())
+        return {};
+    const std::u8string file = (user / "pipelines.vulkan.cache").u8string();
+    return std::string(reinterpret_cast<const char*>(file.data()), file.size());
+}
+
+} // namespace
+
 bool gpuValidationWanted(std::string_view profile, bool optIn) noexcept
 {
     return optIn || profile == "debug" || profile == "dev";
@@ -1652,7 +1669,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                           .applicationVersion = 0,
                                                           .hands = options.xrHands,
                                                           .depth = options.xrDepth,
-                                                          .refreshRate = options.xrRefreshRate}},
+                                                          .refreshRate = options.xrRefreshRate},
+                                                   .pipelineCacheFile = pipelineCacheFileOf(options)},
                                                   &error);
     if (device == nullptr)
         return error;
@@ -3878,6 +3896,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
     bool quit = false;
     bool backgroundGpuDrain = false;
+    bool keepPipelinesNow = false;
     TextInputFocus textInputFocus;
     FrameClock frameClock;
     // When the loop began, for the conformance run's ceiling below.
@@ -3961,6 +3980,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         if (backgroundGpuDrain) {
             device->waitIdle();
             backgroundGpuDrain = false;
+        }
+        // **The pipelines this session made, kept before the app may be
+        // ended** (ADR 0257): going to the background, or losing focus -- the
+        // two moments after which a phone, a headset or a player with a task
+        // manager ends it without a word.
+        if (keepPipelinesNow) {
+            device->keepPipelines();
+            keepPipelinesNow = false;
         }
         // A damaged game is not played on (ADR 0183).
         if (packCheck->state.load(std::memory_order_relaxed) == 2)
@@ -7693,6 +7720,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             for (const platform::Event& event : events) {
                 if (event.type == platform::EventType::WillEnterBackground)
                     backgroundGpuDrain = true;
+                if (event.type == platform::EventType::WillEnterBackground ||
+                    event.type == platform::EventType::WindowFocusLost)
+                    keepPipelinesNow = true;
                 if (event.type != platform::EventType::Quit &&
                     event.type != platform::EventType::WindowCloseRequested) {
                     continue;

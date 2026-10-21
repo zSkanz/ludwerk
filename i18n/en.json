@@ -236,6 +236,7 @@
   "rhi.info.xr_unavailable": "No headset to draw to, so the game is drawn on the screen: {detail}",
   "rhi.info.xr_ended": "The headset's session has ended. The game goes on on the screen.",
   "rhi.warn.xr_call_failed": "The headset's runtime refused {what} (code {code}).",
+  "rhi.info.pipeline_cache_seeded": "Pipelines kept by an earlier run: {bytes} bytes read. Nought is a first run, another graphics card or driver, or a file that was not whole.",
   "rhi.info.pipeline_slow": "Creating the pipeline {name} took {ms} ms.",
   "engine.frame.info.spike": "Frame {frame}: {ms} ms",
   "engine.frame.info.spike_scope": "{indent}{scope}: {ms} ms, {calls} calls",

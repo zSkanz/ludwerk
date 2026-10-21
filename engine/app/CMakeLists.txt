@@ -2782,6 +2782,20 @@ if(ENG_BUILD_TESTS)
         TIMEOUT 300
         LABELS "perf;quiet")
 
+    # **The pipelines a run made are kept when it is killed** (ADR 0257). Its
+    # run is ended by a clock, so it runs alone (`perf`) and not on a hosted
+    # runner (`quiet`). See the driver.
+    add_test(NAME pipeline_cache_kill
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/surfacefirst
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/pipeline-cache-kill
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_pipeline_cache_kill.cmake)
+    set_tests_properties(pipeline_cache_kill PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300
+        LABELS "perf;quiet")
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind

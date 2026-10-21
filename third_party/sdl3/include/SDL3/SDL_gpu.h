@@ -2623,6 +2623,12 @@ extern SDL_DECLSPEC SDL_PropertiesID SDLCALL SDL_GetGPUDeviceProperties(SDL_GPUD
 #define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_WIDTH_NUMBER  "SDL.gpu.device.vulkan.fragment_density.max_texel_width"
 #define SDL_PROP_GPU_DEVICE_VULKAN_FRAGMENT_DENSITY_MAX_TEXEL_HEIGHT_NUMBER "SDL.gpu.device.vulkan.fragment_density.max_texel_height"
 
+/* (Vulkan only) How many bytes of the pipeline cache file named at device
+ * creation the device's pipeline cache was seeded with: 0 when there was
+ * none, or it was another device's, another driver's, or not whole.
+ * (Ludwerk patch.) */
+#define SDL_PROP_GPU_DEVICE_VULKAN_PIPELINE_CACHE_SEEDED_NUMBER "SDL.gpu.device.vulkan.pipeline_cache.seeded"
+
 
 /* State Creation */
 
@@ -4484,6 +4490,21 @@ extern SDL_DECLSPEC SDL_GPUFence * SDLCALL SDL_SubmitGPUCommandBufferAndAcquireF
  */
 extern SDL_DECLSPEC bool SDLCALL SDL_CancelGPUCommandBuffer(
     SDL_GPUCommandBuffer *command_buffer);
+
+/**
+ * Writes the device's pipeline cache to the file it was created with
+ * (SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING), beside it
+ * first and then over it, so a process that ends at any moment leaves the
+ * last whole copy. Call it when the app is about to be suspended or killed
+ * -- going to the background, losing focus -- and some time after new
+ * pipelines were made. Safe from any thread. (Ludwerk patch.)
+ *
+ * \param device a GPU context.
+ * \returns true when written, or when the device keeps no cache file; false
+ *          when writing failed.
+ */
+extern SDL_DECLSPEC bool SDLCALL SDL_SaveGPUPipelineCache(
+    SDL_GPUDevice *device);
 
 /**
  * Blocks the thread until the GPU is completely idle.
