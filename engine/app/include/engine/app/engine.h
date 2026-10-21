@@ -207,6 +207,8 @@ struct EngineOptions
     // `[network] relay`, or `--relay=` (ADR 0178): where `Host` registers and
     // a `Join` by code asks when the call names no relay.
     std::string defaultRelay;
+    // `[ui] font_fallbacks` (ADR 0259).
+    std::vector<std::string> fontFallbacks;
     // **Whether this run's matches are encrypted** (ADR 0224): false only for
     // `--insecure` or `[network] encrypt = false`, and never in a shipping
     // build.

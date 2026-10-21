@@ -2128,6 +2128,7 @@ static int hostMain(int argc, char** argv)
         // The run's own relay wins over the project's.
         if (options.defaultRelay.empty())
             options.defaultRelay = config.networkRelay;
+        options.fontFallbacks = config.fontFallbacks;
         options.network.timeoutMs = config.networkTimeoutSeconds * 1000u;
         // The run's own number wins over the project's.
         if (!options.maxPerAddressFromFlag)

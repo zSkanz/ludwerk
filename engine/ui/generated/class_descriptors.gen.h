@@ -287,6 +287,8 @@ scene::Value getTextLabelTextSize(const scene::World& world, core::InstanceId id
 bool setTextLabelTextSize(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getTextLabelFont(const scene::World& world, core::InstanceId id);
 bool setTextLabelFont(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getTextLabelFallbackFont(const scene::World& world, core::InstanceId id);
+bool setTextLabelFallbackFont(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getTextLabelTextXAlignment(const scene::World& world, core::InstanceId id);
 bool setTextLabelTextXAlignment(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getTextLabelTextYAlignment(const scene::World& world, core::InstanceId id);

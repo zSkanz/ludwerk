@@ -162,6 +162,9 @@ struct ProjectConfig
     bool serverAdmin = false;
     core::u16 serverAdminPort = 0;
     std::vector<std::string> serverAdminAllow;
+    // `[ui] font_fallbacks` (ADR 0259): the fonts a character a label's own
+    // font has not got is drawn with, in order, before the default face.
+    std::vector<std::string> fontFallbacks;
     // `[server] health`, `health_port` and `health_allow` (ADR 0220): a
     // world's `/health` and `/metrics`, on the game's port number over TCP
     // when no other is given.

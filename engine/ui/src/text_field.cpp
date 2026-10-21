@@ -24,9 +24,8 @@ FieldView fieldView(const scene::World& world, core::InstanceId id)
     // Less the field's own padding: where its text, its caret and its
     // placeholder are, and where a press is turned into a place in the text.
     view.box = textRectOf(world, id, core::Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize});
-    view.font = label->font;
+    view.font = fontWithFallback(label->font, label->fallbackFont);
     view.size = label->textSize * self->unitScale;
-    view.lineHeight = textLineHeight(view.font, view.size);
     view.horizontalAlignment = label->horizontalAlignment;
     view.multiLine = field->multiLine;
     view.scrollX = field->multiLine ? 0.0f : field->scroll.x;
@@ -62,6 +61,8 @@ FieldView fieldView(const scene::World& world, core::InstanceId id)
         composeHere();
     view.boundaries.emplace_back(static_cast<u32>(text.size()), static_cast<u32>(view.display.size()));
 
+    view.lineHeight = textLineHeight(view.font, view.size, view.display);
+    view.ascent = textAscent(view.font, view.size, view.display);
     const f32 width = view.box.max.x - view.box.min.x;
     view.lines = textLines(view.display, view.font, view.size, view.multiLine ? width : 0.0f);
     const f32 height = view.box.max.y - view.box.min.y;

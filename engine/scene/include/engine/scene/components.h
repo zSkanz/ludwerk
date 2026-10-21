@@ -2514,6 +2514,9 @@ struct TextLabelComponent
     // `Inter`. The built-in vector face is what is left when even that file is
     // absent; it is not what an empty `Font` asks for.
     std::string font;
+    // `TextLabel.FallbackFont` (ADR 0259): the face a character `font` has not
+    // got is drawn with, before the project's fallbacks. Empty: none of its own.
+    std::string fallbackFont;
     core::Color3 textColor{0.0f, 0.0f, 0.0f};
     // `TextLabel.TextTransparency`: the words' own see-through, apart from the
     // box's. Stored as written; drawing clamps it to 0..1.

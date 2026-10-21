@@ -11,6 +11,18 @@ here.
 
 ### Added
 
+- Text in Chinese, Japanese and Korean beside a game's own font: a character
+  a label's font has not got is drawn with the next font that has it -- the
+  label's `TextLabel.FallbackFont`, then the fonts the project lists in
+  `[ui] font_fallbacks`, then the default font -- and a box only when none
+  has it. A line is as tall as the fonts it uses. OpenType (`.otf`) fonts and
+  the first face of a collection (`.ttc`) load.
+- Wrapped text in Chinese, Japanese and Korean breaks between characters, and
+  no line begins with a closing bracket, a comma, a full stop or a small kana,
+  nor ends with an opening bracket. A zero-width space is a place to break and
+  a no-break space holds two words together; neither, nor the direction
+  marks, draws a box.
+
 - A sound behind a wall can be muffled: with
   `AudioService.OcclusionEnabled` on -- it is off until a game turns it on --
   a sound on a part loses its brightness and some of its level by the parts,

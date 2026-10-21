@@ -1144,8 +1144,9 @@ TEST_CASE("every Content property the engine ships says which files it accepts")
     // **A material's four maps left with the `Material` class** (ADR 0090): a
     // material is an asset, its maps are fields of its file, and the material
     // panel edits them -- not the property grid.
-    // And `Lighting.Baked`'s light of what stands still (ADR 0253).
-    CHECK(contentProperties == 26);
+    // And `Lighting.Baked`'s light of what stands still (ADR 0253), and the
+    // font a label falls back on (ADR 0259).
+    CHECK(contentProperties == 27);
 }
 
 TEST_CASE("a reference with a setter is editable, and one without is not")

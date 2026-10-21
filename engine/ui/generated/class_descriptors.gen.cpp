@@ -735,7 +735,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(viewportFrameDesc);
 
     // --- TextLabel ---
-    static std::array<scene::PropertyDesc, 11> textLabelProperties;
+    static std::array<scene::PropertyDesc, 12> textLabelProperties;
     textLabelProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Text"),
@@ -788,10 +788,23 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .threadSafety = scene::ThreadSafety::Unsafe,
             .readOnly = false,
             .inert = false,
-            .doc = "The font, as an `asset://` path to a TrueType file. An empty value, or the name `Inter`, uses the engine's default font, Inter.\012\012A font that cannot be found falls back to the default, and a message is logged once. If the project has no font file at all, a built-in font is used that has only ASCII characters and one weight.",
+            .doc = "The font, as an `asset://` path to a TrueType or OpenType file. An empty value, or the name `Inter`, uses the engine's default font, Inter.\012\012A character this font does not have is drawn with `FallbackFont`, then with the fonts the project lists in `[ui] font_fallbacks`, then with Inter; a box is drawn only when none of them has it. A font that cannot be found falls back to the default, and a message is logged once. If the project has no font file at all, a built-in font is used that has only ASCII characters and one weight.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getTextLabelFont,
             .set = native::setTextLabelFont,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("FallbackFont"),
+            .type = scene::ValueType::String,
+            .contentKind = atoms.intern("Font"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "A font for the characters `Font` does not have, tried before the project's `[ui] font_fallbacks`. For a label in a script its own font lacks, such as a name in Japanese in a font made for Latin text, when the rest of the game needs no such fallback. Empty: only the project's fallbacks and the default font.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
+            .get = native::getTextLabelFallbackFont,
+            .set = native::setTextLabelFallbackFont,
         },
         scene::PropertyDesc{
             .name = atoms.intern("TextXAlignment"),

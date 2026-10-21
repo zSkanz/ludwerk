@@ -3524,11 +3524,18 @@ declare extern type TextLabel extends UIObject with
     --- The size of the text, in pixels. Glyphs are drawn at the nearest whole size; the layout uses the
     --- exact value.
     TextSize: number
-    --- The font, as an `asset://` path to a TrueType file. An empty value, or the name `Inter`, uses
-    --- the engine's default font, Inter. A font that cannot be found falls back to the default, and a
-    --- message is logged once. If the project has no font file at all, a built-in font is used that has
-    --- only ASCII characters and one weight.
+    --- The font, as an `asset://` path to a TrueType or OpenType file. An empty value, or the name
+    --- `Inter`, uses the engine's default font, Inter. A character this font does not have is drawn
+    --- with `FallbackFont`, then with the fonts the project lists in `[ui] font_fallbacks`, then with
+    --- Inter; a box is drawn only when none of them has it. A font that cannot be found falls back to
+    --- the default, and a message is logged once. If the project has no font file at all, a built-in
+    --- font is used that has only ASCII characters and one weight.
     Font: Content
+    --- A font for the characters `Font` does not have, tried before the project's `[ui]
+    --- font_fallbacks`. For a label in a script its own font lacks, such as a name in Japanese in a
+    --- font made for Latin text, when the rest of the game needs no such fallback. Empty: only the
+    --- project's fallbacks and the default font.
+    FallbackFont: Content
     --- The horizontal position of the text in the object: `Left`, `Center` or `Right`.
     TextXAlignment: EnumHorizontalAlignment
     --- The vertical position of the text in the object: `Top`, `Center` or `Bottom`.

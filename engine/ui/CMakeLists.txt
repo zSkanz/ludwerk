@@ -46,6 +46,7 @@ engine_add_module_tests(ui
         tests/selection_tests.cpp
         tests/appearance_tests.cpp
         tests/glyph_tests.cpp
+        tests/fallback_tests.cpp
         tests/rich_text_tests.cpp
         tests/interaction_tests.cpp
         tests/text_edit_tests.cpp

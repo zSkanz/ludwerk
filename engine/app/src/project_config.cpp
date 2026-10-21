@@ -833,6 +833,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.serverAdminPort = static_cast<core::u16>(*value);
     for (const std::string& address : document.strings("server.admin_allow"))
         config.serverAdminAllow.push_back(address);
+    for (const std::string& font : document.strings("ui.font_fallbacks"))
+        config.fontFallbacks.push_back(font);
     if (const std::optional<bool> value = document.boolean("server.health"))
         config.serverHealth = *value;
     if (const std::optional<bool> value = document.boolean("server.time_dilation"))

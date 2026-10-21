@@ -35,6 +35,14 @@
 // glyphs; a player seeing two strange letters where one accented one should
 // be learns nothing.
 //
+// **Before the box, the faces a label falls back on** (ADR 0259): the label's
+// own `FallbackFont`, then the project's `[ui] font_fallbacks`, then the
+// default face, and the first that has a character draws it. One face holds
+// one family of scripts -- a Latin one has no ideographs, and a CJK one is
+// tens of megabytes no game wants for its Latin text -- so a label in a game
+// translated into Japanese draws its Latin letters in the game's face and its
+// kana in the fallback, in one line.
+//
 // The seam is `measureText` and `buildTextGeometry`, and it held: the real face
 // arrived without moving either signature, the cache's key or its miss path.
 // What changed was what fills an entry.
@@ -43,6 +51,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -188,6 +197,9 @@ struct GlyphEntry
     // a glyph with no ink is on none, and is not lost with a page.
     bool paged = false;
     core::u8 page = 0;
+    // Which face of its chain drew it (ADR 0259): 0 the label's own, and the
+    // box a missing character is. What a line's height is measured from.
+    core::u8 face = 0;
 };
 
 // A shelf packer: glyphs go left to right on a row whose height is the tallest
@@ -337,6 +349,31 @@ struct Face
     bool fallsBack = false;
 };
 
+// **A face and the faces it falls back on, in order** (ADR 0259): the
+// label's own first, then its `FallbackFont`, then the project's `[ui]
+// font_fallbacks`, then the default face -- each once, and only those that
+// loaded. A character is drawn by the first that has it.
+//
+// The glyph store keys by the CHAIN, not by the face that drew: which face
+// that is depends on the faces before it, and a hit must not have to ask
+// them. Chains of the same faces share a key, so two names for one face
+// still share its glyphs.
+struct FaceChain
+{
+    // As asked: a name, and after `kFontFallbackSeparator` the label's own
+    // fallbacks.
+    std::string font;
+    u32 hash = 0;
+    std::vector<Face*> faces;
+
+    [[nodiscard]] Face& primary() const noexcept { return *faces.front(); }
+};
+
+// The most faces one chain tries. A bit each in a line's mask of the faces it
+// used, and more than any game names: a label's, two or three of its own, the
+// project's few, and the default.
+constexpr usize MaxChainFaces = 16;
+
 struct FaceTable
 {
     // Stable addresses: `faceFor` hands out references and a caller holds one
@@ -350,6 +387,10 @@ struct FaceTable
     // a typo in its font name would otherwise fill the log.
     std::vector<u32> warned;
     bool defaultAttempted = false;
+    // The project's fallbacks (`setFontFallbacks`), and the chains built from
+    // them and the faces above -- dropped with the faces.
+    std::vector<std::string> fallbacks;
+    std::vector<std::unique_ptr<FaceChain>> chains;
 };
 
 FaceTable& faceTable()
@@ -372,10 +413,11 @@ FaceTable& faceTable()
 {
     if (face.data.empty())
         return false;
-    // Offset 0: the file is a single-face TTF rather than a collection. A
-    // collection would need `stbtt_GetFontOffsetForIndex`, and choosing WHICH
-    // face out of one is a decision nobody has been asked to make.
-    if (stbtt_InitFont(&face.info, face.data.data(), 0) == 0)
+    // A collection's first face: the CJK families ship as one file of several
+    // (`.ttc`), and the first is the one a game names the file for. A single
+    // face is at offset 0, which is what this answers for one.
+    const int offset = stbtt_GetFontOffsetForIndex(face.data.data(), 0);
+    if (offset < 0 || stbtt_InitFont(&face.info, face.data.data(), offset) == 0)
         return false;
     stbtt_GetFontVMetrics(&face.info, &face.ascent, &face.descent, &face.lineGap);
     face.ready = true;
@@ -442,6 +484,54 @@ FaceTable& faceTable()
 
     table.faces.push_back(std::make_unique<Face>(std::move(face)));
     return *table.faces.back();
+}
+
+// The chain for a `font` as the text functions take it, built on first use.
+// **No chain past a face that did not load**: the built-in vector face's glyphs
+// are rectangles in its own units, and a raster glyph beside one in a line
+// would be measured in neither.
+[[nodiscard]] FaceChain& chainFor(std::string_view font)
+{
+    FaceTable& table = faceTable();
+    for (const std::unique_ptr<FaceChain>& known : table.chains) {
+        if (known->font == font)
+            return *known;
+    }
+
+    auto chain = std::make_unique<FaceChain>();
+    chain->font = std::string(font);
+    const usize cut = font.find(kFontFallbackSeparator);
+    Face& primary = faceFor(font.substr(0, cut));
+    chain->faces.push_back(&primary);
+    chain->hash = primary.hash;
+    if (primary.ready) {
+        const Face& standard = faceFor({});
+        const auto add = [&](std::string_view name) {
+            if (chain->faces.size() >= MaxChainFaces)
+                return;
+            Face& face = faceFor(name);
+            // A name that did not load resolves to the default face, which
+            // comes last whatever is named.
+            if (!face.ready || (&face == &standard && !name.empty()))
+                return;
+            if (std::find(chain->faces.begin(), chain->faces.end(), &face) != chain->faces.end())
+                return;
+            chain->faces.push_back(&face);
+            chain->hash = (chain->hash ^ face.hash) * 16777619u;
+        };
+        std::string_view own = cut == std::string_view::npos ? std::string_view{} : font.substr(cut + 1);
+        while (!own.empty()) {
+            const usize next = own.find(kFontFallbackSeparator);
+            if (const std::string_view name = own.substr(0, next); !name.empty())
+                add(name);
+            own = next == std::string_view::npos ? std::string_view{} : own.substr(next + 1);
+        }
+        for (const std::string& name : table.fallbacks)
+            add(name);
+        add({});
+    }
+    table.chains.push_back(std::move(chain));
+    return *table.chains.back();
 }
 
 // **The size a raster glyph is made at, for a size it is asked at.**
@@ -521,6 +611,38 @@ constexpr f32 LargestRasterSize = 128.0f;
     return static_cast<f32>(face.ascent) * stbtt_ScaleForPixelHeight(&face.info, pixelSize);
 }
 
+// A line's reach above its baseline and its whole height, in pixels.
+struct LineMetrics
+{
+    f32 ascent = 0.0f;
+    f32 height = 0.0f;
+};
+
+// **A line is as tall as the faces its characters were drawn with** (ADR
+// 0259): the highest ascent and the deepest descent among them, and the label's
+// own face always among them, with its own line gap. `faces` is a bit for each
+// face of the chain used. A line in the label's own face alone measures what
+// it always did -- to the bit, since the sums below are not taken for it.
+[[nodiscard]] LineMetrics lineMetricsOf(const FaceChain& chain, f32 pixelSize, u32 faces) noexcept
+{
+    const Face& primary = chain.primary();
+    LineMetrics metrics{ascentOf(primary, pixelSize), lineHeightOf(primary, pixelSize)};
+    if (!primary.ready || (faces >> 1) == 0)
+        return metrics;
+    const f32 gap = static_cast<f32>(primary.lineGap) * stbtt_ScaleForPixelHeight(&primary.info, pixelSize);
+    f32 below = metrics.height - metrics.ascent;
+    for (usize slot = 1; slot < chain.faces.size(); ++slot) {
+        if ((faces & (1u << slot)) == 0)
+            continue;
+        const Face& face = *chain.faces[slot];
+        const f32 scale = stbtt_ScaleForPixelHeight(&face.info, pixelSize);
+        metrics.ascent = std::fmax(metrics.ascent, static_cast<f32>(face.ascent) * scale);
+        below = std::fmax(below, static_cast<f32>(-face.descent) * scale + gap);
+    }
+    metrics.height = metrics.ascent + below;
+    return metrics;
+}
+
 // --- The atlas ---------------------------------------------------------------
 
 // **A page is 1024 square, and there are up to eight** (ADR 0169). One page
@@ -596,9 +718,12 @@ constexpr u32 AtlasSize = 1024;
 
 // Rasterises one codepoint into the atlas at `pixelSize`, filling `entry` --
 // outlined by `stroke` when it has a radius. False means it did not fit, which
-// the caller answers by clearing the store.
-[[nodiscard]] bool rasteriseGlyph(Face& face, f32 pixelSize, u32 codepoint, GlyphEntry& entry, GlyphStore& cache,
-                                  GlyphStroke stroke = {})
+// the caller answers by clearing the store. `top` is how far the baseline is
+// below the top of the line in pixels at this size: the label's own face's
+// ascent, whichever face of its chain draws the glyph, so every glyph of a
+// line is placed from one top.
+[[nodiscard]] bool rasteriseGlyph(Face& face, f32 top, f32 pixelSize, u32 codepoint, GlyphEntry& entry,
+                                  GlyphStore& cache, GlyphStroke stroke = {})
 {
     // A scope of its own: a glyph is rasterised once, the first time a size
     // of it is shown, and a report should say how many a slow frame made.
@@ -718,7 +843,7 @@ constexpr u32 AtlasSize = 1024;
     // line rather than from the baseline: everything downstream places text from
     // the top of its box, and converting once here beats converting at every
     // call site.
-    const f32 ascentPixels = static_cast<f32>(face.ascent) * scale;
+    const f32 ascentPixels = top;
     entry.firstQuad = static_cast<u32>(cache.quads.size());
     entry.quadCount = 1;
     cache.quads.push_back(GlyphQuad{
@@ -839,9 +964,21 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
            stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint)) != 0;
 }
 
-[[nodiscard]] usize glyphIndex(Face& face, f32 pixelSize, u32 codepoint, GlyphStroke stroke = {})
+// Characters that are not drawn and take no room: the zero-width space and
+// joiners, the word joiner, the byte-order mark, and the marks that steer the
+// direction of text. A face that lacks them -- most do -- would draw each as
+// the box a missing character is, in the middle of a translated line.
+[[nodiscard]] bool zeroWidth(u32 codepoint) noexcept
+{
+    return (codepoint >= 0x200B && codepoint <= 0x200F) || (codepoint >= 0x202A && codepoint <= 0x202E) ||
+           (codepoint >= 0x2060 && codepoint <= 0x2064) || (codepoint >= 0x2066 && codepoint <= 0x2069) ||
+           codepoint == 0xFEFF;
+}
+
+[[nodiscard]] usize glyphIndex(FaceChain& chain, f32 pixelSize, u32 codepoint, GlyphStroke stroke = {})
 {
     GlyphStore& cache = store();
+    Face& face = chain.primary();
     const bool drawable = codepoint >= FirstFaceCodepoint && codepoint <= LastFaceCodepoint;
     // Cached under the codepoint that was ASKED for, even when the answer is the
     // replacement box, so `missingGlyphs` counts DISTINCT characters the face
@@ -862,7 +999,7 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
         const f32 grown = static_cast<f32>(stroke.quarters) * madeAt / std::fmax(pixelSize, 1.0f);
         made.quarters = static_cast<u32>(std::fmin(std::fmax(grown + 0.5f, 1.0f), static_cast<f32>(MaxStrokeQuarters)));
     }
-    const u64 key = glyphKey(face.hash, madeAt, codepoint, made);
+    const u64 key = glyphKey(chain.hash, madeAt, codepoint, made);
 
     const auto position = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
                                            [](const GlyphEntry& entry, u64 value) { return entry.key < value; });
@@ -876,26 +1013,42 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
 
     if (cache.entries.size() >= MaxGlyphEntries) {
         clearStore(cache);
-        return glyphIndex(face, pixelSize, codepoint, stroke);
+        return glyphIndex(chain, pixelSize, codepoint, stroke);
     }
 
     GlyphEntry entry;
     entry.key = key;
     bool filled = false;
-    if (face.ready) {
-        filled = rasteriseGlyph(face, madeAt, codepoint, entry, cache, made);
-        if (!filled && atlasFull(cache, face, codepoint)) {
-            // Every page holds something this frame has shown, and the face
-            // does have the glyph: one frame asked for more than the whole
-            // atlas. Clearing is the answer the entry limit gets, and the
-            // frame is built again (`buildWithSettledGlyphs`).
-            clearStore(cache);
-            return glyphIndex(face, pixelSize, codepoint, stroke);
+    if (zeroWidth(codepoint)) {
+        // No ink and no advance, cached as a space is.
+        entry.quadCount = 0;
+        filled = true;
+    }
+    else if (face.ready) {
+        // The first face of the chain that has the character draws it.
+        usize slot = 0;
+        while (slot < chain.faces.size() &&
+               stbtt_FindGlyphIndex(&chain.faces[slot]->info, static_cast<int>(codepoint)) == 0)
+            ++slot;
+        if (slot < chain.faces.size()) {
+            Face& drawing = *chain.faces[slot];
+            const f32 top = static_cast<f32>(face.ascent) * stbtt_ScaleForPixelHeight(&face.info, madeAt);
+            filled = rasteriseGlyph(drawing, top, madeAt, codepoint, entry, cache, made);
+            if (filled)
+                entry.face = static_cast<core::u8>(slot);
+            else if (atlasFull(cache, drawing, codepoint)) {
+                // Every page holds something this frame has shown, and the face
+                // does have the glyph: one frame asked for more than the whole
+                // atlas. Clearing is the answer the entry limit gets, and the
+                // frame is built again (`buildWithSettledGlyphs`).
+                clearStore(cache);
+                return glyphIndex(chain, pixelSize, codepoint, stroke);
+            }
         }
         if (!filled) {
-            // The face has no glyph for this codepoint. The visible box, same
-            // as the built-in face gives -- a player seeing boxes knows the
-            // font is missing glyphs.
+            // No face of the chain has a glyph for this codepoint. The visible
+            // box, same as the built-in face gives -- a player seeing boxes
+            // knows the font is missing glyphs.
             fillReplacementGlyph(entry, cache.quads);
             entry.textured = false;
             if (stroke.quarters == 0)
@@ -945,31 +1098,123 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
 
 // The advance of one run, in face units. Every width in this file goes through
 // the cache, so a measurement and a draw can never disagree about how wide a
-// character is.
-[[nodiscard]] f32 widthOf(std::string_view run, Face& face, f32 pixelSize)
+// character is. `faces`, given, gains a bit for each face of the chain the run
+// was drawn with.
+[[nodiscard]] f32 widthOf(std::string_view run, FaceChain& chain, f32 pixelSize, u32* faces = nullptr)
 {
     f32 total = 0.0f;
     usize index = 0;
     while (index < run.size()) {
         const Decoded decoded = decodeUtf8(run, index);
-        total += store().entries[glyphIndex(face, pixelSize, decoded.codepoint)].advance;
+        const GlyphEntry& entry = store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)];
+        total += entry.advance;
+        if (faces != nullptr)
+            *faces |= 1u << entry.face;
         index += decoded.length;
     }
     return total;
 }
 
-// One measured line: how wide it is and which bytes it covers.
+// The faces of the chain a text is drawn with, the label's own always among
+// them: what its lines are measured by (`lineMetricsOf`).
+[[nodiscard]] u32 facesOf(std::string_view text, FaceChain& chain, f32 pixelSize)
+{
+    u32 faces = 1u;
+    usize index = 0;
+    while (index < text.size()) {
+        const Decoded decoded = decodeUtf8(text, index);
+        if (decoded.codepoint != '\n')
+            faces |= 1u << store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)].face;
+        index += decoded.length;
+    }
+    return faces;
+}
+
+// --- Where a line may end ----------------------------------------------------
+//
+// **The part of the Unicode line-breaking algorithm (UAX #14) that text with no
+// spaces needs** (ADR 0259). Chinese and Japanese put no space between words,
+// and a line of them breaks between any two characters -- except where the
+// typesetting rule the Japanese call kinsoku forbids it: no line begins with a
+// closing bracket, a comma, a full stop or a small kana, and none ends with an
+// opening bracket. Korean puts spaces between words and breaks between
+// syllables too. Latin text still breaks at its spaces, and a word in it is
+// never cut while a better place exists. A zero-width space marks a place a
+// line may end, and a no-break space is one it may not.
+
+// Ideographs, kana, Hangul syllables and the CJK punctuation and full-width
+// forms: what a line may break before or after.
+[[nodiscard]] bool breaksAround(u32 c) noexcept
+{
+    return (c >= 0x2E80 && c <= 0x2FFF) || // radicals, ideographic description
+           (c >= 0x3000 && c <= 0x30FF) || // CJK punctuation, hiragana, katakana
+           (c >= 0x3105 && c <= 0x312F) || // bopomofo
+           (c >= 0x3190 && c <= 0x31FF) || // kanbun, CJK strokes, small katakana
+           (c >= 0x3200 && c <= 0x4DBF) || // enclosed and compatibility CJK, extension A
+           (c >= 0x4E00 && c <= 0x9FFF) || // the unified ideographs
+           (c >= 0xAC00 && c <= 0xD7A3) || // Hangul syllables
+           (c >= 0xF900 && c <= 0xFAFF) || // compatibility ideographs
+           (c >= 0xFE30 && c <= 0xFE4F) || // CJK compatibility forms
+           (c >= 0xFF01 && c <= 0xFFEF) || // full-width and half-width forms
+           (c >= 0x20000 && c <= 0x3FFFF); // the supplementary ideographic planes
+}
+
+// What no line may begin with: closing brackets, the stops and commas, the
+// marks that lengthen or repeat what is before them, and the small kana.
+[[nodiscard]] bool startsNoLine(u32 c) noexcept
+{
+    static constexpr u32 Closers[] = {
+        0x21,   0x29,   0x2C,   0x2E,   0x3A,   0x3B,   0x3F,   0x5D,   0x7D,   0x2019, 0x201D, 0x203C, 0x2047, 0x2048,
+        0x2049, 0x3001, 0x3002, 0x3005, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015, 0x3017, 0x3019, 0x301B, 0x301C,
+        0x301E, 0x301F, 0x303B, 0x3041, 0x3043, 0x3045, 0x3047, 0x3049, 0x3063, 0x3083, 0x3085, 0x3087, 0x308E, 0x3095,
+        0x3096, 0x309B, 0x309C, 0x309D, 0x309E, 0x30A0, 0x30A1, 0x30A3, 0x30A5, 0x30A7, 0x30A9, 0x30C3, 0x30E3, 0x30E5,
+        0x30E7, 0x30EE, 0x30F5, 0x30F6, 0x30FB, 0x30FC, 0x30FD, 0x30FE, 0xFF01, 0xFF09, 0xFF0C, 0xFF0E, 0xFF1A, 0xFF1B,
+        0xFF1F, 0xFF3D, 0xFF5D, 0xFF60, 0xFF61, 0xFF63, 0xFF64, 0xFF65, 0xFF9E, 0xFF9F};
+    if ((c >= 0x31F0 && c <= 0x31FF) || (c >= 0xFF67 && c <= 0xFF70))
+        return true;
+    return std::binary_search(std::begin(Closers), std::end(Closers), c);
+}
+
+// What no line may end with: the opening brackets and quotes.
+[[nodiscard]] bool endsNoLine(u32 c) noexcept
+{
+    static constexpr u32 Openers[] = {0x28,   0x5B,   0x7B,   0x2018, 0x201C, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010,
+                                      0x3014, 0x3016, 0x3018, 0x301A, 0x301D, 0xFF08, 0xFF3B, 0xFF5B, 0xFF5F, 0xFF62};
+    return std::binary_search(std::begin(Openers), std::end(Openers), c);
+}
+
+// Whether a line may end between `before` and `after`. Spaces are not asked
+// about: a line ends at a space and drops it, which the callers do.
+[[nodiscard]] bool breaksBetween(u32 before, u32 after) noexcept
+{
+    // A no-break space (and its narrow form) and the word joiner hold what is
+    // either side of them together; a zero-width space is a place to break,
+    // after it and not before.
+    const auto glue = [](u32 c) { return c == 0x00A0 || c == 0x202F || c == 0x2060 || c == 0xFEFF; };
+    if (before == ' ' || after == ' ' || glue(before) || glue(after) || after == 0x200B)
+        return false;
+    if (before == 0x200B)
+        return true;
+    if (startsNoLine(after) || endsNoLine(before))
+        return false;
+    return breaksAround(before) || breaksAround(after);
+}
+
+// One measured line: how wide it is, which bytes it covers, and a bit for each
+// face of the chain its characters were drawn with.
 struct Line
 {
     usize begin = 0;
     usize end = 0;
     f32 width = 0.0f;
+    u32 faces = 1u;
 };
 
-// Breaks `text` into lines at `maxWidth`, at spaces, and mid-word only for a
-// word wider than the box. A word cut at a random letter is worse than one that
-// overhangs, which is what `TextWrapped`'s doc promises.
-void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32 maxWidth, std::vector<Line>& out)
+// Breaks `text` into lines at `maxWidth`: at the last place the rules above
+// allow, and mid-word only where a line has none -- a word wider than the box.
+// A word cut at a random letter is worse than one that overhangs, which is
+// what `TextWrapped`'s doc promises.
+void breakLines(std::string_view text, FaceChain& chain, f32 pixelSize, f32 scale, f32 maxWidth, std::vector<Line>& out)
 {
     out.clear();
     if (text.empty()) {
@@ -978,7 +1223,13 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
     }
 
     usize lineBegin = 0;
-    usize lastSpace = std::string_view::npos;
+    // The last place this line may end, and where the next then begins: a
+    // space ends it and is dropped, a break between two ideographs drops
+    // nothing.
+    usize breakEnd = std::string_view::npos;
+    usize breakNext = std::string_view::npos;
+    // The character before `index` on this line; none at its start.
+    u32 previous = 0;
     usize index = 0;
     // The line so far, in face units: carried along rather than measured from
     // the line's start at every character, which made wrapping a long text
@@ -990,10 +1241,12 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
         Line line;
         line.begin = lineBegin;
         line.end = end;
-        line.width = widthOf(text.substr(lineBegin, end - lineBegin), face, pixelSize) * scale;
+        line.width = widthOf(text.substr(lineBegin, end - lineBegin), chain, pixelSize, &line.faces) * scale;
         out.push_back(line);
         lineBegin = nextBegin;
-        lastSpace = std::string_view::npos;
+        breakEnd = std::string_view::npos;
+        breakNext = std::string_view::npos;
+        previous = 0;
         running = 0.0f;
     };
 
@@ -1003,23 +1256,30 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
             ++index;
             continue;
         }
-        if (text[index] == ' ')
-            lastSpace = index;
-
         // Advanced by CODEPOINT, so a multi-byte character is one unit of
         // wrapping rather than two or three -- and so a break can never land in
         // the middle of one and produce two invalid sequences.
         const Decoded decoded = decodeUtf8(text, index);
-        const f32 advance = store().entries[glyphIndex(face, pixelSize, decoded.codepoint)].advance;
+        const u32 codepoint = decoded.codepoint;
+        if (codepoint == ' ') {
+            breakEnd = index;
+            breakNext = index + 1;
+        }
+        const f32 advance = store().entries[glyphIndex(chain, pixelSize, codepoint)].advance;
 
         if (maxWidth > 0.0f) {
             const f32 width = (running + advance) * scale;
             if (width > wrapRoomOf(maxWidth) && index > lineBegin) {
-                if (lastSpace != std::string_view::npos && lastSpace > lineBegin) {
-                    // Break at the space and drop it: a trailing space would
-                    // make a centred line sit visibly left of centre.
-                    const usize breakAt = lastSpace;
-                    flush(breakAt, breakAt + 1);
+                // Before this character when the two either side allow it;
+                // else at the last place that did.
+                if (breaksBetween(previous, codepoint)) {
+                    flush(index, index);
+                    continue;
+                }
+                if (breakEnd != std::string_view::npos && breakEnd > lineBegin) {
+                    // At a space, it is dropped: a trailing space would make a
+                    // centred line sit visibly left of centre.
+                    flush(breakEnd, breakNext);
                     index = lineBegin;
                     continue;
                 }
@@ -1027,7 +1287,12 @@ void breakLines(std::string_view text, Face& face, f32 pixelSize, f32 scale, f32
                 continue;
             }
         }
+        if (index > lineBegin && breaksBetween(previous, codepoint)) {
+            breakEnd = index;
+            breakNext = index;
+        }
         running += advance;
+        previous = codepoint;
         index += decoded.length;
     }
     flush(text.size(), text.size());
@@ -1051,12 +1316,12 @@ struct LineCache
     return cache;
 }
 
-[[nodiscard]] const std::vector<Line>& linesOf(std::string_view text, Face& face, f32 pixelSize, f32 scale,
+[[nodiscard]] const std::vector<Line>& linesOf(std::string_view text, FaceChain& chain, f32 pixelSize, f32 scale,
                                                f32 maxWidth)
 {
     LineCache& cache = lineCache();
     cache.key.assign(text);
-    const Face* faceAddress = &face;
+    const FaceChain* faceAddress = &chain;
     const auto append = [&cache](const void* data, usize size) {
         cache.key.append(static_cast<const char*>(data), size);
     };
@@ -1073,7 +1338,7 @@ struct LineCache
     if (cache.entries.size() >= MostEntries)
         cache.entries.clear();
     std::vector<Line> lines;
-    breakLines(text, face, pixelSize, scale, maxWidth, lines);
+    breakLines(text, chain, pixelSize, scale, maxWidth, lines);
     return cache.entries.emplace(cache.key, std::move(lines)).first->second;
 }
 
@@ -1406,41 +1671,62 @@ struct RichLine
     f32 height = 0.0f;
 };
 
-[[nodiscard]] f32 advanceOf(Face& face, const RichStyle& style, u32 codepoint)
+[[nodiscard]] f32 advanceOf(FaceChain& chain, const RichStyle& style, u32 codepoint)
 {
-    const f32 advance = store().entries[glyphIndex(face, style.size, codepoint)].advance * scaleFor(face, style.size);
+    const f32 advance =
+        store().entries[glyphIndex(chain, style.size, codepoint)].advance * scaleFor(chain.primary(), style.size);
     return advance + (style.bold ? boldOffsetOf(style.size) : 0.0f);
 }
 
 // On `breakLines`' rules, over styled glyphs rather than bytes.
-void breakRichLines(const RichText& text, Face& face, f32 maxWidth, std::vector<RichLine>& out)
+void breakRichLines(const RichText& text, FaceChain& chain, f32 maxWidth, std::vector<RichLine>& out)
 {
     out.clear();
+    constexpr usize None = static_cast<usize>(-1);
     usize lineBegin = 0;
-    usize lastSpace = static_cast<usize>(-1);
+    // As in `breakLines`: where this line may end, where the next then
+    // begins, and how wide this one is there.
+    usize breakEnd = None;
+    usize breakNext = None;
+    f32 widthAtBreak = 0.0f;
     f32 width = 0.0f;
-    f32 widthAtSpace = 0.0f;
+    const Face& primary = chain.primary();
 
     const auto finish = [&](usize end, f32 lineWidth, usize nextBegin) {
         RichLine line;
         line.begin = lineBegin;
         line.end = end;
         line.width = lineWidth;
-        // The tallest thing on the line sets its height and its baseline; an
-        // empty line is as tall as whatever style it sits in.
+        // The tallest thing on the line sets its height and its baseline, in
+        // the face that draws it; an empty line is as tall as whatever style
+        // it sits in.
         const usize probeEnd = end > lineBegin ? end : std::min(lineBegin + 1, text.glyphs.size());
+        f32 below = 0.0f;
+        bool fellBack = false;
         for (usize at = lineBegin; at < probeEnd; ++at) {
-            const RichStyle& style = text.styles[text.glyphs[at].style];
-            line.ascent = std::max(line.ascent, ascentOf(face, style.size));
-            line.height = std::max(line.height, lineHeightOf(face, style.size));
+            const RichGlyph glyph = text.glyphs[at];
+            const RichStyle& style = text.styles[glyph.style];
+            const u32 faces = glyph.codepoint == '\n'
+                                  ? 1u
+                                  : 1u << store().entries[glyphIndex(chain, style.size, glyph.codepoint)].face;
+            const LineMetrics metrics = lineMetricsOf(chain, style.size, faces);
+            fellBack = fellBack || faces != 1u;
+            line.ascent = std::max(line.ascent, metrics.ascent);
+            line.height = std::max(line.height, metrics.height);
+            below = std::max(below, metrics.height - metrics.ascent);
         }
+        // Mixed faces reach as high as the highest and as deep as the deepest;
+        // one face alone measures as it always did.
+        if (fellBack)
+            line.height = line.ascent + below;
         if (line.height <= 0.0f) {
-            line.ascent = ascentOf(face, text.styles.front().size);
-            line.height = lineHeightOf(face, text.styles.front().size);
+            line.ascent = ascentOf(primary, text.styles.front().size);
+            line.height = lineHeightOf(primary, text.styles.front().size);
         }
         out.push_back(line);
         lineBegin = nextBegin;
-        lastSpace = static_cast<usize>(-1);
+        breakEnd = None;
+        breakNext = None;
         width = 0.0f;
     };
 
@@ -1452,10 +1738,15 @@ void breakRichLines(const RichText& text, Face& face, f32 maxWidth, std::vector<
             ++index;
             continue;
         }
-        const f32 advance = advanceOf(face, text.styles[glyph.style], glyph.codepoint);
+        const u32 previous = index > lineBegin ? text.glyphs[index - 1].codepoint : 0u;
+        const f32 advance = advanceOf(chain, text.styles[glyph.style], glyph.codepoint);
         if (maxWidth > 0.0f && width + advance > wrapRoomOf(maxWidth) && index > lineBegin) {
-            if (lastSpace != static_cast<usize>(-1) && lastSpace > lineBegin) {
-                finish(lastSpace, widthAtSpace, lastSpace + 1);
+            if (breaksBetween(previous, glyph.codepoint)) {
+                finish(index, width, index);
+                continue;
+            }
+            if (breakEnd != None && breakEnd > lineBegin) {
+                finish(breakEnd, widthAtBreak, breakNext);
                 index = lineBegin;
                 continue;
             }
@@ -1463,8 +1754,14 @@ void breakRichLines(const RichText& text, Face& face, f32 maxWidth, std::vector<
             continue;
         }
         if (glyph.codepoint == ' ') {
-            lastSpace = index;
-            widthAtSpace = width;
+            breakEnd = index;
+            breakNext = index + 1;
+            widthAtBreak = width;
+        }
+        else if (index > lineBegin && breaksBetween(previous, glyph.codepoint)) {
+            breakEnd = index;
+            breakNext = index;
+            widthAtBreak = width;
         }
         width += advance;
         ++index;
@@ -1507,9 +1804,9 @@ f32 scaledTextSize(f32 fits) noexcept
 
 std::vector<TextLine> textLines(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
-    Face& face = faceFor(font);
+    FaceChain& chain = chainFor(font);
     std::vector<Line> lines;
-    breakLines(text, face, pixelSize, scaleFor(face, pixelSize), maxWidth, lines);
+    breakLines(text, chain, pixelSize, scaleFor(chain.primary(), pixelSize), maxWidth, lines);
     std::vector<TextLine> out;
     out.reserve(lines.size());
     for (const Line& line : lines)
@@ -1519,22 +1816,33 @@ std::vector<TextLine> textLines(std::string_view text, std::string_view font, f3
 
 f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize)
 {
-    Face& face = faceFor(font);
-    return widthOf(run, face, pixelSize) * scaleFor(face, pixelSize);
+    FaceChain& chain = chainFor(font);
+    return widthOf(run, chain, pixelSize) * scaleFor(chain.primary(), pixelSize);
 }
 
-f32 textLineHeight(std::string_view font, f32 pixelSize)
+f32 textLineHeight(std::string_view font, f32 pixelSize, std::string_view text)
 {
-    return lineHeightOf(faceFor(font), pixelSize);
+    FaceChain& chain = chainFor(font);
+    return lineMetricsOf(chain, pixelSize, facesOf(text, chain, pixelSize)).height;
+}
+
+f32 textAscent(std::string_view font, f32 pixelSize, std::string_view text)
+{
+    FaceChain& chain = chainFor(font);
+    return lineMetricsOf(chain, pixelSize, facesOf(text, chain, pixelSize)).ascent;
 }
 
 std::string ellipsizedText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, Vec2 box)
 {
-    Face& face = faceFor(font);
+    FaceChain& chain = chainFor(font);
+    const Face& face = chain.primary();
     const f32 scale = scaleFor(face, pixelSize);
     // A copy: measuring a cut line below may refill the cache these came from.
-    const std::vector<Line> lines = linesOf(text, face, pixelSize, scale, maxWidth);
-    const f32 lineHeight = lineHeightOf(face, pixelSize);
+    const std::vector<Line> lines = linesOf(text, chain, pixelSize, scale, maxWidth);
+    u32 faces = 0;
+    for (const Line& line : lines)
+        faces |= line.faces;
+    const f32 lineHeight = lineMetricsOf(chain, pixelSize, faces).height;
     // The lines the box is tall enough for, and never none: a box shorter
     // than a line still says something. The hair is a height that is exactly
     // some lines, which a sum of floats can find a thousandth short.
@@ -1547,12 +1855,14 @@ std::string ellipsizedText(std::string_view text, std::string_view font, f32 pix
     if (!cut)
         return std::string(text);
 
-    // The face's own ellipsis, or three full stops where it has none -- the
-    // built-in face, and a game's font that stops at ASCII, would draw the
-    // box a missing character is.
-    const bool own = face.ready && stbtt_FindGlyphIndex(&face.info, 0x2026) != 0;
+    // The ellipsis of a face of the chain, or three full stops where none has
+    // one -- the built-in face, and a game's font that stops at ASCII, would
+    // draw the box a missing character is.
+    const bool own = face.ready && std::any_of(chain.faces.begin(), chain.faces.end(), [](const Face* held) {
+                         return stbtt_FindGlyphIndex(&held->info, 0x2026) != 0;
+                     });
     const std::string_view ellipsis = own ? std::string_view{"\xE2\x80\xA6"} : std::string_view{"..."};
-    const f32 ellipsisWidth = widthOf(ellipsis, face, pixelSize) * scale;
+    const f32 ellipsisWidth = widthOf(ellipsis, chain, pixelSize) * scale;
 
     std::string out;
     out.reserve(text.size());
@@ -1566,7 +1876,7 @@ std::string ellipsizedText(std::string_view text, std::string_view font, f32 pix
             usize end = run.size();
             while (end > 0) {
                 const std::string_view head = run.substr(0, end);
-                if (head.back() != ' ' && widthOf(head, face, pixelSize) * scale + ellipsisWidth <= box.x + 0.01f)
+                if (head.back() != ' ' && widthOf(head, chain, pixelSize) * scale + ellipsisWidth <= box.x + 0.01f)
                     break;
                 // The start of the character before: never inside one.
                 do {
@@ -1592,16 +1902,22 @@ TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pix
     // what took `TextLabel.Font` off the `Inert` list. An empty
     // name is the default face; a name the provider cannot resolve falls back to
     // it and warns once.
-    Face& face = faceFor(font);
-    const f32 scale = scaleFor(face, pixelSize);
-    const std::vector<Line>& lines = linesOf(text, face, pixelSize, scale, maxWidth);
+    FaceChain& chain = chainFor(font);
+    const f32 scale = scaleFor(chain.primary(), pixelSize);
+    const std::vector<Line>& lines = linesOf(text, chain, pixelSize, scale, maxWidth);
 
     TextRunMetrics metrics;
     metrics.lineCount = static_cast<u32>(lines.size());
-    metrics.ascent = ascentOf(face, pixelSize);
-    for (const Line& line : lines)
+    // Every line of a label is as tall as the tallest face any of them used:
+    // lines of a paragraph a step apart, whichever script each holds.
+    u32 faces = 0;
+    for (const Line& line : lines) {
         metrics.size.x = std::fmax(metrics.size.x, line.width);
-    metrics.size.y = static_cast<f32>(lines.size()) * lineHeightOf(face, pixelSize);
+        faces |= line.faces;
+    }
+    const LineMetrics line = lineMetricsOf(chain, pixelSize, faces);
+    metrics.ascent = line.ascent;
+    metrics.size.y = static_cast<f32>(lines.size()) * line.height;
     return metrics;
 }
 
@@ -1635,12 +1951,19 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                        i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
                        std::vector<DrawQuad>& out, const TextStroke& stroke)
 {
-    Face& face = faceFor(font);
-    const f32 scale = scaleFor(face, pixelSize);
+    FaceChain& chain = chainFor(font);
+    const f32 scale = scaleFor(chain.primary(), pixelSize);
     // Held by reference: filling glyphs below never touches the line cache.
-    const std::vector<Line>& lines = linesOf(text, face, pixelSize, scale, maxWidth);
+    const std::vector<Line>& lines = linesOf(text, chain, pixelSize, scale, maxWidth);
 
-    const f32 lineHeight = lineHeightOf(face, pixelSize);
+    u32 faces = 0;
+    for (const Line& line : lines)
+        faces |= line.faces;
+    const LineMetrics metrics = lineMetricsOf(chain, pixelSize, faces);
+    const f32 lineHeight = metrics.height;
+    // A glyph is placed from the top of a line in the label's own face; a
+    // taller face in the label lowers every baseline by the difference.
+    const f32 lift = metrics.ascent - ascentOf(chain.primary(), pixelSize);
     const f32 totalHeight = static_cast<f32>(lines.size()) * lineHeight;
     const f32 boxWidth = box.max.x - box.min.x;
     const f32 boxHeight = box.max.y - box.min.y;
@@ -1671,8 +1994,8 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                 const Decoded decoded = decodeUtf8(text, index);
                 // The plain glyph's advance places both passes, so an outline
                 // sits exactly under its letter.
-                const f32 advance = store().entries[glyphIndex(face, pixelSize, decoded.codepoint)].advance;
-                const usize slot = glyphIndex(face, pixelSize, decoded.codepoint, outline ? key : GlyphStroke{});
+                const f32 advance = store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)].advance;
+                const usize slot = glyphIndex(chain, pixelSize, decoded.codepoint, outline ? key : GlyphStroke{});
                 // Copied out rather than referenced: the next `glyphIndex` may
                 // reallocate the entry vector, and this loop calls it again.
                 const GlyphEntry entry = store().entries[slot];
@@ -1680,8 +2003,8 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                 for (u32 quad = 0; quad < entry.quadCount; ++quad) {
                     const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
                     DrawQuad glyph;
-                    glyph.min = Vec2{x + (pen + shape.minX) * scale, y + shape.minY * scale};
-                    glyph.max = Vec2{x + (pen + shape.maxX) * scale, y + shape.maxY * scale};
+                    glyph.min = Vec2{x + (pen + shape.minX) * scale, y + lift + shape.minY * scale};
+                    glyph.max = Vec2{x + (pen + shape.maxX) * scale, y + lift + shape.maxY * scale};
                     glyph.color = color;
                     glyph.alpha = alpha;
                     // Textures 1 to `kGlyphPages` are the atlas's pages (`ui.h`). A
@@ -1708,16 +2031,16 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
 TextRunMetrics measureRichText(std::string_view markup, std::string_view font, f32 pixelSize, f32 maxWidth)
 {
     ENG_PROFILE_SCOPE("ui.text.measure");
-    Face& face = faceFor(font);
+    FaceChain& chain = chainFor(font);
     RichStyle base;
     base.size = pixelSize;
     const RichText text = parseRichText(markup, base);
     std::vector<RichLine> lines;
-    breakRichLines(text, face, maxWidth, lines);
+    breakRichLines(text, chain, maxWidth, lines);
 
     TextRunMetrics metrics;
     metrics.lineCount = static_cast<u32>(lines.size());
-    metrics.ascent = lines.empty() ? ascentOf(face, pixelSize) : lines.front().ascent;
+    metrics.ascent = lines.empty() ? ascentOf(chain.primary(), pixelSize) : lines.front().ascent;
     for (const RichLine& line : lines) {
         metrics.size.x = std::fmax(metrics.size.x, line.width);
         metrics.size.y += line.height;
@@ -1729,7 +2052,8 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
                            i32 horizontalAlignment, i32 verticalAlignment, core::Color3 color, f32 alpha, u32 scissor,
                            std::vector<DrawQuad>& out, const TextStroke& labelStroke)
 {
-    Face& face = faceFor(font);
+    FaceChain& chain = chainFor(font);
+    const Face& face = chain.primary();
     RichStyle base;
     base.size = pixelSize;
     base.color = color;
@@ -1737,7 +2061,7 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
     base.stroke = labelStroke;
     const RichText text = parseRichText(markup, base);
     std::vector<RichLine> lines;
-    breakRichLines(text, face, maxWidth, lines);
+    breakRichLines(text, chain, maxWidth, lines);
 
     f32 totalHeight = 0.0f;
     for (const RichLine& line : lines)
@@ -1782,14 +2106,14 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
                 // A glyph's quads are measured from the top of ITS size's line, so
                 // a smaller run is dropped until its baseline meets the line's.
                 const f32 top = baseline - ascentOf(face, style.size);
-                const f32 advance = store().entries[glyphIndex(face, style.size, glyph.codepoint)].advance * scale +
+                const f32 advance = store().entries[glyphIndex(chain, style.size, glyph.codepoint)].advance * scale +
                                     (style.bold ? boldOffsetOf(style.size) : 0.0f);
                 const bool outlined = style.stroke.thickness > 0.0f && style.stroke.alpha > 0.0f;
                 if (outlinePass && !outlined) {
                     pen += advance;
                     continue;
                 }
-                const usize slot = glyphIndex(face, style.size, glyph.codepoint,
+                const usize slot = glyphIndex(chain, style.size, glyph.codepoint,
                                               outlinePass ? glyphStrokeOf(style.stroke, style.size, style.alpha <= 0.0f)
                                                           : GlyphStroke{});
                 const GlyphEntry entry = store().entries[slot];
@@ -1895,9 +2219,40 @@ void setFaceProvider(FaceProvider provider, void* user) noexcept
     // Loaded faces are dropped, not kept: a provider that has just been
     // installed may resolve a name the previous one could not, and a cached
     // fallback would be the wrong face for the rest of the process.
+    table.chains.clear();
     table.faces.clear();
     table.warned.clear();
     resetGlyphCache();
+}
+
+void setFontFallbacks(std::span<const std::string> names)
+{
+    FaceTable& table = faceTable();
+    if (std::equal(names.begin(), names.end(), table.fallbacks.begin(), table.fallbacks.end()))
+        return;
+    table.fallbacks.assign(names.begin(), names.end());
+    // The faces stay loaded; what each label falls back on is built again.
+    table.chains.clear();
+    resetGlyphCache();
+}
+
+std::string_view fontWithFallback(std::string_view font, std::string_view fallback)
+{
+    if (fallback.empty())
+        return font;
+    // Kept for the process: a few pairs a game, and a view a caller may hold
+    // across frames.
+    static std::vector<std::unique_ptr<std::string>> joined;
+    for (const std::unique_ptr<std::string>& held : joined) {
+        if (held->size() == font.size() + 1 + fallback.size() && held->starts_with(font) &&
+            (*held)[font.size()] == kFontFallbackSeparator && held->ends_with(fallback))
+            return *held;
+    }
+    auto made = std::make_unique<std::string>(font);
+    made->push_back(kFontFallbackSeparator);
+    made->append(fallback);
+    joined.push_back(std::move(made));
+    return *joined.back();
 }
 
 } // namespace engine::ui

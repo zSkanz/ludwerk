@@ -131,6 +131,7 @@ quality = "high"
 | `[export]` | How `ludwerk build` packages the game, per target. See [Shipping a game](manual:guides/shipping) |
 | `[save]` | `max_slot_bytes` and `max_slots` — how much a game may save. See [Saving the game](manual:guides/saves) |
 | `[scene]` | `close_grace_seconds` — how long closing waits for a scene's handlers. See [Scenes at run time](manual:guides/scenes) |
+| `[ui]` | `font_fallbacks` — the fonts a character a label's own font has not got is drawn with, in order, before the default font: `["asset://fonts/NotoSansCJKjp-Regular.otf"]`. See [Text and images](manual:ui/text-and-images) |
 | `[script]` | `max_memory_mb` — the cap on the scripts' memory: 1024 on a desktop and 512 on a phone unless you say. A table that grows without end stops the scripts before it stops the machine |
 | `[xr]` | `enabled = true` — try a headset at start, through OpenXR, and draw on the screen when there is none; `required = true` — a game played only in a headset, which without one says so and does not start; `mirror = false` — the window stays black instead of showing the left eye; `hands = false` — controllers only, never the hands themselves; `depth = false` — the headset is not given each eye's depth; `--xr` and `--no-xr` on the command line override `enabled` and `required`. See [VR](manual:guides/vr) |
 

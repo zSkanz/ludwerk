@@ -508,7 +508,8 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
     // An empty field that is not being typed into shows its placeholder.
     if (label.text.empty() && field.composition.empty() && !field.focused) {
         if (!field.placeholderText.empty())
-            buildTextGeometry(field.placeholderText, label.font, label.textSize * unitScaleOf(world, entry.id),
+            buildTextGeometry(field.placeholderText, fontWithFallback(label.font, label.fallbackFont),
+                              label.textSize * unitScaleOf(world, entry.id),
                               field.multiLine ? box.max.x - box.min.x : 0.0f, box, label.horizontalAlignment,
                               label.verticalAlignment, field.placeholderColor, textAlpha, scissor, out.quads);
         return;
@@ -556,8 +557,12 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
         if (line.end <= line.begin)
             continue;
         const f32 left = lineLeft(view, line);
-        const f32 top = view.top + static_cast<f32>(index) * view.lineHeight;
-        buildTextGeometry(display.substr(line.begin, line.end - line.begin), view.font, view.size, 0.0f,
+        // On the field's one baseline: a line drawn alone is placed by its
+        // own faces, which may reach less high than the whole text's.
+        const std::string_view run = display.substr(line.begin, line.end - line.begin);
+        const f32 top =
+            view.top + static_cast<f32>(index) * view.lineHeight + view.ascent - textAscent(view.font, view.size, run);
+        buildTextGeometry(run, view.font, view.size, 0.0f,
                           Rect{Vec2{left, top}, Vec2{left + line.width + 1.0f, top + view.lineHeight}}, 0, 0,
                           label.textColor, textAlpha, scissor, out.quads, stroke);
     }
@@ -782,6 +787,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         // Nothing to draw. A `TextInput`'s placeholder is `emitField`'s.
         if (text.empty())
             return;
+        const std::string_view font = fontWithFallback(label->font, label->fallbackFont);
 
         // `TextScaled` re-measures at the size that fills the box rather than
         // stretching a bitmap: there is no distance field in v1, and a stretched
@@ -789,7 +795,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         f32 size = label->textSize * self->unitScale;
         if (label->textScaled && !text.empty()) {
             const TextRunMetrics unit =
-                rich ? measureRichText(text, label->font, 100.0f, 0.0f) : measureText(text, label->font, 100.0f, 0.0f);
+                rich ? measureRichText(text, font, 100.0f, 0.0f) : measureText(text, font, 100.0f, 0.0f);
             if (unit.size.x > 0.0f && unit.size.y > 0.0f) {
                 const f32 fits = 100.0f * std::fmin(textRoom.x / unit.size.x, textRoom.y / unit.size.y);
                 size = scaledTextSize(fits);
@@ -816,7 +822,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         std::string ended;
         if (label->textOverflow != 0 && !label->textScaled) {
             if (label->textOverflow == 2 && !rich) {
-                ended = ellipsizedText(text, label->font, size, wrapWidth, textRoom);
+                ended = ellipsizedText(text, font, size, wrapWidth, textRoom);
                 text = ended;
             }
             else {
@@ -829,10 +835,10 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         }
 
         if (rich)
-            buildRichTextGeometry(text, label->font, size, wrapWidth, textBox, label->horizontalAlignment,
+            buildRichTextGeometry(text, font, size, wrapWidth, textBox, label->horizontalAlignment,
                                   label->verticalAlignment, color, textAlpha, scissor, out.quads, textStroke);
         else
-            buildTextGeometry(text, label->font, size, wrapWidth, textBox, label->horizontalAlignment,
+            buildTextGeometry(text, font, size, wrapWidth, textBox, label->horizontalAlignment,
                               label->verticalAlignment, color, textAlpha, scissor, out.quads, textStroke);
     }
 }

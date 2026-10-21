@@ -37,7 +37,10 @@ struct FieldView
     std::vector<TextLine> lines;
     std::string font;
     f32 size = 0.0f;
+    // Every line's height and baseline, by the faces the whole text uses
+    // (ADR 0259): one step from line to line whatever script each holds.
     f32 lineHeight = 0.0f;
+    f32 ascent = 0.0f;
     core::Rect box;
     // The top of the first line, scrolled.
     f32 top = 0.0f;

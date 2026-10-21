@@ -2856,6 +2856,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // The same mounts the meshes come from, so `TextLabel.Font` can name a face
     // out of the project the same way `MeshPart.MeshContent` names a model.
     uiText.setMounts(&contentMounts);
+    // And the faces a character a label's font has not got falls back on,
+    // resolved through the same mounts.
+    ui::setFontFallbacks(options.fontFallbacks);
     // What the interface's pictures may hold on the card, by this machine's
     // memory: 64 MiB on a phone with two gigabytes, 256 on a desk
     // with eight.

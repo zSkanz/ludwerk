@@ -6804,11 +6804,25 @@ local Classes: { Schema.Class } = {
                 Type = "Content",
                 ContentKind = "Font",
                 Default = '""',
-                Doc = "The font, as an `asset://` path to a TrueType file. An empty value, or the name `Inter`, "
-                    .. "uses the engine's default font, Inter.\n\n"
-                    .. "A font that cannot be found falls back to the default, and a message is logged once. If "
-                    .. "the project has no font file at all, a built-in font is used that has only ASCII "
-                    .. "characters and one weight.",
+                Doc = "The font, as an `asset://` path to a TrueType or OpenType file. An empty value, or the "
+                    .. "name `Inter`, uses the engine's default font, Inter.\n\n"
+                    .. "A character this font does not have is drawn with `FallbackFont`, then with the fonts "
+                    .. "the project lists in `[ui] font_fallbacks`, then with Inter; a box is drawn only when "
+                    .. "none of them has it. A font that cannot be found falls back to the default, and a "
+                    .. "message is logged once. If the project has no font file at all, a built-in font is "
+                    .. "used that has only ASCII characters and one weight.",
+            },
+            {
+                Name = "FallbackFont",
+                Type = "Content",
+                ContentKind = "Font",
+                Default = '""',
+                Presentation = true,
+                Records = { "ADR 0259" },
+                Doc = "A font for the characters `Font` does not have, tried before the project's "
+                    .. "`[ui] font_fallbacks`. For a label in a script its own font lacks, such as a name in "
+                    .. "Japanese in a font made for Latin text, when the rest of the game needs no such fallback. "
+                    .. "Empty: only the project's fallbacks and the default font.",
             },
             {
                 Name = "TextXAlignment",

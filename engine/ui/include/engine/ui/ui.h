@@ -345,6 +345,22 @@ void beginGlyphFrame() noexcept;
 using FaceProvider = bool (*)(void* user, std::string_view name, std::vector<core::u8>& out);
 void setFaceProvider(FaceProvider provider, void* user) noexcept;
 
+// **The faces a character falls back on** (ADR 0259). A character the
+// label's own face has not got is drawn by the first that has it of: the
+// label's `FallbackFont`, the project's fallbacks in order, and the engine's
+// default face; the box a missing character is only when none has it.
+//
+// The project's, from `[ui] font_fallbacks`. Names the provider resolves, as
+// `TextLabel.Font` does.
+void setFontFallbacks(std::span<const std::string> names);
+// What separates a label's own face from the faces it falls back on, in the
+// `font` every function below takes. No face's name holds it.
+inline constexpr char kFontFallbackSeparator = '\n';
+// The `font` a label is measured and drawn with: `font` when `fallback` is
+// empty, and the two joined when it is not -- kept for the process, so the
+// view stays good as long as anything holds it.
+[[nodiscard]] std::string_view fontWithFallback(std::string_view font, std::string_view fallback);
+
 // What an `ImageLabel.Image` resolves to: which texture index to sample and how
 // big the picture is in its own pixels.
 //
@@ -403,9 +419,10 @@ inline constexpr f32 kMaxScaledTextSize = 100.0f;
 
 // Measures a run at a size, optionally wrapped to a width.
 //
-// `maxWidth` of 0 means no wrapping. Wrapping breaks at spaces, and mid-word
-// only for a word wider than the box: a word cut at a random letter is worse
-// than one that overhangs.
+// `maxWidth` of 0 means no wrapping. Wrapping breaks at spaces, and between
+// the characters of Chinese, Japanese and Korean where the typesetting rules
+// allow it (ADR 0259); mid-word only for a word wider than the box: a word cut
+// at a random letter is worse than one that overhangs.
 [[nodiscard]] TextRunMetrics measureText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth);
 
 // **One line of a laid-out text** (ADR 0139): the bytes it covers and how wide
@@ -422,8 +439,11 @@ struct TextLine
                                               f32 maxWidth);
 // The width of a run on one line, in pixels.
 [[nodiscard]] f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize);
-// The height of one line, in pixels.
-[[nodiscard]] f32 textLineHeight(std::string_view font, f32 pixelSize);
+// The height of one line, in pixels, and how far its baseline is below its
+// top: by the faces `text` is drawn with (ADR 0259), the label's own always
+// among them -- for no text, its own alone.
+[[nodiscard]] f32 textLineHeight(std::string_view font, f32 pixelSize, std::string_view text = {});
+[[nodiscard]] f32 textAscent(std::string_view font, f32 pixelSize, std::string_view text = {});
 
 // **A text cut to what a box holds, and ended with an ellipsis** (ADR 0168,
 // `Enum.TextOverflow.Ellipsis`): measured with `font` at `pixelSize`, broken

@@ -21,7 +21,8 @@ title.Parent = screen
 | `TextLabel.TextColor` | black | **No `3` suffix.** |
 | `TextLabel.TextTransparency` | 0 | The words' own; the box has `BackgroundTransparency`. |
 | `TextLabel.TextSize` | 14 | The em size **in pixels**. |
-| `TextLabel.Font` | `""` | An `asset://` URI to a TrueType file. |
+| `TextLabel.Font` | `""` | An `asset://` URI to a TrueType or OpenType file. |
+| `TextLabel.FallbackFont` | `""` | A font for the characters `Font` has not got. See Fonts. |
 | `TextLabel.TextXAlignment` | `Center` | `Enum.HorizontalAlignment` |
 | `TextLabel.TextYAlignment` | `Center` | `Enum.VerticalAlignment` |
 | `TextLabel.TextWrapped` | `false` | |
@@ -35,9 +36,8 @@ confused. Their values are the enums a `UIListLayout` uses,
 these were a label's `HorizontalAlignment` and `VerticalAlignment` opens with
 them read under the new names.
 
-A codepoint the font has no glyph for draws the font's undefined-character box
-rather than nothing: a label that silently drops characters is the failure mode
-that ships.
+A character none of the label's fonts has draws a box rather than nothing: a
+label that silently drops characters is the failure mode that ships.
 
 ## Fonts
 
@@ -48,6 +48,38 @@ that ships.
 A build whose content directory has no font at all falls back further, to a
 built-in face that is ASCII only, one weight and no kerning — text still draws,
 which is the point of having a fallback.
+
+### Fonts for other scripts
+
+One font holds one family of scripts. Inter has Latin, Greek and Cyrillic, and
+no Chinese, Japanese or Korean. **A character the label's font has not got is
+drawn with the next font that has it**:
+
+1. the label's `Font`;
+2. the label's `FallbackFont`, when it has one;
+3. the fonts in `[ui] font_fallbacks`, in order;
+4. Inter.
+
+A game translated into Japanese lists a Japanese font once and keeps its own
+font for everything else:
+
+```toml
+[ui]
+font_fallbacks = ["asset://fonts/NotoSansCJKjp-Regular.otf"]
+```
+
+`FallbackFont` is for one label that needs a script the rest of the game does
+not, such as a name typed in another alphabet. A font may be a `.ttf`, an
+`.otf`, or a collection (`.ttc`), whose first face is used.
+
+A line is as tall as the fonts its characters use: the highest of their
+ascents and the deepest of their descents. A label in one font measures the
+same as before. Every line of a label keeps the same height, so a paragraph
+that mixes scripts keeps even spacing. The zero-width space, the joiners and
+the direction marks draw nothing, whichever font is asked.
+
+Japanese, Simplified Chinese and Traditional Chinese draw some of the same
+characters differently, so list the font made for your game's language.
 
 Glyphs are rasterized on demand and cached by face, size and codepoint -- and
 **a size is one of a few**: every whole pixel to 24, every second pixel to 64,
@@ -69,6 +101,13 @@ the same physical size on two displays.
 `TextWrapped` breaks lines at the box's width. It breaks at spaces, and
 **mid-word only for a word wider than the box** — a word cut in half at a random
 letter is worse than one that overhangs.
+
+Chinese, Japanese and Korean break between characters, by the usual rules for
+those languages. No line begins with a closing bracket, a comma, a full stop
+or a small kana (`、。，．！？）」』ッャ`). No line ends with an opening bracket
+(`（「『`): the character moves to the next line with its neighbor. Put a
+zero-width space (U+200B) where a line may break that otherwise would not. Put
+a no-break space (U+00A0) between two words that must stay on the same line.
 
 `TextScaled` ignores `TextSize` and rasterizes at whatever size fills the box,
 preserving aspect. **Re-rasterized rather than stretched**: there is no distance
@@ -216,7 +255,8 @@ font files, and a `TextInput` always shows its text plain.
 ## What is not here
 
 Complex scripts are not shaped: codepoints are laid out left to right, so
-Arabic, Devanagari and Thai do not join. The same classes draw in the world
+Arabic, Devanagari and Thai do not join, and Thai does not break between its
+words. The same classes draw in the world
 under a `SurfaceGui` or a `BillboardGui`: see [UI in the world](manual:ui/world-space).
 
 ## Where to look next

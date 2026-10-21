@@ -637,6 +637,25 @@ bool setTextLabelFont(scene::World& world, core::InstanceId id, const Value& val
     return true;
 }
 
+Value getTextLabelFallbackFont(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{component->fallbackFont};
+}
+
+bool setTextLabelFallbackFont(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* text = std::get_if<std::string>(&value);
+    if (text == nullptr)
+        return false;
+    component->fallbackFont = *text;
+    markLayoutDirty(world, id);
+    return true;
+}
+
 Value getTextLabelTextXAlignment(const scene::World& world, core::InstanceId id)
 {
     const scene::TextLabelComponent* component = world.textLabels().find(id);
