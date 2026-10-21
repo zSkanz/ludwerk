@@ -292,6 +292,19 @@ void noteClientWrite(lua_State* L, core::InstanceId id, core::u32 mark, std::str
     core::logText(core::LogLevel::Warn, core::formatKeyPrefixed(ENG_TR("net.warn.client_write"), args));
 }
 
+// Whether this machine is the one that decides an instance's simulated
+// state: every machine but a replica, and a replica for what is its own.
+[[nodiscard]] bool ownedHere(const World& w, core::InstanceId id)
+{
+    if (w.engineState().networkTopology != scene::NetworkTopology::Replica)
+        return true;
+    for (core::InstanceId walk = id; walk.valid(); walk = w.parentOf(walk)) {
+        if (w.local(walk))
+            return true;
+    }
+    return false;
+}
+
 // The methods that write what travels, for the same log: no property's atom
 // is this large.
 constexpr core::u32 WroteMaterialParameter = 0xFFFF0001u;
@@ -380,6 +393,12 @@ int instanceNewIndex(lua_State* L)
 
     switch (w.setProperty(id, name, *value)) {
     case World::SetResult::Changed:
+        // **A mesh named is a mesh measured** (ADR 0258), by the machine that
+        // owns the part: a replica's copy of the server's takes the server's
+        // `MeshSize` and `Size` as they arrive, and measuring it here would
+        // give it a size the server never had.
+        if (name == context(L).wellKnown.meshContent && ownedHere(w, id))
+            (void)w.measureMesh(id);
         flushSceneChanges(L);
         return 0;
     case World::SetResult::Unchanged:

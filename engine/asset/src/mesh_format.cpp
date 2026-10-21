@@ -32,7 +32,7 @@ constexpr int IndexEncodeVersion = 1;
 
 // magic(4) + version(4) + flags(4) + sectionCount(4) + bounds(24). The section
 // table follows immediately.
-constexpr usize HeaderBytes = 40;
+constexpr usize HeaderBytes = MeshHeaderBytes;
 constexpr usize SectionBytes = 24;
 
 // Fixed record sizes, so a section's element count can be checked against its
@@ -815,6 +815,28 @@ std::vector<std::byte> encodeMesh(const CompiledMesh& mesh)
         out.pad4();
     }
     return std::move(out.bytes());
+}
+
+std::optional<core::AABB> meshBoundsOf(std::span<const std::byte> header)
+{
+    if (header.size() < HeaderBytes || std::memcmp(header.data(), MeshMagic, 4) != 0)
+        return std::nullopt;
+    Reader reader(header, 4);
+    const u32 version = reader.u32v();
+    if (version > MeshFormatVersion || version < MeshFormatOldest)
+        return std::nullopt;
+    (void)reader.u32v();
+    (void)reader.u32v();
+    const core::AABB bounds = reader.aabb();
+    if (!reader.ok())
+        return std::nullopt;
+    for (const core::f32 value : {bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z}) {
+        if (!std::isfinite(value))
+            return std::nullopt;
+    }
+    if (bounds.min.x > bounds.max.x || bounds.min.y > bounds.max.y || bounds.min.z > bounds.max.z)
+        return std::nullopt;
+    return bounds;
 }
 
 std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, CompiledMesh& out)

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "engine/asset/content.h"
+#include "engine/asset/mesh_format.h"
 #include "engine/core/i18n.h"
 
 using namespace engine::asset;
@@ -80,19 +81,20 @@ struct Fixture
     // Writes a pack plus its manifest and returns the pack path.
     [[nodiscard]] std::filesystem::path writePack(const std::string& name,
                                                   const std::vector<std::pair<std::string, std::string>>& assets,
-                                                  bool breakManifest = false) const
+                                                  bool breakManifest = false, AssetKind kind = AssetKind::Raw) const
     {
         PackWriter writer;
         std::string manifest = "{\"format\":\"content-manifest\",\"version\":1,\"assets\":[";
         bool first = true;
         for (const auto& [urn, contents] : assets) {
-            const ContentHash hash = writer.addContent(AssetKind::Raw, bytesOf(contents));
+            const ContentHash hash = writer.addContent(kind, bytesOf(contents));
             if (!first) {
                 manifest += ",";
             }
             first = false;
             const std::string hex = breakManifest ? hashText("nothing in the pack").toHex() : hash.toHex();
-            manifest += "{\"urn\":\"" + urn + "\",\"hash\":\"" + hex + "\",\"kind\":\"raw\",\"bytes\":1}";
+            manifest += "{\"urn\":\"" + urn + "\",\"hash\":\"" + hex + "\",\"kind\":\"" + assetKindName(kind) +
+                        "\",\"bytes\":1}";
         }
         manifest += "]}\n";
 
@@ -115,7 +117,8 @@ struct Fixture
     // refuses at mount and this store is required not to.
     [[nodiscard]] std::filesystem::path writeObjects(const std::string& name,
                                                      const std::vector<std::pair<std::string, std::string>>& assets,
-                                                     const std::string& skip = {}) const
+                                                     const std::string& skip = {},
+                                                     const std::string& kind = "raw") const
     {
         const std::filesystem::path objects = root / name / "objects";
         std::string index = "{\"format\":\"content-manifest\",\"version\":1,\"assets\":[";
@@ -126,7 +129,7 @@ struct Fixture
                 index += ",";
             }
             first = false;
-            index += "{\"urn\":\"" + urn + "\",\"hash\":\"" + hash.toHex() + "\",\"kind\":\"raw\"}";
+            index += "{\"urn\":\"" + urn + "\",\"hash\":\"" + hash.toHex() + "\",\"kind\":\"" + kind + "\"}";
             if (urn != skip) {
                 write(ContentMounts::objectPath(objects, hash), contents);
             }
@@ -448,4 +451,70 @@ TEST_CASE("an object path fans out one level, by the first two hex digits")
     CHECK(path.filename().string() == hex);
     CHECK(path.parent_path().filename().string() == hex.substr(0, 2));
     CHECK(path.parent_path().parent_path() == std::filesystem::path("root"));
+}
+
+// A compiled mesh measuring 2.8 by 2 by 0.08, as text a fixture writes: what
+// the header says is all `meshBounds` reads.
+[[nodiscard]] static std::string compiledPane()
+{
+    CompiledMesh mesh;
+    mesh.bounds = engine::core::AABB{{-1.4f, 0.0f, -0.04f}, {1.4f, 2.0f, 0.04f}};
+    mesh.lods.emplace_back();
+    const std::vector<std::byte> bytes = encodeMesh(mesh);
+    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
+TEST_CASE("a compiled mesh's bounds are read from its header, from a pack or an object store")
+{
+    seedRealCatalog();
+    const Fixture fixture;
+    const std::string pane = compiledPane();
+    const engine::core::AABB expected{{-1.4f, 0.0f, -0.04f}, {1.4f, 2.0f, 0.04f}};
+
+    // The header alone: the bytes after it are not needed.
+    const std::vector<std::byte> header = bytesOf(pane.substr(0, MeshHeaderBytes));
+    REQUIRE(meshBoundsOf(header).has_value());
+    CHECK(*meshBoundsOf(header) == expected);
+    CHECK_FALSE(meshBoundsOf(bytesOf("not a mesh at all, but long enough to have a header of forty")).has_value());
+    CHECK_FALSE(meshBoundsOf(std::span<const std::byte>(header).first(20)).has_value());
+
+    SUBCASE("an object store")
+    {
+        const std::filesystem::path objects = fixture.writeObjects(
+            "import", {{"asset://models/pane.gltf", pane}, {"asset://notes.txt", "words"}}, {}, "mesh");
+        ContentMounts mounts;
+        REQUIRE_FALSE(mounts.mountObjects(objects, fixture.objectIndex("import")).has_value());
+        const std::optional<engine::core::AABB> bounds = mounts.meshBounds("asset://models/pane.gltf");
+        REQUIRE(bounds.has_value());
+        CHECK(*bounds == expected);
+        // Asked again, the same; and read after the blob was, the same.
+        CHECK(mounts.meshBounds("asset://models/pane.gltf") == bounds);
+        (void)mounts.resolve("asset://models/pane.gltf");
+        CHECK(mounts.meshBounds("asset://models/pane.gltf") == bounds);
+        // Not a mesh's header, or no name at all: nothing.
+        CHECK_FALSE(mounts.meshBounds("asset://notes.txt").has_value());
+        CHECK_FALSE(mounts.meshBounds("asset://models/missing.gltf").has_value());
+    }
+
+    SUBCASE("a pack, and only a mesh's entry in it")
+    {
+        const std::filesystem::path meshes =
+            fixture.writePack("meshes", {{"asset://models/pane.gltf", pane}}, false, AssetKind::Mesh);
+        const std::filesystem::path raw = fixture.writePack("raw", {{"asset://models/raw.gltf", pane}});
+        ContentMounts mounts;
+        REQUIRE_FALSE(mounts.mountPack(meshes).has_value());
+        REQUIRE_FALSE(mounts.mountPack(raw).has_value());
+        const std::optional<engine::core::AABB> bounds = mounts.meshBounds("asset://models/pane.gltf");
+        REQUIRE(bounds.has_value());
+        CHECK(*bounds == expected);
+        CHECK_FALSE(mounts.meshBounds("asset://models/raw.gltf").has_value());
+    }
+
+    SUBCASE("a loose file is no compiled mesh")
+    {
+        Fixture::write(fixture.root / "loose" / "models" / "pane.gltf", "{}");
+        ContentMounts mounts;
+        mounts.mountDirectory(fixture.root / "loose");
+        CHECK_FALSE(mounts.meshBounds("asset://models/pane.gltf").has_value());
+    }
 }

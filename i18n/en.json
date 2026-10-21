@@ -288,6 +288,7 @@
   "scene.info.scene_written": "Wrote {count} instance(s) to {path}.",
   "scene.info.scene_changed": "The scene is now {path}: {count} instance(s).",
   "scene.info.scene_loaded": "Loaded a scene of {count} instance(s).",
+  "scene.warn.mesh_unmeasured": "The size of the mesh \"{mesh}\" could not be read, because no imported mesh in the game's content has that path. MeshSize and Size were left as they were. Check the path, or set MeshSize yourself.",
   "scene.warn.stamp_cycle": "A stamp contains a copy of itself, and that copy was left out: {chain}.",
   "scene.warn.refused_properties": "{count} propert(y/ies) in the scene file were not applied: {names}. Either the class has no such property (check the spelling against the API reference) or the value is not one it accepts. The rest of the scene loaded.",
   "scene.warn.missing_stamps": "{count} stamped instance(s) were not loaded, because the stamp file they refer to is not in the content.",

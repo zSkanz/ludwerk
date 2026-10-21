@@ -185,4 +185,14 @@ struct MeshCompileOptions
 
 [[nodiscard]] std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, CompiledMesh& out);
 
+// What a compiled mesh's header holds before its first section: its magic,
+// version, flags, section count and bounds.
+inline constexpr usize MeshHeaderBytes = 40;
+
+// **A mesh's bounds, read from its header alone**: what `MeshPart.MeshSize`
+// is filled from the moment a script names the mesh. The rest of the file is
+// neither read nor checked. Nothing for bytes that do not begin as a mesh this
+// build reads, or whose bounds are empty or not finite.
+[[nodiscard]] std::optional<core::AABB> meshBoundsOf(std::span<const std::byte> header);
+
 } // namespace engine::asset

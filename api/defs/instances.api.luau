@@ -1056,7 +1056,9 @@ local Classes: { Schema.Class } = {
                 ContentKind = "Mesh",
                 Doc = "The model file this part draws, as an `asset://` path to a glTF file. Setting it replaces "
                     .. "the mesh. If the file fails to load, the part keeps its previous mesh and the error is "
-                    .. "logged.",
+                    .. "logged.\n\n"
+                    .. "Set from a script, it also sets `MeshSize` to the size of the mesh, and `Size` too if it "
+                    .. "is still (1, 1, 1), so the part draws and collides at the mesh's own size. See `MeshSize`.",
             },
             {
                 Name = "CollisionFidelity",
@@ -1074,8 +1076,12 @@ local Classes: { Schema.Class } = {
                 Doc = "The size of the mesh as it was authored, in meters. The part is scaled by `Size` divided "
                     .. "by `MeshSize`, so setting `Size` to twice `MeshSize` draws and collides the mesh at twice "
                     .. "its authored size.\n\n"
-                    .. "The importer sets this value and it is saved with the scene. You can set it yourself to "
-                    .. "stretch the mesh. Each component must be greater than 0.",
+                    .. "Setting `MeshContent` from a script sets this to the size of the new mesh at once, read "
+                    .. "from the game's imported content, and sets `Size` to the same value if `Size` is still "
+                    .. "(1, 1, 1). On a client, this happens only for parts the client made; a part the server "
+                    .. "made takes both values from the server. The editor sets it when you import or drop a mesh, "
+                    .. "and it is saved with the scene. You can set it yourself to stretch the mesh. Each "
+                    .. "component must be greater than 0.",
             },
             {
                 Name = "PoseFrom",

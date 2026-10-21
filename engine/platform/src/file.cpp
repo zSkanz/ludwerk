@@ -175,6 +175,28 @@ bool readFile(const std::filesystem::path& path, std::vector<std::byte>& out)
     return true;
 }
 
+bool readFileStart(const std::filesystem::path& path, std::size_t count, std::vector<std::byte>& out)
+{
+    SDL_IOStream* const stream = SDL_IOFromFile(toUtf8(path).c_str(), "rb");
+    if (stream == nullptr)
+        return false;
+    std::vector<std::byte> bytes(count);
+    std::size_t read = 0;
+    while (read < count) {
+        const std::size_t got = SDL_ReadIO(stream, bytes.data() + read, count - read);
+        if (got == 0)
+            break;
+        read += got;
+    }
+    const bool failed = read < count && SDL_GetIOStatus(stream) == SDL_IO_STATUS_ERROR;
+    (void)SDL_CloseIO(stream);
+    if (failed)
+        return false;
+    bytes.resize(read);
+    out = std::move(bytes);
+    return true;
+}
+
 bool readTextFile(const std::filesystem::path& path, std::string& out)
 {
     std::size_t size = 0;

@@ -386,6 +386,7 @@ struct VmContext
         core::NameAtom parent;
         core::NameAtom cframe;
         core::NameAtom name;
+        core::NameAtom meshContent;
     } wellKnown;
 
     // Takes the `int` the Luau API hands out rather than a `LuauAtom`: every

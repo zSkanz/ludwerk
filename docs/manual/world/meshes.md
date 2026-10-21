@@ -59,10 +59,35 @@ past that, the joints beyond the sixty-fourth stay in their rest pose.
 
 ## Size against the mesh
 
-`Size` is still the full extent in meters, and the mesh is fitted to it. A mesh
-authored at the wrong scale is corrected by the part's `Size` rather than by
-re-exporting — though re-exporting is usually the better answer, because the
-number in the file is then right for everyone who uses it.
+`Size` is still the full extent in meters, and the mesh is fitted to it.
+`MeshPart.MeshSize` is the size of the mesh itself, and the part is drawn and
+collides at `Size / MeshSize` times the mesh. A mesh authored at the wrong
+scale is corrected by the part's `Size` rather than by re-exporting — though
+re-exporting is usually the better answer, because the number in the file is
+then right for everyone who uses it.
+
+**Setting `MeshContent` from a script sets `MeshSize` to the size of the new
+mesh**, read from the game's imported content when the property is set. You
+do not need to wait for the mesh to load or call `PreloadAsync` first. If
+`Size` is still (1, 1, 1), it is set to the same value, so a `MeshPart` made by
+a script draws **and collides** at the mesh's own size. Before this, such a
+part kept a `Size` of (1, 1, 1) and collided as a one-meter box. To use
+another size, set `Size` after `MeshContent`. To scale the mesh, multiply its
+`MeshSize`:
+
+```luau
+--!strict
+local rock = Instance.new("MeshPart")
+rock.MeshContent = "asset://models/rock.glb"
+rock.Size = rock.MeshSize * 2 -- twice the size it was authored at
+rock.Parent = workspace
+```
+
+The values are set by the machine that owns the part. The server sets them on
+the parts it makes, and they replicate. A client sets them only on the parts it
+makes itself. A part that is not an imported mesh of the game's content, such
+as a path with a typo, keeps its `MeshSize` and `Size`, and a warning names it
+once.
 
 ## Colliding with imported geometry
 

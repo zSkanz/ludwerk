@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "engine/asset/mesh_format.h"
 #include "engine/core/content_path.h"
 #include "engine/core/i18n.h"
 #include "engine/core/json.h"
@@ -316,6 +317,55 @@ ResolvedContent ContentMounts::resolve(std::string_view urn) const
         }
     }
     return result;
+}
+
+std::optional<core::AABB> ContentMounts::meshBounds(std::string_view urn) const
+{
+    if (!isValidUrn(urn)) {
+        return std::nullopt;
+    }
+    const std::string_view relative = urn.substr(AssetScheme.size());
+    // The mount `resolve` would answer from, found the same way.
+    for (auto mount = m_mounts.rbegin(); mount != m_mounts.rend(); ++mount) {
+        if (!mount->answersFor(urn))
+            continue;
+        if (mount->sealed) {
+            const PackName* const name = findPackName(mount->names, urn);
+            if (name == nullptr)
+                continue;
+            if (name->kind != AssetKind::Mesh)
+                return std::nullopt;
+            return meshBoundsOf(mount->pack->blob(name->content));
+        }
+        if (mount->kind == MountKind::Directory) {
+            std::filesystem::path candidate = mount->directory;
+            candidate /= std::filesystem::path(relative);
+            if (platform::fileExists(candidate))
+                return std::nullopt;
+            continue;
+        }
+        const auto entry = mount->byUrn.find(std::string(urn));
+        if (entry == mount->byUrn.end())
+            continue;
+        if (entry->second.kind != AssetKind::Mesh)
+            return std::nullopt;
+        const core::ContentHash& hash = entry->second.hash;
+        if (mount->kind == MountKind::Pack)
+            return meshBoundsOf(mount->pack->blob(hash));
+        // An object store's blob: the bytes already read if anything read
+        // them, else the header and nothing past it.
+        if (const auto loaded = mount->loaded.find(hash); loaded != mount->loaded.end())
+            return meshBoundsOf(loaded->second);
+        if (const auto known = mount->measured.find(hash); known != mount->measured.end())
+            return known->second;
+        std::vector<std::byte> header;
+        std::optional<core::AABB> bounds;
+        if (platform::readFileStart(objectPath(mount->objects, hash), MeshHeaderBytes, header))
+            bounds = meshBoundsOf(header);
+        mount->measured.emplace(hash, bounds);
+        return bounds;
+    }
+    return std::nullopt;
 }
 
 std::span<const std::byte> ContentMounts::blob(const core::ContentHash& hash) const

@@ -44,6 +44,10 @@
 #include "engine/scene/types.h"
 #include "engine/scene/value.h"
 
+namespace engine::asset {
+class ContentMounts;
+} // namespace engine::asset
+
 namespace engine::scene {
 
 // Intrusive links plus the duplicate-name chain (ADR 0026). `lastChild` exists
@@ -1870,6 +1874,20 @@ public:
     // `Length` is what the last tick wrote.
     void setSequenceFiles(SequenceFiles* files) noexcept { m_sequenceFiles = files; }
     [[nodiscard]] SequenceFiles* sequenceFiles() const noexcept { return m_sequenceFiles; }
+    // **The host's content** (ADR 0258): what a mesh measures, read from its
+    // compiled header the moment a script names it. Null where nobody gave
+    // any -- a test, a world with no content -- and then nothing is measured.
+    void setContent(const asset::ContentMounts* content) noexcept { m_content = content; }
+    [[nodiscard]] const asset::ContentMounts* content() const noexcept { return m_content; }
+    // **A `MeshPart` sized to the mesh it now names** (ADR 0258): `MeshSize`
+    // becomes what the mesh measures, and `Size` too while it is still
+    // (1, 1, 1), so the part draws and collides at the mesh's own size. Both
+    // are set as properties -- changes, replicated, in the hash -- and both
+    // come from the content's bytes alone, so every machine with the same
+    // content sets the same numbers. The caller decides who measures: the
+    // machine that owns the part. A mesh with no compiled header is left as
+    // it was and said once per name. False where nothing was measured.
+    bool measureMesh(core::InstanceId id);
     // **What this machine's mixer can say of a sound** (ADR 0200 section 9),
     // the host's audio system: what `Sound.Loudness` and `GetBands` ask. Null
     // where there is none, and then every answer is silence.
@@ -2533,6 +2551,9 @@ private:
     const Localization* m_localization = nullptr;
     const DialogueLines* m_dialogue = nullptr;
     SequenceFiles* m_sequenceFiles = nullptr;
+    const asset::ContentMounts* m_content = nullptr;
+    // The meshes `measureMesh` found no bounds for, said once each.
+    std::vector<core::NameAtom> m_unmeasured;
     SoundMeter* m_soundMeter = nullptr;
     MaterialClones m_materialClones;
     u32 m_lastMaterialClone = 0;

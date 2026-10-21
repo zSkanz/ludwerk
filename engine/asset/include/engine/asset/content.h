@@ -41,6 +41,7 @@
 #include "engine/asset/pack.h"
 #include "engine/core/content_hash.h"
 #include "engine/core/error.h"
+#include "engine/core/math.h"
 #include "engine/core/types.h"
 
 namespace engine::asset {
@@ -146,6 +147,15 @@ public:
     [[nodiscard]] ResolvedContent resolve(std::string_view urn) const;
     [[nodiscard]] bool contains(std::string_view urn) const { return resolve(urn).found(); }
 
+    // **What a compiled mesh measures, from its header alone** (ADR 0258):
+    // the bounds `MeshPart.MeshSize` is filled from the moment a script names
+    // the mesh. A pack's mesh is read where it is mapped and an object store's
+    // by its first bytes, so nothing is loaded and every machine with the same
+    // content answers the same, headless or not. Nothing for a name that is
+    // not a compiled mesh -- a loose file, a missing one. Not thread-safe, as
+    // `blob` is not.
+    [[nodiscard]] std::optional<core::AABB> meshBounds(std::string_view urn) const;
+
     // **What a sealed pack holds under a name that is not an asset's** (ADR
     // 0183): a game's own files -- `game://src/client/Main.luauc` -- which a
     // sealed game carries in its pack. Empty where no sealed pack mounted
@@ -215,6 +225,9 @@ private:
         // mount already failed to read, which is what keeps a missing object
         // from being re-opened and re-warned once per frame.
         mutable std::unordered_map<core::ContentHash, std::vector<std::byte>> loaded;
+        // `Objects` only: the bounds `meshBounds` read from a blob's first
+        // bytes, or nothing for one whose header was not a mesh's.
+        mutable std::unordered_map<core::ContentHash, std::optional<core::AABB>> measured;
     };
 
     [[nodiscard]] std::span<const std::byte> objectBytes(const Mount& mount, const core::ContentHash& hash) const;

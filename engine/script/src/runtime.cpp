@@ -409,6 +409,7 @@ std::optional<core::EngineError> ScriptRuntime::boot(core::InstanceId adoptDataM
     m_impl->context.wellKnown.parent = m_world.atoms().intern("Parent");
     m_impl->context.wellKnown.cframe = m_world.atoms().intern("CFrame");
     m_impl->context.wellKnown.name = m_world.atoms().intern("Name");
+    m_impl->context.wellKnown.meshContent = m_world.atoms().intern("MeshContent");
 
     luaL_openlibs(L);
 

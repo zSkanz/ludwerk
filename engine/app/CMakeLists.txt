@@ -1300,6 +1300,20 @@ if(ENG_BUILD_TESTS)
     # in real time.
     set_tests_properties(netcode_carried PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
+    # **A mesh a script names is measured by the machine that owns the part**
+    # (ADR 0258): a real server makes `MeshPart`s by script and a real joiner,
+    # which loads no mesh, reads the server's `MeshSize`, `Size` and collider
+    # as the server has them, measures a part of its own, and leaves a copy
+    # of the server's unmeasured.
+    add_test(NAME netcode_measured
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/measured
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-measured
+            -DPORT=${ENG_PORT_47975}
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_measured.cmake)
+    set_tests_properties(netcode_measured PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
     # **A character the server animates is animated on a joiner** (ADR 0197,
     # protocol 44): a real server spawns one from a stamp and walks it, runs
     # it, makes it jump and sets the one attribute that is its attack; a real

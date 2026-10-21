@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+#include "engine/asset/content.h"
+#include "engine/core/i18n.h"
+#include "engine/core/log.h"
 #include "engine/core/profile.h"
 #include "engine/scene/scene_file.h"
 
@@ -1297,6 +1300,38 @@ asset::ResolvedMaterial World::resolveMaterial(core::NameAtom urn, u32 clone) co
             out.properties.setShaderParameter(parameter);
     }
     return out;
+}
+
+bool World::measureMesh(core::InstanceId id)
+{
+    const MeshPartComponent* mesh = m_content != nullptr ? meshParts().find(id) : nullptr;
+    if (mesh == nullptr || !mesh->meshContent.valid())
+        return false;
+    const core::NameAtom content = mesh->meshContent;
+    // The engine's own meshes (`engine://mesh/grid-64`) are made, not
+    // imported, and are drawn at the size their name gives: nothing to read.
+    if (!asset::isValidUrn(m_atoms.text(content)))
+        return false;
+    const std::optional<core::AABB> bounds = m_content->meshBounds(m_atoms.text(content));
+    if (!bounds.has_value()) {
+        if (std::find(m_unmeasured.begin(), m_unmeasured.end(), content) == m_unmeasured.end()) {
+            m_unmeasured.push_back(content);
+            const core::I18nArg args[] = {{"mesh", m_atoms.text(content)}};
+            core::log(core::LogLevel::Warn, ENG_TR("scene.warn.mesh_unmeasured"), args);
+        }
+        return false;
+    }
+    // A flat mesh is a hundredth of a metre thick rather than nothing:
+    // `MeshSize` divides, and the editor's import measures the same way.
+    const core::Vec3 measured{std::max(bounds->max.x - bounds->min.x, 0.01f),
+                              std::max(bounds->max.y - bounds->min.y, 0.01f),
+                              std::max(bounds->max.z - bounds->min.z, 0.01f)};
+    const PartComponent* part = parts().find(id);
+    const bool unsized = part != nullptr && part->size == core::Vec3{1.0f, 1.0f, 1.0f};
+    (void)setProperty(id, m_atoms.intern("MeshSize"), Value{measured});
+    if (unsized)
+        (void)setProperty(id, m_atoms.intern("Size"), Value{measured});
+    return true;
 }
 
 asset::ResolvedMaterial World::surfaceOf(const PartComponent& part) const

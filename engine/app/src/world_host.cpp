@@ -279,6 +279,8 @@ WorldHost::~WorldHost()
 void WorldHost::setContentMounts(const asset::ContentMounts* mounts)
 {
     m_mounts = mounts;
+    if (m_world.has_value())
+        m_world->setContent(mounts);
     // The host's own materials read through the same mounts, compiled first
     // and loose second, so a material and the maps it names are found the
     // same way.
@@ -340,6 +342,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     scene::refreshVoiceLocale(*m_world, core::InstanceId{});
     m_world->setDialogue(&m_dialogue);
     m_world->setSequenceFiles(&m_sequences);
+    // What a mesh a script names measures (ADR 0258).
+    m_world->setContent(m_mounts);
     // What a sequence reads (ADR 0204): its file, and how long a line it
     // says takes -- the audio's answer, the longest of the line's languages.
     m_sequences.clear();

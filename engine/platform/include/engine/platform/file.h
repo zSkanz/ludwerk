@@ -38,6 +38,11 @@ namespace engine::platform {
 // Whole-file read. `out` is replaced on success and left untouched otherwise.
 [[nodiscard]] bool readFile(const std::filesystem::path& path, std::vector<std::byte>& out);
 
+// **The first `count` bytes and no more**, or the whole file where it is
+// shorter: what a header says, read without moving the rest. `out` is replaced
+// on success and left untouched otherwise.
+[[nodiscard]] bool readFileStart(const std::filesystem::path& path, std::size_t count, std::vector<std::byte>& out);
+
 // The same read, delivered as bytes in a std::string for JSON and other text.
 // No transcoding and no newline translation: the bytes are the file's.
 [[nodiscard]] bool readTextFile(const std::filesystem::path& path, std::string& out);

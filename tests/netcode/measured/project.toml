@@ -1,0 +1,10 @@
+# A mesh named by a script is measured by the machine that owns the part
+# (ADR 0258): a server makes `MeshPart`s, a joiner reads what it was sent and
+# makes one of its own. `run_measured.cmake` runs the two and reads what the
+# joiner printed.
+
+[project]
+name = "Measured"
+id = "dev.ludwerk.netcode-measured"
+version = "1.0.0"
+engine = "0.1"

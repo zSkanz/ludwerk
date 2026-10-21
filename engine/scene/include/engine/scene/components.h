@@ -145,9 +145,12 @@ struct MeshPartComponent
     // **Authored, not derived.** The mesh's real bounds are known only where
     // something loaded it, and the world hash is required to be a pure function
     // of the operation sequence -- a derived divisor would make a headless run
-    // and a rendered run disagree about the same scene. The import writes this
-    // from the compiled bounds; until then it is one, and a part whose `Size` is
-    // also one draws exactly as it did before this field existed.
+    // and a rendered run disagree about the same scene. So it is SET, as a
+    // property, from what every machine has alike: the import writes it from
+    // the compiled bounds, and a script naming a mesh has it set from the
+    // compiled header by the machine that owns the part (`World::measureMesh`,
+    // ADR 0258). Until then it is one, and a part whose `Size` is also one
+    // draws exactly as it did before this field existed.
     core::Vec3 meshSize{1.0f, 1.0f, 1.0f};
 
     // **The mesh whose pose this one wears** (`PoseFrom`, ADR 0201), or none.
