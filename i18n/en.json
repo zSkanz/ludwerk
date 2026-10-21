@@ -399,7 +399,7 @@
   "app.info.import_compiled": "Compiled {meshes} mesh(es) and {textures} texture(s) into this project's object store.",
   "app.info.importing": "importing {done} of {total}: {name}",
   "app.info.import_waiting": "Another process is compiling this project's content. Waiting for it to finish; what it compiles is not compiled twice.",
-  "app.info.import_started": "This project's content is compiled the first time it is opened: {total} source file(s), which can take a few minutes. This happens once; the next time the project opens, the compiled files are reused.",
+  "app.info.import_started": "Compiling {total} source file(s) of this project's content, which can take a few minutes. A project is compiled the first time it is opened, and again in part after an engine update changes how some kind of content is compiled; the compiled files are kept and reused.",
   "app.info.import_progress": "Compiling the project's content: {done} of {total} done. Now compiling {name}.",
   "app.warn.import_compile": "Imported {name}, but could not compile it: {detail}. The file is in the project and still loads; it is read from its source form instead of a compiled one.",
   "app.warn.catalog_unreadable": "The catalog {file} could not be read, so its locale keeps the text it had: {reason}",

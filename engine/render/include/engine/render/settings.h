@@ -265,6 +265,10 @@ struct GraphicsSettings
     // before it is drawn with the built-in surface, in milliseconds:
     // `[graphics] material_wait_ms`. Nought draws it plainly at once.
     u32 materialWaitMs = 250;
+    // **The threads a material's pipelines are made on**, apart from the
+    // job system: `[graphics] pipeline_threads`, at most four; nought is one
+    // on a machine of four hardware threads or fewer and two above.
+    u32 pipelineThreads = 0;
 
     // **How many taps the sun's shadow filter takes at a fragment** (ADR
     // 0172): four at Low, eight at Medium, and zero -- the filter's full

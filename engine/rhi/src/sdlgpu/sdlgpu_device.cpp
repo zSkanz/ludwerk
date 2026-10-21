@@ -17,17 +17,23 @@
 #include <SDL3/SDL_timer.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <cstddef>
 #include <cstring>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
-#include "engine/jobs/jobs.h"
 #include "engine/platform/process.h"
 #include "engine/platform/sdl_interop.h"
 #include "engine/rhi/backends.h"
@@ -164,9 +170,118 @@ struct PipelineRecipe
     return (density ? 4u : 0u) + (samples >= 8 ? 3u : samples >= 4 ? 2u : samples >= 2 ? 1u : 0u);
 }
 
+// **The threads a device makes its pipelines on** (ADR 0257): a few of its
+// own, first asked first made, and nothing else on them. They were jobs of
+// the general pool, behind whatever the world had queued there -- streaming,
+// foliage, a texture's transcode -- and a material's parts waited unseen
+// behind the world for seconds; and a driver's compile of half a second held
+// a worker the world was waiting for. A pipeline is not a job of a frame:
+// it is a call into the driver that blocks until it is done.
+class PipelineWorkers
+{
+public:
+    struct Ticket
+    {
+        std::atomic<bool> done{false};
+        std::mutex mutex;
+        std::condition_variable said;
+    };
+    using TicketPtr = std::shared_ptr<Ticket>;
+
+    explicit PipelineWorkers(u32 count)
+    {
+        for (u32 index = 0; index < count; ++index)
+            m_threads.emplace_back([this] { run(); });
+    }
+    // What is queued is made first: a keeping of the cache asked for as the
+    // device goes is a keeping that happens.
+    ~PipelineWorkers()
+    {
+        {
+            const std::lock_guard lock(m_mutex);
+            m_stopping = true;
+        }
+        m_wake.notify_all();
+        for (std::thread& thread : m_threads)
+            thread.join();
+    }
+    PipelineWorkers(const PipelineWorkers&) = delete;
+    PipelineWorkers& operator=(const PipelineWorkers&) = delete;
+
+    [[nodiscard]] TicketPtr submit(std::function<void()> work)
+    {
+        auto ticket = std::make_shared<Ticket>();
+        {
+            const std::lock_guard lock(m_mutex);
+            m_queue.push_back(Item{std::move(work), ticket});
+        }
+        m_wake.notify_one();
+        return ticket;
+    }
+    [[nodiscard]] static bool finished(const TicketPtr& ticket) noexcept
+    {
+        return ticket == nullptr || ticket->done.load(std::memory_order_acquire);
+    }
+    static void wait(const TicketPtr& ticket)
+    {
+        if (ticket == nullptr)
+            return;
+        std::unique_lock lock(ticket->mutex);
+        ticket->said.wait(lock, [&ticket] { return ticket->done.load(std::memory_order_acquire); });
+    }
+    [[nodiscard]] u32 count() const noexcept { return static_cast<u32>(m_threads.size()); }
+
+    // **How many**: what the project says, or one on a machine of four
+    // hardware threads or fewer and two above -- a scene that brings twenty
+    // materials at once is not made one after another, and a small machine
+    // keeps its cores for the game.
+    [[nodiscard]] static u32 countFor(u32 asked) noexcept
+    {
+        if (asked != 0)
+            return std::min(asked, MaxThreads);
+        return std::thread::hardware_concurrency() <= 4 ? 1u : 2u;
+    }
+    static constexpr u32 MaxThreads = 4;
+
+private:
+    struct Item
+    {
+        std::function<void()> work;
+        TicketPtr ticket;
+    };
+
+    void run()
+    {
+        for (;;) {
+            Item item;
+            {
+                std::unique_lock lock(m_mutex);
+                m_wake.wait(lock, [this] { return m_stopping || !m_queue.empty(); });
+                if (m_queue.empty())
+                    return;
+                item = std::move(m_queue.front());
+                m_queue.pop_front();
+            }
+            item.work();
+            {
+                const std::lock_guard lock(item.ticket->mutex);
+                item.ticket->done.store(true, std::memory_order_release);
+            }
+            item.ticket->said.notify_all();
+        }
+    }
+
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    std::deque<Item> m_queue;
+    bool m_stopping = false;
+    std::vector<std::thread> m_threads;
+};
+
 // **A pipeline being made off the frame** (ADR 0257): its recipe and what
-// it was asked to be made at, made on a job, and taken in on the device's
-// thread -- the tables every bind reads are never written from a worker.
+// it was asked to be made at, made on the device's pipeline threads, and
+// taken in on the device's thread -- the tables every bind reads are never
+// written from another.
 struct OffFramePipeline
 {
     u32 id = 0;
@@ -176,7 +291,7 @@ struct OffFramePipeline
     SDL_GPUGraphicsPipeline* made = nullptr;
     std::vector<SDL_GPUGraphicsPipeline*> twins;
     std::string refused;
-    jobs::JobHandle job{};
+    PipelineWorkers::TicketPtr job;
 };
 
 template <class T>
@@ -445,6 +560,7 @@ public:
         for (const std::unique_ptr<OffFramePipeline>& task : offFrame_)
             takeIn(*task);
         offFrame_.clear();
+        pipelineWorkers_.reset();
         for (const Readback& readback : readbacks_)
             SDL_ReleaseGPUTransferBuffer(device_, readback.transfer);
         readbacks_.clear();
@@ -1075,12 +1191,11 @@ public:
         // session made.
         if (keepsPipelines_ && !lost_) {
             constexpr Uint64 KeepAfterNs = 5'000'000'000ull;
-            if (pipelinesUnkept_ && SDL_GetTicksNS() - lastPipelineNs_ >= KeepAfterNs && jobs::initialized() &&
-                (!keepJob_.valid() || jobs::finished(keepJob_))) {
+            if (pipelinesUnkept_ && SDL_GetTicksNS() - lastPipelineNs_ >= KeepAfterNs && pipelineWorkers_ != nullptr &&
+                PipelineWorkers::finished(keepJob_)) {
                 pipelinesUnkept_ = false;
                 SDL_GPUDevice* device = device_;
-                keepJob_ = jobs::schedule("pipeline.keep", jobs::Domain::AssetIo,
-                                          [device]() noexcept { (void)SDL_SaveGPUPipelineCache(device); });
+                keepJob_ = pipelineWorkers_->submit([device]() noexcept { (void)SDL_SaveGPUPipelineCache(device); });
             }
             // A headset taken off, or its app put behind another, is a session
             // that may not come back.
@@ -1191,6 +1306,15 @@ public:
     [[nodiscard]] PipelineHandle createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
                                                                 std::span<const PipelineVariant> variants) override;
     void keepPipelinesOnDisk() noexcept { keepsPipelines_ = true; }
+    // Its pipeline threads, as many as `PipelineWorkers::countFor` says.
+    void startPipelineWorkers(u32 asked)
+    {
+        pipelineWorkers_ = std::make_unique<PipelineWorkers>(PipelineWorkers::countFor(asked));
+    }
+    [[nodiscard]] u32 pipelineThreads() const noexcept
+    {
+        return pipelineWorkers_ != nullptr ? pipelineWorkers_->count() : 0u;
+    }
     // A pipeline made: kept a few seconds after the last one (`beginFrame`).
     void notePipelineMade() noexcept
     {
@@ -1199,9 +1323,8 @@ public:
     }
     void waitForKeeping()
     {
-        if (keepJob_.valid() && jobs::initialized())
-            jobs::wait(keepJob_);
-        keepJob_ = {};
+        PipelineWorkers::wait(keepJob_);
+        keepJob_.reset();
     }
     void keepPipelines() override
     {
@@ -1583,8 +1706,10 @@ private:
     bool keepsPipelines_ = false;
     bool pipelinesUnkept_ = false;
     Uint64 lastPipelineNs_ = 0;
-    jobs::JobHandle keepJob_{};
+    PipelineWorkers::TicketPtr keepJob_;
     bool headsetRan_ = false;
+    // The threads its pipelines are made and kept on.
+    std::unique_ptr<PipelineWorkers> pipelineWorkers_;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
     std::unique_ptr<IHeadset> headset_;
@@ -1721,8 +1846,8 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
 PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
                                                             std::span<const PipelineVariant> variants)
 {
-    // No workers to make it on: made here, as before.
-    if (lost_ || !jobs::initialized())
+    // No threads to make it on: made here, as before.
+    if (lost_ || pipelineWorkers_ == nullptr)
         return IDevice::createGraphicsPipelineOffFrame(desc, variants);
     const PipelineHandle made = createGraphicsPipeline(desc, true);
     if (!made.valid())
@@ -1738,7 +1863,7 @@ PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipeli
                                                                                 : toSdl(variant.colorFormat));
     OffFramePipeline* running = task.get();
     SDL_GPUDevice* device = device_;
-    task->job = jobs::schedule("pipeline.make", jobs::Domain::AssetIo, [running, device]() noexcept {
+    task->job = pipelineWorkers_->submit([running, device]() noexcept {
         running->made = makeFromRecipe(device, running->recipe, 1, false, SDL_GPU_TEXTUREFORMAT_INVALID);
         if (running->made == nullptr) {
             running->refused = SDL_GetError();
@@ -1750,8 +1875,8 @@ PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipeli
                 makeFromRecipe(device, running->recipe, variant.samples, variant.densityShaded, running->formats[at]));
         }
     });
-    if (!task->job.valid()) {
-        // Refused a job: made here, as before.
+    if (task->job == nullptr) {
+        // Not queued: made here, as before.
         recipes_[made.id - 1] = std::move(task->recipe);
         if (SDL_GPUGraphicsPipeline* now =
                 makeFromRecipe(device_, recipes_[made.id - 1], 1, false, SDL_GPU_TEXTUREFORMAT_INVALID);
@@ -1767,9 +1892,8 @@ PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipeli
 
 void SdlGpuDevice::takeIn(OffFramePipeline& task)
 {
-    if (task.job.valid())
-        jobs::wait(task.job);
-    task.job = {};
+    PipelineWorkers::wait(task.job);
+    task.job.reset();
     PipelineRecipe& recipe = recipes_[task.id - 1];
     recipe = std::move(task.recipe);
     pipelines_[task.id - 1] = task.made;
@@ -1812,7 +1936,7 @@ std::optional<bool> SdlGpuDevice::pipelineMade(PipelineHandle pipeline, bool wai
         OffFramePipeline& task = *offFrame_[at];
         if (task.id != pipeline.id)
             continue;
-        if (!wait && task.job.valid() && !jobs::finished(task.job))
+        if (!wait && !PipelineWorkers::finished(task.job))
             return std::nullopt;
         takeIn(task);
         const bool made = task.made != nullptr;
@@ -3216,6 +3340,7 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
 
     auto made =
         std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);
+    made->startPipelineWorkers(desc.pipelineThreads);
     // **What the last run's pipelines seeded this one with** (ADR 0257): a
     // Vulkan device's alone, which says it, and keeps them as it runs.
     if (!desc.pipelineCacheFile.empty()) {

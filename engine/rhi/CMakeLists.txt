@@ -96,7 +96,6 @@ if(ENG_RHI_SDLGPU)
             src/sdlgpu/sdlgpu_device.cpp
         DEPS
             core
-            jobs
             platform
         API_DEPS
             rhi_api
@@ -116,7 +115,9 @@ if(ENG_RHI_SDLGPU)
         target_link_libraries(engine_rhi_sdlgpu PRIVATE engine::openxr_headers)
         target_compile_definitions(engine_rhi_sdlgpu PRIVATE ENG_SDLGPU_XR=1)
     endif()
-    list(APPEND engine_rhi_test_modules rhi_sdlgpu)
+    # And the job system, which its tests keep busy: a pipeline is made on
+    # threads of the device's own, whatever the pool is doing.
+    list(APPEND engine_rhi_test_modules rhi_sdlgpu jobs)
 endif()
 
 # rhi_api_tests links no backend at all -- if it ever needs one, the seam has

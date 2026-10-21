@@ -549,6 +549,12 @@ Vulkan, the pipelines a run makes are kept in `pipelines.vulkan.cache` in the
 user's folder and read by the next run; `--pipeline-cache=FILE` keeps them
 elsewhere, and `--pipeline-cache=` keeps none.
 
+`pipeline_threads` is how many threads make those pipelines: one on a
+computer with four hardware threads or fewer and two above unless you say,
+four at most. They are threads of their own, so a material is never made
+behind a world that is streaming in, and a long compile by the graphics
+driver never holds up the world's work.
+
 ## What a script can see
 
 The settings, through `GraphicsService`. And, to adapt what the game does

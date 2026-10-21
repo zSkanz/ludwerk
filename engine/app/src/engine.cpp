@@ -1671,7 +1671,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                           .hands = options.xrHands,
                                                           .depth = options.xrDepth,
                                                           .refreshRate = options.xrRefreshRate},
-                                                   .pipelineCacheFile = pipelineCacheFileOf(options)},
+                                                   .pipelineCacheFile = pipelineCacheFileOf(options),
+                                                   .pipelineThreads = options.graphics.pipelineThreads},
                                                   &error);
     if (device == nullptr)
         return error;

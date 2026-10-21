@@ -259,6 +259,7 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
 {
     // Ten seconds: a part unseen longer than that is a part missing.
     settings.materialWaitMs = std::min(settings.materialWaitMs, 10000u);
+    settings.pipelineThreads = std::min(settings.pipelineThreads, 4u);
     // A cap below 360 is a picture of blocks; zero is "none".
     if (settings.renderResolutionCap != 0)
         settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);

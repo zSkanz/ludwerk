@@ -33,6 +33,14 @@ loading screen stopped instead.
    Vulkan backend locks the one cache a pipeline reads. A backend that cannot
    -- the recording and null devices, and a device with no job workers --
    makes it at once, as before.
+
+   **As built, not on the job system.** A job of the general pool waited
+   behind whatever the world had queued there -- streaming, foliage, a
+   texture's transcode -- and its compile of half a second held a worker the
+   world needed. The device has threads of its own for its pipelines, first
+   asked first made: `[graphics] pipeline_threads`, one on a machine of four
+   hardware threads or fewer and two above, four at most
+   (`DeviceDesc::pipelineThreads`). The keeping of item 5 runs there too.
 2. **A part waits unseen, then is drawn plainly.** Until its material's
    pipelines are made, a part is drawn in no pass -- not its shadow, not its
    depth -- for up to `[graphics] material_wait_ms`, 250 by default. A
@@ -54,7 +62,7 @@ loading screen stopped instead.
    the run goes** (patch 0012, `SDL_SaveGPUPipelineCache`), because a phone,
    a headset or a player with a task manager ends a game without a word and
    a device destroyed is the one moment that never comes there: five seconds
-   after the last new pipeline, on a job; at once when the app goes to the
+   after the last new pipeline, on a pipeline thread; at once when the app goes to the
    background or loses focus, and when a headset stops running. Written
    beside the file and moved over it, so a kill mid-write leaves the last
    whole copy. The file carries a header of its own -- a mark, its size and a

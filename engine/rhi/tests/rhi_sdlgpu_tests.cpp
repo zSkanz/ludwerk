@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
@@ -570,10 +571,6 @@ TEST_CASE("a pipeline made off the frame is made on a job and taken in when aske
         MESSAGE("ENG_TEST_SKIP: build host shaders before the off-frame pipeline test");
         return;
     }
-    // Workers to make it on; started here where the suite has none.
-    const bool started = !engine::jobs::initialized();
-    if (started)
-        engine::jobs::init(2);
     const auto vs = device.createShader({.stage = ShaderStage::Vertex,
                                          .format = format,
                                          .code = vertex,
@@ -623,8 +620,194 @@ TEST_CASE("a pipeline made off the frame is made on a job and taken in when aske
     device.destroy(fs);
     CHECK(device.pipelineMade(orphan).has_value());
     device.destroy(orphan);
+}
+
+namespace {
+
+// The line shaders the off-frame tests make their pipelines of, or empty
+// where the host's shaders have not been built.
+struct LineShaders
+{
+    ShaderHandle vertex;
+    ShaderHandle fragment;
+};
+
+[[nodiscard]] std::optional<LineShaders> lineShaders(IDevice& device)
+{
+    const ShaderFormat format = device.caps().shaderFormat;
+    const char* directory = format == ShaderFormat::Dxil ? "dxil" : format == ShaderFormat::Msl ? "msl" : "spirv";
+    const char* suffix = format == ShaderFormat::Dxil ? ".dxil" : format == ShaderFormat::Msl ? ".msl" : ".spv";
+    const auto load = [&](const char* stage) {
+        const auto path =
+            std::filesystem::path(ENG_TEST_SHADER_CONTENT) / directory / (std::string("debug_line.") + stage + suffix);
+        std::ifstream file(path, std::ios::binary);
+        const std::vector<char> bytes{std::istreambuf_iterator<char>(file), {}};
+        const auto view = std::as_bytes(std::span(bytes));
+        return std::vector<std::byte>(view.begin(), view.end());
+    };
+    const auto vertex = load("vertex"), fragment = load("fragment");
+    if (vertex.empty() || fragment.empty())
+        return std::nullopt;
+    LineShaders shaders;
+    shaders.vertex = device.createShader({.stage = ShaderStage::Vertex,
+                                          .format = format,
+                                          .code = vertex,
+                                          .entryPoint = "VertexMain",
+                                          .uniformBufferCount = 1});
+    shaders.fragment = device.createShader(
+        {.stage = ShaderStage::Fragment, .format = format, .code = fragment, .entryPoint = "FragmentMain"});
+    if (!shaders.vertex.valid() || !shaders.fragment.valid())
+        return std::nullopt;
+    return shaders;
+}
+
+// Asked until it is made or `limit` passes; how long it took, or nothing.
+[[nodiscard]] std::optional<std::chrono::milliseconds> madeWithin(IDevice& device, std::span<const PipelineHandle> made,
+                                                                  std::chrono::milliseconds limit)
+{
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<bool> done(made.size(), false);
+    while (std::chrono::steady_clock::now() - start < limit) {
+        bool all = true;
+        for (usize at = 0; at < made.size(); ++at) {
+            if (!done[at])
+                done[at] = device.pipelineMade(made[at]).has_value();
+            all = all && done[at];
+        }
+        if (all)
+            return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+TEST_CASE("a pipeline is made while the job system is busy with the world's work (ADR 0257)")
+{
+    // Every worker of the pool held by work longer than the test: a
+    // pipeline made on the pool would wait for all of it. Made on the
+    // device's own threads, it is made as if the pool were idle.
+    GpuFixture gpu;
+    if (gpu.device == nullptr)
+        return;
+    IDevice& device = *gpu.device;
+    const std::optional<LineShaders> shaders = lineShaders(device);
+    if (!shaders.has_value()) {
+        MESSAGE("ENG_TEST_SKIP: build host shaders before the off-frame pipeline test");
+        return;
+    }
+    const bool started = !engine::jobs::initialized();
+    if (started)
+        engine::jobs::init(2);
+    std::atomic<bool> release{false};
+    std::vector<engine::jobs::JobHandle> busy;
+    for (u32 index = 0; index < engine::jobs::workerCount() * 4; ++index) {
+        busy.push_back(engine::jobs::schedule("test.world", engine::jobs::Domain::AssetIo, [&release]() noexcept {
+            const auto start = std::chrono::steady_clock::now();
+            while (!release.load(std::memory_order_acquire) &&
+                   std::chrono::steady_clock::now() - start < std::chrono::seconds(20))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }));
+    }
+
+    const VertexBufferLayout buffers[] = {{.strideBytes = 7 * sizeof(f32)}};
+    const VertexAttribute attributes[] = {
+        {.location = 0, .format = VertexFormat::Float3},
+        {.location = 1, .format = VertexFormat::Float4, .offsetBytes = 3 * sizeof(f32)}};
+    const ColorTargetDesc targets[] = {{.format = TextureFormat::Rgba8Unorm}};
+    const GraphicsPipelineDesc desc{.vertexShader = shaders->vertex,
+                                    .fragmentShader = shaders->fragment,
+                                    .vertexBuffers = buffers,
+                                    .vertexAttributes = attributes,
+                                    .rasterizer = {.cullMode = CullMode::Back},
+                                    .colorTargets = targets};
+    const PipelineHandle pipeline[] = {device.createGraphicsPipelineOffFrame(desc, {})};
+    REQUIRE(pipeline[0].valid());
+    const std::optional<std::chrono::milliseconds> took = madeWithin(device, pipeline, std::chrono::seconds(5));
+    // Made while every worker of the pool was still busy.
+    bool poolBusy = true;
+    for (const engine::jobs::JobHandle& job : busy)
+        poolBusy = poolBusy && !engine::jobs::finished(job);
+    release.store(true, std::memory_order_release);
+    for (const engine::jobs::JobHandle& job : busy)
+        engine::jobs::wait(job);
+    REQUIRE(took.has_value());
+    CHECK(poolBusy);
+    MESSAGE("made in " << took->count() << " ms with the job system's every worker busy");
+    CHECK(device.pipelineMade(pipeline[0]) == std::optional<bool>{true});
+    device.destroy(pipeline[0]);
+    device.destroy(shaders->vertex);
+    device.destroy(shaders->fragment);
     if (started)
         engine::jobs::shutdown();
+}
+
+TEST_CASE("a scene's burst of new materials is made by two threads, within a bound (ADR 0257)")
+{
+    // Twenty pipelines asked for in one frame, as a scene that brings twenty
+    // materials does, on a device given two pipeline threads: all made, and
+    // in a time a loading screen covers.
+    const auto initError = engine::platform::init({.headless = true});
+    REQUIRE_MESSAGE(!initError.has_value(), (initError ? initError->detail : std::string{}));
+    struct PlatformScope
+    {
+        ~PlatformScope() { engine::platform::shutdown(); }
+    } platformScope;
+    engine::core::EngineError error;
+    const DeviceResult made =
+        createSdlGpuDevice({.backend = BackendId::SdlGpu, .debug = true, .pipelineThreads = 2}, &error);
+    if (made == nullptr) {
+        MESSAGE("ENG_TEST_SKIP: no GPU device on this machine: " << error.detail);
+        return;
+    }
+    IDevice& device = *made;
+    const std::optional<LineShaders> shaders = lineShaders(device);
+    if (!shaders.has_value()) {
+        MESSAGE("ENG_TEST_SKIP: build host shaders before the off-frame pipeline test");
+        return;
+    }
+    const VertexBufferLayout buffers[] = {{.strideBytes = 7 * sizeof(f32)}};
+    const VertexAttribute attributes[] = {
+        {.location = 0, .format = VertexFormat::Float3},
+        {.location = 1, .format = VertexFormat::Float4, .offsetBytes = 3 * sizeof(f32)}};
+    // Pipelines that differ, so that the driver makes each: the target's
+    // format, the faces culled and the depth test, every combination.
+    const TextureFormat formats[] = {TextureFormat::Rgba8Unorm, TextureFormat::Bgra8Unorm, TextureFormat::Rgba16Float,
+                                     TextureFormat::Rgba8UnormSrgb, TextureFormat::Bgra8UnormSrgb};
+    const CullMode culls[] = {CullMode::None, CullMode::Back};
+    const bool depthTests[] = {false, true};
+    std::vector<PipelineHandle> burst;
+    for (const TextureFormat format : formats) {
+        for (const CullMode cull : culls) {
+            for (const bool depthTest : depthTests) {
+                const ColorTargetDesc targets[] = {{.format = format}};
+                GraphicsPipelineDesc desc{.vertexShader = shaders->vertex,
+                                          .fragmentShader = shaders->fragment,
+                                          .vertexBuffers = buffers,
+                                          .vertexAttributes = attributes,
+                                          .rasterizer = {.cullMode = cull},
+                                          .colorTargets = targets};
+                if (depthTest) {
+                    desc.depthStencilFormat = TextureFormat::D32Float;
+                    desc.depthStencil.depthTest = true;
+                    desc.depthStencil.depthWrite = true;
+                }
+                burst.push_back(device.createGraphicsPipelineOffFrame(desc, {}));
+                REQUIRE(burst.back().valid());
+            }
+        }
+    }
+    REQUIRE(burst.size() == 20);
+    const std::optional<std::chrono::milliseconds> took = madeWithin(device, burst, std::chrono::seconds(30));
+    REQUIRE(took.has_value());
+    MESSAGE("twenty pipelines made in " << took->count() << " ms on two threads");
+    for (const PipelineHandle pipeline : burst) {
+        CHECK(device.pipelineMade(pipeline) == std::optional<bool>{true});
+        device.destroy(pipeline);
+    }
+    device.destroy(shaders->vertex);
+    device.destroy(shaders->fragment);
 }
 
 TEST_SUITE_END();

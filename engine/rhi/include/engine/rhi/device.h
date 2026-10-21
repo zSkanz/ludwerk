@@ -59,6 +59,11 @@ struct DeviceDesc
     // a file, UTF-8, the device reads as it is made and keeps as it runs;
     // empty keeps none. A Vulkan device's alone.
     std::string pipelineCacheFile = {};
+    // **The threads its pipelines are made on** (ADR 0257): its own, apart
+    // from the job system, so that a material is never made behind the
+    // world's work; 0 is one on a machine of four hardware threads or fewer
+    // and two above, and four at most.
+    u32 pipelineThreads = 0;
 };
 
 // **What the device holds, in bytes**: every texture and every buffer made
