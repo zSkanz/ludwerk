@@ -246,13 +246,29 @@ void watchdogInterrupt(lua_State* L, int gc)
     // **The thread's own running time**, not the wall's: a machine
     // that kept the thread off a CPU -- a busy PC, a starved container --
     // is not a script that will not stop.
-    const core::i64 cpu = ctx.resumeCpuClock ? platform::threadCpuNs() : -1;
-    const u64 now = cpu >= 0 ? static_cast<u64>(cpu) : watchdogNow();
-    if (now - ctx.resumeStartedCpuNs < ctx.resumeKillNs)
+    //
+    // **And never more than the wall's, nor less than none.** The thread's
+    // clock is read as cycles turned into time at a rate measured as the
+    // process runs (`platform::threadCpuNs`), and a read taken while that
+    // rate is young and the machine busy can land ahead of the last or
+    // behind it: a replay's handler of a few milliseconds was stopped as a
+    // five-second runaway when one landed behind, and the difference
+    // wrapped. A thread cannot run longer than the time that passed.
+    const u64 wall = watchdogNow();
+    const u64 wallSpent = wall - ctx.resumeStartedNs;
+    u64 spent = wallSpent;
+    u64 cpuNow = 0;
+    if (ctx.resumeCpuClock) {
+        if (const core::i64 cpu = platform::threadCpuNs(); cpu >= 0) {
+            cpuNow = static_cast<u64>(cpu);
+            spent = std::min(cpuNow >= ctx.resumeStartedCpuNs ? cpuNow - ctx.resumeStartedCpuNs : 0, wallSpent);
+        }
+    }
+    if (spent < ctx.resumeKillNs)
         return;
     // The next thread gets a whole budget: this one is the runaway.
-    ctx.resumeStartedCpuNs = now;
-    ctx.resumeStartedNs = watchdogNow();
+    ctx.resumeStartedCpuNs = cpuNow;
+    ctx.resumeStartedNs = wall;
     const core::I18nArg args[] = {{"seconds", static_cast<f64>(ctx.resumeKillNs) / 1e9}};
     raise(L, ctx.resumeLoading ? ENG_TR("script.err.script_load_timeout") : ENG_TR("script.err.script_timeout"), args);
 }

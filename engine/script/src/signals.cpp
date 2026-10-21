@@ -867,7 +867,7 @@ bool enterResume(lua_State* L, bool loading) noexcept
         ctx.resumeStartedNs = watchdogNow();
         const core::i64 cpu = platform::threadCpuNs();
         ctx.resumeCpuClock = cpu >= 0;
-        ctx.resumeStartedCpuNs = cpu >= 0 ? static_cast<u64>(cpu) : ctx.resumeStartedNs;
+        ctx.resumeStartedCpuNs = cpu >= 0 ? static_cast<u64>(cpu) : 0;
         // Loading where that buys time: a load limit no longer than the
         // running one is the running one, and says so.
         ctx.resumeLoading = loading && ctx.killAfterNs != 0 && ctx.loadKillAfterNs > ctx.killAfterNs;

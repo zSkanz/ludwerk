@@ -257,8 +257,8 @@ struct VmContext
     u64 resumeKillNs = 0;
     u64 loadKillAfterNs = 0;
     bool resumeLoading = false;
-    // Whether `resumeStartedCpuNs` is the thread's CPU time, or the wall
-    // clock where the system would not say.
+    // Whether `resumeStartedCpuNs` was read: false where the system would
+    // not say, and then the wall clock alone is counted.
     bool resumeCpuClock = false;
     u64 lastLongFrameWarnNs = 0;
     u32 interruptTicks = 0;
