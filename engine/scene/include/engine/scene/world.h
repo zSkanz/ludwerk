@@ -536,6 +536,32 @@ struct EngineState
     i32 listenerMode = 0;
     f32 listenerBlend = 1.0f;
     core::CFrameD listenerCFrame{};
+
+    // **Voice** (ADR 0256): on the server, who hears whom; on each machine,
+    // whether its microphone is sent and whom it will not hear. Off until the
+    // game turns it on and the player allows it. None of it is hashed or
+    // saved.
+    struct Voice
+    {
+        bool enabled = false;
+        bool playerEnabled = true;
+        // `Enum.VoiceChatMode`: Global 0, Team 1, Proximity 2, Script 3.
+        i32 mode = 0;
+        f32 proximityDistance = 40.0f;
+        bool pushToTalk = true;
+        // `VoiceChatService.Talking`: the push-to-talk key, held.
+        bool talking = false;
+        f32 activityThreshold = -40.0f;
+        // `SetLocallyMuted`: the players this machine does not play, by
+        // `UserId`, sorted.
+        std::vector<u32> locallyMuted;
+        // Who this machine hears speaking now, by `UserId`, sorted, and the
+        // changes `SpeakingChanged` has not fired yet: a `UserId` and whether
+        // they began.
+        std::vector<u32> speaking;
+        std::vector<std::pair<u32, bool>> speakingChanges;
+    };
+    Voice voice;
     f32 occlusionMuffle = 900.0f;
     f32 occlusionVolume = 0.5f;
     i32 occlusionRays = -1;

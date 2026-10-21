@@ -2121,6 +2121,8 @@ struct PlayerComponent
     u64 intentTick = 0;
     // `Player.Character`: the part that is them, on this machine.
     core::InstanceId character;
+    // `Player.VoiceMuted` (ADR 0256): nobody hears them. The authority's.
+    bool voiceMuted = false;
     // `Player.ReplicationFocus` (ADR 0162): the part what they are sent is
     // measured from, in place of their character. The authority's.
     core::InstanceId replicationFocus;

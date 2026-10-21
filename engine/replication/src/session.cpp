@@ -122,6 +122,7 @@ constexpr u8 IntentChannel = 2;
 constexpr u8 OwnershipChannel = 3;
 constexpr u8 RemoteChannel = 4;
 constexpr u8 SwarmChannel = 5;
+constexpr u8 VoiceChannel = 6;
 
 // A snapshot record whose fields are the whole set rather than a diff.
 constexpr u8 FullRecord = 1;
@@ -2892,6 +2893,37 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                 }
                 break;
             }
+            if (event.channel == VoiceChannel && type == MessageType::VoiceUp && peer->welcomed) {
+                // **A player speaks** (ADR 0256): theirs whatever the frame
+                // says, within what a speaker may send.
+                Reader voiceIn(event.payload);
+                (void)voiceIn.u8v();
+                const u8 codec = voiceIn.u8v();
+                const u16 sequence = voiceIn.u16v();
+                const bool speaking = voiceIn.u8v() != 0;
+                const u16 length = voiceIn.u16v();
+                if (!voiceIn.ok() || length > MaxVoiceFrameBytes || voiceIn.remaining() != length ||
+                    !peer->player.valid()) {
+                    m_stats.messagesDropped += 1;
+                    break;
+                }
+                if (peer->voiceFrames < 1.0f || peer->voiceBytes < static_cast<core::f32>(length)) {
+                    m_stats.messagesDropped += 1;
+                    if (!peer->voiceWarned) {
+                        peer->voiceWarned = true;
+                        const std::array<core::I18nArg, 1> args{
+                            core::I18nArg{"user", static_cast<core::i64>(peer->userId)}};
+                        core::log(core::LogLevel::Warn, ENG_TR("net.warn.voice_over_cap"), args);
+                    }
+                    break;
+                }
+                peer->voiceFrames -= 1.0f;
+                peer->voiceBytes -= static_cast<core::f32>(length);
+                routeVoice(world, peer->player, codec, sequence, speaking,
+                           std::span<const u8>(event.payload).subspan(event.payload.size() - length));
+                m_stats.messagesReceived += 1;
+                break;
+            }
             if (event.channel == OwnershipChannel && type == MessageType::OwnedState && peer->welcomed) {
                 const u64 tick = reader.u64v();
                 if (!reader.ok() || tick <= peer->ownedTick || peer->userId == 0)
@@ -3323,8 +3355,119 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
             break;
         }
     }
-    if (ticking)
+    if (ticking) {
         applyIntents(world);
+        // What a microphone may send, refilled by the tick's length.
+        const core::f32 dt = static_cast<core::f32>(world.engineState().fixedTimestep);
+        for (Peer& peer : m_peers) {
+            peer.voiceFrames = std::min(VoiceFramesPerSecond, peer.voiceFrames + VoiceFramesPerSecond * dt);
+            peer.voiceBytes = std::min(VoiceBytesPerSecond, peer.voiceBytes + VoiceBytesPerSecond * dt);
+        }
+        m_voiceTicks += 1;
+    }
+}
+
+// **Whether `listener` hears `speaker`** (ADR 0256 §1), by the server's mode:
+// everybody; the same `Team` attribute; a character within the distance; or
+// the game's answer, kept for a second.
+bool AuthoritySession::hears(const scene::World& world, core::InstanceId listener, core::InstanceId speaker)
+{
+    const scene::EngineState::Voice& voice = world.engineState().voice;
+    switch (voice.mode) {
+    case 0:
+        return true;
+    case 1: {
+        const core::NameAtom team = world.atoms().lookup("Team");
+        if (!team.valid())
+            return true;
+        const scene::Value mine = world.getAttribute(listener, team);
+        const scene::Value theirs = world.getAttribute(speaker, team);
+        const auto* a = std::get_if<std::string>(&mine);
+        const auto* b = std::get_if<std::string>(&theirs);
+        if (a != nullptr || b != nullptr)
+            return a != nullptr && b != nullptr && *a == *b;
+        // Neither has a team: they are on none together.
+        return mine.index() == theirs.index();
+    }
+    case 2: {
+        const scene::PlayerComponent* one = world.players().find(listener);
+        const scene::PlayerComponent* two = world.players().find(speaker);
+        const scene::PartComponent* near = one != nullptr ? world.parts().find(one->character) : nullptr;
+        const scene::PartComponent* far = two != nullptr ? world.parts().find(two->character) : nullptr;
+        if (near == nullptr || far == nullptr)
+            return false;
+        const core::DVec3 apart = near->cframe.position - far->cframe.position;
+        const core::f64 reach = static_cast<core::f64>(voice.proximityDistance);
+        return apart.x * apart.x + apart.y * apart.y + apart.z * apart.z <= reach * reach;
+    }
+    case 3: {
+        for (const Hearing& known : m_hearing) {
+            if (known.listener == listener && known.speaker == speaker && known.until > m_voiceTicks)
+                return known.hears;
+        }
+        const bool answer = m_voiceFilter && m_voiceFilter(listener, speaker);
+        std::erase_if(m_hearing, [&](const Hearing& known) {
+            return known.until <= m_voiceTicks || (known.listener == listener && known.speaker == speaker);
+        });
+        m_hearing.push_back(Hearing{listener, speaker, answer, m_voiceTicks + VoiceFilterTicks});
+        return answer;
+    }
+    default:
+        return false;
+    }
+}
+
+// **A speaker's frame, to each player who hears them** (ADR 0256 §1): a peer
+// once, if any player at its machine hears; this machine's own players into
+// what `takeVoice` hands over. Nobody hears themself, a muted player is heard
+// by nobody, and with voice off nothing is sent at all.
+void AuthoritySession::routeVoice(scene::World& world, core::InstanceId speaker, u8 codec, u16 sequence, bool speaking,
+                                  std::span<const u8> frame)
+{
+    const scene::EngineState::Voice& voice = world.engineState().voice;
+    const scene::PlayerComponent* who = world.players().find(speaker);
+    if (!voice.enabled || who == nullptr || who->voiceMuted || frame.size() > MaxVoiceFrameBytes)
+        return;
+    const bool positional = voice.mode == 2;
+    Writer out;
+    out.u8v(static_cast<u8>(MessageType::VoiceDown));
+    out.u32v(who->userId);
+    out.u8v(codec);
+    out.u16v(sequence);
+    out.u8v(static_cast<u8>((positional ? 1u : 0u) | (speaking ? 2u : 0u)));
+    out.u16v(static_cast<u16>(frame.size()));
+    out.bytes.insert(out.bytes.end(), frame.begin(), frame.end());
+    for (Peer& peer : m_peers) {
+        if (!peer.welcomed || !peer.player.valid() || peer.player == speaker)
+            continue;
+        bool any = hears(world, peer.player, speaker);
+        for (const Peer::Guest& guest : peer.guests)
+            any = any || (guest.player.valid() && guest.player != speaker && hears(world, guest.player, speaker));
+        if (any)
+            (void)sendBytes(m_transport, peer.id, out.bytes, net::Delivery::Unreliable, VoiceChannel, m_stats);
+    }
+    std::vector<core::InstanceId> here;
+    scene::localPlayers(world, here);
+    for (const core::InstanceId listener : here) {
+        if (listener == speaker || !hears(world, listener, speaker))
+            continue;
+        m_voiceHeard.push_back(
+            HeardVoice{who->userId, codec, sequence, positional, speaking, std::vector<u8>(frame.begin(), frame.end())});
+        break;
+    }
+}
+
+void AuthoritySession::speak(scene::World& world, u8 codec, u16 sequence, bool speaking, std::span<const u8> frame)
+{
+    if (const core::InstanceId self = scene::localPlayerOf(world); self.valid())
+        routeVoice(world, self, codec, sequence, speaking, frame);
+}
+
+void AuthoritySession::takeVoice(std::vector<HeardVoice>& out)
+{
+    for (HeardVoice& heard : m_voiceHeard)
+        out.push_back(std::move(heard));
+    m_voiceHeard.clear();
 }
 
 void AuthoritySession::noteTimeDropped() noexcept
@@ -5331,6 +5474,25 @@ void ReplicaSession::receive(scene::World& world, InstanceId root, bool ticking)
             m_queuePosition = position;
             world.engineState().queueUpdates.push_back(
                 scene::EngineState::QueueUpdate{position, estimate == NoEstimate ? -1 : static_cast<i64>(estimate)});
+            break;
+        }
+        case MessageType::VoiceDown: {
+            // **A speaker this machine hears** (ADR 0256): played by the
+            // jitter buffer, in its turn.
+            Reader reader(event.payload);
+            (void)reader.u8v();
+            HeardVoice heard;
+            heard.speaker = reader.u32v();
+            heard.codec = reader.u8v();
+            heard.sequence = reader.u16v();
+            const u8 flags = reader.u8v();
+            const u16 length = reader.u16v();
+            if (!reader.ok() || length > MaxVoiceFrameBytes || reader.remaining() != length)
+                break;
+            heard.positional = (flags & 1u) != 0;
+            heard.speaking = (flags & 2u) != 0;
+            heard.frame.assign(event.payload.end() - length, event.payload.end());
+            m_voiceHeard.push_back(std::move(heard));
             break;
         }
         case MessageType::Announce: {
@@ -7405,6 +7567,27 @@ void ReplicaSession::syncGuests(const scene::World& world)
             say(MessageType::GuestJoin, static_cast<u8>(seat + 1));
         }
     }
+}
+
+void ReplicaSession::speak(u8 codec, u16 sequence, bool speaking, std::span<const u8> frame)
+{
+    if (!m_welcomed || frame.size() > MaxVoiceFrameBytes)
+        return;
+    Writer out;
+    out.u8v(static_cast<u8>(MessageType::VoiceUp));
+    out.u8v(codec);
+    out.u16v(sequence);
+    out.u8v(speaking ? 1u : 0u);
+    out.u16v(static_cast<u16>(frame.size()));
+    out.bytes.insert(out.bytes.end(), frame.begin(), frame.end());
+    (void)sendBytes(m_transport, m_authority, out.bytes, net::Delivery::Unreliable, VoiceChannel, m_stats);
+}
+
+void ReplicaSession::takeVoice(std::vector<HeardVoice>& out)
+{
+    for (HeardVoice& heard : m_voiceHeard)
+        out.push_back(std::move(heard));
+    m_voiceHeard.clear();
 }
 
 void ReplicaSession::sendIntent(const scene::World& world, u64 tick)

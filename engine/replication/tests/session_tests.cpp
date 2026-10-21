@@ -722,9 +722,12 @@ struct PlayedMatch
             held = wrapped.get();
             clientTransport = std::move(wrapped);
         }
+        REQUIRE_FALSE(serverTransport
+                          ->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = transportChannels()})
+                          .has_value());
         REQUIRE_FALSE(
-            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = 6}).has_value());
-        REQUIRE_FALSE(clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = 6}).has_value());
+            clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = transportChannels()})
+                .has_value());
         REQUIRE_FALSE(clientTransport->connect("memory", Port, toServer).has_value());
         host = scene::createPlayer(server.world, server.network, 1, true);
         me = scene::createPlayer(client.world, client.network, 0, true);
@@ -7211,4 +7214,193 @@ TEST_CASE("each player's own round trip, where the stats say the worst one")
     // the other. The host's own player, user 1, is nobody's link.
     CHECK(pings[0] == std::pair<core::u32, core::u32>{2, 40});
     CHECK(pings[1] == std::pair<core::u32, core::u32>{3, 180});
+}
+
+// --- Voice (ADR 0256) ---------------------------------------------------------
+
+namespace {
+
+// A frame of `size` bytes, each the frame's number.
+[[nodiscard]] std::vector<core::u8> voiceFrame(core::u16 sequence, core::usize size = 60)
+{
+    return std::vector<core::u8>(size, static_cast<core::u8>(sequence));
+}
+
+} // namespace
+
+TEST_CASE("ADR 0256: a player's voice reaches who hears them, and nobody while voice is off")
+{
+    PlayedMatch match;
+    match.run(10);
+    // Off until the game turns it on: nothing is sent.
+    match.replica->speak(1, 0, true, voiceFrame(0));
+    match.step();
+    std::vector<HeardVoice> heard;
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+
+    match.server.world.engineState().voice.enabled = true;
+    match.replica->speak(1, 1, true, voiceFrame(1));
+    match.step();
+    match.authority->takeVoice(heard);
+    REQUIRE(heard.size() == 1);
+    CHECK(heard[0].speaker == 2);
+    CHECK(heard[0].sequence == 1);
+    CHECK(heard[0].codec == 1);
+    CHECK(heard[0].frame == voiceFrame(1));
+    CHECK_FALSE(heard[0].positional);
+
+    // And the host's own voice reaches the replica.
+    match.authority->speak(match.server.world, 1, 7, true, voiceFrame(7));
+    match.step();
+    std::vector<HeardVoice> there;
+    match.replica->takeVoice(there);
+    REQUIRE(there.size() == 1);
+    CHECK(there[0].speaker == 1);
+    CHECK(there[0].frame == voiceFrame(7));
+}
+
+TEST_CASE("ADR 0256: a muted player is heard by nobody, and a speaker never hears themself")
+{
+    PlayedMatch match;
+    match.run(10);
+    match.server.world.engineState().voice.enabled = true;
+    match.server.world.players().find(match.remote())->voiceMuted = true;
+    match.replica->speak(1, 0, true, voiceFrame(0));
+    match.step();
+    std::vector<HeardVoice> heard;
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+    // The host speaking: the replica hears, the host does not hear itself.
+    match.authority->speak(match.server.world, 1, 1, true, voiceFrame(1));
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+}
+
+TEST_CASE("ADR 0256: in Proximity a speaker is heard within the distance, and placed where they are")
+{
+    PlayedMatch match;
+    match.run(10);
+    scene::EngineState::Voice& voice = match.server.world.engineState().voice;
+    voice.enabled = true;
+    voice.mode = 2;
+    voice.proximityDistance = 20.0f;
+    const core::InstanceId near = match.part("Near", core::DVec3{0.0, 0.0, 0.0});
+    const core::InstanceId far = match.part("Far", core::DVec3{15.0, 0.0, 0.0});
+    match.server.world.players().find(match.host)->character = near;
+    match.server.world.players().find(match.remote())->character = far;
+    std::vector<HeardVoice> heard;
+    match.replica->speak(1, 0, true, voiceFrame(0));
+    match.step();
+    match.authority->takeVoice(heard);
+    REQUIRE(heard.size() == 1);
+    CHECK(heard[0].positional);
+    // Out of reach.
+    match.server.world.parts().find(far)->cframe.position = core::DVec3{25.0, 0.0, 0.0};
+    match.replica->speak(1, 1, true, voiceFrame(1));
+    match.step();
+    heard.clear();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+    // No character, no proximity.
+    match.server.world.players().find(match.remote())->character = core::InstanceId{};
+    match.replica->speak(1, 2, true, voiceFrame(2));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+}
+
+TEST_CASE("ADR 0256: by Team, a player hears the players of their own team")
+{
+    PlayedMatch match;
+    match.run(10);
+    scene::World& world = match.server.world;
+    world.engineState().voice.enabled = true;
+    world.engineState().voice.mode = 1;
+    const core::NameAtom team = world.atoms().intern("Team");
+    REQUIRE(world.setAttribute(match.host, team, scene::Value{std::string("Red")}));
+    REQUIRE(world.setAttribute(match.remote(), team, scene::Value{std::string("Blue")}));
+    std::vector<HeardVoice> heard;
+    match.replica->speak(1, 0, true, voiceFrame(0));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+    REQUIRE(world.setAttribute(match.remote(), team, scene::Value{std::string("Red")}));
+    match.replica->speak(1, 1, true, voiceFrame(1));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.size() == 1);
+}
+
+TEST_CASE("ADR 0256: in Script mode the game decides, and its answer is kept a second")
+{
+    PlayedMatch match;
+    match.run(10);
+    match.server.world.engineState().voice.enabled = true;
+    match.server.world.engineState().voice.mode = 3;
+    int asked = 0;
+    bool allowed = true;
+    match.authority->setVoiceFilter([&](core::InstanceId, core::InstanceId) {
+        asked += 1;
+        return allowed;
+    });
+    std::vector<HeardVoice> heard;
+    for (core::u16 at = 0; at < 10; ++at) {
+        match.replica->speak(1, at, true, voiceFrame(at));
+        match.step();
+    }
+    match.authority->takeVoice(heard);
+    CHECK(heard.size() == 10);
+    CHECK(asked == 1);
+    // A changed answer is taken within the second.
+    allowed = false;
+    heard.clear();
+    for (core::u16 at = 10; at < 80; ++at) {
+        match.replica->speak(1, at, true, voiceFrame(at));
+        match.step();
+    }
+    match.authority->takeVoice(heard);
+    CHECK(heard.size() < 70);
+    CHECK(asked == 2);
+}
+
+TEST_CASE("ADR 0256: a speaker is held to fifty frames and four kilobytes a second, and told once")
+{
+    std::vector<std::string> said;
+    const core::LogSink before = core::setLogSink([&said](core::LogLevel level, std::string_view text) {
+        if (level == core::LogLevel::Warn)
+            said.emplace_back(text);
+    });
+    PlayedMatch match;
+    match.run(10);
+    match.server.world.engineState().voice.enabled = true;
+    // A burst: twice what a second may hold, in one tick.
+    for (core::u16 at = 0; at < 100; ++at)
+        match.replica->speak(1, at, true, voiceFrame(at, 40));
+    match.step();
+    std::vector<HeardVoice> heard;
+    match.authority->takeVoice(heard);
+    CHECK(heard.size() == 50);
+    CHECK(std::count_if(said.begin(), said.end(), [](const std::string& line) {
+              return line.find("more voice than a speaker may") != std::string::npos;
+          }) == 1);
+    // Bytes too: frames of 500 bytes are over four kilobytes after eight.
+    match.run(120);
+    heard.clear();
+    for (core::u16 at = 0; at < 20; ++at)
+        match.replica->speak(1, at, true, voiceFrame(at, 500));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.size() == 8);
+    // A frame over 512 bytes is not sent at all.
+    heard.clear();
+    match.run(120);
+    match.replica->speak(1, 0, true, voiceFrame(0, 600));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+    if (before)
+        (void)core::setLogSink(before);
+    else
+        core::resetLogSink();
 }

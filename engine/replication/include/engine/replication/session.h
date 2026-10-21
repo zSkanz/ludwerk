@@ -184,6 +184,27 @@ inline constexpr usize MaxQueuedIntents = 64;
 // it up then is taking it up again from where each player is now -- counted
 // as anchoring again, and not reported as the player's burst.
 inline constexpr u32 HostStallGraceTicks = 30;
+
+// **A voice frame this machine is to play** (ADR 0256): whose it is, as their
+// `UserId`; the codec, the frame's number and its bytes; whether it is heard
+// where the speaker's character is, and whether their gate is open.
+struct HeardVoice
+{
+    u32 speaker = 0;
+    u8 codec = 0;
+    u16 sequence = 0;
+    bool positional = false;
+    bool speaking = true;
+    std::vector<u8> frame;
+};
+// **What one speaker may send** (ADR 0241, ADR 0256 §2): fifty frames and
+// four kilobytes a second, and no frame over 512 bytes -- Opus at 24 kbit/s
+// is about 60 bytes a frame, so the cap is a speaker five times over.
+inline constexpr core::f32 VoiceFramesPerSecond = 50.0f;
+inline constexpr core::f32 VoiceBytesPerSecond = 4096.0f;
+inline constexpr usize MaxVoiceFrameBytes = 512;
+// How long a game's answer to who hears whom is kept (`VoiceChatMode.Script`).
+inline constexpr u64 VoiceFilterTicks = 60;
 // **How long the last intent stands in while the peer says nothing**:
 // half a second of ticks in which no intent message came at all. Counted by
 // silence, not by ticks without a real intent: a client's long frame is
@@ -549,6 +570,18 @@ public:
     // not all run. Every player's queue is about to be found far ahead of what
     // was applied, through no fault of theirs (`HostStallGraceTicks`).
     void noteTimeDropped() noexcept;
+    // **This machine's own player speaks** -- a listen host's: a frame of
+    // theirs, routed as a peer's is (ADR 0256).
+    void speak(scene::World& world, u8 codec, u16 sequence, bool speaking, std::span<const u8> frame);
+    // The frames this machine's own players hear, since the last call.
+    void takeVoice(std::vector<HeardVoice>& out);
+    // **Who hears whom, when the game says** (`VoiceChatMode.Script`): asked
+    // for a pair, and its answer kept for `VoiceFilterTicks`.
+    void setVoiceFilter(std::function<bool(core::InstanceId listener, core::InstanceId speaker)> filter)
+    {
+        m_voiceFilter = std::move(filter);
+        m_hearing.clear();
+    }
     // **Removes the peer that is player `userId`** (`Player:Kick`, ADR 0167):
     // told why, let go, and its player taken out of the world as one who
     // left is. False when no peer is that player -- the host's own is not.
@@ -762,6 +795,12 @@ private:
         // over several ticks, and is caught up as often, but it is one stall.
         u32 hostStallGrace = 0;
         bool hostStallCounted = false;
+        // **What this peer's microphone may still send** (ADR 0256, ADR
+        // 0241): frames and bytes, refilled each tick to a second's worth,
+        // and whether going over has been said.
+        core::f32 voiceFrames = VoiceFramesPerSecond;
+        core::f32 voiceBytes = VoiceBytesPerSecond;
+        bool voiceWarned = false;
         // Ticks since an intent message last came from this peer, and since
         // any message did.
         u32 silentTicks = 0;
@@ -1079,6 +1118,23 @@ private:
     void settleAsks(scene::World& world, core::InstanceId network);
     std::function<void(const JoinAsk&)> m_gate;
     std::map<u32, JoinAnswer> m_answers;
+    // **Voice** (ADR 0256): the frames this machine's own players hear, the
+    // game's answer to who hears whom and how long each is kept, and the
+    // receives counted, which that is measured in.
+    std::vector<HeardVoice> m_voiceHeard;
+    std::function<bool(core::InstanceId listener, core::InstanceId speaker)> m_voiceFilter;
+    struct Hearing
+    {
+        core::InstanceId listener;
+        core::InstanceId speaker;
+        bool hears = false;
+        u64 until = 0;
+    };
+    std::vector<Hearing> m_hearing;
+    u64 m_voiceTicks = 0;
+    [[nodiscard]] bool hears(const scene::World& world, core::InstanceId listener, core::InstanceId speaker);
+    void routeVoice(scene::World& world, core::InstanceId speaker, u8 codec, u16 sequence, bool speaking,
+                    std::span<const u8> frame);
     u32 m_nextAsk = 1;
     // Receives so far, and when each address last began connections: the
     // second a flood is counted over, in the authority's own receives.
@@ -1211,6 +1267,11 @@ public:
     // because a late intent is worse than a missing one -- the next tick's
     // says what the player is doing now.
     void sendIntent(const scene::World& world, u64 tick);
+    // **This machine's player speaks** (ADR 0256): a frame of their
+    // microphone to the authority, which sends it on to who hears them.
+    void speak(u8 codec, u16 sequence, bool speaking, std::span<const u8> frame);
+    // The frames this machine hears, since the last call.
+    void takeVoice(std::vector<HeardVoice>& out);
     // **This machine's other players, seated** (ADR 0205, protocol 48): every
     // local player after the first asks the authority for a seat, and one
     // that is gone gives its seat back. Once a tick, before `sendIntent`;
@@ -1456,6 +1517,9 @@ private:
     net::PeerId m_authority;
     bool m_connected = false;
     bool m_welcomed = false;
+    // The voice frames this machine is to play (ADR 0256), since the last
+    // `takeVoice`.
+    std::vector<HeardVoice> m_voiceHeard;
     // Unreliable messages (ADR 0161): the number the next one sent carries,
     // and the last one taken.
     u16 m_unreliableOut = 0;
