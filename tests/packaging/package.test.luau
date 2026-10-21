@@ -169,14 +169,30 @@ test.suite("packaging", function(suite)
             assert.that(not game.editorOnly(entry.name), `the game carries .engine/{entry.name}`)
         end
         assert.that(not fs.exists(projectlib.joined(output, "game", ".engine", "keys")), "the game carries a match key")
-        -- **And the notices** the engine is distributed under, beside the
-        -- executable, as the installation has them.
-        for _, name in game.NoticeFiles do
-            local engineRoot = projectlib.installRoot() :: string
+        -- **And the notices**, beside the executable: the engine's own, as the
+        -- installation has them, and those of what the player is built from,
+        -- as its build wrote them -- each project's license text in a folder
+        -- of its name, and none of the installation's tools.
+        local engineRoot = projectlib.installRoot() :: string
+        for _, name in { "LICENSE", "NOTICE" } do
             assert.eq(
                 fs.readFileToString(projectlib.joined(output, "licenses", name)),
                 fs.readFileToString(projectlib.joined(engineRoot, name))
             )
+        end
+        local notices = fs.readFileToString(projectlib.joined(output, "licenses", "THIRD_PARTY_NOTICES.md"))
+        assert.that(
+            string.find(notices, "The projects this program is built from", 1, true) ~= nil,
+            "the export's notices are not the player's own"
+        )
+        assert.that(string.find(notices, "| luau |", 1, true) ~= nil, "the player's notices do not name Luau")
+        assert.that(
+            string.find(notices, "| doctest |", 1, true) == nil,
+            "the player's notices name the tests' framework"
+        )
+        assert.that(fs.exists(projectlib.joined(output, "licenses", "luau")), "Luau's license text is not shipped")
+        for _, tool in { "lute.txt", "luau-lsp.txt", "dxc" } do
+            assert.that(not fs.exists(projectlib.joined(output, "licenses", tool)), `the game carries {tool}`)
         end
         local pack = fs.readFileToString(projectlib.joined(output, "game", ".engine", "content.lpack"))
         for _, word in { "asset://", "main.scene", "packagetest", "Packaging Test Co" } do
