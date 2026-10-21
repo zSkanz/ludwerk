@@ -32,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine/asset/content.h"
 #include "engine/core/error.h"
@@ -196,6 +197,21 @@ public:
 
     [[nodiscard]] std::optional<core::EngineError> start(bool headless);
     void stop();
+
+    // **The microphone** (ADR 0256 §3): open only while this machine's voice
+    // is on and its player allows it. 48 kHz mono; on a phone or a standalone
+    // headset with the system's voice-communication preset, which cancels the
+    // speaker's own sound from it. False when there is no device, or the
+    // system refused it.
+    bool openMicrophone();
+    void closeMicrophone();
+    [[nodiscard]] bool microphoneOpen() const noexcept;
+    // Every whole 20 ms frame (`kVoiceFrameSamples`) captured since the last
+    // call, oldest first, appended to `out`. What is past a second behind is
+    // gone: a frame that late is worth nothing to anybody listening.
+    void takeMicrophone(std::vector<f32>& out);
+    // What a capture device would have delivered, for a test.
+    void feedMicrophoneForTests(std::span<const f32> samples);
 
     // Advances every playing sound by one tick and raises `Ended` and `Loaded`
     // on the world's change queue. Called from the sim tick.

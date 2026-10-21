@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 
+#include "engine/audio/audio.h"
 #include "engine/audio/voice.h"
 
 using namespace engine::audio;
@@ -195,4 +196,28 @@ TEST_CASE("ADR 0256: sequence numbers wrap without a frame taken for late")
     REQUIRE(buffer.pop()->packet == numbered(65535));
     REQUIRE(buffer.pop()->packet == numbered(0));
     CHECK(buffer.late() == 0);
+}
+
+TEST_CASE("ADR 0256: the microphone is taken a whole frame at a time, and no more than a second of it is kept")
+{
+    AudioSystem system;
+    REQUIRE_FALSE(system.start(true).has_value());
+    CHECK_FALSE(system.microphoneOpen());
+    std::vector<f32> taken;
+    system.feedMicrophoneForTests(std::vector<f32>(2500, 0.25f));
+    system.takeMicrophone(taken);
+    CHECK(taken.size() == 2 * kVoiceFrameSamples);
+    // The 580 left over are the start of the next frame.
+    system.feedMicrophoneForTests(std::vector<f32>(400, 0.5f));
+    taken.clear();
+    system.takeMicrophone(taken);
+    REQUIRE(taken.size() == kVoiceFrameSamples);
+    CHECK(taken.front() == 0.25f);
+    CHECK(taken.back() == 0.5f);
+    // A listener a second behind is not listening: the oldest go.
+    system.feedMicrophoneForTests(std::vector<f32>(kVoiceSampleRate + 5000, 0.1f));
+    taken.clear();
+    system.takeMicrophone(taken);
+    CHECK(taken.size() == kVoiceSampleRate);
+    system.stop();
 }

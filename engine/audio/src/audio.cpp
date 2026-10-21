@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "engine/asset/localized.h"
+#include "engine/audio/voice.h"
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
@@ -888,6 +889,29 @@ struct AudioSystem::Impl
 #endif
     bool deviceStarted = false;
 
+    // The microphone (ADR 0256 §3): its device, and what it delivered that
+    // `takeMicrophone` has not taken, under its own lock -- the capture
+    // thread is not the mixer's.
+    ma_device capture{};
+    bool captureStarted = false;
+    std::mutex captureLock;
+    std::vector<f32> captured;
+
+    void keepCaptured(const f32* samples, usize count)
+    {
+        const std::lock_guard guard(captureLock);
+        captured.insert(captured.end(), samples, samples + count);
+        if (captured.size() > kVoiceSampleRate)
+            captured.erase(captured.begin(), captured.end() - kVoiceSampleRate);
+    }
+
+    static void captureCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount)
+    {
+        (void)output;
+        if (input != nullptr)
+            static_cast<Impl*>(device->pUserData)->keepCaptured(static_cast<const f32*>(input), frameCount);
+    }
+
     std::mutex mutex;
     std::vector<Voice> voices;
     Audition audition;
@@ -1555,6 +1579,7 @@ void AudioSystem::stop()
     // and tearing down while one runs is a use-after-free that reproduces on a
     // fast machine and never on a slow one.
     m_impl->releasePrefetch();
+    closeMicrophone();
     if (m_impl->deviceStarted) {
 #if ENG_PLATFORM_UWP
         m_impl->output.reset();
@@ -1565,6 +1590,70 @@ void AudioSystem::stop()
     }
     delete m_impl;
     m_impl = nullptr;
+}
+
+bool AudioSystem::openMicrophone()
+{
+    if (m_impl == nullptr)
+        return false;
+    if (m_impl->captureStarted)
+        return true;
+#if ENG_PLATFORM_UWP
+    // The packaged app's capture is the platform's own API, and nothing asks
+    // it for a microphone yet.
+    return false;
+#else
+    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    config.capture.format = ma_format_f32;
+    config.capture.channels = 1;
+    config.sampleRate = kVoiceSampleRate;
+    config.dataCallback = &Impl::captureCallback;
+    config.pUserData = m_impl;
+    // A phone's or a headset's speaker is a hand's width from its
+    // microphone: the system cancels its sound from what is captured.
+    config.aaudio.inputPreset = ma_aaudio_input_preset_voice_communication;
+    if (ma_device_init(nullptr, &config, &m_impl->capture) != MA_SUCCESS)
+        return false;
+    if (ma_device_start(&m_impl->capture) != MA_SUCCESS) {
+        ma_device_uninit(&m_impl->capture);
+        return false;
+    }
+    m_impl->captureStarted = true;
+    return true;
+#endif
+}
+
+void AudioSystem::closeMicrophone()
+{
+    if (m_impl == nullptr || !m_impl->captureStarted)
+        return;
+#if !ENG_PLATFORM_UWP
+    ma_device_uninit(&m_impl->capture);
+#endif
+    m_impl->captureStarted = false;
+    const std::lock_guard guard(m_impl->captureLock);
+    m_impl->captured.clear();
+}
+
+bool AudioSystem::microphoneOpen() const noexcept
+{
+    return m_impl != nullptr && m_impl->captureStarted;
+}
+
+void AudioSystem::takeMicrophone(std::vector<f32>& out)
+{
+    if (m_impl == nullptr)
+        return;
+    const std::lock_guard guard(m_impl->captureLock);
+    const usize whole = m_impl->captured.size() / kVoiceFrameSamples * kVoiceFrameSamples;
+    out.insert(out.end(), m_impl->captured.begin(), m_impl->captured.begin() + static_cast<std::ptrdiff_t>(whole));
+    m_impl->captured.erase(m_impl->captured.begin(), m_impl->captured.begin() + static_cast<std::ptrdiff_t>(whole));
+}
+
+void AudioSystem::feedMicrophoneForTests(std::span<const f32> samples)
+{
+    if (m_impl != nullptr)
+        m_impl->keepCaptured(samples.data(), samples.size());
 }
 
 void AudioSystem::tick(scene::World& world, f64 fixedDt)
