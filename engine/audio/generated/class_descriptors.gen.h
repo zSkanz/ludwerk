@@ -140,12 +140,13 @@ inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 97;
 inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 98;
 inline constexpr scene::EnumId RelayStateEnumId = 99;
 inline constexpr scene::EnumId SoundCategoryEnumId = 100;
-inline constexpr scene::EnumId SubtitleModeEnumId = 101;
-inline constexpr scene::EnumId LipSyncModeEnumId = 102;
-inline constexpr scene::EnumId IrradianceModeEnumId = 103;
-inline constexpr scene::EnumId ScreenSplitEnumId = 104;
-inline constexpr scene::EnumId SequenceControlEnumId = 105;
-inline constexpr scene::EnumId NetworkFailureEnumId = 106;
+inline constexpr scene::EnumId ListenerModeEnumId = 101;
+inline constexpr scene::EnumId SubtitleModeEnumId = 102;
+inline constexpr scene::EnumId LipSyncModeEnumId = 103;
+inline constexpr scene::EnumId IrradianceModeEnumId = 104;
+inline constexpr scene::EnumId ScreenSplitEnumId = 105;
+inline constexpr scene::EnumId SequenceControlEnumId = 106;
+inline constexpr scene::EnumId NetworkFailureEnumId = 107;
 
 } // namespace generated
 
@@ -315,6 +316,12 @@ scene::Value getAudioServiceVoiceVolume(const scene::World& world, core::Instanc
 bool setAudioServiceVoiceVolume(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId id);
 bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceListenerMode(const scene::World& world, core::InstanceId id);
+bool setAudioServiceListenerMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceListenerBlend(const scene::World& world, core::InstanceId id);
+bool setAudioServiceListenerBlend(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getAudioServiceListenerCFrame(const scene::World& world, core::InstanceId id);
+bool setAudioServiceListenerCFrame(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getAudioServiceOcclusionEnabled(const scene::World& world, core::InstanceId id);
 bool setAudioServiceOcclusionEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getAudioServiceOcclusionMuffle(const scene::World& world, core::InstanceId id);

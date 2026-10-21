@@ -530,6 +530,12 @@ struct EngineState
     // `occlusionRays` is -1 until a script writes it, and reads as the
     // quality level's then. Off until a game turns it on.
     bool occlusionEnabled = false;
+    // **Where this machine hears from** (ADR 0256 §5): `Enum.ListenerMode`'s
+    // value -- the camera, the local player's character a `listenerBlend` of
+    // the way from the camera, or `listenerCFrame`. Each machine's.
+    i32 listenerMode = 0;
+    f32 listenerBlend = 1.0f;
+    core::CFrameD listenerCFrame{};
     f32 occlusionMuffle = 900.0f;
     f32 occlusionVolume = 0.5f;
     i32 occlusionRays = -1;

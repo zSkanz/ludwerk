@@ -11,6 +11,10 @@ here.
 
 ### Added
 
+- `AudioService.ListenerMode` hears from the camera, from the local player's
+  character (`ListenerBlend` of the way from the camera, facing as it does), or
+  from `ListenerCFrame`. It is for a game whose camera hangs high above the
+  action, and each view of a shared screen hears from its own player.
 - `TextLabel.LetterSpacing`: room after each character as a fraction of the
   text's size, honoured by wrapping, `TextScaled`, `TextOverflow` and rich
   text, and not added after Chinese, Japanese and Korean characters.

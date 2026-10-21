@@ -2625,6 +2625,30 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "ListenerMode",
+            Records = { "ADR 0256" },
+            Doc = "Where this machine hears its sounds from, set by `AudioService.ListenerMode`.",
+            Items = {
+                {
+                    Name = "Camera",
+                    Value = 0,
+                    Doc = "The camera: the view's own place and facing.",
+                },
+                {
+                    Name = "Character",
+                    Value = 1,
+                    Doc = "The local player's character, facing the way the camera looks, so a sound on the left "
+                        .. "of the screen is still on the left. `ListenerBlend` sets how far from the camera "
+                        .. "toward the character the ear is.",
+                },
+                {
+                    Name = "Custom",
+                    Value = 2,
+                    Doc = "`AudioService.ListenerCFrame`, which the game sets.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "SubtitleMode",
             Records = { "ADR 0200" },
             Doc = "When captions are shown, set by `DialogueService.Subtitles`.",

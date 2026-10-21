@@ -13022,6 +13022,31 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     soundCategoryDesc.items = soundCategoryItems;
     enums.registerEnum(soundCategoryDesc);
 
+    // --- ListenerMode ---
+    static std::array<EnumItemDesc, 3> listenerModeItems;
+    listenerModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Camera"),
+            .value = 0,
+            .doc = "The camera: the view's own place and facing.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Character"),
+            .value = 1,
+            .doc = "The local player's character, facing the way the camera looks, so a sound on the left of the screen is still on the left. `ListenerBlend` sets how far from the camera toward the character the ear is.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Custom"),
+            .value = 2,
+            .doc = "`AudioService.ListenerCFrame`, which the game sets.",
+        },
+    }};
+    EnumDescriptor listenerModeDesc;
+    listenerModeDesc.name = atoms.intern("ListenerMode");
+    listenerModeDesc.doc = "Where this machine hears its sounds from, set by `AudioService.ListenerMode`.";
+    listenerModeDesc.items = listenerModeItems;
+    enums.registerEnum(listenerModeDesc);
+
     // --- SubtitleMode ---
     static std::array<EnumItemDesc, 3> subtitleModeItems;
     subtitleModeItems = {{

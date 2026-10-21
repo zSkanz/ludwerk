@@ -61,19 +61,32 @@ and its group's. It is the game's: a fade to silence at the end of a level, a
 mix a designer set. What a PLAYER turns is `AudioService.PlayerVolume`, which
 the options screen writes and the engine keeps for them.
 
-## The listener is the camera
+## Where the player hears from
 
-> The listener is `Workspace.CurrentCamera`, and it is not settable.
-
-A game with two ideas about where the player is hearing from is a game with a
-bug, and the camera is already the one thing that answers that question. So
-whatever moves the camera moves the ear.
-
-Two consequences:
+By default the listener is `Workspace.CurrentCamera`: whatever moves the camera
+moves the ear.
 
 - **Where the camera looks is which side a sound is on.** A sound to the
   camera's right is in the right speaker — see [Sounds](manual:audio/sounds).
 - **With `CurrentCamera` set to `nil`, the ear sits at the world origin.**
+
+A camera high above the action -- a top-down or isometric game -- hears its
+hero's fight from thirty meters up, and through every roof between. Move the
+ear to the character instead:
+
+```luau
+local AudioService = game:GetService("AudioService")
+AudioService.ListenerMode = Enum.ListenerMode.Character
+AudioService.ListenerBlend = 0.8 -- a little above the hero, toward the camera
+```
+
+The ear is the local player's character, as it is drawn this frame, and it
+faces the way the camera looks, so left on the screen is still left.
+`ListenerBlend` sets how far it is from the camera, between 0 and 1. With several
+players at one screen, each view hears from its own player. `Custom` puts the
+ear at `AudioService.ListenerCFrame`, wherever the game sets it. Each machine
+has its own ear, so set these on the client. Occlusion is cast from the ear
+chosen here.
 
 ## A sound behind a wall
 

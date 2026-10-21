@@ -600,6 +600,16 @@ The method a `LipSync` uses to move a mouth.
 | `Bands` | 1 | The sound's frequency bands, even if the line has a viseme track. They tell an open mouth from a wide or a round one. |
 | `Loudness` | 2 | The sound's loudness only, which opens a single morph target. |
 
+## Enum.ListenerMode
+
+Where this machine hears its sounds from, set by `AudioService.ListenerMode`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Camera` | 0 | The camera: the view's own place and facing. |
+| `Character` | 1 | The local player's character, facing the way the camera looks, so a sound on the left of the screen is still on the left. `ListenerBlend` sets how far from the camera toward the character the ear is. |
+| `Custom` | 2 | `AudioService.ListenerCFrame`, which the game sets. |
+
 ## Enum.LogLevel
 
 The severity of a log message, in ascending order. `Value` orders the levels, so a handler can filter with `level.Value >= Enum.LogLevel.Warning.Value`. `DebugService.MessageOut` passes one with every message.

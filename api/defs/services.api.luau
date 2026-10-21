@@ -5838,8 +5838,9 @@ local Classes: { Schema.Class } = {
         Extends = "Instance",
         Module = "audio",
         Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
-        Doc = "Controls audio mixing: the master volume, the player's volume settings and one-shot sounds. The "
-            .. "listener is always `Workspace.CurrentCamera`.",
+        Doc = "Controls audio mixing: the master volume, the player's volume settings, one-shot sounds and "
+            .. "where sounds are heard from. The listener is `Workspace.CurrentCamera` unless `ListenerMode` "
+            .. "says otherwise.",
         Properties = {
             {
                 Name = "MasterVolume",
@@ -5907,6 +5908,37 @@ local Classes: { Schema.Class } = {
                     .. "is audible when it is playing, in range and not muted by the player. The value belongs to "
                     .. "the game, like `MasterVolume`. The fade happens in each machine's mixer, and scripts "
                     .. "cannot read it.",
+            },
+            {
+                Name = "ListenerMode",
+                Type = "Enum.ListenerMode",
+                Default = "Enum.ListenerMode.Camera",
+                Presentation = true,
+                Records = { "ADR 0256" },
+                Doc = "Where this machine hears every sound from: the camera, the local player's character, or "
+                    .. "`ListenerCFrame`. A top-down or isometric game, whose camera is high above the action, "
+                    .. "hears its hero's surroundings from the hero with `Character`. With several players at "
+                    .. "one screen, each view hears from its own player. Occlusion is cast from this ear. Set it "
+                    .. "on the client: each machine has its own.",
+            },
+            {
+                Name = "ListenerBlend",
+                Type = "number",
+                Default = "1",
+                Presentation = true,
+                ErrorKey = "scene.err.number_out_of_range",
+                Records = { "ADR 0256" },
+                Doc = "With `ListenerMode` set to `Character`, how far the ear is moved from the camera toward the "
+                    .. "character, from 0 (at the camera) to 1 (at the character). It always faces the way the "
+                    .. "camera looks. A top-down game may use 0.8, a little above its hero.",
+            },
+            {
+                Name = "ListenerCFrame",
+                Type = "CFrame",
+                Default = "CFrame.identity",
+                Presentation = true,
+                Records = { "ADR 0256" },
+                Doc = "Where sounds are heard from, and facing which way, when `ListenerMode` is `Custom`.",
             },
             {
                 Name = "OcclusionEnabled",

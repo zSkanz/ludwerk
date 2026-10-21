@@ -330,6 +330,9 @@ end
 declare extern type EnumSoundCategory extends EnumItem with
 end
 
+declare extern type EnumListenerMode extends EnumItem with
+end
+
 declare extern type EnumSubtitleMode extends EnumItem with
 end
 
@@ -6971,6 +6974,18 @@ declare extern type AudioService extends Instance with
     --- when it is playing, in range and not muted by the player. The value belongs to the game, like
     --- `MasterVolume`. The fade happens in each machine's mixer, and scripts cannot read it.
     MusicUnderVoice: number
+    --- Where this machine hears every sound from: the camera, the local player's character, or
+    --- `ListenerCFrame`. A top-down or isometric game, whose camera is high above the action, hears its
+    --- hero's surroundings from the hero with `Character`. With several players at one screen, each
+    --- view hears from its own player. Occlusion is cast from this ear. Set it on the client: each
+    --- machine has its own.
+    ListenerMode: EnumListenerMode
+    --- With `ListenerMode` set to `Character`, how far the ear is moved from the camera toward the
+    --- character, from 0 (at the camera) to 1 (at the character). It always faces the way the camera
+    --- looks. A top-down game may use 0.8, a little above its hero.
+    ListenerBlend: number
+    --- Where sounds are heard from, and facing which way, when `ListenerMode` is `Custom`.
+    ListenerCFrame: CFrame
     --- Whether a sound behind a wall is muffled. Off until the game turns it on. When on, a sound on a
     --- part is muffled by the parts, terrain and blocks between it and the listener, not by characters,
     --- and not by its own part or the model that part is in. Each machine muffles what it hears, so set
@@ -8019,6 +8034,12 @@ declare Enum: {
         Music: EnumSoundCategory,
         Voice: EnumSoundCategory,
         GetEnumItems: (self: any) -> { EnumSoundCategory },
+    },
+    ListenerMode: {
+        Camera: EnumListenerMode,
+        Character: EnumListenerMode,
+        Custom: EnumListenerMode,
+        GetEnumItems: (self: any) -> { EnumListenerMode },
     },
     SubtitleMode: {
         Auto: EnumSubtitleMode,

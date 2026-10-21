@@ -6,7 +6,7 @@
 - A **service**: get it with `game:GetService("AudioService")`
 - **Not creatable**: it cannot be created with `Instance.new`
 
-Controls audio mixing: the master volume, the player's volume settings and one-shot sounds. The listener is always `Workspace.CurrentCamera`.
+Controls audio mixing: the master volume, the player's volume settings, one-shot sounds and where sounds are heard from. The listener is `Workspace.CurrentCamera` unless `ListenerMode` says otherwise.
 
 This page lists the members this class declares. Inherited members are
 listed on the page of the class that declares them.
@@ -16,6 +16,9 @@ listed on the page of the class that declares them.
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
 | `EffectsVolume` | `number` | `1` | read/write | The player's volume for every `Sound` whose `Category` is `Effects`, from 0 to 1. It is a player setting, kept like `PlayerVolume`. |
+| `ListenerBlend` | `number` | `1` | read/write | With `ListenerMode` set to `Character`, how far the ear is moved from the camera toward the character, from 0 (at the camera) to 1 (at the character). It always faces the way the camera looks. A top-down game may use 0.8, a little above its hero. |
+| `ListenerCFrame` | `CFrame` | `CFrame.identity` | read/write | Where sounds are heard from, and facing which way, when `ListenerMode` is `Custom`. |
+| `ListenerMode` | `Enum.ListenerMode` | `Enum.ListenerMode.Camera` | read/write | Where this machine hears every sound from: the camera, the local player's character, or `ListenerCFrame`. A top-down or isometric game, whose camera is high above the action, hears its hero's surroundings from the hero with `Character`. With several players at one screen, each view hears from its own player. Occlusion is cast from this ear. Set it on the client: each machine has its own. |
 | `MasterVolume` | `number` | `1` | read/write | A multiplier on every sound, applied after the sound's own volume and its group's. It belongs to the game: use it for a fade or a cutscene. It is not saved. For the player's volume setting, use `PlayerVolume`. |
 | `MusicUnderVoice` | `number` | `0.4` | read/write | The factor music is multiplied by while a voice plays, from 0 to 1. At 1, music is not lowered.<br><br>While any `Voice` sound is audible on a machine, every `Music` sound there fades down to this factor over 0.15 seconds, and back up over 0.6 seconds when the voice stops. A voice is audible when it is playing, in range and not muted by the player. The value belongs to the game, like `MasterVolume`. The fade happens in each machine's mixer, and scripts cannot read it. |
 | `MusicVolume` | `number` | `1` | read/write | The player's volume for every `Sound` whose `Category` is `Music`, from 0 to 1. It is a player setting, kept like `PlayerVolume`. |

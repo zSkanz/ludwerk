@@ -440,6 +440,47 @@ bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId, const
     return takeBetween(value, 0.0f, 1.0f, world.engineState().musicUnderVoice);
 }
 
+// --- The ear (ADR 0256 §5) ---------------------------------------------------------
+
+Value getAudioServiceListenerMode(const scene::World& world, core::InstanceId)
+{
+    return Value{scene::EnumValue{generated::ListenerModeEnumId, world.engineState().listenerMode}};
+}
+
+bool setAudioServiceListenerMode(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (item == nullptr || item->enumId != generated::ListenerModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    world.engineState().listenerMode = item->value;
+    return true;
+}
+
+Value getAudioServiceListenerBlend(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().listenerBlend)};
+}
+
+bool setAudioServiceListenerBlend(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, 0.0f, 1.0f, world.engineState().listenerBlend);
+}
+
+Value getAudioServiceListenerCFrame(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().listenerCFrame};
+}
+
+bool setAudioServiceListenerCFrame(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* frame = std::get_if<core::CFrameD>(&value);
+    if (frame == nullptr)
+        return false;
+    world.engineState().listenerCFrame = *frame;
+    return true;
+}
+
 // --- Occlusion (ADR 0255) ---------------------------------------------------------
 
 Value getAudioServiceOcclusionEnabled(const scene::World& world, core::InstanceId)

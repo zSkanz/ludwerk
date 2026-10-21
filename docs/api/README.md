@@ -18,7 +18,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | Class | Inherits | Summary |
 |---|---|---|
 | [`AchievementService`](achievementservice.md) | [`Instance`](instance.md) | Unlocks and reads the platform's achievements. |
-| [`AudioService`](audioservice.md) | [`Instance`](instance.md) | Controls audio mixing: the master volume, the player's volume settings and one-shot sounds. |
+| [`AudioService`](audioservice.md) | [`Instance`](instance.md) | Controls audio mixing: the master volume, the player's volume settings, one-shot sounds and where sounds are heard from. |
 | [`ClientScriptService`](clientscriptservice.md) | [`Instance`](instance.md) | Holds the client scripts of the current scene, such as its HUD, its menu or a camera. |
 | [`CloudSaveService`](cloudsaveservice.md) | [`Instance`](instance.md) | Reads and writes the current user's save slots in the platform's cloud. |
 | [`ConsoleService`](consoleservice.md) | [`Instance`](instance.md) | The console of a server that runs with no window, and the game's own commands in it. |

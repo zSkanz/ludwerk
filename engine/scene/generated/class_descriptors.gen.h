@@ -138,12 +138,13 @@ inline constexpr EnumId ParticleFlipbookModeEnumId = 97;
 inline constexpr EnumId SwarmAgentRemovalEnumId = 98;
 inline constexpr EnumId RelayStateEnumId = 99;
 inline constexpr EnumId SoundCategoryEnumId = 100;
-inline constexpr EnumId SubtitleModeEnumId = 101;
-inline constexpr EnumId LipSyncModeEnumId = 102;
-inline constexpr EnumId IrradianceModeEnumId = 103;
-inline constexpr EnumId ScreenSplitEnumId = 104;
-inline constexpr EnumId SequenceControlEnumId = 105;
-inline constexpr EnumId NetworkFailureEnumId = 106;
+inline constexpr EnumId ListenerModeEnumId = 101;
+inline constexpr EnumId SubtitleModeEnumId = 102;
+inline constexpr EnumId LipSyncModeEnumId = 103;
+inline constexpr EnumId IrradianceModeEnumId = 104;
+inline constexpr EnumId ScreenSplitEnumId = 105;
+inline constexpr EnumId SequenceControlEnumId = 106;
+inline constexpr EnumId NetworkFailureEnumId = 107;
 
 } // namespace generated
 

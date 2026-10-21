@@ -443,6 +443,21 @@
           "Transient": true
         },
         {
+          "Name": "ListenerBlend",
+          "Type": "number",
+          "Default": "1"
+        },
+        {
+          "Name": "ListenerCFrame",
+          "Type": "CFrame",
+          "Default": "CFrame.identity"
+        },
+        {
+          "Name": "ListenerMode",
+          "Type": "Enum.ListenerMode",
+          "Default": "Enum.ListenerMode.Camera"
+        },
+        {
           "Name": "MasterVolume",
           "Type": "number",
           "Default": "1"
@@ -17443,6 +17458,23 @@
         },
         {
           "Name": "Loudness",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "Name": "ListenerMode",
+      "Items": [
+        {
+          "Name": "Camera",
+          "Value": 0
+        },
+        {
+          "Name": "Character",
+          "Value": 1
+        },
+        {
+          "Name": "Custom",
           "Value": 2
         }
       ]

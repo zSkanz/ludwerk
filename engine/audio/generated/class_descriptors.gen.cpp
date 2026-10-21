@@ -867,7 +867,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(captionDesc);
 
     // --- AudioService ---
-    static std::array<scene::PropertyDesc, 10> audioServiceProperties;
+    static std::array<scene::PropertyDesc, 13> audioServiceProperties;
     audioServiceProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("MasterVolume"),
@@ -944,6 +944,43 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setAudioServiceMusicUnderVoice,
         },
         scene::PropertyDesc{
+            .name = atoms.intern("ListenerMode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("ListenerMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Where this machine hears every sound from: the camera, the local player's character, or `ListenerCFrame`. A top-down or isometric game, whose camera is high above the action, hears its hero's surroundings from the hero with `Character`. With several players at one screen, each view hears from its own player. Occlusion is cast from this ear. Set it on the client: each machine has its own.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getAudioServiceListenerMode,
+            .set = native::setAudioServiceListenerMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ListenerBlend"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "With `ListenerMode` set to `Character`, how far the ear is moved from the camera toward the character, from 0 (at the camera) to 1 (at the character). It always faces the way the camera looks. A top-down game may use 0.8, a little above its hero.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getAudioServiceListenerBlend,
+            .set = native::setAudioServiceListenerBlend,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ListenerCFrame"),
+            .type = scene::ValueType::CFrame,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Where sounds are heard from, and facing which way, when `ListenerMode` is `Custom`.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_cframe"),
+            .get = native::getAudioServiceListenerCFrame,
+            .set = native::setAudioServiceListenerCFrame,
+        },
+        scene::PropertyDesc{
             .name = atoms.intern("OcclusionEnabled"),
             .type = scene::ValueType::Bool,
             .threadSafety = scene::ThreadSafety::Unsafe,
@@ -1012,7 +1049,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     audioServiceDesc.super = instanceClass;
     audioServiceDesc.flags = scene::ClassFlags::Service | scene::ClassFlags::NotCreatable;
     audioServiceDesc.defaultName = atoms.intern("AudioService");
-    audioServiceDesc.doc = "Controls audio mixing: the master volume, the player's volume settings and one-shot sounds. The listener is always `Workspace.CurrentCamera`.";
+    audioServiceDesc.doc = "Controls audio mixing: the master volume, the player's volume settings, one-shot sounds and where sounds are heard from. The listener is `Workspace.CurrentCamera` unless `ListenerMode` says otherwise.";
     audioServiceDesc.properties = audioServiceProperties;
     audioServiceDesc.methods = audioServiceMethods;
     classes.registerClass(audioServiceDesc);

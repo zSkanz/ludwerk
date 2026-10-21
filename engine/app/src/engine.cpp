@@ -71,6 +71,7 @@
 #include "engine/app/field_streamer.h"
 #include "engine/app/frame_pacing.h"
 #include "engine/app/frame_scheduler.h"
+#include "engine/app/listener_ear.h"
 #include "engine/app/graph_editor.h"
 #include "engine/app/graph_panel.h"
 #include "engine/app/icons.h"
@@ -7552,6 +7553,15 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // nearest. The views are the last frame's -- this frame's are not
         // decided yet -- and the cameras are where they are now. One ear
         // while a sequence has the screen, or the editor its own camera.
+        //
+        // **And a view's ear is where the game says** (ADR 0256 §5): the
+        // camera, or its player's character -- drawn where it is drawn this
+        // frame, so the ear glides with it -- `ListenerBlend` of the way from
+        // the camera and facing as the camera does, or `ListenerCFrame`.
+        const scene::EngineState& earState = host->world().engineState();
+        const auto earOf = [&](const core::CFrameD& eye, core::InstanceId player) {
+            return listenerEar(host->world(), framePoses, eye, player);
+        };
         std::array<core::CFrameD, 4> viewEars;
         core::u32 viewEarCount = 0;
         const bool sequenceHeard = sequenceCamera.has_value() && advancing(editor.runState());
@@ -7561,7 +7571,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 if (const scene::CameraComponent* camera =
                         host->world().cameras().find(screen.screenViews[index].camera);
                     camera != nullptr)
-                    viewEars[viewEarCount++] = camera->cframe;
+                    viewEars[viewEarCount++] = earOf(camera->cframe, screen.screenViews[index].player);
+            }
+            // One view, the window's own: its camera and this machine's player.
+            if (viewEarCount == 0 && earState.listenerMode != 0) {
+                if (const scene::CameraComponent* camera = host->world().cameras().find(listener); camera != nullptr)
+                    viewEars[viewEarCount++] = earOf(camera->cframe, scene::localPlayerOf(host->world()));
+                else if (earState.listenerMode == 2)
+                    viewEars[viewEarCount++] = earState.listenerCFrame;
             }
         }
         // A material read in the middle of its save kept what it had; one no
