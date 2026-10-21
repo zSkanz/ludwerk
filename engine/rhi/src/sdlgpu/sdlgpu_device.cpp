@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,6 +28,8 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/text_key.h"
+#include "engine/jobs/jobs.h"
+#include "engine/platform/platform.h"
 #include "engine/platform/process.h"
 #include "engine/platform/sdl_interop.h"
 #include "engine/rhi/backends.h"
@@ -126,6 +129,56 @@ struct PipelineRecipe
         SDL_GPUGraphicsPipeline* pipeline = nullptr;
     };
     std::vector<FormatTwin> formatTwins;
+};
+
+// **One of a recipe's pipelines, made**: at `samples`, shaded through a
+// density map or not, into a first target of `format` (INVALID: the recipe's
+// own). Its pointers are the recipe's own lists, set here, so a recipe that
+// moved since it was made still makes the pipeline it describes.
+[[nodiscard]] SDL_GPUGraphicsPipeline* makeFromRecipe(SDL_GPUDevice* device, const PipelineRecipe& recipe, u32 samples,
+                                                      bool density, SDL_GPUTextureFormat format)
+{
+    SDL_GPUGraphicsPipelineCreateInfo info = recipe.info;
+    std::vector<SDL_GPUColorTargetDescription> targets = recipe.colorTargets;
+    if (format != SDL_GPU_TEXTUREFORMAT_INVALID && !targets.empty())
+        targets[0].format = format;
+    info.vertex_input_state.vertex_buffer_descriptions = recipe.vertexBuffers.data();
+    info.vertex_input_state.vertex_attributes = recipe.attributes.data();
+    info.target_info.color_target_descriptions = targets.data();
+    info.multisample_state.sample_count = sampleCountOf(samples);
+    SDL_PropertiesID properties = 0;
+    if (density) {
+        properties = SDL_CreateProperties();
+        SDL_SetBooleanProperty(properties, SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN,
+                               true);
+        info.props = properties;
+    }
+    SDL_GPUGraphicsPipeline* made = SDL_CreateGPUGraphicsPipeline(device, &info);
+    if (properties != 0)
+        SDL_DestroyProperties(properties);
+    return made;
+}
+
+// Where in a recipe's twins a pass of `samples`, with or without a density
+// map, keeps its pipeline.
+[[nodiscard]] usize twinSlot(u32 samples, bool density) noexcept
+{
+    return (density ? 4u : 0u) + (samples >= 8 ? 3u : samples >= 4 ? 2u : samples >= 2 ? 1u : 0u);
+}
+
+// **A pipeline being made off the frame** (ADR 0257): its recipe and what
+// it was asked to be made at, made on a job, and taken in on the device's
+// thread -- the tables every bind reads are never written from a worker.
+struct OffFramePipeline
+{
+    u32 id = 0;
+    PipelineRecipe recipe;
+    std::vector<PipelineVariant> variants;
+    std::vector<SDL_GPUTextureFormat> formats;
+    SDL_GPUGraphicsPipeline* made = nullptr;
+    std::vector<SDL_GPUGraphicsPipeline*> twins;
+    std::string refused;
+    jobs::JobHandle job{};
 };
 
 template <class T>
@@ -387,6 +440,10 @@ public:
 
         SDL_WaitForGPUIdle(device_);
         releaseInFlight();
+        // What is still being made is waited for and released with the rest.
+        for (const std::unique_ptr<OffFramePipeline>& task : offFrame_)
+            takeIn(*task);
+        offFrame_.clear();
         for (const Readback& readback : readbacks_)
             SDL_ReleaseGPUTransferBuffer(device_, readback.transfer);
         readbacks_.clear();
@@ -858,7 +915,12 @@ public:
         return shader != nullptr ? ShaderHandle{addSlot(shaders_, shader)} : ShaderHandle{};
     }
 
-    [[nodiscard]] PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
+    [[nodiscard]] PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override
+    {
+        return createGraphicsPipeline(desc, false);
+    }
+    // `held`: the slot and the recipe, and no pipeline yet -- a job makes it.
+    [[nodiscard]] PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, bool held);
 
     [[nodiscard]] ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override
     {
@@ -934,6 +996,14 @@ public:
         if (lost_)
             return;
         if (SDL_GPUShader** entry = slot(shaders_, handle.id); entry != nullptr && *entry != nullptr) {
+            // A pipeline being made from it is made first.
+            for (usize at = offFrame_.size(); at > 0; --at) {
+                OffFramePipeline& task = *offFrame_[at - 1];
+                if (task.recipe.info.vertex_shader == *entry || task.recipe.info.fragment_shader == *entry) {
+                    takeIn(task);
+                    offFrame_.erase(offFrame_.begin() + static_cast<std::ptrdiff_t>(at - 1));
+                }
+            }
             SDL_ReleaseGPUShader(device_, *entry);
             *entry = nullptr;
         }
@@ -943,6 +1013,7 @@ public:
     {
         if (lost_)
             return;
+        (void)pipelineMade(handle, true);
         if (SDL_GPUGraphicsPipeline** entry = slot(pipelines_, handle.id); entry != nullptr && *entry != nullptr) {
             SDL_ReleaseGPUGraphicsPipeline(device_, *entry);
             *entry = nullptr;
@@ -1067,6 +1138,17 @@ public:
         finishedFrames_ = submittedFrames_ - inFlight_.size();
         cmdList_.begin(nullptr);
     }
+
+    [[nodiscard]] PipelineHandle createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
+                                                                std::span<const PipelineVariant> variants) override;
+    [[nodiscard]] std::optional<bool> pipelineMade(PipelineHandle pipeline) override
+    {
+        return pipelineMade(pipeline, false);
+    }
+    // Waiting for it when `wait` says so: a pipeline about to be destroyed.
+    [[nodiscard]] std::optional<bool> pipelineMade(PipelineHandle pipeline, bool wait);
+    // A finished job's pipelines into the tables -- waited for first.
+    void takeIn(OffFramePipeline& task);
 
     void warmPipeline(PipelineHandle pipeline, u32 samples, bool densityShaded, TextureFormat colorFormat) override
     {
@@ -1415,12 +1497,14 @@ private:
     std::vector<SDL_GPUGraphicsPipeline*> pipelines_;
     // Beside `pipelines_`, slot for slot.
     std::vector<PipelineRecipe> recipes_;
+    // Pipelines being made off the frame, each with its slot held empty.
+    std::vector<std::unique_ptr<OffFramePipeline>> offFrame_;
     std::vector<SDL_GPUComputePipeline*> computePipelines_;
     std::vector<ClaimedWindow> windows_;
     std::unique_ptr<IHeadset> headset_;
 };
 
-PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& desc)
+PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& desc, bool held)
 {
     if (lost_)
         return {};
@@ -1505,6 +1589,19 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
         .padding3 = 0,
     };
 
+    if (held) {
+        // **The slot held, the compile left to a job** (ADR 0257): the
+        // recipe, with the shaders it names, is everything the job needs.
+        recipes_.push_back(PipelineRecipe{.vertexBuffers = std::move(vertexBuffers),
+                                          .attributes = std::move(attributes),
+                                          .colorTargets = std::move(colorTargets),
+                                          .info = info,
+                                          .name = std::string(desc.debugName),
+                                          .twins = {},
+                                          .tried = {},
+                                          .formatTwins = {}});
+        return PipelineHandle{addSlot(pipelines_, static_cast<SDL_GPUGraphicsPipeline*>(nullptr))};
+    }
     const Uint64 startedNs = SDL_GetTicksNS();
     SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(device_, &info);
     sayIfSlow(desc.debugName, startedNs);
@@ -1532,6 +1629,109 @@ PipelineHandle SdlGpuDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
                                       .tried = {},
                                       .formatTwins = {}});
     return PipelineHandle{addSlot(pipelines_, pipeline)};
+}
+
+PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
+                                                            std::span<const PipelineVariant> variants)
+{
+    // No workers to make it on: made here, as before.
+    if (lost_ || !jobs::initialized())
+        return IDevice::createGraphicsPipelineOffFrame(desc, variants);
+    const PipelineHandle made = createGraphicsPipeline(desc, true);
+    if (!made.valid())
+        return made;
+    auto task = std::make_unique<OffFramePipeline>();
+    task->id = made.id;
+    // The recipe moves to the job and comes back with what it made.
+    task->recipe = std::move(recipes_[made.id - 1]);
+    recipes_[made.id - 1] = PipelineRecipe{};
+    task->variants.assign(variants.begin(), variants.end());
+    for (const PipelineVariant& variant : variants)
+        task->formats.push_back(variant.colorFormat == TextureFormat::Undefined ? SDL_GPU_TEXTUREFORMAT_INVALID
+                                                                                : toSdl(variant.colorFormat));
+    OffFramePipeline* running = task.get();
+    SDL_GPUDevice* device = device_;
+    task->job = jobs::schedule("pipeline.make", jobs::Domain::AssetIo, [running, device]() noexcept {
+        running->made = makeFromRecipe(device, running->recipe, 1, false, SDL_GPU_TEXTUREFORMAT_INVALID);
+        if (running->made == nullptr) {
+            running->refused = SDL_GetError();
+            return;
+        }
+        for (usize at = 0; at < running->variants.size(); ++at) {
+            const PipelineVariant& variant = running->variants[at];
+            running->twins.push_back(
+                makeFromRecipe(device, running->recipe, variant.samples, variant.densityShaded, running->formats[at]));
+        }
+    });
+    if (!task->job.valid()) {
+        // Refused a job: made here, as before.
+        recipes_[made.id - 1] = std::move(task->recipe);
+        if (SDL_GPUGraphicsPipeline* now =
+                makeFromRecipe(device_, recipes_[made.id - 1], 1, false, SDL_GPU_TEXTUREFORMAT_INVALID);
+            now != nullptr)
+            pipelines_[made.id - 1] = now;
+        for (const PipelineVariant& variant : variants)
+            warmPipeline(made, variant.samples, variant.densityShaded, variant.colorFormat);
+        return made;
+    }
+    offFrame_.push_back(std::move(task));
+    return made;
+}
+
+void SdlGpuDevice::takeIn(OffFramePipeline& task)
+{
+    if (task.job.valid())
+        jobs::wait(task.job);
+    task.job = {};
+    PipelineRecipe& recipe = recipes_[task.id - 1];
+    recipe = std::move(task.recipe);
+    pipelines_[task.id - 1] = task.made;
+    if (task.made == nullptr) {
+        // Refused, and said, as a pipeline made on the frame is.
+        const core::I18nArg args[] = {{"name", std::string_view{recipe.name}},
+                                      {"detail", std::string_view{task.refused}}};
+        core::log(core::LogLevel::Error, ENG_TR("rhi.err.pipeline_refused"), args);
+        return;
+    }
+    for (usize at = 0; at < task.variants.size() && at < task.twins.size(); ++at) {
+        const PipelineVariant& variant = task.variants[at];
+        const SDL_GPUTextureFormat format = task.formats[at];
+        const bool ownFormat = format == SDL_GPU_TEXTUREFORMAT_INVALID || recipe.colorTargets.empty() ||
+                               recipe.colorTargets[0].format == format;
+        const usize twin = twinSlot(variant.samples, variant.densityShaded);
+        if (ownFormat && variant.samples <= 1 && !variant.densityShaded) {
+            // The pipeline itself: nothing to keep twice.
+            if (task.twins[at] != nullptr)
+                SDL_ReleaseGPUGraphicsPipeline(device_, task.twins[at]);
+            continue;
+        }
+        if (ownFormat && !recipe.tried[twin]) {
+            recipe.tried[twin] = true;
+            recipe.twins[twin] = task.twins[at];
+        }
+        else if (!ownFormat) {
+            recipe.formatTwins.push_back(PipelineRecipe::FormatTwin{format, twin, task.twins[at]});
+        }
+        else if (task.twins[at] != nullptr) {
+            SDL_ReleaseGPUGraphicsPipeline(device_, task.twins[at]);
+        }
+    }
+}
+
+std::optional<bool> SdlGpuDevice::pipelineMade(PipelineHandle pipeline, bool wait)
+{
+    for (usize at = 0; at < offFrame_.size(); ++at) {
+        OffFramePipeline& task = *offFrame_[at];
+        if (task.id != pipeline.id)
+            continue;
+        if (!wait && task.job.valid() && !jobs::finished(task.job))
+            return std::nullopt;
+        takeIn(task);
+        const bool made = task.made != nullptr;
+        offFrame_.erase(offFrame_.begin() + static_cast<std::ptrdiff_t>(at));
+        return made;
+    }
+    return this->pipeline(pipeline) != nullptr;
 }
 
 Swapchain SdlGpuDevice::acquireSwapchain(platform::Window& window)
@@ -2829,6 +3029,15 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
         SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, depthClamp);
+        // **The pipelines the last run made** (ADR 0257, SDL patch 0011): on
+        // Vulkan, read as the device is made and kept as it goes, in the
+        // user's own folder. Another GPU's or another driver's, the driver
+        // ignores; with no folder, the cache lasts the session.
+        if (const std::filesystem::path& user = platform::paths().userDir; !user.empty()) {
+            const std::u8string file = (user / "pipelines.vulkan.cache").u8string();
+            const std::string text(reinterpret_cast<const char*>(file.data()), file.size());
+            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING, text.c_str());
+        }
 #if ENG_SDLGPU_XR
         if (xrAsk != nullptr)
             xrAsk->apply(props, desc.xr);

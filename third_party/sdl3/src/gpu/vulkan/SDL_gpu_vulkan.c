@@ -1167,6 +1167,10 @@ struct VulkanRenderer
     VkPhysicalDeviceProperties2KHR physicalDeviceProperties;
     VkPhysicalDeviceDriverPropertiesKHR physicalDeviceDriverProperties;
     VkDevice logicalDevice;
+    /* Ludwerk: every pipeline is made through this, seeded from and kept in
+     * `pipelineCacheFile` across runs (patch 0011). */
+    VkPipelineCache pipelineCache;
+    char *pipelineCacheFile;
     Uint8 integratedMemoryNotification;
     Uint8 outOfDeviceLocalMemoryWarning;
     Uint8 outofBARMemoryWarning;
@@ -5142,6 +5146,32 @@ static void VULKAN_DestroyDevice(
     SDL_DestroyMutex(renderer->descriptorSetLayoutFetchLock);
     SDL_DestroyMutex(renderer->windowLock);
 
+    /* Ludwerk: the pipelines this run made, kept for the next (patch 0011).
+     * Written beside the file and moved over it, so a run that ends while
+     * another is writing never leaves half of one. */
+    if (renderer->pipelineCache != VK_NULL_HANDLE) {
+        if (renderer->pipelineCacheFile != NULL) {
+            size_t size = 0;
+            if (renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, NULL) == VK_SUCCESS && size > 0) {
+                void *data = SDL_malloc(size);
+                if (data != NULL && renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &size, data) == VK_SUCCESS) {
+                    char *partial = NULL;
+                    if (SDL_asprintf(&partial, "%s.%" SDL_PRIu64 ".partial", renderer->pipelineCacheFile, (Uint64)SDL_GetCurrentThreadID()) > 0) {
+                        if (SDL_SaveFile(partial, data, size)) {
+                            if (!SDL_RenamePath(partial, renderer->pipelineCacheFile)) {
+                                SDL_RemovePath(partial);
+                            }
+                        }
+                        SDL_free(partial);
+                    }
+                }
+                SDL_free(data);
+            }
+        }
+        renderer->vkDestroyPipelineCache(renderer->logicalDevice, renderer->pipelineCache, NULL);
+    }
+    SDL_free(renderer->pipelineCacheFile);
+
     renderer->vkDestroyDevice(renderer->logicalDevice, NULL);
     renderer->vkDestroyInstance(renderer->instance, NULL);
 
@@ -6734,10 +6764,9 @@ static SDL_GPUGraphicsPipeline *VULKAN_CreateGraphicsPipeline(
     vkPipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
     vkPipelineCreateInfo.basePipelineIndex = 0;
 
-    // TODO: enable pipeline caching
     vulkanResult = renderer->vkCreateGraphicsPipelines(
         renderer->logicalDevice,
-        VK_NULL_HANDLE,
+        renderer->pipelineCache,
         1,
         &vkPipelineCreateInfo,
         NULL,
@@ -6872,7 +6901,7 @@ static SDL_GPUComputePipeline *VULKAN_CreateComputePipeline(
 
     vulkanResult = renderer->vkCreateComputePipelines(
         renderer->logicalDevice,
-        (VkPipelineCache)VK_NULL_HANDLE,
+        renderer->pipelineCache,
         1,
         &vkShaderCreateInfo,
         NULL,
@@ -13748,6 +13777,34 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
         SDL_free(renderer);
         SDL_Vulkan_UnloadLibrary();
         return NULL;
+    }
+
+    /* Ludwerk: a pipeline cache, seeded from the file the app names (patch
+     * 0011). Data the driver cannot use -- another GPU's, another driver's --
+     * it ignores; a cache that cannot be made at all is none, as before. */
+    renderer->pipelineCache = VK_NULL_HANDLE;
+    renderer->pipelineCacheFile = NULL;
+    {
+        const char *file = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING, NULL);
+        void *seed = NULL;
+        size_t seedSize = 0;
+        VkPipelineCacheCreateInfo cacheInfo;
+        SDL_zero(cacheInfo);
+        cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        if (file != NULL && *file != '\0') {
+            renderer->pipelineCacheFile = SDL_strdup(file);
+            seed = SDL_LoadFile(file, &seedSize);
+        }
+        cacheInfo.initialDataSize = seed != NULL ? seedSize : 0;
+        cacheInfo.pInitialData = seed;
+        if (renderer->vkCreatePipelineCache(renderer->logicalDevice, &cacheInfo, NULL, &renderer->pipelineCache) != VK_SUCCESS) {
+            cacheInfo.initialDataSize = 0;
+            cacheInfo.pInitialData = NULL;
+            if (renderer->vkCreatePipelineCache(renderer->logicalDevice, &cacheInfo, NULL, &renderer->pipelineCache) != VK_SUCCESS) {
+                renderer->pipelineCache = VK_NULL_HANDLE;
+            }
+        }
+        SDL_free(seed);
     }
 
     if (renderer->supportsFragmentDensityMap) {

@@ -1,16 +1,20 @@
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <doctest/doctest.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "engine/core/i18n.h"
+#include "engine/jobs/jobs.h"
 #include "engine/platform/platform.h"
 #include "engine/platform/window.h"
 #include "engine/rhi/backends.h"
@@ -484,6 +488,85 @@ TEST_CASE("resources round-trip through the device")
     }
 
     device.destroy(sampler);
+}
+
+TEST_CASE("a pipeline made off the frame is made on a job and taken in when asked (ADR 0257)")
+{
+    GpuFixture gpu;
+    if (gpu.device == nullptr)
+        return;
+    IDevice& device = *gpu.device;
+    const ShaderFormat format = device.caps().shaderFormat;
+    const char* directory = format == ShaderFormat::Dxil ? "dxil" : format == ShaderFormat::Msl ? "msl" : "spirv";
+    const char* suffix = format == ShaderFormat::Dxil ? ".dxil" : format == ShaderFormat::Msl ? ".msl" : ".spv";
+    const auto load = [&](const char* stage) {
+        const auto path =
+            std::filesystem::path(ENG_TEST_SHADER_CONTENT) / directory / (std::string("debug_line.") + stage + suffix);
+        std::ifstream file(path, std::ios::binary);
+        const std::vector<char> bytes{std::istreambuf_iterator<char>(file), {}};
+        const auto view = std::as_bytes(std::span(bytes));
+        return std::vector<std::byte>(view.begin(), view.end());
+    };
+    const auto vertex = load("vertex"), fragment = load("fragment");
+    if (vertex.empty() || fragment.empty()) {
+        MESSAGE("ENG_TEST_SKIP: build host shaders before the off-frame pipeline test");
+        return;
+    }
+    // Workers to make it on; started here where the suite has none.
+    const bool started = !engine::jobs::initialized();
+    if (started)
+        engine::jobs::init(2);
+    const auto vs = device.createShader({.stage = ShaderStage::Vertex,
+                                         .format = format,
+                                         .code = vertex,
+                                         .entryPoint = "VertexMain",
+                                         .uniformBufferCount = 1});
+    const auto fs = device.createShader(
+        {.stage = ShaderStage::Fragment, .format = format, .code = fragment, .entryPoint = "FragmentMain"});
+    REQUIRE(vs.valid());
+    REQUIRE(fs.valid());
+    const VertexBufferLayout buffers[] = {{.strideBytes = 7 * sizeof(f32)}};
+    const VertexAttribute attributes[] = {
+        {.location = 0, .format = VertexFormat::Float3},
+        {.location = 1, .format = VertexFormat::Float4, .offsetBytes = 3 * sizeof(f32)}};
+    const ColorTargetDesc targets[] = {{.format = TextureFormat::Rgba8Unorm}};
+    const GraphicsPipelineDesc desc{.vertexShader = vs,
+                                    .fragmentShader = fs,
+                                    .vertexBuffers = buffers,
+                                    .vertexAttributes = attributes,
+                                    .rasterizer = {.cullMode = CullMode::None},
+                                    .colorTargets = targets};
+    // With its twin at four samples, as an eye's pass draws it.
+    const PipelineVariant variants[] = {{.samples = 4}};
+    const PipelineHandle pipeline = device.createGraphicsPipelineOffFrame(desc, variants);
+    REQUIRE(pipeline.valid());
+    std::optional<bool> made;
+    for (int tries = 0; tries < 5000 && !made.has_value(); ++tries) {
+        made = device.pipelineMade(pipeline);
+        if (!made.has_value())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(made.has_value());
+    CHECK(*made);
+    // Taken in: asked again, it is simply there.
+    CHECK(device.pipelineMade(pipeline) == std::optional<bool>{true});
+    device.destroy(pipeline);
+
+    // One destroyed while it is made is waited for and let go, not leaked
+    // into a slot that says it was made.
+    const PipelineHandle dropped = device.createGraphicsPipelineOffFrame(desc, variants);
+    REQUIRE(dropped.valid());
+    device.destroy(dropped);
+    CHECK(device.pipelineMade(dropped) == std::optional<bool>{false});
+
+    // And one whose shaders go first is made before they do.
+    const PipelineHandle orphan = device.createGraphicsPipelineOffFrame(desc, {});
+    device.destroy(vs);
+    device.destroy(fs);
+    CHECK(device.pipelineMade(orphan).has_value());
+    device.destroy(orphan);
+    if (started)
+        engine::jobs::shutdown();
 }
 
 TEST_SUITE_END();

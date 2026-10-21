@@ -757,6 +757,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuDebug = true;
             continue;
         }
+        if (arg == "--pipelines=off-frame" || arg == "--pipelines=on-frame") {
+            options.offFramePipelines = arg == "--pipelines=off-frame";
+            continue;
+        }
         if (arg.starts_with("--gpu=")) {
             // Which graphics API: a player's way round a driver that draws
             // wrong through one of them.
@@ -2053,6 +2057,7 @@ static int hostMain(int argc, char** argv)
         }
 
         options.graphics = config.graphics;
+        options.graphics.offFramePipelines = options.offFramePipelines.value_or(!options.headless);
         // The measuring keys (ADR 0171): the flag beats the file, and what the
         // file hides is added to what the flag does.
         options.graphics.measuredShadowTaps =

@@ -13,6 +13,7 @@
 // not an error.
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 
@@ -70,6 +71,17 @@ struct DeviceMemory
 
 // Queried, never assumed. Interfaces here are coarse by design (architecture.md
 // §7): a capability exists when a render path gates on it, not before.
+// **A pipeline's twin to make with it** (ADR 0257): the pass it will be drawn
+// in -- its samples, a density map shading it, and the format of its first
+// target (Undefined: the pipeline's own). What `warmPipeline` makes one at a
+// time.
+struct PipelineVariant
+{
+    u32 samples = 1;
+    bool densityShaded = false;
+    TextureFormat colorFormat = TextureFormat::Undefined;
+};
+
 struct Capabilities
 {
     ShaderFormat shaderFormat = ShaderFormat::Unknown;
@@ -322,6 +334,28 @@ public:
         (void)densityShaded;
         (void)colorFormat;
     }
+
+    // **A pipeline made off the frame** (ADR 0257): the handle is good at
+    // once, and what it names is made on a job -- the driver's compile, which
+    // for a material's pipeline is tenths of a second on a cold cache -- with
+    // the twins `variants` name. Until `pipelineMade` says true, binding it
+    // binds nothing: the caller draws without it. A backend that cannot makes
+    // it here and now, which is what this does.
+    [[nodiscard]] virtual PipelineHandle createGraphicsPipelineOffFrame(const GraphicsPipelineDesc& desc,
+                                                                        std::span<const PipelineVariant> variants)
+    {
+        const PipelineHandle made = createGraphicsPipeline(desc);
+        for (const PipelineVariant& variant : variants) {
+            if (made.valid())
+                warmPipeline(made, variant.samples, variant.densityShaded, variant.colorFormat);
+        }
+        return made;
+    }
+
+    // Whether a pipeline is made: true, still being made (nothing), or
+    // refused (false, and said). Asked on the device's own thread, which is
+    // where what a job made is taken in.
+    [[nodiscard]] virtual std::optional<bool> pipelineMade(PipelineHandle pipeline) { return pipeline.valid(); }
 
     // **A texture's texels a few frames later, never waiting** (a headset
     // eye's exposure, folded into its forward pass): the top-left `width` by

@@ -2349,6 +2349,11 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDevice(
  *   This allows configuring a variety of Vulkan-specific options such as
  *   increasing the API version and opting into extensions aside from the
  *   minimal set SDL requires.
+ * - `SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING`: a file
+ *   the device's pipeline cache is read from when it is created and written
+ *   back to when it is destroyed, so pipelines made in one run are not
+ *   compiled again in the next. Data from another GPU or driver is ignored by
+ *   the driver. (Ludwerk patch.)
  *
  * With the Metal backend: -
  * `SDL_PROP_GPU_DEVICE_CREATE_METAL_ALLOW_MACFAMILY1_BOOLEAN`: By default,
@@ -2393,6 +2398,7 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDeviceWithProperties(
 #define SDL_PROP_GPU_DEVICE_CREATE_D3D12_AGILITY_SDK_PATH_STRING                "SDL.gpu.device.create.d3d12.agility_sdk_path"
 #define SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN "SDL.gpu.device.create.vulkan.requirehardwareacceleration"
 #define SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER                       "SDL.gpu.device.create.vulkan.options"
+#define SDL_PROP_GPU_DEVICE_CREATE_VULKAN_PIPELINE_CACHE_FILE_STRING            "SDL.gpu.device.create.vulkan.pipeline_cache_file"
 #define SDL_PROP_GPU_DEVICE_CREATE_METAL_ALLOW_MACFAMILY1_BOOLEAN               "SDL.gpu.device.create.metal.allowmacfamily1"
 
 #define SDL_PROP_GPU_DEVICE_CREATE_XR_ENABLE_BOOLEAN                            "SDL.gpu.device.create.xr.enable"

@@ -490,6 +490,8 @@
   "render.err.surface_quarantined": "Held back: the graphics device was lost while this surface was on screen. Change and save the shader to try it again.",
   "render.warn.surface_pipeline_failed": "The surface shader {name} compiled, but the graphics device rejected its pipelines, so what uses it is drawn in magenta until the shader's source changes.",
   "render.warn.surface_quarantined": "The surface shader {urn} was on screen when the graphics device was lost, so it is held back until it changes.",
+  "render.info.surface_drawn_plain": "The pipelines of {urn} are still being made after {milliseconds} ms, so its parts are drawn with the built-in surface until they are. Name it in ContentProvider:PreloadAsync behind a loading screen to have it ready, or set [graphics] material_wait_ms.",
+  "render.info.surface_pipelines_off_frame": "Made the pipelines of {urn} off the frame in {milliseconds} ms. No frame waited for them.",
   "render.info.surface_pipelines": "Surface shader {urn}: its ten shaders and all its pipelines were created in {milliseconds} ms.",
   "render.info.surface_compiled": "Surface shader {urn} ready in {milliseconds} ms ({compiled} of 10 stages compiled, the rest from the cache).",
   "render.warn.surface_unavailable": "The surface shader {name} could not be loaded or built, so what uses it is drawn with the built-in surface.",

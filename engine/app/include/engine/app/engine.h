@@ -433,6 +433,10 @@ struct EngineOptions
     // **`--gpu-debug`: the GPU debug layer, asked for by name**. Off
     // means whatever the profile decides -- see `gpuValidationWanted`.
     bool gpuDebug = false;
+    // **`--pipelines=off-frame|on-frame`** (ADR 0257): where a material's
+    // pipelines are made. Unsaid, off the frame with a window and on it
+    // headless.
+    std::optional<bool> offFramePipelines;
     // **`--gpu-least`: the device a GPU with the fewest features is given**
     // -- no depth clamping -- on a GPU that has more: how a desk draws
     // as such a phone does.

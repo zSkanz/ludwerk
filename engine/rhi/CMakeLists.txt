@@ -96,6 +96,7 @@ if(ENG_RHI_SDLGPU)
             src/sdlgpu/sdlgpu_device.cpp
         DEPS
             core
+            jobs
             platform
         API_DEPS
             rhi_api

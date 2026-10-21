@@ -103,6 +103,9 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
     }
     if (const std::optional<f64> value = number("sharpness", 0.0, 1.0))
         settings.sharpness = static_cast<f32>(*value);
+    // How long a part waits unseen for its material's pipelines (ADR 0257).
+    if (const std::optional<f64> value = number("material_wait_ms", 0.0, 10000.0))
+        settings.materialWaitMs = static_cast<u32>(*value);
     // `terrain_surface = "full" | "lean"` (ADR 0175): the ground's material
     // as the level draws it unless the project says.
     if (const std::optional<std::string_view> named = document.string(key("terrain_surface"))) {
@@ -590,6 +593,8 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         // the ground's material is no setting a player has.
         settings.terrainSurface = instruments->terrainSurface;
         settings.measuredSkip = instruments->measuredSkip;
+        settings.offFramePipelines = instruments->offFramePipelines;
+        settings.materialWaitMs = instruments->materialWaitMs;
         settings.measuredShadowUnderCasters = instruments->measuredShadowUnderCasters;
         if (instruments->measuredShadowUnderCasters >= 0)
             settings.shadowUnderCasters = instruments->measuredShadowUnderCasters != 0;

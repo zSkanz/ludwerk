@@ -280,6 +280,16 @@ A shader that does not compile draws as a **magenta error surface**. Its errors
 are in the console by file and line, marked on their lines in the script
 editor, and listed in the material panel.
 
+**The graphics card makes its own pipelines from a shader the first time it is
+drawn**, and on a cold driver cache that takes a large shader tenths of a
+second. The engine has the card do it off the frame: until they are made, the
+parts that wear the shader are not drawn at all -- not their shadows either --
+for up to `[graphics] material_wait_ms` (250 by default), and drawn with the
+built-in surface after that, which the log says once. `0` draws them with the
+built-in surface at once. To have a shader ready before anything wears it, name
+it in `ContentProvider:PreloadAsync` behind a loading screen: the call returns
+once its pipelines are made.
+
 **Building a game compiles every surface shader for every backend** into its
 content pack, and a shader that does not compile fails the build, by file and
 line. The game itself carries no compiler and never compiles anything. A build

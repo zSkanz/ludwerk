@@ -257,6 +257,8 @@ f32 effectiveRenderScale(const GraphicsSettings& settings, u32 width, u32 height
 
 GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
 {
+    // Ten seconds: a part unseen longer than that is a part missing.
+    settings.materialWaitMs = std::min(settings.materialWaitMs, 10000u);
     // A cap below 360 is a picture of blocks; zero is "none".
     if (settings.renderResolutionCap != 0)
         settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);

@@ -1017,8 +1017,21 @@ private:
         rhi::PipelineHandle shadowInstanced{};
         rhi::PipelineHandle prepass{};
         rhi::PipelineHandle prepassInstanced{};
+        // **Being made off the frame** (ADR 0257), and since when; whether a
+        // wait past the project's was said.
+        bool making = false;
+        std::chrono::steady_clock::time_point askedAt{};
+        bool waitSaid = false;
     };
     std::vector<SurfaceSet> surfaces_;
+    // What an eye's pass draws with (`warmEyes`): a surface's lit pipelines
+    // are made at it too, off the frame.
+    u32 eyeSamples_ = 1;
+    bool eyeDensity_ = false;
+    rhi::TextureFormat eyeFormat_ = rhi::TextureFormat::Undefined;
+    // Per material of the frame: its surface's pipelines are being made, and
+    // it is drawn in no pass until they are (ADR 0257).
+    std::vector<bool> materialWaiting_;
     ISurfaceSource* surfaceSource_ = nullptr;
     // Per material of the frame: whether its surface failed, and draws as the
     // error surface -- loud magenta, the colour no material means.
@@ -1028,7 +1041,10 @@ private:
     std::vector<u32> materialSurface_;
     std::vector<std::vector<core::u8>> materialBlock_;
     std::vector<std::array<rhi::TextureBinding, asset::MaxSurfaceTextures>> materialSurfaceTextures_;
-    [[nodiscard]] u32 surfaceFor(rhi::IDevice& device, std::string_view name, bool& failed);
+    // `waiting`: its pipelines are being made off the frame (ADR 0257).
+    [[nodiscard]] u32 surfaceFor(rhi::IDevice& device, std::string_view name, bool& failed, bool& waiting);
+    // A set being made, asked again: ready once every pipeline is.
+    void pollSurface(rhi::IDevice& device, SurfaceSet& set);
     [[nodiscard]] bool buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& set);
     static void releaseSurface(rhi::IDevice& device, SurfaceSet& set);
     void prepareSurfaces(rhi::IDevice& device, const RenderWorld& world);
@@ -2820,6 +2836,9 @@ void DefaultRenderer::warmEyes(rhi::IDevice& device, u32 samples, u32 foveation,
         return;
     core::profile::Sections sections;
     ENG_PROFILE_NEXT(sections, "warm.eyes");
+    eyeSamples_ = samples;
+    eyeDensity_ = foveation > 0 && device.caps().densityTexelWidth > 0;
+    eyeFormat_ = eyeFormat;
     // What an eye's pass with samples draws (`forwardWhole`): the lit
     // surfaces in every family, the sky, the world's interface, the ground,
     // the blocks and the foliage. Prepassed variants are not among them: a
@@ -2872,7 +2891,10 @@ std::optional<bool> DefaultRenderer::warmSurface(rhi::IDevice& device, std::stri
     if (!valid_ || shaderLibrary_ == nullptr)
         return std::nullopt;
     bool failed = false;
-    if (surfaceFor(device, name, failed) != 0)
+    // Still being made off the frame is still on its way (ADR 0257): a
+    // game's `PreloadAsync` waits for it, and a loading screen covers it.
+    bool waiting = false;
+    if (surfaceFor(device, name, failed, waiting) != 0)
         return true;
     return failed ? std::optional<bool>{false} : std::nullopt;
 }
@@ -3867,9 +3889,41 @@ void DefaultRenderer::releaseSurface(rhi::IDevice& device, SurfaceSet& set)
     set.ready = false;
 }
 
-u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, bool& failed)
+void DefaultRenderer::pollSurface(rhi::IDevice& device, SurfaceSet& set)
+{
+    if (!set.making)
+        return;
+    bool every = true;
+    bool refused = false;
+    for (const rhi::PipelineHandle pipeline :
+         {set.forward, set.forwardPrepassed, set.instanced, set.instancedPrepassed, set.blended, set.shadow,
+          set.shadowInstanced, set.prepass, set.prepassInstanced}) {
+        const std::optional<bool> made = device.pipelineMade(pipeline);
+        if (!made.has_value())
+            every = false;
+        else if (!*made)
+            refused = true;
+    }
+    if (!every)
+        return;
+    set.making = false;
+    set.ready = !refused;
+    set.failed = refused;
+    if (refused) {
+        const std::array<core::I18nArg, 1> args{core::I18nArg{"name", std::string_view{set.name}}};
+        core::log(core::LogLevel::Warn, ENG_TR("render.warn.surface_pipeline_failed"), args);
+        return;
+    }
+    const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - set.askedAt);
+    const std::array<core::I18nArg, 2> args{core::I18nArg{"urn", std::string_view{set.name}},
+                                            core::I18nArg{"milliseconds", std::lround(elapsed.count() * 10.0) / 10.0}};
+    core::log(core::LogLevel::Info, ENG_TR("render.info.surface_pipelines_off_frame"), args);
+}
+
+u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, bool& failed, bool& waiting)
 {
     failed = false;
+    waiting = false;
     // **A user's surface, by URN**: asked for every frame, never waited on.
     if (name.find("://") != std::string_view::npos) {
         const SurfaceProgram* program = nullptr;
@@ -3888,7 +3942,9 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
                 found = index;
         }
         if (found < surfaces_.size() && surfaces_[found].revision == program->revision) {
+            pollSurface(device, surfaces_[found]);
             failed = surfaces_[found].failed;
+            waiting = surfaces_[found].making;
             return surfaces_[found].ready ? static_cast<u32>(found) + 1u : 0u;
         }
         if (found == surfaces_.size()) {
@@ -3928,6 +3984,11 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
             failed = true;
             return 0;
         }
+        // Made off the frame: asked again until it is (ADR 0257).
+        if (set.making) {
+            waiting = true;
+            return 0;
+        }
         const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started);
         const std::array<core::I18nArg, 2> args{
             core::I18nArg{"urn", name}, core::I18nArg{"milliseconds", std::lround(elapsed.count() * 10.0) / 10.0}};
@@ -3936,8 +3997,12 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
     }
 
     for (core::usize index = 0; index < surfaces_.size(); ++index) {
-        if (surfaces_[index].name == name)
+        if (surfaces_[index].name == name) {
+            pollSurface(device, surfaces_[index]);
+            failed = surfaces_[index].failed;
+            waiting = surfaces_[index].making;
             return surfaces_[index].ready ? static_cast<u32>(index) + 1u : 0u;
+        }
     }
     SurfaceSet& set = surfaces_.emplace_back();
     set.name = std::string(name);
@@ -3977,6 +4042,10 @@ u32 DefaultRenderer::surfaceFor(rhi::IDevice& device, std::string_view name, boo
     if (!buildSurfacePipelines(device, set)) {
         const std::array<core::I18nArg, 1> args{core::I18nArg{"name", name}};
         core::log(core::LogLevel::Warn, ENG_TR("render.warn.surface_unavailable"), args);
+        return 0;
+    }
+    if (set.making) {
+        waiting = true;
         return 0;
     }
     return static_cast<u32>(surfaces_.size());
@@ -4020,88 +4089,122 @@ bool DefaultRenderer::buildSurfacePipelines(rhi::IDevice& device, SurfaceSet& se
     const auto shader = [&](core::usize variant, bool fragment) {
         return set.shaders[variant * 2 + (fragment ? 1 : 0)];
     };
+    // **Made off the frame where the machine may** (ADR 0257): the driver's
+    // compile on a job, the lit pipelines with their twins at an eye's pass.
+    const bool offFrame = settings_.offFramePipelines;
+    std::vector<rhi::PipelineVariant> eyes;
+    if (eyeSamples_ > 1 || eyeDensity_) {
+        eyes.push_back(rhi::PipelineVariant{.samples = eyeSamples_, .densityShaded = eyeDensity_});
+        if (eyeFormat_ != rhi::TextureFormat::Undefined)
+            eyes.push_back(
+                rhi::PipelineVariant{.samples = eyeSamples_, .densityShaded = eyeDensity_, .colorFormat = eyeFormat_});
+    }
+    const auto make = [&](const rhi::GraphicsPipelineDesc& desc, bool lit) {
+        if (!offFrame)
+            return device.createGraphicsPipeline(desc);
+        return device.createGraphicsPipelineOffFrame(desc, lit ? std::span<const rhi::PipelineVariant>(eyes)
+                                                               : std::span<const rhi::PipelineVariant>{});
+    };
 
-    set.forward = device.createGraphicsPipeline({
-        .vertexShader = shader(0, false),
-        .fragmentShader = shader(0, true),
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = depthWriting,
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "surface_forward",
-    });
+    set.forward = make(
+        {
+            .vertexShader = shader(0, false),
+            .fragmentShader = shader(0, true),
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = depthWriting,
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "surface_forward",
+        },
+        true);
     const rhi::DepthStencilState depthTesting{
         .depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual};
-    set.forwardPrepassed = device.createGraphicsPipeline({
-        .vertexShader = shader(0, false),
-        .fragmentShader = shader(0, true),
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = depthTesting,
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "surface_forward_prepassed",
-    });
-    set.instanced = device.createGraphicsPipeline({
-        .vertexShader = shader(1, false),
-        .fragmentShader = shader(1, true),
-        .vertexBuffers = instancedBuffers,
-        .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = depthWriting,
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "surface_forward_instanced",
-    });
-    set.instancedPrepassed = device.createGraphicsPipeline({
-        .vertexShader = shader(1, false),
-        .fragmentShader = shader(1, true),
-        .vertexBuffers = instancedBuffers,
-        .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = depthTesting,
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "surface_forward_instanced_prepassed",
-    });
-    set.blended = device.createGraphicsPipeline({
-        .vertexShader = shader(2, false),
-        .fragmentShader = shader(2, true),
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrBlendTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "surface_forward_blended",
-    });
+    set.forwardPrepassed = make(
+        {
+            .vertexShader = shader(0, false),
+            .fragmentShader = shader(0, true),
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = depthTesting,
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "surface_forward_prepassed",
+        },
+        true);
+    set.instanced = make(
+        {
+            .vertexShader = shader(1, false),
+            .fragmentShader = shader(1, true),
+            .vertexBuffers = instancedBuffers,
+            .vertexAttributes = instancedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = depthWriting,
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "surface_forward_instanced",
+        },
+        true);
+    set.instancedPrepassed = make(
+        {
+            .vertexShader = shader(1, false),
+            .fragmentShader = shader(1, true),
+            .vertexBuffers = instancedBuffers,
+            .vertexAttributes = instancedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = depthTesting,
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "surface_forward_instanced_prepassed",
+        },
+        true);
+    set.blended = make(
+        {
+            .vertexShader = shader(2, false),
+            .fragmentShader = shader(2, true),
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrBlendTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "surface_forward_blended",
+        },
+        true);
     const auto depthPipeline = [&](core::usize variant, bool instanced, rhi::CullMode cull, rhi::TextureFormat format,
                                    const char* debugName) {
-        return device.createGraphicsPipeline({
-            .vertexShader = shader(variant, false),
-            .fragmentShader = shader(variant, true),
-            .vertexBuffers = instanced ? std::span<const rhi::VertexBufferLayout>(instancedBuffers)
-                                       : std::span<const rhi::VertexBufferLayout>(buffers),
-            .vertexAttributes = instanced ? std::span<const rhi::VertexAttribute>(instancedAttributes)
-                                          : std::span<const rhi::VertexAttribute>(attributes),
-            .rasterizer = {.cullMode = cull, .depthClip = true},
-            .depthStencil = depthWriting,
-            .colorTargets = {},
-            .depthStencilFormat = format,
-            .debugName = debugName,
-        });
+        return make(
+            {
+                .vertexShader = shader(variant, false),
+                .fragmentShader = shader(variant, true),
+                .vertexBuffers = instanced ? std::span<const rhi::VertexBufferLayout>(instancedBuffers)
+                                           : std::span<const rhi::VertexBufferLayout>(buffers),
+                .vertexAttributes = instanced ? std::span<const rhi::VertexAttribute>(instancedAttributes)
+                                              : std::span<const rhi::VertexAttribute>(attributes),
+                .rasterizer = {.cullMode = cull, .depthClip = true},
+                .depthStencil = depthWriting,
+                .colorTargets = {},
+                .depthStencilFormat = format,
+                .debugName = debugName,
+            },
+            false);
     };
     set.shadow = depthPipeline(3, false, rhi::CullMode::Front, kShadowFormat, "surface_shadow");
     set.shadowInstanced = depthPipeline(4, true, rhi::CullMode::Front, kShadowFormat, "surface_shadow_instanced");
     set.prepass = depthPipeline(3, false, rhi::CullMode::Back, kDepthFormat, "surface_prepass");
     set.prepassInstanced = depthPipeline(4, true, rhi::CullMode::Back, kDepthFormat, "surface_prepass_instanced");
 
-    set.ready = set.forward.valid() && set.instanced.valid() && set.blended.valid() && set.shadow.valid() &&
-                set.shadowInstanced.valid() && set.prepass.valid() && set.prepassInstanced.valid();
-    return set.ready;
+    const bool made = set.forward.valid() && set.instanced.valid() && set.blended.valid() && set.shadow.valid() &&
+                      set.shadowInstanced.valid() && set.prepass.valid() && set.prepassInstanced.valid();
+    // Off the frame, every handle is good and nothing is made yet: asked
+    // again until it is.
+    set.making = offFrame && made;
+    set.ready = made && !set.making;
+    set.askedAt = std::chrono::steady_clock::now();
+    set.waitSaid = false;
+    return made;
 }
 
 void DefaultRenderer::prepareSurfaces(rhi::IDevice& device, const RenderWorld& world)
@@ -4109,6 +4212,7 @@ void DefaultRenderer::prepareSurfaces(rhi::IDevice& device, const RenderWorld& w
     ENG_PROFILE_SCOPE("prepare.surfaces");
     materialSurface_.assign(world.materials.size(), 0u);
     materialError_.assign(world.materials.size(), false);
+    materialWaiting_.assign(world.materials.size(), false);
     materialBlock_.resize(world.materials.size());
     materialSurfaceTextures_.resize(world.materials.size());
 
@@ -4124,8 +4228,31 @@ void DefaultRenderer::prepareSurfaces(rhi::IDevice& device, const RenderWorld& w
         if (name.empty())
             continue;
         bool failed = false;
-        const u32 surface = surfaceFor(device, name, failed);
+        bool waiting = false;
+        const u32 surface = surfaceFor(device, name, failed, waiting);
         materialError_[index] = failed;
+        if (surface == 0 && waiting) {
+            // **Not drawn while its pipelines are made** (ADR 0257) -- in
+            // no pass, so nothing casts a shadow without a body -- for as long
+            // as the project waits; drawn with the built-in surface after
+            // that, and said once.
+            for (SurfaceSet& set : surfaces_) {
+                if (set.name != name)
+                    continue;
+                const auto waited = std::chrono::steady_clock::now() - set.askedAt;
+                if (waited < std::chrono::milliseconds(settings_.materialWaitMs)) {
+                    materialWaiting_[index] = true;
+                }
+                else if (!set.waitSaid) {
+                    set.waitSaid = true;
+                    const std::array<core::I18nArg, 2> args{
+                        core::I18nArg{"urn", name},
+                        core::I18nArg{"milliseconds", static_cast<core::i64>(settings_.materialWaitMs)}};
+                    core::log(core::LogLevel::Info, ENG_TR("render.info.surface_drawn_plain"), args);
+                }
+                break;
+            }
+        }
         if (surface == 0)
             continue;
         materialSurface_[index] = surface;
@@ -4881,6 +5008,11 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // leaves the batching the rest of the frame is built on untouched.
         const InstanceBatch* batch = mask || batchIndex == kNoBatch ? nullptr : &batches_[batchIndex];
         if (batch != nullptr && batch->firstDraw != drawIndex)
+            continue;
+        // **A material whose pipelines are being made is drawn in no pass**
+        // (ADR 0257): no shadow, no depth, no body, until they are -- a run is
+        // one material, so it waits whole.
+        if (draw.material < materialWaiting_.size() && materialWaiting_[draw.material])
             continue;
 
         // The shadow pass takes every solid draw; the forward passes take only

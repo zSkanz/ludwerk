@@ -2768,6 +2768,20 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **A surface shader first worn in play costs that frame nothing** (ADR
+    # 0257): its pipelines are made off the frame, cold. See the driver.
+    add_test(NAME surface_first_use
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/surfacefirst
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/surface-first-use
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_surface_first_use.cmake)
+    # Timed, so it runs alone (`perf`) and not on a hosted runner (`quiet`).
+    set_tests_properties(surface_first_use PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300
+        LABELS "perf;quiet")
+
     # **The report's draws by kind add up to its total**, and name the kinds
     # the scene has. See the driver.
     add_test(NAME frame_report_draws_by_kind

@@ -1,0 +1,19 @@
+# A surface shader first worn in play costs that frame nothing (ADR 0257):
+# its pipelines are made off the frame, and the parts that wear it wait
+# unseen until they are. The driver is `run_surface_first_use.cmake`.
+
+[project]
+name = "Ludwerk Surface First Use"
+id = "dev.ludwerk.surfacefirst"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Surface First Use"
+width = 320
+height = 180
+
+[graphics]
+# Long enough that a cold compile is waited for unseen, so the test reads
+# where the pipelines were made and not the fallback.
+material_wait_ms = 5000

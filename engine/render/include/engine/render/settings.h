@@ -256,6 +256,16 @@ struct GraphicsSettings
     // the picture instancing has to match pixel for pixel.
     bool instancing = true;
 
+    // **A material's pipelines made off the frame** (ADR 0257): on a machine
+    // that shows a window. Off where a run is evidence -- headless, where what
+    // a frame shows has to be the same every time -- unless asked
+    // (`--pipelines=off-frame`).
+    bool offFramePipelines = false;
+    // How long a part whose material's pipelines are being made waits unseen
+    // before it is drawn with the built-in surface, in milliseconds:
+    // `[graphics] material_wait_ms`. Nought draws it plainly at once.
+    u32 materialWaitMs = 250;
+
     // **How many taps the sun's shadow filter takes at a fragment** (ADR
     // 0172): four at Low, eight at Medium, and zero -- the filter's full
     // sixteen -- at High and above. It follows the shadow quality.
