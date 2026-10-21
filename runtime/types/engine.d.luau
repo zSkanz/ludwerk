@@ -5395,9 +5395,14 @@ declare extern type GraphicsService extends Instance with
     --- The highest frame rate, in frames per second; 0 means no limit. With `VSync` off it is the only
     --- limit. With `VSync` on, it can only limit the rate below the display's refresh rate.
     MaxFrameRate: number
-    --- The highest frame rate while the window is in the background or minimized, in frames per second;
-    --- 0 means no limit.
+    --- The highest frame rate while the window cannot be seen, in frames per second; 0 means no limit.
+    --- The window cannot be seen when it is minimized, hidden, or wholly covered where the system
+    --- reports it. In a multiplayer session it is never below 60.
     BackgroundFrameRate: number
+    --- The highest frame rate while the window can be seen but another window has the keyboard. 0, the
+    --- default, means no limit: a game in view with a chat window focused beside it is still being
+    --- played. In a multiplayer session it is never below 60.
+    UnfocusedFrameRate: number
     --- Whether an extra frame is generated between every two drawn frames, using AMD FSR 3 frame
     --- generation. Twice as many frames are shown for the same rendering cost. Each drawn frame is
     --- shown half a frame later, which adds input latency; leave it off for a game where reaction time

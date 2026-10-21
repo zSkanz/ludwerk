@@ -1086,6 +1086,8 @@ Value getGraphicsServiceMaxFrameRate(const World& world, core::InstanceId id);
 bool setGraphicsServiceMaxFrameRate(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceBackgroundFrameRate(const World& world, core::InstanceId id);
 bool setGraphicsServiceBackgroundFrameRate(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceUnfocusedFrameRate(const World& world, core::InstanceId id);
+bool setGraphicsServiceUnfocusedFrameRate(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceFrameGeneration(const World& world, core::InstanceId id);
 bool setGraphicsServiceFrameGeneration(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceBrightness(const World& world, core::InstanceId id);

@@ -121,6 +121,9 @@ void setPointerPosition(Window& window, f32 x, f32 y);
 // refreshes -- 0 when the display will not say.
 [[nodiscard]] bool windowFocused(const Window& window) noexcept;
 [[nodiscard]] bool windowMinimized(const Window& window) noexcept;
+// **Wholly covered by others**, where the system reports it (SDL's
+// occlusion; a desktop that does not report it answers false).
+[[nodiscard]] bool windowOccluded(const Window& window) noexcept;
 [[nodiscard]] f32 windowRefreshRate(const Window& window) noexcept;
 
 // How far in from each window edge it is safe to draw, in PIXELS: left, top,

@@ -400,6 +400,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         say(layer, GraphicsSetting::MaxFrameRate, static_cast<f64>(*overrides.maxFrameRate));
     if (overrides.backgroundFrameRate)
         say(layer, GraphicsSetting::BackgroundFrameRate, static_cast<f64>(*overrides.backgroundFrameRate));
+    if (overrides.unfocusedFrameRate)
+        say(layer, GraphicsSetting::UnfocusedFrameRate, static_cast<f64>(*overrides.unfocusedFrameRate));
 }
 
 // A setting's key in `project.toml`: its name in snake case, a run of capitals
@@ -615,6 +617,7 @@ FramePacing pacingOf(const scene::GraphicsModel& model, bool handheld) noexcept
     pacing.vsync = handheld || model.effective(GraphicsSetting::VSync) != 0.0;
     pacing.maxFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::MaxFrameRate));
     pacing.backgroundFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::BackgroundFrameRate));
+    pacing.unfocusedFrameRate = static_cast<core::u32>(model.effective(GraphicsSetting::UnfocusedFrameRate));
     return handheldPacing(pacing, handheld);
 }
 
@@ -667,6 +670,8 @@ FramePacing pacingWith(FramePacing file, const GraphicsOverrides& overrides) noe
         file.maxFrameRate = *overrides.maxFrameRate;
     if (overrides.backgroundFrameRate.has_value())
         file.backgroundFrameRate = *overrides.backgroundFrameRate;
+    if (overrides.unfocusedFrameRate.has_value())
+        file.unfocusedFrameRate = *overrides.unfocusedFrameRate;
     return file;
 }
 
@@ -917,6 +922,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         config.pacing.maxFrameRate = static_cast<core::u32>(*value);
     if (const std::optional<f64> value = numberIn(document, "display.background_frame_rate", 0.0, 1000.0))
         config.pacing.backgroundFrameRate = static_cast<core::u32>(*value);
+    if (const std::optional<f64> value = numberIn(document, "display.unfocused_frame_rate", 0.0, 1000.0))
+        config.pacing.unfocusedFrameRate = static_cast<core::u32>(*value);
     config.pacing = handheldPacing(config.pacing, handheld);
     // Said after, so a handheld's game can turn it off and a desk's cannot
     // turn it on by saying `true`: it is a handheld's.

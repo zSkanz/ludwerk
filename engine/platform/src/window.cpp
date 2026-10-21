@@ -405,6 +405,11 @@ bool windowMinimized(const Window& window) noexcept
     return (SDL_GetWindowFlags(window.handle()) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
 }
 
+bool windowOccluded(const Window& window) noexcept
+{
+    return (SDL_GetWindowFlags(window.handle()) & SDL_WINDOW_OCCLUDED) != 0;
+}
+
 f32 windowRefreshRate(const Window& window) noexcept
 {
     const SDL_DisplayID display = SDL_GetDisplayForWindow(window.handle());

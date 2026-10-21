@@ -756,15 +756,18 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.vsync = arg == "--vsync";
             continue;
         }
-        if (arg.starts_with("--max-frame-rate=") || arg.starts_with("--background-frame-rate=")) {
-            const bool background = arg.starts_with("--background-frame-rate=");
+        if (arg.starts_with("--max-frame-rate=") || arg.starts_with("--background-frame-rate=") ||
+            arg.starts_with("--unfocused-frame-rate=")) {
             engine::core::u64 rate = 0;
             if (!numericValue(arg.substr(arg.find('=') + 1), rate) || rate > 1000) {
                 const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
                 engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
                 return kExitUsage;
             }
-            (background ? graphics.backgroundFrameRate : graphics.maxFrameRate) = static_cast<engine::core::u32>(rate);
+            auto& which = arg.starts_with("--background-frame-rate=")  ? graphics.backgroundFrameRate
+                          : arg.starts_with("--unfocused-frame-rate=") ? graphics.unfocusedFrameRate
+                                                                       : graphics.maxFrameRate;
+            which = static_cast<engine::core::u32>(rate);
             continue;
         }
         if (arg == "--gpu-debug") {

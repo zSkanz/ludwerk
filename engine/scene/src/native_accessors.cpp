@@ -3404,6 +3404,16 @@ bool setGraphicsServiceBackgroundFrameRate(World& world, core::InstanceId, const
     return writeGraphicsNumber(world, GraphicsSetting::BackgroundFrameRate, value);
 }
 
+Value getGraphicsServiceUnfocusedFrameRate(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::UnfocusedFrameRate)};
+}
+
+bool setGraphicsServiceUnfocusedFrameRate(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::UnfocusedFrameRate, value);
+}
+
 Value getGraphicsServiceBrightness(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::Brightness)};

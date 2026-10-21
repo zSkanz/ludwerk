@@ -3233,6 +3233,12 @@
           "Transient": true
         },
         {
+          "Name": "UnfocusedFrameRate",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
           "Name": "Upscaling",
           "Type": "Enum.UpscalingMode",
           "Default": "Enum.UpscalingMode.None",

@@ -1920,8 +1920,20 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "The highest frame rate while the window is in the background or minimized, in frames per "
-                    .. "second; 0 means no limit.",
+                Doc = "The highest frame rate while the window cannot be seen, in frames per second; 0 means no "
+                    .. "limit. The window cannot be seen when it is minimized, hidden, or wholly covered where the "
+                    .. "system reports it. In a multiplayer session it is never below 60.",
+            },
+            {
+                Name = "UnfocusedFrameRate",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The highest frame rate while the window can be seen but another window has the keyboard. "
+                    .. "0, the default, means no limit: a game in view with a chat window focused beside it is "
+                    .. "still being played. In a multiplayer session it is never below 60.",
             },
             {
                 Name = "FrameGeneration",

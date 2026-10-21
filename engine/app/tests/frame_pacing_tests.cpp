@@ -40,17 +40,20 @@ TEST_CASE("in front, with the display's sync holding, a frame has no cap but the
 
 TEST_CASE("a window nobody is looking at is drawn at the background rate")
 {
-    // An editor at two thousand frames a second: unfocused or
-    // minimised, it had nothing to wait on.
+    // An editor at two thousand frames a second: minimised, it had nothing
+    // to wait on.
     FramePacing pacing;
     FrameWindowState window;
     window.refreshRate = 60.0f;
-    window.focused = false;
-    CHECK(app::frameCapFor(pacing, window) == 10u);
-    window.focused = true;
     window.minimized = true;
     window.presented = false;
     CHECK(app::frameCapFor(pacing, window) == 10u);
+    // Covered wholly, where the system says so, is out of sight too.
+    window.minimized = false;
+    window.occluded = true;
+    CHECK(app::frameCapFor(pacing, window) == 10u);
+    window.occluded = false;
+    window.minimized = true;
     // A game capped lower than the background rate keeps its own cap.
     pacing.maxFrameRate = 5;
     CHECK(app::frameCapFor(pacing, window) == 5u);
@@ -163,15 +166,39 @@ TEST_CASE("the watch says the sync is not holding only after frames it could not
     CHECK(watch.held());
 }
 
+TEST_CASE("a window in sight without the keyboard is drawn as one in front, unless the game asks")
+{
+    // **A game in view with the chat focused on the other screen** was held
+    // to the background rate, and online to sixty: the player saw sixty.
+    FramePacing pacing;
+    FrameWindowState window;
+    window.refreshRate = 240.0f;
+    window.focused = false;
+    CHECK(app::frameCapFor(pacing, window) == 0u);
+    pacing.maxFrameRate = 144;
+    CHECK(app::frameCapFor(pacing, window) == 144u);
+    // A game that asks for a rate while it has not the keyboard has it.
+    pacing.maxFrameRate = 0;
+    pacing.unfocusedFrameRate = 30;
+    CHECK(app::frameCapFor(pacing, window) == 30u);
+    // Online, never below the simulation's.
+    window.networked = true;
+    CHECK(app::frameCapFor(pacing, window) == 60u);
+    // And with the keyboard, no cap but the game's.
+    window.focused = true;
+    CHECK(app::frameCapFor(pacing, window) == 0u);
+}
+
 TEST_CASE("a window in the background in a networked session runs at the simulation's rate")
 {
     const app::FramePacing pacing{.vsync = true, .maxFrameRate = 0, .backgroundFrameRate = 10};
     app::FrameWindowState window;
-    window.focused = false;
+    window.minimized = true;
     CHECK(app::frameCapFor(pacing, window) == 10u);
     window.networked = true;
     CHECK(app::frameCapFor(pacing, window) == 60u);
-    window.minimized = true;
+    window.minimized = false;
+    window.occluded = true;
     CHECK(app::frameCapFor(pacing, window) == 60u);
     // A cap the game asked for still stands, and a higher background rate is
     // the game's to keep.

@@ -32,8 +32,13 @@ struct FramePacing
     // Frames a second at most; 0 is no cap. With `vsync` off it is the only
     // limit, and with it on it caps below the refresh.
     u32 maxFrameRate = 0;
-    // The cap while the window is unfocused or minimised; 0 is no throttle.
+    // **The cap while the window cannot be seen** -- minimised, hidden, or
+    // covered where the system says so; 0 is no throttle.
     u32 backgroundFrameRate = 10;
+    // **The cap while it can be seen and has not the keyboard**: none unless
+    // asked. A game in full view with a chat window focused on another screen
+    // is a game being played, and was held to the background rate.
+    u32 unfocusedFrameRate = 0;
     // **Paced at a rate the frames can hold** (ADR 0173, `RateGovernor`): a
     // display's refresh over one, two, three or four, stepped down while the
     // frames do not fit and up again when they do with room. A handheld's,
@@ -51,6 +56,8 @@ struct FrameWindowState
 {
     bool focused = true;
     bool minimized = false;
+    // Wholly covered, where the system says so (SDL_WINDOW_OCCLUDED).
+    bool occluded = false;
     // The display's refresh in hertz, 0 when it will not say.
     f32 refreshRate = 0.0f;
     // Whether this frame had a backbuffer to present to. A minimised or
@@ -67,8 +74,10 @@ struct FrameWindowState
 
 // **The cap for this frame**, in frames a second; 0 is none.
 //
-// In the background: the background rate, or the game's own cap if that is
-// lower. In front: the game's cap; and where `vsync` is asked for and is not
+// Out of sight -- minimised, hidden, covered: the background rate. In sight
+// without the keyboard: the unfocused rate, none unless asked. Either way the
+// game's own cap if that is lower, and never below the simulation's rate in a
+// networked session. In front: the game's cap; and where `vsync` is asked for and is not
 // holding -- no backbuffer, or a driver set to ignore it -- the display's
 // refresh (60 when it will not say), so "match the monitor" is true whatever
 // the driver does.

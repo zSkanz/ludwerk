@@ -6041,7 +6041,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 46> graphicsServiceProperties;
+    static std::array<PropertyDesc, 47> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -6621,10 +6621,23 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "The highest frame rate while the window is in the background or minimized, in frames per second; 0 means no limit.",
+            .doc = "The highest frame rate while the window cannot be seen, in frames per second; 0 means no limit. The window cannot be seen when it is minimized, hidden, or wholly covered where the system reports it. In a multiplayer session it is never below 60.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceBackgroundFrameRate,
             .set = native::setGraphicsServiceBackgroundFrameRate,
+        },
+        PropertyDesc{
+            .name = atoms.intern("UnfocusedFrameRate"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The highest frame rate while the window can be seen but another window has the keyboard. 0, the default, means no limit: a game in view with a chat window focused beside it is still being played. In a multiplayer session it is never below 60.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceUnfocusedFrameRate,
+            .set = native::setGraphicsServiceUnfocusedFrameRate,
         },
         PropertyDesc{
             .name = atoms.intern("FrameGeneration"),

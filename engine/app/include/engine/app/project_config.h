@@ -70,11 +70,12 @@ struct GraphicsOverrides
     std::optional<core::u32> renderCap;
     // `--terrain-surface=full|lean|fast|flat` (ADR 0175, ADR 0179), over the level's and the file's.
     std::optional<render::GraphicsSettings::TerrainSurface> terrainSurface;
-    // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`
-    // (ADR 0147), over `[display]`.
+    // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`,
+    // `--unfocused-frame-rate=N` (ADR 0147), over `[display]`.
     std::optional<bool> vsync;
     std::optional<core::u32> maxFrameRate;
     std::optional<core::u32> backgroundFrameRate;
+    std::optional<core::u32> unfocusedFrameRate;
     // `--force-surface=NAME`: a test instrument (ADR 0091), never a project setting.
     std::optional<std::string> forcedSurface;
     // `--debug-view=NAME`: a test instrument.
@@ -105,7 +106,9 @@ struct ProjectConfig
 
     // **How fast frames are made** (ADR 0147), `[display]`: `vsync`
     // (on unless it says otherwise), `max_frame_rate` (0, no cap) and
-    // `background_frame_rate` (10; 0, no throttle), each under its flag.
+    // `background_frame_rate` (10, while the window cannot be seen; 0, no
+    // throttle) and `unfocused_frame_rate` (0, none, while it can), each
+    // under its flag.
     FramePacing pacing;
 
     // `[project] icon` -- a project-relative path to a PNG or `.ico`. A PNG is

@@ -33,15 +33,19 @@ u32 lowerRate(u32 a, u32 b) noexcept
 
 u32 frameCapFor(const FramePacing& pacing, const FrameWindowState& window) noexcept
 {
-    if ((!window.focused || window.minimized) && pacing.backgroundFrameRate != 0) {
+    // **Out of sight is not out of focus.** A window anybody can see is drawn
+    // for them, whether or not it has the keyboard: only one that cannot be
+    // seen is held to the background rate.
+    const bool hidden = window.minimized || window.occluded;
+    const u32 behind = hidden ? pacing.backgroundFrameRate : !window.focused ? pacing.unfocusedFrameRate : 0;
+    if (behind != 0) {
         // **Never below the simulation's rate in a networked session**:
         // a host behind another window at ten frames a second sent its
         // snapshots in bursts a tenth of a second apart, longer than every
         // client's interpolation delay, and each saw the others freeze and
         // jump; a client there sent its intents six at a time.
-        const u32 background = window.networked ? std::max(pacing.backgroundFrameRate, NetworkedBackgroundRate)
-                                                : pacing.backgroundFrameRate;
-        return lowerCap(background, pacing.maxFrameRate);
+        const u32 rate = window.networked ? std::max(behind, NetworkedBackgroundRate) : behind;
+        return lowerCap(rate, pacing.maxFrameRate);
     }
 
     u32 cap = pacing.maxFrameRate;

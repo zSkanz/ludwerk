@@ -72,9 +72,15 @@ after the camera -- from a quarter to sixteen, a millisecond and a half unless
 the game says. [Indirect light](manual:rendering/indirect-light) has what it buys.
 
 **The display.** `WindowMode` (`Windowed`, `Borderless`, `Fullscreen`),
-`Resolution`, `Monitor`, `VSync`, `MaxFrameRate`, `BackgroundFrameRate` and
-`FrameGeneration` -- a frame made between every two drawn, which is
-[its own section](manual:rendering/quality).
+`Resolution`, `Monitor`, `VSync`, `MaxFrameRate`, `BackgroundFrameRate`,
+`UnfocusedFrameRate` and `FrameGeneration` -- a frame made between every two
+drawn, which is [its own section](manual:rendering/quality).
+`BackgroundFrameRate` holds a window nobody can see -- minimized, hidden, or
+wholly covered where the system reports it -- to 10 frames a second by
+default; `UnfocusedFrameRate` holds one that can be seen while another window
+has the keyboard, and holds nothing by default: a game in view with a chat
+window focused beside it is still being played. In a multiplayer session
+neither goes below 60.
 `GetMonitors()` lists the displays as `{ Name, Size, RefreshRate }`,
 `GetSupportedResolutions()` the fullscreen sizes of the one `Monitor` names,
 and `GetRefreshRate()` its rate. A handheld's window is its display and its
@@ -168,7 +174,8 @@ window_mode = "borderless"   # windowed | borderless | fullscreen
 resolution = [1920, 1080]
 vsync = true
 max_frame_rate = 0
-background_frame_rate = 10
+background_frame_rate = 10   # minimized, hidden or covered
+unfocused_frame_rate = 0     # in view, another window has the keyboard
 frame_generation = false     # a frame made between every two drawn
 ```
 

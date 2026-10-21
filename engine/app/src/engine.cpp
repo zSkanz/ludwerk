@@ -4500,6 +4500,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             FrameWindowState state;
             state.focused = platform::windowFocused(*window);
             state.minimized = platform::windowMinimized(*window);
+            state.occluded = platform::windowOccluded(*window);
             // **A headset in use is never behind** (ADR 0244): while its
             // session shows the game, the headset paces the loop, and the
             // window having the keyboard or not is nothing to the player
@@ -4510,6 +4511,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 (headset->state() == rhi::HeadsetState::Running || headset->state() == rhi::HeadsetState::Paused)) {
                 state.focused = true;
                 state.minimized = false;
+                state.occluded = false;
             }
             state.refreshRate = platform::windowRefreshRate(*window);
             // The profiler's line is this display's frame.
@@ -4528,7 +4530,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             // in front read as "it fell from 250 to 60 and came back", and
             // nothing in the log said the window had not had the keyboard.
             {
-                const bool behind = (!state.focused || state.minimized) && livePacing.backgroundFrameRate != 0;
+                const bool hidden = state.minimized || state.occluded;
+                const bool behind =
+                    hidden ? livePacing.backgroundFrameRate != 0 : !state.focused && livePacing.unfocusedFrameRate != 0;
                 if (behind != pacedBehind) {
                     pacedBehind = behind;
                     if (behind) {
