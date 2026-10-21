@@ -287,12 +287,16 @@ with half of itself not working.
 
 `Report` is one text file, written when there is something to report: what
 the game and the engine were, the crash note, and the end of that run's log.
-It is beside the log: the folder the game runs from, or -- when a player put
-the game where it may not write, a protected Desktop or Program Files -- the
-game's own folder under the user's application data
-(`%APPDATA%\<company>\<game>\logs` on Windows, beside its saves); on a phone
-`Android/data/<package>/files`, which a cable or the system's file browser
-opens with no permission asked. The engine uploads nothing and shows
+It is beside the log, which an exported game writes in the player's own folder
+for it, beside its saves -- `%APPDATA%\<company>\<game>\logs` on Windows,
+`~/Library/Application Support/<company>/<game>/logs` on macOS, under
+`$XDG_DATA_HOME` (`~/.local/share/<company>/<game>/logs`) on Linux -- and
+never in the folder the game is installed in: that folder may be one a
+player cannot write, under Program Files, and one they can is zipped and
+passed on with every log in it. The log's first line names the folder. On a
+phone it is `Android/data/<package>/files`, which a cable or the system's file
+browser opens with no permission asked. A run of the project in development
+writes its log where it is run from. The engine uploads nothing and shows
 nothing: what you do with the path is yours, and so is whether to ask.
 
 ## When the game does not open

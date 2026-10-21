@@ -2289,6 +2289,17 @@ static int hostMain(int argc, char** argv)
                                                                   : std::filesystem::current_path();
 #else
     std::filesystem::path artifactDir = std::filesystem::current_path();
+    // **A shipped game writes in its player's folder for it, never beside
+    // itself**: the folder a game is installed in may be one its player cannot
+    // write (Program Files), and one they can is zipped and passed on with
+    // every log and crash report in it. `gameHome` is set only for a game run
+    // as its package runs it; a development run keeps writing where it is run.
+    if (!gameHome.empty() && options.logFile.empty()) {
+        std::error_code error;
+        std::filesystem::create_directories(gameHome / "logs", error);
+        if (!error)
+            artifactDir = gameHome / "logs";
+    }
 #endif
     // **The run before keeps its log**: the log was opened over
     // itself, so the run that crashed lost its log to the run started to see
