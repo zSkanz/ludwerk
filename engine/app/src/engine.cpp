@@ -1774,13 +1774,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // `[window] fullscreen` (ADR 0104 §1): the game's, never the editor's.
         if (options.fullscreen && !options.editor && !options.windowPlacement.has_value())
             platform::setWindowFullscreen(*window, true);
-        // **And the player's own window** (ADR 0147 section 4), where they
-        // saved one: the mode, the display and the size they chose, before the
-        // first frame. A handheld's window is its display whatever was saved.
+        // **And the window the game asks for** (ADR 0147 section 4): the
+        // mode, the display and the size the player saved, or else the
+        // project's `[display]` -- `window_mode`, `monitor`, `resolution` --
+        // before the first frame. Only the player's was put in, and a game
+        // whose file said `borderless` on its second display opened windowed
+        // on the first. A handheld's window is its display whatever was said.
+        const auto saysWindow = [](const scene::GraphicsLayer& layer) {
+            return layer.says(scene::GraphicsSetting::WindowMode) || layer.says(scene::GraphicsSetting::Monitor) ||
+                   layer.says(scene::GraphicsSetting::ResolutionWidth);
+        };
         if (!Handheld && !options.editor && !options.windowPlacement.has_value() &&
-            (graphicsHost.player.says(scene::GraphicsSetting::WindowMode) ||
-             graphicsHost.player.says(scene::GraphicsSetting::Monitor) ||
-             graphicsHost.player.says(scene::GraphicsSetting::ResolutionWidth))) {
+            (saysWindow(graphicsHost.player) || saysWindow(graphicsHost.project))) {
             platform::setWindowMode(*window, static_cast<platform::WindowMode>(appliedWindow.mode),
                                     static_cast<usize>(appliedWindow.monitor), appliedWindow.width,
                                     appliedWindow.height);
