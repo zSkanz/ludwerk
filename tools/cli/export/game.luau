@@ -591,6 +591,71 @@ local function pruneEngine(gameDir: string)
     end
 end
 
+--- The files a module could be required from: scripts, and the scenes,
+--- stamps and settings that carry a script's source or name a module.
+local function readsAsSource(name: string): boolean
+    local lower = string.lower(name)
+    return string.match(lower, "%.luau?$") ~= nil
+        or string.match(lower, "%.json$") ~= nil
+        or string.match(lower, "%.toml$") ~= nil
+end
+
+--- **The engine's `@engine/...` modules a game requires**: every one named in
+--- its own files, and every one those modules name in turn. Found by the name
+--- written anywhere in them, so a module a comment mentions is kept too -- a
+--- module kept that is not used costs a few kilobytes, and one left out that
+--- is used is a script that stops.
+local function requiredModules(modules: string, gameDir: string): { [string]: boolean }
+    local wanted: { [string]: boolean } = {}
+    local pending: { string } = {}
+    local function walk(folder: string)
+        for _, entry in fs.listDirectory(folder) do
+            local at = projectlib.joined(folder, entry.name)
+            if entry.type == "dir" then
+                walk(at)
+            elseif entry.type == "file" and readsAsSource(entry.name) then
+                for name in string.gmatch(fs.readFileToString(at), "@engine/([%w_]+)") do
+                    if not wanted[name] then
+                        wanted[name] = true
+                        table.insert(pending, name)
+                    end
+                end
+            end
+        end
+    end
+    walk(gameDir)
+    while #pending > 0 do
+        local folder = projectlib.joined(modules, table.remove(pending) :: string)
+        if fs.exists(folder) then
+            walk(folder)
+        end
+    end
+    return wanted
+end
+
+--- **An exported game carries the `@engine/...` modules it requires, and no
+--- others**: `testing`, the conformance runner's, and `bot`, a load test's,
+--- were in every game a player installed. `content` is the engine's content
+--- as laid out in the package and `gameDir` the game composed beside it. The
+--- host gives a module left out an error that says so, should a script reach
+--- it some way no file names. Returns the modules left out, in order.
+local function pruneModules(content: string, gameDir: string): { string }
+    local modules = projectlib.joined(content, "runtime", "engine")
+    if not fs.exists(modules) or not fs.exists(gameDir) then
+        return {}
+    end
+    local wanted = requiredModules(modules, gameDir)
+    local removed: { string } = {}
+    for _, entry in fs.listDirectory(modules) do
+        if entry.type == "dir" and not wanted[entry.name] then
+            fs.removeDirectory(projectlib.joined(modules, entry.name), { recursive = true })
+            table.insert(removed, entry.name)
+        end
+    end
+    table.sort(removed)
+    return removed
+end
+
 --- **The notices the engine is distributed under**, and the game's fonts'
 --- licenses, into `to`: a game made with the engine is a copy of it, and
 --- Apache-2.0's NOTICE and the MIT, BSD and zlib terms of what it carries ask
@@ -648,6 +713,8 @@ end
 return {
     notForPlayers = notForPlayers,
     pruneEngine = pruneEngine,
+    pruneModules = pruneModules,
+    requiredModules = requiredModules,
     copyNotices = copyNotices,
     NoticeFiles = NoticeFiles,
     editorOnly = editorOnly,

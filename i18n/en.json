@@ -145,6 +145,7 @@
   "engine.overlay.look.fog_replaced": "FogStart, FogEnd and FogColor are kept but not used, because the Atmosphere under Lighting replaces the linear fog. Remove the Atmosphere and they apply again.",
   "engine.overlay.look.outranked": "Not used: an earlier enabled effect of the same kind applies instead. Lighting's effects are considered first, in order, then the camera's.",
   "engine.cli.err.script_missing": "Script not found: {path}.",
+  "engine.err.module_left_out": "{module} is not in this game: it was left out when the game was exported, because none of its scripts requires it.",
   "engine.cli.err.compile_script": "Could not compile {path} for the package: {message}",
   "engine.cli.side_warning": "{where}:{line}:{column}: warning: {message}",
   "engine.cli.sides_checked": "Checked where every script runs: {count} warning(s).",

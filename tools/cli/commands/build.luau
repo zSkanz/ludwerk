@@ -769,6 +769,7 @@ local function run(options: Options): number
         game.copyTree(engineContent, projectlib.joined(output, "content"), game.notForPlayers)
         moduleExport.deploy(integrationPayloads, output)
         composeGame(projectlib.joined(output, "game"))
+        game.pruneModules(projectlib.joined(output, "content"), projectlib.joined(output, "game"))
         -- Beside the executable, where a player looks.
         sayMissingNotices(game.copyNotices(projectlib.installRoot(), content, projectlib.joined(output, "licenses")))
         if chosen.platform == "linux" and not chosen.server then

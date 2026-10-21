@@ -180,6 +180,9 @@ here.
   in the player's folder for it, beside its saves, and not in the folder the
   game is installed in -- which may be one the player cannot write, and is
   what a player zips and passes on. The log's first line names the folder.
+- An exported game carries the engine's `@engine/...` modules its files
+  require, and those they require, and no others: `@engine/testing` and
+  `@engine/bot` were in every game. A `require` of one left out says so.
 - A server whose frame ran so long it dropped ticks -- a scene loading -- takes
   every player's input up again from where they are, and no longer reports
   each moving player's input as a burst of theirs. A button pressed in the

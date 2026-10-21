@@ -941,9 +941,21 @@ std::optional<core::EngineError> WorldHost::restartRuntime()
 std::optional<core::EngineError> WorldHost::registerRuntimeModules()
 {
     const std::filesystem::path base = platform::paths().contentDir / "runtime" / "engine";
+    // **An exported game carries the modules its scripts require, and no
+    // others** (`ludwerk build`): a module it left out is one nothing in the
+    // game asks for, and a `require` of it says so rather than the boot
+    // failing. Anywhere else a missing module is a broken installation.
+    const std::string_view profile = ENG_PROFILE_NAME;
+    const bool exported = profile == "player" || profile == "shipping";
     for (const std::string_view name : RuntimeModules) {
         const std::filesystem::path path = base / std::filesystem::path(name) / "init.luau";
         std::string source;
+        if (exported && !std::filesystem::exists(base / std::filesystem::path(name))) {
+            const std::string module = std::string("@engine/").append(name);
+            const std::string said = core::tr(ENG_TR("engine.err.module_left_out"), {{"module", module}});
+            script::registerModule(m_runtime->state(), module, "error([==[" + said + "]==], 2)");
+            continue;
+        }
         if (!readFile(path, source)) {
             const std::array<I18nArg, 1> args{I18nArg{"path", path.string()}};
             return core::makeError(ENG_TR("engine.cli.err.script_missing"), args);

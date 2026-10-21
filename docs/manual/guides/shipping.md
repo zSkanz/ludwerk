@@ -436,6 +436,13 @@ with under `keys/`, the logs and run files of every run from the folder --
 they hold your paths, your GPU and the command lines -- and any folder a tool
 of yours writes there.
 
+**The engine's modules go in when your scripts require them.** Of the
+`@engine/...` modules, a package carries the ones a file of your game names
+-- a script, a scene, a stamp -- and the ones those name in turn. One no file
+names is left out: `@engine/testing`, which the conformance specs use, and
+`@engine/bot`, a load test's bot, are not in a game that does not use them. A
+`require` of a module left out says so.
+
 **The notices go with it.** A game made with the engine is a copy of the
 engine, and the licenses it is under ask that a copy carry their notices: a
 Windows or Linux export has a `licenses/` folder beside the executable, and

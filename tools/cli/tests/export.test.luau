@@ -469,6 +469,25 @@ test.suite("export", function(suite)
         fs.removeDirectory(folder, { recursive = true })
     end)
 
+    suite:case("an export carries the engine's modules its scripts require, and those they require", function()
+        -- `testing` and `bot` were in every game a player installed.
+        local folder = scratch("modules")
+        local modules = `{folder}/content/runtime/engine`
+        for _, name in { "bot", "camera", "chat", "guild", "settings", "testing" } do
+            write(`{modules}/{name}/init.luau`, `return "{name}"`)
+        end
+        -- `chat` requires `guild`, which requires nothing more.
+        write(`{modules}/chat/init.luau`, `local guild = require("@engine/guild")\nreturn guild`)
+        write(`{folder}/game/src/client/init.luau`, `local camera = require("@engine/camera")`)
+        write(`{folder}/game/scenes/main.scene.json`, `\{"source": "require(\\"@engine/chat\\")"\}`)
+        -- Not source: a picture that happens to hold the bytes.
+        write(`{folder}/game/content/sign.png`, "@engine/settings")
+        local removed = game.pruneModules(`{folder}/content`, `{folder}/game`)
+        assert.eq(table.concat(removed, ","), "bot,settings,testing")
+        assert.eq(table.concat(listed(modules), ","), "camera/init.luau,chat/init.luau,guild/init.luau")
+        fs.removeDirectory(folder, { recursive = true })
+    end)
+
     suite:case("an export carries the engine's notices, byte for byte, and its fonts' licenses", function()
         local folder = scratch("notices")
         local install = `{folder}/engine`
