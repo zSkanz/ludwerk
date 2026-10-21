@@ -176,6 +176,12 @@ here.
 
 ### Fixed
 
+- An exported game's `licenses/` carries the notices of what its player is
+  built from: a `THIRD_PARTY_NOTICES.md` its build writes from what the
+  player links and the files it carries, and each project's license text. It
+  carried the engine's whole list, the editor's libraries and the tests'
+  included, and the licenses of the tools an installation runs -- none of
+  which is in a game -- and no text of what the player does link.
 - An exported game writes its log, the record of its run and a crash report
   in the player's folder for it, beside its saves, and not in the folder the
   game is installed in -- which may be one the player cannot write, and is

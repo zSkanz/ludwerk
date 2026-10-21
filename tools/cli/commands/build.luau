@@ -584,7 +584,12 @@ local function run(options: Options): number
             })
             -- In the package, beside the game: `assets/licenses/`.
             sayMissingNotices(
-                game.copyNotices(projectlib.installRoot(), content, projectlib.joined(stage, "assets", "licenses"))
+                game.copyNotices(
+                    projectlib.installRoot(),
+                    content,
+                    projectlib.joined(stage, "assets", "licenses"),
+                    engineContent
+                )
             )
             return nil
         end)
@@ -771,7 +776,9 @@ local function run(options: Options): number
         composeGame(projectlib.joined(output, "game"))
         game.pruneModules(projectlib.joined(output, "content"), projectlib.joined(output, "game"))
         -- Beside the executable, where a player looks.
-        sayMissingNotices(game.copyNotices(projectlib.installRoot(), content, projectlib.joined(output, "licenses")))
+        sayMissingNotices(
+            game.copyNotices(projectlib.installRoot(), content, projectlib.joined(output, "licenses"), engineContent)
+        )
         if chosen.platform == "linux" and not chosen.server then
             fs.writeStringToFile(
                 projectlib.joined(output, `{executableName}.desktop`),

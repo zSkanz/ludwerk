@@ -446,8 +446,11 @@ names is left out: `@engine/testing`, which the conformance specs use, and
 **The notices go with it.** A game made with the engine is a copy of the
 engine, and the licenses it is under ask that a copy carry their notices: a
 Windows or Linux export has a `licenses/` folder beside the executable, and
-an Android package `assets/licenses/`, with the engine's `LICENSE`, `NOTICE`
-and `THIRD_PARTY_NOTICES.md` and the licenses of the tools it carries. A font
+an Android package `assets/licenses/`, with the engine's `LICENSE` and
+`NOTICE`, a `THIRD_PARTY_NOTICES.md` of the projects the player is built
+from -- found by its build from what it links and the files it carries, not
+the engine's tools and not the editor's libraries -- and the license text of
+each, in a folder of its name. A font
 in your content with an `OFL*.txt` beside it -- the Open Font License asks
 that the font ship with it -- has that file in `licenses/fonts/`. Leave them
 where they are, and say in your game's credits or about screen that it is

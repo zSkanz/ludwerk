@@ -566,6 +566,8 @@ local function notForPlayers(relative: string): boolean
         or relative == "icons"
         or relative == "runtime/conformance"
         or relative == "runtime/types"
+        -- Beside the game instead (`copyNotices`).
+        or relative == "licenses"
 end
 
 --- **What a boot of the package left in its `.engine/`, gone again**: the
@@ -656,36 +658,37 @@ local function pruneModules(content: string, gameDir: string): { string }
     return removed
 end
 
---- **The notices the engine is distributed under**, and the game's fonts'
---- licenses, into `to`: a game made with the engine is a copy of it, and
---- Apache-2.0's NOTICE and the MIT, BSD and zlib terms of what it carries ask
---- that a copy carry them. The engine's `LICENSE`, `NOTICE` and
---- `THIRD_PARTY_NOTICES.md` and its `licenses/` folder, from the installation
---- (`root`); and every `OFL*.txt` under the game's content, into `fonts/` --
---- a font under the Open Font License ships with it. Returns the engine
---- notices that were not found, so a build can say it shipped without them.
+--- **The notices the engine is distributed under, and those of what the
+--- player is built from**, and the game's fonts' licenses, into `to`: a game
+--- made with the engine is a copy of it, and Apache-2.0's NOTICE and the MIT,
+--- BSD and zlib terms of what it carries ask that a copy carry them. The
+--- engine's `LICENSE` and `NOTICE` from the installation (`root`); the player's
+--- own `THIRD_PARTY_NOTICES.md` and the license texts of each project in it,
+--- which its build wrote into `licenses/` of its content (`playerContent`,
+--- `cmake/engine_notices.cmake`); and every `OFL*.txt` under the game's
+--- content, into `fonts/` -- a font under the Open Font License ships with
+--- it. Not the installation's `licenses/`: those are the tools it runs -- the
+--- shader compiler, Lute, luau-lsp -- and none of them is in a game. A player
+--- built before its notices were has the installation's whole list instead.
+--- Returns the notices that were not found, so a build can say it shipped
+--- without them.
 local NoticeFiles = { "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md" }
 
-local function copyNotices(root: string?, content: string?, to: string): { string }
+local function copyNotices(root: string?, content: string?, to: string, playerContent: string?): { string }
     fs.createDirectory(to, { makeParents = true })
+    local own = if playerContent ~= nil then projectlib.joined(playerContent, "licenses") else nil
+    if own ~= nil and fs.exists(projectlib.joined(own, "THIRD_PARTY_NOTICES.md")) then
+        copyTree(own, to)
+    end
     local missing: { string } = {}
     for _, name in NoticeFiles do
         local from = if root ~= nil then projectlib.joined(root, name) else nil
-        if from ~= nil and fs.exists(from) then
+        if fs.exists(projectlib.joined(to, name)) then
+            continue
+        elseif from ~= nil and fs.exists(from) then
             fs.copy(from, projectlib.joined(to, name))
         else
             table.insert(missing, name)
-        end
-    end
-    -- An installation's `licenses/`, or this repository's own when the CLI
-    -- runs from its source.
-    if root ~= nil then
-        local folder = projectlib.joined(root, "licenses")
-        if not fs.exists(folder) then
-            folder = projectlib.joined(root, "third_party", "licenses")
-        end
-        if fs.exists(folder) then
-            copyTree(folder, to)
         end
     end
     if content ~= nil and fs.exists(content) then

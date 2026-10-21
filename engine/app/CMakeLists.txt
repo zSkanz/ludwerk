@@ -298,6 +298,17 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/branding/icon/icon.ico")
 endif()
 
+# **The notices of what this host is built from**, beside it as content, where
+# every player carries them and `ludwerk build` puts them beside a game: the
+# projects its link graph names, found once every target exists, and those
+# whose files are content rather than code -- the shaders include SMAA's and
+# FidelityFX's sources, and the fonts are Inter and ImGui's Cousine.
+include(${ENG_CMAKE_DIR}/engine_notices.cmake)
+engine_notice_uses(smaa fidelityfx_fsr1 fidelityfx_fsr2 fidelityfx_sdk inter imgui)
+# A deferred call reads its variables when it runs, in the top directory;
+# the folder is written into the call now, while this is this directory.
+cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL engine_write_notices engine_host [[${CMAKE_CURRENT_BINARY_DIR}/content/licenses]])")
+
 # The catalog ships beside the binary as content, because the host resolves it
 # relative to its own location rather than the source tree -- the same shape a
 # packaged build uses (architecture.md §8).
@@ -629,6 +640,12 @@ if(ENG_BUILD_TESTS)
     set_tests_properties(editor_shell PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 120)
+
+    # The notices the build wrote beside the host name what it links, each
+    # with its license text, and not the tests' framework.
+    add_test(NAME host_notices COMMAND ${CMAKE_COMMAND}
+        "-DNOTICES=${CMAKE_CURRENT_BINARY_DIR}/content/licenses"
+        -P "${CMAKE_SOURCE_DIR}/tests/notices/check_notices.cmake")
 
     # Gate: --version must report the pin and the ABI constants (ADR 0031).
     # Asserted on the real binary rather than in-process, so it also proves the

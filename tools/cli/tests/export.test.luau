@@ -502,13 +502,31 @@ test.suite("export", function(suite)
         local to = `{folder}/out/licenses`
         local missing = game.copyNotices(install, content, to)
         assert.eq(#missing, 0)
+        -- A player built before it carried notices of its own: the
+        -- installation's list, and still none of its tools' licenses.
         assert.eq(
             table.concat(listed(to), ","),
-            "LICENSE,NOTICE,THIRD_PARTY_NOTICES.md,fonts/fonts-Body-OFL-Body.txt,fonts/fonts-Display-OFL.txt,lute.txt"
+            "LICENSE,NOTICE,THIRD_PARTY_NOTICES.md,fonts/fonts-Body-OFL-Body.txt,fonts/fonts-Display-OFL.txt"
         )
         for _, name in game.NoticeFiles do
             assert.eq(fs.readFileToString(`{to}/{name}`), fs.readFileToString(`{install}/{name}`))
         end
+        -- **The player's own**: what its build found it is made of, and the
+        -- license texts of each, in place of the installation's whole list.
+        local player = `{folder}/player/content`
+        write(`{player}/licenses/THIRD_PARTY_NOTICES.md`, "what the player links")
+        write(`{player}/licenses/luau/LICENSE.txt`, "luau's")
+        write(`{player}/licenses/sdl3/LICENSE.txt`, "sdl's")
+        local beside = `{folder}/out/beside`
+        assert.eq(#game.copyNotices(install, nil, beside, player), 0)
+        assert.eq(
+            table.concat(listed(beside), ","),
+            "LICENSE,NOTICE,THIRD_PARTY_NOTICES.md,luau/LICENSE.txt,sdl3/LICENSE.txt"
+        )
+        assert.eq(fs.readFileToString(`{beside}/THIRD_PARTY_NOTICES.md`), "what the player links")
+        assert.eq(fs.readFileToString(`{beside}/LICENSE`), "the license")
+        -- And the content copied beside the game does not carry them again.
+        assert.eq(game.notForPlayers("licenses"), true)
         -- The engine this test runs from has them, as an installation does.
         local here = `{folder}/here`
         assert.eq(#game.copyNotices(projectlib.installRoot(), nil, here), 0)
