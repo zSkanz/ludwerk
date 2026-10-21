@@ -6675,8 +6675,11 @@ declare extern type DebugService extends Instance with
     --- requested.
     function GetProfileReport(self): any
     --- Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`,
-    --- `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws` and `LuaMemoryKB`, and
-    --- `SetCustomStat` defines more. Raises an error for a name that is not a statistic.
+    --- `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws`, `LuaMemoryKB` and
+    --- `ProcessMemoryMB`, and `SetCustomStat` defines more. Raises an error for a name that is not a
+    --- statistic. `ProcessMemoryMB` is the memory the whole game's process holds at the moment it is
+    --- asked, in megabytes, as the operating system counts it: the engine, the graphics driver and the
+    --- scripts together. 0 where the system does not say.
     function GetStat(self, name: string): number
     --- Defines or updates a statistic of the game's own under a name. It can then be read with
     --- `GetStat` and is shown in the Stats panel. Raises an error if the value is not a number.

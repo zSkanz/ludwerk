@@ -7,10 +7,11 @@
 # what a scene held each time it changed scene: this field, eleven megabytes a
 # load, three hundred over the run.
 #
-# The frame report's memory line says what the process holds. The last one
-# while on the sixth load and the last one after the thirtieth are within
-# `ENG_RELOAD_GROWTH_MIB` of each other: what a load leaves is let go by the
-# next, and the pools are closed up behind it.
+# What the process holds the game reads at each load (`DebugService:GetStat(
+# "ProcessMemoryMB")`), and the one at the sixth load and the one half a
+# second after the thirtieth are within `ENG_RELOAD_GROWTH_MIB` of each other:
+# what a load leaves is let go by the next, and the pools are closed up behind
+# it.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DSCRIPT=<project> -DOUTPUT=<dir> -P run_scene_reload_memory.cmake
@@ -32,7 +33,7 @@ file(COPY "${SCRIPT}/" DESTINATION "${OUTPUT}/game"
     PATTERN "engine.log" EXCLUDE
     PATTERN "engine.previous.log" EXCLUDE)
 execute_process(
-    COMMAND "${HOST}" "${OUTPUT}/game" --headless --frames=1400 --exit --pace=60 --frame-report=1
+    COMMAND "${HOST}" "${OUTPUT}/game" --headless --frames=1300 --exit --pace=60
             --width=320 --height=180
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
@@ -52,37 +53,20 @@ if(NOT errorAt EQUAL -1 OR NOT warnAt EQUAL -1)
     message(FATAL_ERROR "scene reload: the run warned or failed")
 endif()
 
-# What the process held at the end of a stretch: the last memory line in it.
-function(held_between from to into)
-    string(FIND "${output}" "${from}" begin)
-    if(begin EQUAL -1)
+# What the process held as the game said it: the game asks the system at
+# each load and prints it on the line that names the load, so the reading is
+# taken at the same moments every run, however long a frame takes.
+function(held_at mark into)
+    string(REGEX MATCH "${mark} ([0-9]+)(\\.[0-9]+)? MiB" found "${output}")
+    if(found STREQUAL "")
         message("${output}")
-        message(FATAL_ERROR "scene reload: the game never said \"${from}\"")
+        message(FATAL_ERROR "scene reload: the game never said \"${mark}\" with what it held")
     endif()
-    if(to STREQUAL "")
-        string(LENGTH "${output}" end)
-    else()
-        string(FIND "${output}" "${to}" end)
-    endif()
-    if(end EQUAL -1 OR NOT end GREATER begin)
-        message("${output}")
-        message(FATAL_ERROR "scene reload: the game did not get past \"${from}\"")
-    endif()
-    math(EXPR length "${end} - ${begin}")
-    string(SUBSTRING "${output}" ${begin} ${length} stretch)
-    string(REGEX MATCHALL "process uses [0-9.]+ MiB" lines "${stretch}")
-    list(LENGTH lines count)
-    if(count EQUAL 0)
-        message("${output}")
-        message(FATAL_ERROR "scene reload: no memory line after \"${from}\"")
-    endif()
-    list(GET lines -1 last)
-    string(REGEX MATCH "([0-9]+)(\\.[0-9]+)? MiB" found "${last}")
     set(${into} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
 
-held_between("SCENE field 6" "SCENE field 7" early)
-held_between("SCENE field 30" "" late)
+held_at("SCENE field 6" early)
+held_at("SCENE field end" late)
 math(EXPR grown "${late} - ${early}")
 message("scene reload: ${early} MiB at the sixth load, ${late} MiB after the thirtieth (${grown} MiB)")
 if(grown GREATER ENG_RELOAD_GROWTH_MIB)

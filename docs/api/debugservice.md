@@ -45,7 +45,9 @@ A scope's times include its child scopes and any waiting, and they are CPU times
 
 ### `GetStat(name: string): number`
 
-Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`, `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws` and `LuaMemoryKB`, and `SetCustomStat` defines more. Raises an error for a name that is not a statistic.
+Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`, `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws`, `LuaMemoryKB` and `ProcessMemoryMB`, and `SetCustomStat` defines more. Raises an error for a name that is not a statistic.
+
+`ProcessMemoryMB` is the memory the whole game's process holds at the moment it is asked, in megabytes, as the operating system counts it: the engine, the graphics driver and the scripts together. 0 where the system does not say.
 
 ### `HidePanel(name: string)`
 

@@ -8828,7 +8828,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .name = atoms.intern("GetStat"),
             .yields = false,
             .threadSafety = ThreadSafety::ReadParallel,
-            .doc = "Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`, `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws` and `LuaMemoryKB`, and `SetCustomStat` defines more. Raises an error for a name that is not a statistic.",
+            .doc = "Returns the value of a named statistic. The built-in statistics include `FPS`, `FrameTimeMs`, `PhysicsBodies`, `InstanceCount`, `DrawCalls`, `MeshLodDraws`, `LuaMemoryKB` and `ProcessMemoryMB`, and `SetCustomStat` defines more. Raises an error for a name that is not a statistic.\012\012`ProcessMemoryMB` is the memory the whole game's process holds at the moment it is asked, in megabytes, as the operating system counts it: the engine, the graphics driver and the scripts together. 0 where the system does not say.",
         },
         MethodDesc{
             .name = atoms.intern("SetCustomStat"),

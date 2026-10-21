@@ -23,6 +23,7 @@
 #include "engine/input/input.h"
 #include "engine/net/local_address.h"
 #include "engine/platform/event.h"
+#include "engine/platform/platform.h"
 #include "engine/platform/window.h"
 #include "engine/scene/dormancy.h"
 #include "engine/scene/phases.h"
@@ -477,6 +478,13 @@ int debugServiceGetStat(lua_State* L)
     }
     if (name == "LuaMemoryKB") {
         lua_pushnumber(L, frame.luaMemoryKb);
+        return 1;
+    }
+    // The whole process, asked of the system now rather than copied once a
+    // frame: what a game, or a test of the engine's, reads at the moment it
+    // cares about.
+    if (name == "ProcessMemoryMB") {
+        lua_pushnumber(L, static_cast<f64>(platform::residentBytes()) / (1024.0 * 1024.0));
         return 1;
     }
     if (name == "AudioUnderruns") {
