@@ -419,6 +419,11 @@ f32 windowRefreshRate(const Window& window) noexcept
     return mode != nullptr && mode->refresh_rate > 0.0f ? mode->refresh_rate : 0.0f;
 }
 
+u32 windowDisplayId(const Window& window) noexcept
+{
+    return static_cast<u32>(SDL_GetDisplayForWindow(window.handle()));
+}
+
 WindowInsets windowSafeAreaInsets(const Window& window) noexcept
 {
     WindowInsets insets;

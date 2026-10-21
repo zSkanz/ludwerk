@@ -195,6 +195,7 @@
   "engine.frame.info.occlusion": "Occlusion: {rays} rays a frame, {mean} ms a frame, worst {worst} ms; {muffled} sounds muffled.",
   "engine.frame.info.report": "{seconds} s: {fps} frames per second, median {median} ms, p95 {p95} ms, worst {worst} ms; {draws} draws, {triangles} triangles; the world at {width} by {height} ({quality}).",
   "engine.frame.info.background_pace": "The window is out of sight or without the keyboard: frames are limited to {rate} per second until it is in front again ([display] background_frame_rate while it cannot be seen, unfocused_frame_rate while it can; 0 means no limit).",
+  "engine.frame.info.swapchain_display": "The window moved to another display, so its swapchain was made again there, to present at that display's refresh rate.",
   "engine.frame.info.foreground_pace": "The window is in front again: frames run at the game's own rate.",
   "engine.frame.info.paced": "Frames are paced at {rate} per second on a display that refreshes {refresh} times per second. That is the highest rate under the game's limit; a lower rate is used only when frames keep missing it.",
   "engine.frame.info.paced_down": "Frames are paced at {rate} per second, down from {from}: {late} of {frames} frames were late in the last second, and more than three in ten in the second before. The CPU's part of a frame was {cpu} ms.",

@@ -760,6 +760,33 @@ public:
         return name != nullptr ? std::string_view{name} : std::string_view{};
     }
 
+    bool remakeSwapchain(platform::Window& window) override
+    {
+        if (lost_)
+            return false;
+        SDL_Window* native = platform::nativeWindow(window);
+        const auto claimed = std::find_if(windows_.begin(), windows_.end(),
+                                          [&](const ClaimedWindow& entry) { return entry.window == native; });
+        if (claimed == windows_.end())
+            return false;
+        // Released and claimed again rather than given new parameters: SDL
+        // makes a new swapchain only when a parameter changes, and Vulkan's
+        // surface, made with the window's claim, is what holds the display.
+        if (!SDL_WaitForGPUIdle(device_))
+            return false;
+        SDL_ReleaseWindowFromGPUDevice(device_, native);
+        if (!SDL_ClaimWindowForGPUDevice(device_, native)) {
+            windows_.erase(claimed);
+            return false;
+        }
+        const SDL_GPUPresentMode mode = claimed->presentMode == PresentMode::Immediate ? SDL_GPU_PRESENTMODE_IMMEDIATE
+                                        : claimed->presentMode == PresentMode::Mailbox ? SDL_GPU_PRESENTMODE_MAILBOX
+                                                                                       : SDL_GPU_PRESENTMODE_VSYNC;
+        if (mode != SDL_GPU_PRESENTMODE_VSYNC)
+            (void)SDL_SetGPUSwapchainParameters(device_, native, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+        return true;
+    }
+
     void releaseWindow(platform::Window& window) override
     {
         if (lost_)

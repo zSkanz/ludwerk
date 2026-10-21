@@ -279,6 +279,16 @@ public:
         (void)on;
         return false;
     }
+    // **A claimed window's swapchain made again**, presenting as it did:
+    // what a window moved to another display needs. A swapchain is bound to
+    // the display it was made on -- a window opened on a 100 Hz display and
+    // dragged to a 240 Hz one went on presenting at 100, through Direct3D 12
+    // and Vulkan alike. Waits for the device. Answers whether it was made.
+    virtual bool remakeSwapchain(platform::Window& window)
+    {
+        (void)window;
+        return false;
+    }
     // How a claimed window presents after the last `setVSync`, and which
     // driver the device runs on ("vulkan", "direct3d12", "metal") -- the two
     // facts a report of a frame rate held to the display is answered from.

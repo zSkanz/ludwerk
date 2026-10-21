@@ -453,6 +453,64 @@ TEST_CASE("a timed frame's passes to a window are one entry, after every pass be
     device.releaseWindow(*window);
 }
 
+TEST_CASE("a window's swapchain made again presents as it did, and goes on presenting")
+{
+    // What a window moved to another display is given: its swapchain released
+    // and made again, with the present mode it had. One display is enough to
+    // say the window still presents, and presents the way it was asked.
+    if (const auto initError = engine::platform::init({.headless = false}); initError.has_value()) {
+        MESSAGE("no display on this machine, so no window to draw to: " << initError->detail);
+        return;
+    }
+    struct PlatformScope
+    {
+        ~PlatformScope() { engine::platform::shutdown(); }
+    } platformScope;
+
+    engine::core::EngineError error;
+    const auto window = engine::platform::createWindow(
+        {.titleKey = ENG_TR("platform.window.title"), .width = 64, .height = 64, .visible = false}, &error);
+    if (window == nullptr)
+        return;
+    const DeviceResult made = createSdlGpuDevice({.backend = BackendId::SdlGpu, .debug = true}, &error);
+    if (made == nullptr || !made->claimWindow(*window))
+        return;
+    IDevice& device = *made;
+
+    const auto frame = [&] {
+        ICmdList* cmd = device.beginFrame();
+        REQUIRE(cmd != nullptr);
+        const Swapchain screen = device.acquireSwapchain(*window);
+        if (screen.texture.valid()) {
+            const std::array<ColorAttachment, 1> colors{ColorAttachment{
+                .texture = screen.texture,
+                .loadOp = LoadOp::Clear,
+                .storeOp = StoreOp::Store,
+                .clearColor = {0.0f, 1.0f, 0.0f, 1.0f},
+            }};
+            cmd->beginRenderPass({.colorAttachments = colors, .debugName = "screen"});
+            cmd->endRenderPass();
+        }
+        device.submitAndPresent();
+    };
+
+    const bool unsynced = device.setVSync(*window, false);
+    const PresentMode asked = device.presentMode(*window);
+    frame();
+    REQUIRE(device.remakeSwapchain(*window));
+    CHECK(device.presentMode(*window) == asked);
+    if (unsynced)
+        CHECK(asked != PresentMode::Vsync);
+    for (int index = 0; index < 3; ++index)
+        frame();
+    CHECK_FALSE(device.lost());
+
+    device.waitIdle();
+    device.releaseWindow(*window);
+    // A window that is not claimed has no swapchain to make again.
+    CHECK_FALSE(device.remakeSwapchain(*window));
+}
+
 TEST_CASE("resources round-trip through the device")
 {
     GpuFixture gpu;

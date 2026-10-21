@@ -125,6 +125,10 @@ void setPointerPosition(Window& window, f32 x, f32 y);
 // occlusion; a desktop that does not report it answers false).
 [[nodiscard]] bool windowOccluded(const Window& window) noexcept;
 [[nodiscard]] f32 windowRefreshRate(const Window& window) noexcept;
+// **Which display the window is on**, as the system names it: a number that
+// changes when the window is moved to another display, and is 0 when the
+// system will not say. Cheap enough to ask every frame.
+[[nodiscard]] u32 windowDisplayId(const Window& window) noexcept;
 
 // How far in from each window edge it is safe to draw, in PIXELS: left, top,
 // right, bottom. Zero on a desktop window; a notch, a rounded corner or a

@@ -2283,6 +2283,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     core::u32 saidCeiling = ~0u;
     bool framePresented = true;
     core::u64 pacedFrameNs = 0;
+    // The display the window's swapchain was made for (`remakeSwapchain`).
+    core::u32 swapchainDisplay = 0;
     const core::u32 baseCatchUpTicks = FrameTiming{}.maxCatchUpTicks;
     // When the last snapshot went out, on the wall clock: a frame catching up
     // sends the next only an interval after it (ADR 0228 §7). An interval
@@ -4519,6 +4521,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // window's refresh -- held a Quest's frames to forty-five a second
         // against its seventy-two, and to ten when its window lost focus;
         // the compositor dropped a thousand frames a minute.
+        // **A window moved to another display presents at that display's
+        // rate**: its swapchain is made again there. One made on a 100 Hz
+        // display and dragged to a 240 Hz one went on at a hundred frames a
+        // second, its pacing reading 240 all the while.
+        if (window != nullptr && device != nullptr) {
+            const core::u32 display = platform::windowDisplayId(*window);
+            if (display != 0 && display != swapchainDisplay) {
+                if (swapchainDisplay != 0 && device->remakeSwapchain(*window))
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.swapchain_display"));
+                swapchainDisplay = display;
+            }
+        }
         const bool headsetPaces = headset != nullptr && headset->state() != rhi::HeadsetState::Ended;
         if (headsetPaces)
             heldRate = 0;
