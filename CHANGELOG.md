@@ -176,6 +176,11 @@ here.
 
 ### Fixed
 
+- Plurals follow CLDR for Portugal's Portuguese, where 0 takes `other`
+  (`pt` and `pt-BR` put it with `one`); for Serbian, Croatian and Bosnian,
+  which have no `many`; for a whole million in French, Portuguese, Spanish,
+  Italian and Catalan, which is `many`; and for Slovenian, Icelandic,
+  Macedonian, Hebrew, Irish and Welsh, which had English's rule.
 - An exported game's `licenses/` carries the notices of what its player is
   built from: a `THIRD_PARTY_NOTICES.md` its build writes from what the
   player links and the files it carries, and each project's license text. It

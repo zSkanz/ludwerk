@@ -35,7 +35,12 @@ std::string entryDiagnostic(std::string_view sourceName, std::string_view key, s
 // The categories are CLDR's own words -- `zero`, `one`, `two`, `few`, `many`,
 // `other` -- because those are the keys a translator writes in the catalog and
 // a second vocabulary would be a second thing to get wrong.
-std::string_view pluralCategory(std::string_view language, i64 count) noexcept
+//
+// **The region, where CLDR gives it a rule of its own**: Portugal's
+// Portuguese is `one` at 1 alone, where Brazil's and the language's own -- `pt`
+// -- put 0 with it. It is the one region of a language this subset names that
+// CLDR splits.
+std::string_view pluralCategory(std::string_view language, std::string_view region, i64 count) noexcept
 {
     // Negative counts pluralise as their magnitude in every rule CLDR states,
     // and "-1 item" reading as "-1 items" is the kind of thing nobody notices
@@ -43,6 +48,13 @@ std::string_view pluralCategory(std::string_view language, i64 count) noexcept
     const i64 n = count < 0 ? -count : count;
     const i64 mod10 = n % 10;
     const i64 mod100 = n % 100;
+    // `many` for a whole million, and every multiple of one, in the Romance
+    // languages CLDR gives it to: "1 000 000 de jours", "un millón de días". A
+    // catalog without `many` falls back to `other`, which is what they were.
+    const bool millions = n != 0 && n % 1000000 == 0;
+
+    if (language == "pt" && region == "pt")
+        return n == 1 ? "one" : millions ? "many" : "other";
 
     // No plural at all: one form for every count. Getting this wrong is the most
     // visible of the lot, because the translator has ONE string and the engine
@@ -54,20 +66,87 @@ std::string_view pluralCategory(std::string_view language, i64 count) noexcept
 
     // One form for 0 and 1. French, Brazilian Portuguese, Hindi -- "0 jour"
     // rather than "0 jours".
-    for (const std::string_view zeroIsOne : {"fr", "pt", "hi", "bn", "fa", "am", "gu", "kn", "mr", "zu"}) {
+    if (language == "fr" || language == "pt")
+        return n == 0 || n == 1 ? "one" : millions ? "many" : "other";
+    for (const std::string_view zeroIsOne : {"hi", "bn", "fa", "am", "gu", "kn", "mr", "zu"}) {
         if (language == zeroIsOne)
             return n == 0 || n == 1 ? "one" : "other";
     }
+    // English's shape, with the Romance `many`.
+    if (language == "es" || language == "it" || language == "ca")
+        return n == 1 ? "one" : millions ? "many" : "other";
 
-    // Russian, Ukrainian, Serbo-Croatian: one / few / many, by the last digit
-    // and the last two.
-    for (const std::string_view slavic : {"ru", "uk", "be", "sr", "hr", "bs"}) {
+    // Russian, Ukrainian, Belarusian: one / few / many, by the last digit and
+    // the last two.
+    for (const std::string_view slavic : {"ru", "uk", "be"}) {
         if (language == slavic) {
             if (mod10 == 1 && mod100 != 11)
                 return "one";
             if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
                 return "few";
             return "many";
+        }
+    }
+    // Serbian, Croatian, Bosnian: the same one and few, and the rest is
+    // `other` -- CLDR keeps `many` for none of them.
+    for (const std::string_view southSlavic : {"sr", "hr", "bs"}) {
+        if (language == southSlavic) {
+            if (mod10 == 1 && mod100 != 11)
+                return "one";
+            if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+                return "few";
+            return "other";
+        }
+    }
+    // Slovenian, by the last two digits: 1, 2, 3 and 4, and the rest.
+    if (language == "sl") {
+        if (mod100 == 1)
+            return "one";
+        if (mod100 == 2)
+            return "two";
+        if (mod100 == 3 || mod100 == 4)
+            return "few";
+        return "other";
+    }
+    // Macedonian and Icelandic: `one` by the last digit, past the teens -- 21
+    // is singular, 11 is not.
+    if (language == "mk" || language == "is")
+        return mod10 == 1 && mod100 != 11 ? "one" : "other";
+    // Hebrew: a dual.
+    if (language == "he") {
+        if (n == 1)
+            return "one";
+        if (n == 2)
+            return "two";
+        return "other";
+    }
+    // Irish: one, two, a few to six and many to ten.
+    if (language == "ga") {
+        if (n == 1)
+            return "one";
+        if (n == 2)
+            return "two";
+        if (n >= 3 && n <= 6)
+            return "few";
+        if (n >= 7 && n <= 10)
+            return "many";
+        return "other";
+    }
+    // Welsh, the six-category case of Europe.
+    if (language == "cy") {
+        switch (n) {
+        case 0:
+            return "zero";
+        case 1:
+            return "one";
+        case 2:
+            return "two";
+        case 3:
+            return "few";
+        case 6:
+            return "many";
+        default:
+            return "other";
         }
     }
 
@@ -226,14 +305,28 @@ Catalog::LoadResult Catalog::loadFromJson(std::string_view json, std::string_vie
 
 void Catalog::setLocale(std::string_view locale)
 {
-    // The language subtag, lowercased. `pt-BR` is `pt` and `zh_Hans` is `zh`:
-    // region does not change a cardinal rule in CLDR, and accepting both
-    // separators means a caller never has to know which one this file wanted.
+    // The language subtag, lowercased -- `pt-BR` is `pt` and `zh_Hans` is `zh`,
+    // and accepting both separators means a caller never has to know which one
+    // this file wanted -- and the region, which one rule needs: `pt-PT`'s.
     locale_.clear();
-    for (const char c : locale) {
-        if (c == '-' || c == '_')
+    region_.clear();
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    usize at = 0;
+    for (; at < locale.size() && locale[at] != '-' && locale[at] != '_'; ++at)
+        locale_.push_back(lower(locale[at]));
+    // The region is the subtag of two letters or three digits after the
+    // language, past a script of four letters (`zh-Hant-TW`).
+    while (at < locale.size()) {
+        const usize begin = at + 1;
+        usize end = begin;
+        while (end < locale.size() && locale[end] != '-' && locale[end] != '_')
+            ++end;
+        if (end - begin == 2 || end - begin == 3) {
+            for (usize index = begin; index < end; ++index)
+                region_.push_back(lower(locale[index]));
             break;
-        locale_.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
+        }
+        at = end;
     }
 }
 
@@ -289,7 +382,7 @@ std::string Catalog::format(TextKey key, std::span<const I18nArg> args) const
             }
         }
 
-        const std::string_view wanted = pluralCategory(locale_, count);
+        const std::string_view wanted = pluralCategory(locale_, region_, count);
         const std::pair<std::string, std::string>* fallback = nullptr;
         for (const auto& plural : entry.plurals) {
             if (plural.first == wanted) {

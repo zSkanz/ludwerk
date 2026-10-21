@@ -99,8 +99,8 @@ public:
     // grammar to the people it was written for.
     //
     // The BCP-47 language subtag, lowercased -- `pt` out of `pt-BR`, `zh` out of
-    // `zh-Hans`. Region does not change a cardinal rule in CLDR, and the two
-    // cases where a script arguably does are not ones this subset distinguishes.
+    // `zh-Hans` -- and the region, kept for the one rule CLDR gives a region of
+    // its own: `pt-PT`, where 0 is not singular as it is in `pt` and `pt-BR`.
     //
     // `loadFromFile` takes it from the file's stem, so `i18n/pl.json` is Polish
     // with no second place to say so. Empty is English, which is what a catalog
@@ -110,6 +110,7 @@ public:
 
 private:
     std::string locale_;
+    std::string region_;
 
     struct Entry
     {

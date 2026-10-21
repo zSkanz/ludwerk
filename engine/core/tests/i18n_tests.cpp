@@ -257,10 +257,66 @@ TEST_CASE("French and Brazilian Portuguese put zero with one")
     CHECK(categoryOf(french, 1) == "one");
     CHECK(categoryOf(french, 2) == "other");
 
-    // The region is dropped: `pt-BR` is `pt`.
+    // `pt-BR` is `pt`'s rule.
     const Catalog brazilian = pluralCatalog("pt-BR");
     CHECK(categoryOf(brazilian, 0) == "one");
     CHECK(categoryOf(brazilian, 3) == "other");
+    CHECK(categoryOf(pluralCatalog("pt"), 0) == "one");
+}
+
+TEST_CASE("Portugal's Portuguese is singular at one alone, as CLDR gives it")
+{
+    // The one region of a language the rules name that CLDR splits: a game
+    // translated for Portugal read "0 dia" where its translator wrote "0 dias".
+    for (const std::string_view locale : {"pt-PT", "pt_PT", "PT-pt"}) {
+        CAPTURE(locale);
+        const Catalog portugal = pluralCatalog(locale);
+        CHECK(categoryOf(portugal, 0) == "other");
+        CHECK(categoryOf(portugal, 1) == "one");
+        CHECK(categoryOf(portugal, 2) == "other");
+    }
+}
+
+TEST_CASE("a whole million is many in the Romance languages that have it")
+{
+    for (const std::string_view locale : {"fr", "pt", "pt-PT", "es", "it", "ca"}) {
+        CAPTURE(locale);
+        const Catalog catalog = pluralCatalog(locale);
+        CHECK(categoryOf(catalog, 1000000) == "many");
+        CHECK(categoryOf(catalog, 3000000) == "many");
+        CHECK(categoryOf(catalog, 1000001) == "other");
+    }
+    CHECK(categoryOf(pluralCatalog("en"), 1000000) == "other");
+}
+
+TEST_CASE("Serbian, Croatian and Bosnian have no many")
+{
+    for (const std::string_view locale : {"sr", "hr", "bs"}) {
+        CAPTURE(locale);
+        const Catalog catalog = pluralCatalog(locale);
+        CHECK(categoryOf(catalog, 21) == "one");
+        CHECK(categoryOf(catalog, 11) == "other");
+        CHECK(categoryOf(catalog, 22) == "few");
+        CHECK(categoryOf(catalog, 5) == "other");
+    }
+}
+
+TEST_CASE("Slovenian, Icelandic, Macedonian, Hebrew, Irish and Welsh by their own rules")
+{
+    const Catalog slovenian = pluralCatalog("sl");
+    CHECK(categoryOf(slovenian, 101) == "one");
+    CHECK(categoryOf(slovenian, 102) == "two");
+    CHECK(categoryOf(slovenian, 104) == "few");
+    CHECK(categoryOf(slovenian, 5) == "other");
+    CHECK(categoryOf(pluralCatalog("is"), 21) == "one");
+    CHECK(categoryOf(pluralCatalog("is"), 11) == "other");
+    CHECK(categoryOf(pluralCatalog("mk"), 31) == "one");
+    CHECK(categoryOf(pluralCatalog("he"), 2) == "two");
+    CHECK(categoryOf(pluralCatalog("he"), 20) == "other");
+    CHECK(categoryOf(pluralCatalog("ga"), 5) == "few");
+    CHECK(categoryOf(pluralCatalog("ga"), 9) == "many");
+    CHECK(categoryOf(pluralCatalog("cy"), 6) == "many");
+    CHECK(categoryOf(pluralCatalog("cy"), 0) == "zero");
 }
 
 TEST_CASE("Russian turns over at the last digit and again at the teens")
