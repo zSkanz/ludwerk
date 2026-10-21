@@ -5,8 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
-#include <initializer_list>
 #include <doctest/doctest.h>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -4747,7 +4747,8 @@ TEST_CASE("every refusal and every relay failure is handed with its Enum.Network
     // Enum.NetworkFailure: TimedOut 0, Full 3, Insecure 6, KeyChanged 7,
     // Blocked 10, RelayUnreachable 11, RelayBusy 12, NoMatch 13.
     for (const Expected& failure : {
-             Expected{static_cast<core::u8>(net::ConnectFailure::RelayUnreachable), 11, "net.err.join_relay_unreachable"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::RelayUnreachable), 11,
+                      "net.err.join_relay_unreachable"},
              Expected{static_cast<core::u8>(net::ConnectFailure::NoSession), 13, "net.err.join_no_session"},
              Expected{static_cast<core::u8>(net::ConnectFailure::Full), 3, "net.err.refused_full"},
              Expected{static_cast<core::u8>(net::ConnectFailure::Refused), 10, "net.err.join_kept_away"},

@@ -172,7 +172,8 @@ struct JoinTarget
                                             core::I18nArg{"code", std::string_view{code}}};
     switch (static_cast<net::ConnectFailure>(failure)) {
     case net::ConnectFailure::RelayUnreachable:
-        return said(Failure::RelayUnreachable, ENG_TR("net.err.join_relay_unreachable"), "net.err.join_relay_unreachable", args);
+        return said(Failure::RelayUnreachable, ENG_TR("net.err.join_relay_unreachable"),
+                    "net.err.join_relay_unreachable", args);
     case net::ConnectFailure::NoSession:
         return said(Failure::NoMatch, ENG_TR("net.err.join_no_session"), "net.err.join_no_session", args);
     case net::ConnectFailure::Full:
@@ -1195,7 +1196,8 @@ void NetworkSession::update()
         return;
     }
     if (status.lost && !m_redial) {
-        goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"), false);
+        goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"),
+               false);
         return;
     }
     // **A redial is a state, and it has an end**. While the server is
@@ -1213,7 +1215,8 @@ void NetworkSession::update()
         }
         else if (static_cast<core::f64>(now - std::min(now, m_lostSinceNs)) > m_joinTimeoutSeconds * 1'000'000'000.0) {
             m_lostSinceNs = 0;
-            goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"), false);
+            goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"),
+                   false);
         }
         return;
     }

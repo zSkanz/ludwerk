@@ -230,18 +230,18 @@ TEST_CASE("a join code written whole is taken from the command line, as a script
     Project project;
     project.write("src/client/idle.luau", "print('client-up')");
     const std::string relay = "127.0.0.1:" + std::to_string(engine::testing::port(47930));
-    const platform::ProcessResult joined = platform::runProcess(
-        {ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/K7QWM2ZP", "--headless", "--rhi=null",
-         "--frames=30", "--exit"});
+    const platform::ProcessResult joined =
+        platform::runProcess({ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/K7QWM2ZP",
+                              "--headless", "--rhi=null", "--frames=30", "--exit"});
     REQUIRE(joined.started);
     CHECK_MESSAGE(joined.exitCode == 0, joined.output);
     CHECK_MESSAGE(joined.output.find("Joining the match K7QWM2ZP through the relay " + relay) != std::string::npos,
                   joined.output);
 
     // Written wrong, it is refused for what it is -- not as a port.
-    const platform::ProcessResult refused = platform::runProcess(
-        {ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/", "--headless", "--rhi=null",
-         "--frames=1", "--exit"});
+    const platform::ProcessResult refused =
+        platform::runProcess({ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/", "--headless",
+                              "--rhi=null", "--frames=1", "--exit"});
     REQUIRE(refused.started);
     CHECK(refused.exitCode == 2);
     CHECK_MESSAGE(refused.output.find("needs a relay before the last slash and a join code after it") !=
