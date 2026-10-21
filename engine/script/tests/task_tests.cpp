@@ -426,8 +426,8 @@ TEST_CASE("the watchdog counts a script's own running time, not the time it was 
     Fixture fixture;
     REQUIRE(fixture.booted);
     fixture.runtime->setWatchdog(0.0, 0.3);
-    // Windows' thread clock answers a millisecond after its first read.
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    // Windows' thread clock answers 20 ms after its first read.
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
     if (engine::platform::threadCpuNs() < 0) {
         MESSAGE("no thread CPU clock on this system");
         return;

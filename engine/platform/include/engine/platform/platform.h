@@ -86,9 +86,10 @@ void sleepNs(u64 ns) noexcept;
 // on a shared runner needs, so that a runner pausing the process is not read
 // as the engine doing work.
 //
-// POSIX reads `CLOCK_THREAD_CPUTIME_ID`. Windows reads the thread's cycle count
-// and converts it with the rate the processor's timestamp counter has run at
-// since the first call, so the first millisecond after that answers -1.
+// **It never runs backwards.** POSIX reads `CLOCK_THREAD_CPUTIME_ID`.
+// Windows reads the thread's cycle count and converts it with the rate the
+// processor's timestamp counter is measured to run at over the 20 ms after
+// the first call -- measured once and kept -- so those 20 ms answer -1.
 [[nodiscard]] core::i64 threadCpuNs() noexcept;
 
 // Resident set size in bytes, or zero where the platform will not say.

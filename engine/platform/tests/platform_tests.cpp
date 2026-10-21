@@ -1,5 +1,6 @@
 #include <SDL3/SDL_hints.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstring>
@@ -932,9 +933,9 @@ TEST_CASE("raising the process priority is honest about whether it happened")
 
 TEST_CASE("a thread's CPU clock runs while it works and stops while it waits")
 {
-    // The first call starts the Windows calibration; give it its millisecond.
+    // The first call starts the Windows calibration; give it its 20 ms.
     (void)engine::platform::threadCpuNs();
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
     if (engine::platform::threadCpuNs() < 0) {
         MESSAGE("no per-thread CPU clock on this platform");
         return;
@@ -966,6 +967,48 @@ TEST_CASE("a thread's CPU clock runs while it works and stops while it waits")
     const engine::core::i64 idleStart = engine::platform::threadCpuNs();
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     CHECK(static_cast<double>(engine::platform::threadCpuNs() - idleStart) < 10.0e6);
+}
+
+TEST_CASE("a thread's CPU clock never runs backwards, on any thread, on a busy machine")
+{
+    // Read a million times on each of more threads than the machine has
+    // cores, each working between reads: a thread taken off its core between
+    // a read's two halves is what moved the Windows clock's rate, and the
+    // clock went back -- a watchdog took a handler of a few milliseconds for a
+    // five-second runaway. Every thread's clock is its own, and each is asked
+    // only that it never goes back.
+    (void)engine::platform::threadCpuNs();
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    if (engine::platform::threadCpuNs() < 0) {
+        MESSAGE("no per-thread CPU clock on this platform");
+        return;
+    }
+    const unsigned threads = (std::max)(4u, std::thread::hardware_concurrency() + 2u);
+    std::atomic<int> backwards{0};
+    std::atomic<int> unread{0};
+    std::vector<std::thread> readers;
+    for (unsigned index = 0; index < threads; ++index) {
+        readers.emplace_back([&backwards, &unread] {
+            engine::core::i64 last = engine::platform::threadCpuNs();
+            volatile engine::core::u64 sink = 0;
+            for (int read = 0; read < 1'000'000; ++read) {
+                for (int work = 0; work < 8; ++work)
+                    sink = sink + 1;
+                const engine::core::i64 now = engine::platform::threadCpuNs();
+                if (now < 0)
+                    unread.fetch_add(1, std::memory_order_relaxed);
+                else if (now < last)
+                    backwards.fetch_add(1, std::memory_order_relaxed);
+                if (now >= 0)
+                    last = now;
+            }
+        });
+    }
+    for (std::thread& reader : readers)
+        reader.join();
+    CHECK(backwards.load() == 0);
+    // Once the clock can be read, it can always be read.
+    CHECK(unread.load() == 0);
 }
 
 TEST_CASE("text input switches on and off for a window, which is what raises a phone's keyboard")

@@ -20,6 +20,7 @@
 #ifdef SDL_PLATFORM_ANDROID
 #include <jni.h>
 #endif
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -313,15 +314,36 @@ core::i64 threadCpuNs() noexcept
     if (QueryThreadCycleTime(GetCurrentThread(), &cycles) == 0)
         return -1;
     // The thread's cycles are counted in timestamp-counter ticks, which run at
-    // a constant rate; that rate is read off the wall clock since the first
-    // call rather than off a table nobody keeps.
-    static const u64 wallStart = nowNs();
-    static const u64 ticksStart = __rdtsc();
-    const u64 wall = nowNs() - wallStart;
-    const u64 ticks = __rdtsc() - ticksStart;
-    if (wall < 1'000'000 || ticks == 0)
-        return -1;
-    return static_cast<core::i64>(static_cast<double>(cycles) * static_cast<double>(wall) / static_cast<double>(ticks));
+    // a constant rate; that rate is read off the wall clock rather than off a
+    // table nobody keeps -- **once**, over the first `CalibrationNs` after the
+    // first call, and then never again. It was read again at every call, over
+    // the time since the first, and a read taken early on a busy machine --
+    // the thread off its core between the wall clock and the counter -- moved
+    // the rate, and the clock ran backwards: a script's watchdog took a
+    // handler of a few milliseconds for a runaway. Until the rate is known
+    // the clock says it cannot be read, which every caller handles.
+    constexpr u64 CalibrationNs = 20'000'000;
+    struct Start
+    {
+        u64 wall;
+        u64 ticks;
+    };
+    static const Start start{nowNs(), __rdtsc()};
+    static std::atomic<double> nanosPerTick{0.0};
+    double rate = nanosPerTick.load(std::memory_order_acquire);
+    if (rate == 0.0) {
+        const u64 wall = nowNs() - start.wall;
+        const u64 ticks = __rdtsc() - start.ticks;
+        if (wall < CalibrationNs || ticks == 0)
+            return -1;
+        // The first thread past the window decides, and every thread uses
+        // what it decided.
+        double expected = 0.0;
+        const double measured = static_cast<double>(wall) / static_cast<double>(ticks);
+        rate =
+            nanosPerTick.compare_exchange_strong(expected, measured, std::memory_order_acq_rel) ? measured : expected;
+    }
+    return static_cast<core::i64>(static_cast<double>(cycles) * rate);
 #elif defined(_WIN32)
     return -1;
 #else
