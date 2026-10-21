@@ -698,7 +698,26 @@ max_instances = 2
                 client.frame();
         }
     };
-    run(240);
+    // **Until it has happened, not for a count of frames**: the door signs
+    // a player in on its own threads, on the machine's own time, and a count
+    // of frames is a guess at how fast that machine is -- a slow runner's
+    // door had not answered when the frames ran out, and the match was never
+    // made. A minute is the bound, far past any machine's.
+    const auto runUntil = [&](const auto& done) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (!done() && std::chrono::steady_clock::now() < until)
+            run(1);
+    };
+    const auto count = [&](std::string_view needle) {
+        return std::count_if(log.lines.begin(), log.lines.end(),
+                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
+    };
+    runUntil([&]() {
+        return std::all_of(clients.begin(), clients.end(), [](const Client& client) {
+            return client.host->world().engineState().networkState == 2;
+        });
+    });
+    run(60);
     // **Matched, as Nakama would tell their machines**: Ana and Bo say so,
     // and Cy, in no such match, says so too.
     for (Client& client : clients) {
@@ -712,11 +731,12 @@ max_instances = 2
         told.nakamaMatch = true;
         state.signInAsks.push_back(std::move(told));
     }
-    run(480);
-    const auto count = [&](std::string_view needle) {
-        return std::count_if(log.lines.begin(), log.lines.end(),
-                             [&](const std::string& line) { return line.find(needle) != std::string::npos; });
-    };
+    runUntil([&]() {
+        return count("town-matched:") > 0 && log.contains("arena-arrived:nakama:ana") &&
+               log.contains("arena-arrived:nakama:bo");
+    });
+    // And long enough after for what must not happen to have had its chance.
+    run(240);
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
     // One instance, two teams of one, heard once in the town.
     CHECK(count("town-matched:1:1:i-1") == 1);
