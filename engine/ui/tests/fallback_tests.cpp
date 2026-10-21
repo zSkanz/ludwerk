@@ -388,7 +388,8 @@ TEST_CASE("ADR 0259: letter spacing widens Latin text by its share of the size, 
     // Two px after each of five letters at 20 px.
     CHECK(textWidth("Hello", tracked, 20.0f) == doctest::Approx(static_cast<double>(plain + 10.0f)).epsilon(0.001));
     // Ideographs are set at their full width: no room is added after them.
-    CHECK(textWidth("日本語", tracked, 20.0f) == doctest::Approx(static_cast<double>(textWidth("日本語", Latin, 20.0f))));
+    CHECK(textWidth("日本語", tracked, 20.0f) ==
+          doctest::Approx(static_cast<double>(textWidth("日本語", Latin, 20.0f))));
     // Negative draws closer, and a value past the clamp is the clamp.
     CHECK(textWidth("Hello", engine::ui::labelFont(Latin, {}, -0.05f), 20.0f) < plain);
     CHECK(engine::ui::labelFont(Latin, {}, 50.0f) == engine::ui::labelFont(Latin, {}, 2.0f));

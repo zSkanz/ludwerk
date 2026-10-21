@@ -713,9 +713,8 @@ max_instances = 2
                              [&](const std::string& line) { return line.find(needle) != std::string::npos; });
     };
     runUntil([&]() {
-        return std::all_of(clients.begin(), clients.end(), [](const Client& client) {
-            return client.host->world().engineState().networkState == 2;
-        });
+        return std::all_of(clients.begin(), clients.end(),
+                           [](const Client& client) { return client.host->world().engineState().networkState == 2; });
     });
     run(60);
     // **Matched, as Nakama would tell their machines**: Ana and Bo say so,

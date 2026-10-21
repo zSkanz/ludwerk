@@ -1702,9 +1702,9 @@ struct RichLine
 [[nodiscard]] f32 advanceOf(FaceChain& chain, const RichStyle& style, u32 codepoint)
 {
     const f32 scale = scaleFor(chain.primary(), style.size);
-    const f32 advance = (store().entries[glyphIndex(chain, style.size, codepoint)].advance +
-                         trackingOf(chain, style.size, codepoint)) *
-                        scale;
+    const f32 advance =
+        (store().entries[glyphIndex(chain, style.size, codepoint)].advance + trackingOf(chain, style.size, codepoint)) *
+        scale;
     return advance + (style.bold ? boldOffsetOf(style.size) : 0.0f);
 }
 
