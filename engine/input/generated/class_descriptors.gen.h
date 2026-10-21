@@ -145,6 +145,7 @@ inline constexpr scene::EnumId LipSyncModeEnumId = 102;
 inline constexpr scene::EnumId IrradianceModeEnumId = 103;
 inline constexpr scene::EnumId ScreenSplitEnumId = 104;
 inline constexpr scene::EnumId SequenceControlEnumId = 105;
+inline constexpr scene::EnumId NetworkFailureEnumId = 106;
 
 } // namespace generated
 

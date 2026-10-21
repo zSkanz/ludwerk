@@ -7990,7 +7990,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("JoinFailed"),
             .slot = 8,
-            .doc = "Fires when a join fails. This machine stays in single-player, in the state it was in before `Join` was called, so the menu that called `Join` is still there to handle the event.\012\012The reason is passed as readable text: the server did not answer, the server is full, it runs a different version, or it is taking no more players from this machine's network address. Players behind one router or one mobile network share an address, and a server allows 64 of them by default (`[network] max_connections_per_address` in `project.toml`, or `--max-per-address` for a dedicated server; 0 is no limit). With a join code, it can also be that the relay did not answer, no match has that code, the host has blocked this machine, or no connection could be established in time.",
+            .doc = "Fires when a join fails. This machine stays in single-player, in the state it was in before `Join` was called, so the menu that called `Join` is still there to handle the event.\012\012The reason is passed as readable text: the server did not answer, the server is full, it runs a different version, or it is taking no more players from this machine's network address. Players behind one router or one mobile network share an address, and a server allows 64 of them by default (`[network] max_connections_per_address` in `project.toml`, or `--max-per-address` for a dedicated server; 0 is no limit). With a join code, it can also be that the relay did not answer, no match has that code, the host has blocked this machine, or no connection could be established in time.\012\012After the text come an `Enum.NetworkFailure` and the catalog key the text was made from. Decide by the enum, not by the words: the words are in the player's language and change between versions.",
         },
         EventDesc{
             .name = atoms.intern("RelayStateChanged"),
@@ -8000,12 +8000,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
         EventDesc{
             .name = atoms.intern("HostFailed"),
             .slot = 10,
-            .doc = "Fires when `Host` cannot open its port, for example because another program is using it. This machine stays as it was. The reason is passed as readable text.",
+            .doc = "Fires when `Host` cannot open its port, for example because another program is using it. This machine stays as it was. The reason is passed as readable text in the player's language, then as an `Enum.NetworkFailure` to decide by, then as the catalog key of the text.",
         },
         EventDesc{
             .name = atoms.intern("Disconnected"),
             .slot = 11,
-            .doc = "Fires when the connection ends and this machine is back in single-player. The server left, the network failed, or `Disconnect` was called.",
+            .doc = "Fires when the connection ends and this machine is back in single-player. The server left, the network failed, or `Disconnect` was called. The reason is passed as readable text, then as an `Enum.NetworkFailure` (`ServerGone`, `Left`, `Removed` and the others), then as the catalog key of the text.",
         },
         EventDesc{
             .name = atoms.intern("ChannelMerging"),
@@ -13133,6 +13133,91 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     sequenceControlDesc.doc = "What a playing `SequencePlayer` does with the local players' input.";
     sequenceControlDesc.items = sequenceControlItems;
     enums.registerEnum(sequenceControlDesc);
+
+    // --- NetworkFailure ---
+    static std::array<EnumItemDesc, 15> networkFailureItems;
+    networkFailureItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("TimedOut"),
+            .value = 0,
+            .doc = "Nothing answered in time: no server at that address, or none that could be reached. A join gives up after `[network] timeout`.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("ServerGone"),
+            .value = 1,
+            .doc = "The server stopped answering during the match, and this machine is back in single-player.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Left"),
+            .value = 2,
+            .doc = "This machine left the match: `Disconnect` was called, or `Join` or `Host` started something else.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Full"),
+            .value = 3,
+            .doc = "The match has as many players as it takes.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("AddressLimit"),
+            .value = 4,
+            .doc = "The server takes no more players from this machine's network address. Players behind one router or one mobile network share an address.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("VersionMismatch"),
+            .value = 5,
+            .doc = "The server runs a different version of the game or of the engine.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Insecure"),
+            .value = 6,
+            .doc = "One side requires an encrypted match and the other does not offer one.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("KeyChanged"),
+            .value = 7,
+            .doc = "The server's key is not the one this machine knew it by, so it may not be the same server.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RefusedByGame"),
+            .value = 8,
+            .doc = "The server's game refused this player. The text is the game's own reason when it gave one.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Removed"),
+            .value = 9,
+            .doc = "The server's game removed this player from the match. The text is the game's own reason when it gave one.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Blocked"),
+            .value = 10,
+            .doc = "The host has blocked this machine.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RelayUnreachable"),
+            .value = 11,
+            .doc = "The relay named for a join code did not answer.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("RelayBusy"),
+            .value = 12,
+            .doc = "The relay is carrying as many matches as it can.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("NoMatch"),
+            .value = 13,
+            .doc = "No match has that join code.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("CannotStart"),
+            .value = 14,
+            .doc = "The connection could not be started on this machine: an address that is not one, or a port another program is using.",
+        },
+    }};
+    EnumDescriptor networkFailureDesc;
+    networkFailureDesc.name = atoms.intern("NetworkFailure");
+    networkFailureDesc.doc = "Why a join failed, a host could not start or a match ended, passed by `JoinFailed`, `HostFailed` and `Disconnected` beside the reason's text. Compare against these to decide what to do, and show the text, or your own words for each value, to the player.";
+    networkFailureDesc.items = networkFailureItems;
+    enums.registerEnum(networkFailureDesc);
 }
 
 } // namespace engine::scene::generated

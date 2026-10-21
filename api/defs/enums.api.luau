@@ -2744,6 +2744,97 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "NetworkFailure",
+            Doc = "Why a join failed, a host could not start or a match ended, passed by `JoinFailed`, `HostFailed` "
+                .. "and `Disconnected` beside the reason's text. Compare against these to decide what to do, and "
+                .. "show the text, or your own words for each value, to the player.",
+            Items = {
+                {
+                    Name = "TimedOut",
+                    Value = 0,
+                    Doc = "Nothing answered in time: no server at that address, or none that could be "
+                        .. "reached. A join gives up after `[network] timeout`.",
+                },
+                {
+                    Name = "ServerGone",
+                    Value = 1,
+                    Doc = "The server stopped answering during the match, and this machine is back in "
+                        .. "single-player.",
+                },
+                {
+                    Name = "Left",
+                    Value = 2,
+                    Doc = "This machine left the match: `Disconnect` was called, or `Join` or `Host` "
+                        .. "started something else.",
+                },
+                {
+                    Name = "Full",
+                    Value = 3,
+                    Doc = "The match has as many players as it takes.",
+                },
+                {
+                    Name = "AddressLimit",
+                    Value = 4,
+                    Doc = "The server takes no more players from this machine's network address. Players "
+                        .. "behind one router or one mobile network share an address.",
+                },
+                {
+                    Name = "VersionMismatch",
+                    Value = 5,
+                    Doc = "The server runs a different version of the game or of the engine.",
+                },
+                {
+                    Name = "Insecure",
+                    Value = 6,
+                    Doc = "One side requires an encrypted match and the other does not offer one.",
+                },
+                {
+                    Name = "KeyChanged",
+                    Value = 7,
+                    Doc = "The server's key is not the one this machine knew it by, so it may not be the "
+                        .. "same server.",
+                },
+                {
+                    Name = "RefusedByGame",
+                    Value = 8,
+                    Doc = "The server's game refused this player. The text is the game's own reason when "
+                        .. "it gave one.",
+                },
+                {
+                    Name = "Removed",
+                    Value = 9,
+                    Doc = "The server's game removed this player from the match. The text is the game's "
+                        .. "own reason when it gave one.",
+                },
+                {
+                    Name = "Blocked",
+                    Value = 10,
+                    Doc = "The host has blocked this machine.",
+                },
+                {
+                    Name = "RelayUnreachable",
+                    Value = 11,
+                    Doc = "The relay named for a join code did not answer.",
+                },
+                {
+                    Name = "RelayBusy",
+                    Value = 12,
+                    Doc = "The relay is carrying as many matches as it can.",
+                },
+                {
+                    Name = "NoMatch",
+                    Value = 13,
+                    Doc = "No match has that join code.",
+                },
+                {
+                    Name = "CannotStart",
+                    Value = 14,
+                    Doc = "The connection could not be started on this machine: an address that is not "
+                        .. "one, or a port another program is using.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

@@ -11,6 +11,10 @@ here.
 
 ### Added
 
+- `JoinFailed`, `HostFailed` and `Disconnected` pass an `Enum.NetworkFailure`
+  and the catalog key of their text after the text itself, so a game decides
+  by a value that does not change with the language or the version.
+
 - `RunService.Exported` says whether a game runs as an exported game -- true
   in a package `ludwerk build` made, false in the editor, under `ludwerk dev`
   and in tests -- so a game can leave out what is for its developers only.

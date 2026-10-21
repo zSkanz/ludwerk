@@ -3951,7 +3951,11 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "JoinFailed",
-                Parameters = { { Name = "reason", Type = "string" } },
+                Parameters = {
+                    { Name = "reason", Type = "string" },
+                    { Name = "failure", Type = "Enum.NetworkFailure" },
+                    { Name = "key", Type = "string" },
+                },
                 Doc = "Fires when a join fails. This machine stays in single-player, in the state it was in "
                     .. "before `Join` was called, so the menu that called `Join` is still there to handle the "
                     .. "event.\n\n"
@@ -3961,7 +3965,10 @@ local Classes: { Schema.Class } = {
                     .. "allows 64 of them by default (`[network] max_connections_per_address` in `project.toml`, or "
                     .. "`--max-per-address` for a dedicated server; 0 is no limit). With a join code, it can also be that the relay did not "
                     .. "answer, no match has that code, the host has blocked this machine, or no connection could "
-                    .. "be established in time.",
+                    .. "be established in time.\n\n"
+                    .. "After the text come an `Enum.NetworkFailure` and the catalog key the text was made from. "
+                    .. "Decide by the enum, not by the words: the words are in the player's language and change "
+                    .. "between versions.",
             },
             {
                 Name = "RelayStateChanged",
@@ -3972,15 +3979,27 @@ local Classes: { Schema.Class } = {
             },
             {
                 Name = "HostFailed",
-                Parameters = { { Name = "reason", Type = "string" } },
+                Parameters = {
+                    { Name = "reason", Type = "string" },
+                    { Name = "failure", Type = "Enum.NetworkFailure" },
+                    { Name = "key", Type = "string" },
+                },
                 Doc = "Fires when `Host` cannot open its port, for example because another program is using it. "
-                    .. "This machine stays as it was. The reason is passed as readable text.",
+                    .. "This machine stays as it was. The reason is passed as readable text in the player's "
+                    .. "language, then as an `Enum.NetworkFailure` to decide by, then as the catalog key of the "
+                    .. "text.",
             },
             {
                 Name = "Disconnected",
-                Parameters = { { Name = "reason", Type = "string" } },
+                Parameters = {
+                    { Name = "reason", Type = "string" },
+                    { Name = "failure", Type = "Enum.NetworkFailure" },
+                    { Name = "key", Type = "string" },
+                },
                 Doc = "Fires when the connection ends and this machine is back in single-player. The server left, "
-                    .. "the network failed, or `Disconnect` was called.",
+                    .. "the network failed, or `Disconnect` was called. The reason is passed as readable text, "
+                    .. "then as an `Enum.NetworkFailure` (`ServerGone`, `Left`, `Removed` and the others), then as "
+                    .. "the catalog key of the text.",
             },
             {
                 Name = "ChannelMerging",

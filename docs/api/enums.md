@@ -612,6 +612,28 @@ The severity of a log message, in ascending order. `Value` orders the levels, so
 | `Warning` | 3 | Something is wrong, and the run continues. `warn` logs at this level. |
 | `Error` | 4 | A failure that the code could not handle, including an error raised in a signal handler. |
 
+## Enum.NetworkFailure
+
+Why a join failed, a host could not start or a match ended, passed by `JoinFailed`, `HostFailed` and `Disconnected` beside the reason's text. Compare against these to decide what to do, and show the text, or your own words for each value, to the player.
+
+| Item | Value | Description |
+|---|---|---|
+| `TimedOut` | 0 | Nothing answered in time: no server at that address, or none that could be reached. A join gives up after `[network] timeout`. |
+| `ServerGone` | 1 | The server stopped answering during the match, and this machine is back in single-player. |
+| `Left` | 2 | This machine left the match: `Disconnect` was called, or `Join` or `Host` started something else. |
+| `Full` | 3 | The match has as many players as it takes. |
+| `AddressLimit` | 4 | The server takes no more players from this machine's network address. Players behind one router or one mobile network share an address. |
+| `VersionMismatch` | 5 | The server runs a different version of the game or of the engine. |
+| `Insecure` | 6 | One side requires an encrypted match and the other does not offer one. |
+| `KeyChanged` | 7 | The server's key is not the one this machine knew it by, so it may not be the same server. |
+| `RefusedByGame` | 8 | The server's game refused this player. The text is the game's own reason when it gave one. |
+| `Removed` | 9 | The server's game removed this player from the match. The text is the game's own reason when it gave one. |
+| `Blocked` | 10 | The host has blocked this machine. |
+| `RelayUnreachable` | 11 | The relay named for a join code did not answer. |
+| `RelayBusy` | 12 | The relay is carrying as many matches as it can. |
+| `NoMatch` | 13 | No match has that join code. |
+| `CannotStart` | 14 | The connection could not be started on this machine: an address that is not one, or a port another program is using. |
+
 ## Enum.NetworkState
 
 The connection state of this machine, reported by `NetworkService.State`. `Join`, `Host` and `Disconnect` change it.

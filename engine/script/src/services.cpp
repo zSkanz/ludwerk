@@ -4501,6 +4501,25 @@ void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<st
     }
 }
 
+void fireNetworkFailure(lua_State* L, std::string_view eventName, std::string_view reason, core::i32 failure,
+                        std::string_view key)
+{
+    World& w = world(L);
+    const ClassId networkClass = w.classes().findId(w.atoms().lookup("NetworkService"));
+    const core::InstanceId service = findServiceOfClass(L, networkClass);
+    if (!service.valid())
+        return;
+    const scene::EventDesc* descriptor = w.classes().findEvent(networkClass, w.atoms().intern(eventName));
+    if (descriptor == nullptr)
+        return;
+    const int first = lua_gettop(L) + 1;
+    lua_pushlstring(L, reason.data(), reason.size());
+    pushEnumItem(L, scene::EnumValue{scene::generated::NetworkFailureEnumId, failure});
+    lua_pushlstring(L, key.data(), key.size());
+    fireInstanceEvent(L, service, descriptor->slot, first, 3);
+    lua_settop(L, first - 1);
+}
+
 void fireXRUserCFrameChanged(lua_State* L, core::u8 pose, const core::CFrameD& cframe)
 {
     World& w = world(L);

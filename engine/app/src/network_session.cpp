@@ -23,6 +23,7 @@
 
 #include <array>
 #include <charconv>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -78,17 +79,54 @@ constexpr core::u16 DefaultPort = 7777;
     return true;
 }
 
+using Why = NetworkFailureReason;
+
+// **`Enum.NetworkFailure`, value for value** (`api/defs/enums.api.luau`):
+// what a game decides by, where the text is for its player to read.
+enum class Failure : core::i32
+{
+    TimedOut = 0,
+    ServerGone = 1,
+    Left = 2,
+    Full = 3,
+    AddressLimit = 4,
+    VersionMismatch = 5,
+    Insecure = 6,
+    KeyChanged = 7,
+    RefusedByGame = 8,
+    Removed = 9,
+    Blocked = 10,
+    RelayUnreachable = 11,
+    RelayBusy = 12,
+    NoMatch = 13,
+    CannotStart = 14,
+};
+
+// A reason the catalog words: its value, its text and its key, the key
+// written beside `ENG_TR` because a `TextKey` is only its hash.
+[[nodiscard]] Why said(Failure failure, core::TextKey key, std::string_view name,
+                       std::span<const core::I18nArg> args = {})
+{
+    return Why{core::engineCatalog().format(key, args), static_cast<core::i32>(failure), std::string(name)};
+}
+
 // **What a player is told**, from an engine error: its words without
-// the `[key]` in front, which is for a log. `HostFailed` and a join that could
-// not start handed a game the key with the sentence.
-[[nodiscard]] std::string reasonOf(const core::EngineError& error)
+// the `[key]` in front, which is for a log -- and which is the key a game is
+// handed beside them. `HostFailed` and a join that could not start handed a
+// game the key with the sentence.
+[[nodiscard]] Why reasonOf(const core::EngineError& error)
 {
     const std::string& message = error.message;
     if (message.starts_with('[')) {
-        if (const std::size_t end = message.find("] "); end != std::string::npos)
-            return message.substr(end + 2);
+        if (const std::size_t end = message.find("] "); end != std::string::npos) {
+            std::string key = message.substr(1, end - 1);
+            // An address no server can be found at is, to a player, a
+            // server that did not answer.
+            const Failure failure = key == "net.err.connect_unresolved" ? Failure::TimedOut : Failure::CannotStart;
+            return Why{message.substr(end + 2), static_cast<core::i32>(failure), std::move(key)};
+        }
     }
-    return message;
+    return Why{message, static_cast<core::i32>(Failure::CannotStart), {}};
 }
 
 // The words for why an authority refused this machine.
@@ -128,58 +166,65 @@ struct JoinTarget
 }
 
 // Why a join by code did not reach its host, in the game's player's words.
-[[maybe_unused]] [[nodiscard]] std::string joinFailureText(core::u8 failure, const std::string& relay,
-                                                           const std::string& code)
+[[maybe_unused]] [[nodiscard]] Why joinFailureWhy(core::u8 failure, const std::string& relay, const std::string& code)
 {
     const std::array<core::I18nArg, 2> args{core::I18nArg{"relay", std::string_view{relay}},
                                             core::I18nArg{"code", std::string_view{code}}};
     switch (static_cast<net::ConnectFailure>(failure)) {
     case net::ConnectFailure::RelayUnreachable:
-        return core::engineCatalog().format(ENG_TR("net.err.join_relay_unreachable"), args);
+        return said(Failure::RelayUnreachable, ENG_TR("net.err.join_relay_unreachable"), "net.err.join_relay_unreachable", args);
     case net::ConnectFailure::NoSession:
-        return core::engineCatalog().format(ENG_TR("net.err.join_no_session"), args);
+        return said(Failure::NoMatch, ENG_TR("net.err.join_no_session"), "net.err.join_no_session", args);
     case net::ConnectFailure::Full:
-        return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+        return said(Failure::Full, ENG_TR("net.err.refused_full"), "net.err.refused_full");
     case net::ConnectFailure::Refused:
-        return core::engineCatalog().format(ENG_TR("net.err.join_kept_away"), args);
+        return said(Failure::Blocked, ENG_TR("net.err.join_kept_away"), "net.err.join_kept_away", args);
     case net::ConnectFailure::Busy:
-        return core::engineCatalog().format(ENG_TR("net.err.join_relay_busy"), args);
+        return said(Failure::RelayBusy, ENG_TR("net.err.join_relay_busy"), "net.err.join_relay_busy", args);
     case net::ConnectFailure::KeyChanged:
-        return core::engineCatalog().format(ENG_TR("net.err.join_key_changed"), args);
+        return said(Failure::KeyChanged, ENG_TR("net.err.join_key_changed"), "net.err.join_key_changed", args);
     case net::ConnectFailure::Insecure:
-        return core::engineCatalog().format(ENG_TR("net.err.join_insecure"), args);
+        return said(Failure::Insecure, ENG_TR("net.err.join_insecure"), "net.err.join_insecure", args);
     case net::ConnectFailure::None:
     case net::ConnectFailure::TimedOut:
         break;
     }
-    return core::engineCatalog().format(ENG_TR("net.err.join_no_path"), args);
+    return said(Failure::TimedOut, ENG_TR("net.err.join_no_path"), "net.err.join_no_path", args);
 }
 
-[[maybe_unused]] [[nodiscard]] std::string refusalText(core::u8 reason, const std::string& words)
+[[maybe_unused]] [[nodiscard]] Why refusalWhy(core::u8 reason, const std::string& words)
 {
 #if ENG_ENABLE_REPLICATION
     if (reason == replication::RefusedFull)
-        return core::engineCatalog().format(ENG_TR("net.err.refused_full"));
+        return said(Failure::Full, ENG_TR("net.err.refused_full"), "net.err.refused_full");
     if (reason == replication::RefusedAddressLimit)
-        return core::engineCatalog().format(ENG_TR("net.err.refused_address_limit"));
+        return said(Failure::AddressLimit, ENG_TR("net.err.refused_address_limit"), "net.err.refused_address_limit");
     if (reason == replication::RefusedLuauFlags)
-        return core::engineCatalog().format(ENG_TR("net.err.refused_luau_flags"));
+        return said(Failure::VersionMismatch, ENG_TR("net.err.refused_luau_flags"), "net.err.refused_luau_flags");
     if (reason == replication::RefusedInsecure)
-        return core::engineCatalog().format(ENG_TR("net.err.refused_insecure"));
+        return said(Failure::Insecure, ENG_TR("net.err.refused_insecure"), "net.err.refused_insecure");
     if (reason == replication::RefusedServerKey)
-        return core::engineCatalog().format(ENG_TR("net.err.join_key_changed"));
+        return said(Failure::KeyChanged, ENG_TR("net.err.join_key_changed"), "net.err.join_key_changed");
     if (reason == replication::RefusedNotEncrypted)
-        return core::engineCatalog().format(ENG_TR("net.err.join_insecure"));
+        return said(Failure::Insecure, ENG_TR("net.err.join_insecure"), "net.err.join_insecure");
     // The game's own words for a refusal, or the engine's where it gave none.
-    if (reason == replication::RefusedByGame)
-        return words.empty() ? core::engineCatalog().format(ENG_TR("net.err.refused_by_game")) : words;
+    if (reason == replication::RefusedByGame) {
+        Why why = said(Failure::RefusedByGame, ENG_TR("net.err.refused_by_game"), "net.err.refused_by_game");
+        if (!words.empty())
+            why.text = words;
+        return why;
+    }
     // The game's own words for a removal, or the engine's where it gave none.
-    if (reason == replication::RefusedRemoved)
-        return words.empty() ? core::engineCatalog().format(ENG_TR("net.info.removed")) : words;
+    if (reason == replication::RefusedRemoved) {
+        Why why = said(Failure::Removed, ENG_TR("net.info.removed"), "net.info.removed");
+        if (!words.empty())
+            why.text = words;
+        return why;
+    }
 #endif
     (void)reason;
     (void)words;
-    return core::engineCatalog().format(ENG_TR("net.err.refused_version"));
+    return said(Failure::VersionMismatch, ENG_TR("net.err.refused_version"), "net.err.refused_version");
 }
 
 } // namespace
@@ -552,7 +597,17 @@ void NetworkSession::sendMessages()
 #endif
 }
 
-void NetworkSession::goSolo(std::string_view event, std::string_view reason, bool wasAuthority)
+NetworkFailureReason networkRefusal(core::u8 reason, const std::string& words)
+{
+    return refusalWhy(reason, words);
+}
+
+NetworkFailureReason networkJoinFailure(core::u8 failure, const std::string& relay, const std::string& code)
+{
+    return joinFailureWhy(failure, relay, code);
+}
+
+void NetworkSession::goSolo(std::string_view event, const Why& why, bool wasAuthority)
 {
     WorldHost* host = m_host();
     // Out of a match, nobody proves a key (ADR 0224).
@@ -613,7 +668,7 @@ void NetworkSession::goSolo(std::string_view event, std::string_view reason, boo
     if (!wasAuthority)
         host->returnToSolo(m_sceneBeforeJoin);
     m_sceneBeforeJoin.clear();
-    script::fireNetworkEvent(host->runtime().state(), event, reason);
+    script::fireNetworkFailure(host->runtime().state(), event, why.text, why.failure, why.key);
 }
 
 std::function<bool(std::string_view, core::u16, const std::array<core::u8, 32>&)>
@@ -767,14 +822,14 @@ void NetworkSession::update()
         case Kind::Join: {
             // Whatever this machine was doing on the network, it stops first.
             if (active())
-                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+                goSolo("Disconnected", said(Failure::Left, ENG_TR("net.info.left"), "net.info.left"), wasAuthority);
             std::string address;
             core::u16 port = DefaultPort;
             const JoinTarget target = joinTargetOf(request.address, request.relay);
             if (!target.byCode && !splitAddress(request.address, address, port)) {
                 const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{request.address}}};
-                script::fireNetworkEvent(host->runtime().state(), "JoinFailed",
-                                         core::engineCatalog().format(ENG_TR("net.err.bad_address"), args));
+                const Why why = said(Failure::CannotStart, ENG_TR("net.err.bad_address"), "net.err.bad_address", args);
+                script::fireNetworkFailure(host->runtime().state(), "JoinFailed", why.text, why.failure, why.key);
                 break;
             }
             const RelayUse relay{.relay = target.relay,
@@ -786,7 +841,8 @@ void NetworkSession::update()
             if (std::optional<core::EngineError> error =
                     begin(replication::Topology::Replica, address, port, false, relay);
                 error.has_value()) {
-                script::fireNetworkEvent(host->runtime().state(), "JoinFailed", reasonOf(*error));
+                const Why why = reasonOf(*error);
+                script::fireNetworkFailure(host->runtime().state(), "JoinFailed", why.text, why.failure, why.key);
                 break;
             }
             // The world stays this machine's until the server takes it: the
@@ -811,7 +867,7 @@ void NetworkSession::update()
             if (active() && state.networkTopology != scene::NetworkTopology::Replica)
                 break; // Hosting already.
             if (active())
-                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+                goSolo("Disconnected", said(Failure::Left, ENG_TR("net.info.left"), "net.info.left"), wasAuthority);
             const RelayUse relay{
                 .relay = request.relay, .code = {}, .direct = true, .ticket = {}, .pass = {}, .serverKey = {}};
             if (std::optional<core::EngineError> error =
@@ -820,7 +876,8 @@ void NetworkSession::update()
                 // **Said to the game, not only to the log**: a port in
                 // use left `State` at Offline and the script waiting.
                 core::logText(core::LogLevel::Error, error->message);
-                script::fireNetworkEvent(host->runtime().state(), "HostFailed", reasonOf(*error));
+                const Why why = reasonOf(*error);
+                script::fireNetworkFailure(host->runtime().state(), "HostFailed", why.text, why.failure, why.key);
                 break;
             }
             state.networkTopology = scene::NetworkTopology::Host;
@@ -836,7 +893,7 @@ void NetworkSession::update()
         }
         case Kind::Disconnect:
             if (active())
-                goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.left")), wasAuthority);
+                goSolo("Disconnected", said(Failure::Left, ENG_TR("net.info.left"), "net.info.left"), wasAuthority);
             break;
         }
     }
@@ -1067,11 +1124,11 @@ void NetworkSession::update()
     // script's join is still the machine's own world until the welcome, so
     // this is asked whatever the topology says.
     if (m_connecting && status.refused != 0) {
-        const std::string why = refusalText(status.refused, status.refusedText);
+        const Why why = refusalWhy(status.refused, status.refusedText);
         // **A join from the command line has no script to tell**: the log
         // is where its player reads why.
         if (m_redial)
-            core::logText(core::LogLevel::Warn, why);
+            core::logText(core::LogLevel::Warn, why.text);
         goSolo("JoinFailed", why, state.networkTopology != scene::NetworkTopology::Replica);
         return;
     }
@@ -1105,8 +1162,8 @@ void NetworkSession::update()
             const std::array<core::I18nArg, 1> args{core::I18nArg{"address", std::string_view{m_address}}};
             goSolo("JoinFailed",
                    m_relay.code.empty() || (status.joinFailure == 0 && !status.lost)
-                       ? core::engineCatalog().format(ENG_TR("net.err.join_failed"), args)
-                       : joinFailureText(status.joinFailure, m_relay.relay, m_relay.code),
+                       ? said(Failure::TimedOut, ENG_TR("net.err.join_failed"), "net.err.join_failed", args)
+                       : joinFailureWhy(status.joinFailure, m_relay.relay, m_relay.code),
                    state.networkTopology != scene::NetworkTopology::Replica);
         }
         return;
@@ -1114,9 +1171,9 @@ void NetworkSession::update()
     // A join from the command line dials again, as it always has (ADR 0085);
     // one a script made hands the decision back to the game.
     if (status.refused != 0) {
-        const std::string why = refusalText(status.refused, status.refusedText);
+        const Why why = refusalWhy(status.refused, status.refusedText);
         if (m_redial)
-            core::logText(core::LogLevel::Warn, why);
+            core::logText(core::LogLevel::Warn, why.text);
         goSolo("Disconnected", why, false);
         return;
     }
@@ -1138,7 +1195,7 @@ void NetworkSession::update()
         return;
     }
     if (status.lost && !m_redial) {
-        goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
+        goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"), false);
         return;
     }
     // **A redial is a state, and it has an end**. While the server is
@@ -1156,7 +1213,7 @@ void NetworkSession::update()
         }
         else if (static_cast<core::f64>(now - std::min(now, m_lostSinceNs)) > m_joinTimeoutSeconds * 1'000'000'000.0) {
             m_lostSinceNs = 0;
-            goSolo("Disconnected", core::engineCatalog().format(ENG_TR("net.info.server_gone")), false);
+            goSolo("Disconnected", said(Failure::ServerGone, ENG_TR("net.info.server_gone"), "net.info.server_gone"), false);
         }
         return;
     }

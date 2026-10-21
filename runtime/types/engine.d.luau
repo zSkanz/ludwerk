@@ -345,6 +345,9 @@ end
 declare extern type EnumSequenceControl extends EnumItem with
 end
 
+declare extern type EnumNetworkFailure extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. The component names are lowercase because they are fields of Luau's native
     --- vector type. `v.X` also reads the component at run time, but only the lowercase name is
@@ -5981,17 +5984,22 @@ declare extern type NetworkService extends Instance with
     --- (`[network] max_connections_per_address` in `project.toml`, or `--max-per-address` for a
     --- dedicated server; 0 is no limit). With a join code, it can also be that the relay did not
     --- answer, no match has that code, the host has blocked this machine, or no connection could be
-    --- established in time.
-    read JoinFailed: Signal<string>
+    --- established in time. After the text come an `Enum.NetworkFailure` and the catalog key the text
+    --- was made from. Decide by the enum, not by the words: the words are in the player's language and
+    --- change between versions.
+    read JoinFailed: Signal<string, EnumNetworkFailure, string>
     --- Fires when `RelayState` or `JoinCode` changes: the relay registered the match, stopped
     --- answering, or started answering again. Read the two properties for the new values.
     read RelayStateChanged: Signal<()>
     --- Fires when `Host` cannot open its port, for example because another program is using it. This
-    --- machine stays as it was. The reason is passed as readable text.
-    read HostFailed: Signal<string>
+    --- machine stays as it was. The reason is passed as readable text in the player's language, then as
+    --- an `Enum.NetworkFailure` to decide by, then as the catalog key of the text.
+    read HostFailed: Signal<string, EnumNetworkFailure, string>
     --- Fires when the connection ends and this machine is back in single-player. The server left, the
-    --- network failed, or `Disconnect` was called.
-    read Disconnected: Signal<string>
+    --- network failed, or `Disconnect` was called. The reason is passed as readable text, then as an
+    --- `Enum.NetworkFailure` (`ServerGone`, `Left`, `Removed` and the others), then as the catalog key
+    --- of the text.
+    read Disconnected: Signal<string, EnumNetworkFailure, string>
     --- Fires on a channel the manager is about to merge into another, because it has held under a
     --- quarter of its players for a while. In `seconds` its players are moved, all together, to the
     --- fullest channel with room. A game can say so first.
@@ -7997,6 +8005,24 @@ declare Enum: {
         Keep: EnumSequenceControl,
         Suspend: EnumSequenceControl,
         GetEnumItems: (self: any) -> { EnumSequenceControl },
+    },
+    NetworkFailure: {
+        TimedOut: EnumNetworkFailure,
+        ServerGone: EnumNetworkFailure,
+        Left: EnumNetworkFailure,
+        Full: EnumNetworkFailure,
+        AddressLimit: EnumNetworkFailure,
+        VersionMismatch: EnumNetworkFailure,
+        Insecure: EnumNetworkFailure,
+        KeyChanged: EnumNetworkFailure,
+        RefusedByGame: EnumNetworkFailure,
+        Removed: EnumNetworkFailure,
+        Blocked: EnumNetworkFailure,
+        RelayUnreachable: EnumNetworkFailure,
+        RelayBusy: EnumNetworkFailure,
+        NoMatch: EnumNetworkFailure,
+        CannotStart: EnumNetworkFailure,
+        GetEnumItems: (self: any) -> { EnumNetworkFailure },
     },
 }
 

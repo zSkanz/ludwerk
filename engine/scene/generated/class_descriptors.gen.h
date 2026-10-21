@@ -143,6 +143,7 @@ inline constexpr EnumId LipSyncModeEnumId = 102;
 inline constexpr EnumId IrradianceModeEnumId = 103;
 inline constexpr EnumId ScreenSplitEnumId = 104;
 inline constexpr EnumId SequenceControlEnumId = 105;
+inline constexpr EnumId NetworkFailureEnumId = 106;
 
 } // namespace generated
 

@@ -679,6 +679,13 @@ void fireSubWorldMessages(lua_State* L);
 // two carry a readable reason.
 void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason);
 
+// **`JoinFailed`, `HostFailed` or `Disconnected` with why**: the text in the
+// player's language, the `Enum.NetworkFailure` value a game decides by, and
+// the catalog key the text was made from. Games matched the sentences, and a
+// sentence that changed between versions broke the match without a word.
+void fireNetworkFailure(lua_State* L, std::string_view eventName, std::string_view reason, core::i32 failure,
+                        std::string_view key);
+
 // `RunService.TimeDilationChanged` (ADR 0233), fired by the host when the
 // rate its world runs at changes.
 void fireTimeDilationChanged(lua_State* L);

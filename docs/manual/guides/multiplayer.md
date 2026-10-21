@@ -10,8 +10,12 @@ local NetworkService = game:GetService("NetworkService")
 NetworkService.Connected:Connect(function()
     print("in the match")
 end)
-NetworkService.JoinFailed:Connect(function(reason: string)
-    print("could not join:", reason)
+NetworkService.JoinFailed:Connect(function(reason: string, failure: EnumItem)
+    if failure == Enum.NetworkFailure.Full then
+        print("the match is full; try another")
+    else
+        print("could not join:", reason)
+    end
 end)
 NetworkService.Disconnected:Connect(function(reason: string)
     print("back to solo:", reason)
@@ -19,6 +23,13 @@ end)
 
 NetworkService:Join("play.example.com:7777") -- or Join() for [network] server
 ```
+
+**Why, in three forms.** `JoinFailed`, `HostFailed` and `Disconnected` pass
+the reason as text in the player's language, then as an
+`Enum.NetworkFailure` -- `TimedOut`, `Full`, `VersionMismatch`, `Removed`,
+`ServerGone`, `Left` and the rest -- then as the catalog key the text was
+made from. Decide by the enum: the words are a translation and change between
+versions, and a game that matched them stopped matching without a word.
 
 | Call | What it does |
 |---|---|

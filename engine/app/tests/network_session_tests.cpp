@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <initializer_list>
 #include <doctest/doctest.h>
 #include <map>
 #include <memory>
@@ -15,12 +16,14 @@
 #include "engine/app/world_host.h"
 #include "engine/app/world_ui.h"
 #include "engine/net/memory_transport.h"
+#include "engine/net/transport.h"
 #include "engine/platform/file.h"
 #include "engine/platform/process.h"
 #include "engine/render/draw_poses.h"
 #include "engine/render/transform_history.h"
 #include "engine/replication/replication.h"
 #include "engine/replication/script_templates.h"
+#include "engine/replication/session.h"
 #include "engine/scene/character_replay.h"
 #include "engine/scene/components.h"
 #include "engine/scene/physics_sync.h"
@@ -228,8 +231,9 @@ TEST_CASE("a solo game hosts, another joins it, and a server that goes puts the 
         NetworkService.Connected:Connect(function()
             print(`connected authority:{NetworkService.Authority} state:{NetworkService.State.Name}`)
         end)
-        NetworkService.Disconnected:Connect(function(reason: string)
+        NetworkService.Disconnected:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`disconnected:{reason} authority:{NetworkService.Authority}`)
+            print(`why:Disconnected:{failure.Name}:{key}`)
         end)
         NetworkService:Join("memory:47101")
     )");
@@ -258,6 +262,8 @@ TEST_CASE("a solo game hosts, another joins it, and a server that goes puts the 
     CHECK(client.topology() == scene::NetworkTopology::Solo);
     CHECK(log.contains("authority:true"));
     CHECK(log.contains("disconnected:"));
+    // Beside the words, what a game decides by (Enum.NetworkFailure).
+    CHECK(log.contains("why:Disconnected:ServerGone:net.info.server_gone"));
     // Solo again, so its server code started again, fresh.
     CHECK(client.serverCode() == 1);
     CHECK(occurrences(log, "client-rules-started") == 2);
@@ -713,8 +719,9 @@ TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")
     Machine client;
     client.project.write("src/client/join.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.JoinFailed:Connect(function(reason: string)
+        NetworkService.JoinFailed:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`join-failed:{reason ~= ""} state:{NetworkService.State.Name}`)
+            print(`why:JoinFailed:{failure.Name}:{key}`)
         end)
         NetworkService:Join("memory:47999")
     )");
@@ -722,6 +729,8 @@ TEST_CASE("a join nothing answers is JoinFailed, and the game stays solo")
     for (int at = 0; at < 60; ++at)
         client.frame();
     CHECK(log.contains("join-failed:true state:Offline"));
+    // An address no server can be found at: to a player, nothing answered.
+    CHECK(log.contains("why:JoinFailed:TimedOut:net.err.connect_unresolved"));
     CHECK(client.topology() == scene::NetworkTopology::Solo);
     CHECK_FALSE(client.network->active());
 }
@@ -768,8 +777,9 @@ TEST_CASE("a full server says so, and the player who asked hears why")
     Machine second;
     second.project.write("src/client/join.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.JoinFailed:Connect(function(reason: string)
+        NetworkService.JoinFailed:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`second-refused:{reason}`)
+            print(`why:JoinFailed:{failure.Name}:{key}`)
         end)
         task.wait(0.5)
         NetworkService:Join("memory:47102")
@@ -784,6 +794,7 @@ TEST_CASE("a full server says so, and the player who asked hears why")
     CHECK(second.state() == Offline);
     CHECK(log.contains("second-refused:"));
     CHECK(log.contains("full"));
+    CHECK(log.contains("why:JoinFailed:Full:net.err.refused_full"));
 }
 
 TEST_CASE("a host's script says how many play and removes a player, and each is told why (ADR 0167)")
@@ -823,8 +834,9 @@ TEST_CASE("a host's script says how many play and removes a player, and each is 
             print(`first-kick:{pcall(function() me:Kick() end)}`)
             print(`first-limit:{pcall(function() NetworkService.MaxPlayers = 8 end)}`)
         end)
-        NetworkService.Disconnected:Connect(function(reason: string)
+        NetworkService.Disconnected:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`first-out:{reason}`)
+            print(`why:Disconnected:{failure.Name}:{key}`)
         end)
         NetworkService:Join("memory:47121")
     )");
@@ -832,8 +844,9 @@ TEST_CASE("a host's script says how many play and removes a player, and each is 
     Machine second;
     second.project.write("src/client/join.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.JoinFailed:Connect(function(reason: string)
+        NetworkService.JoinFailed:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`second-refused:{reason}`)
+            print(`why:JoinFailed:{failure.Name}:{key}`)
         end)
         task.wait(0.5)
         NetworkService:Join("memory:47121")
@@ -850,6 +863,7 @@ TEST_CASE("a host's script says how many play and removes a player, and each is 
     CHECK(second.state() == Offline);
     CHECK(log.contains("second-refused:"));
     CHECK(log.contains("full"));
+    CHECK(log.contains("why:JoinFailed:Full:net.err.refused_full"));
     CHECK(log.contains("first-kick:false"));
     CHECK(log.contains("first-limit:false"));
 
@@ -861,6 +875,7 @@ TEST_CASE("a host's script says how many play and removes a player, and each is 
     // Removed, with the game's own words; and the host is nobody's to remove.
     CHECK(log.contains("host-self:false"));
     CHECK(log.contains("first-out:The run is starting without you."));
+    CHECK(log.contains("why:Disconnected:Removed:net.info.removed"));
     CHECK(first.state() == Offline);
     CHECK(log.contains("host-removing:2"));
     CHECK(log.contains("host-players:1"));
@@ -877,7 +892,8 @@ TEST_CASE("a host that cannot open its port says so to the game")
     Machine second;
     second.project.write("src/client/host.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.HostFailed:Connect(function(reason: string)
+        NetworkService.HostFailed:Connect(function(reason: string, failure: EnumItem, key: string)
+            print(`why:HostFailed:{failure.Name}:{string.sub(key, 1, 4)}`)
             -- The words a game shows its player, with no catalog key in front
             -- of them, as `JoinFailed`'s are.
             print(`host-failed:{reason ~= ""} state:{NetworkService.State.Name} keyed:{string.sub(reason, 1, 1) == "["}`)
@@ -892,6 +908,7 @@ TEST_CASE("a host that cannot open its port says so to the game")
     }
     CHECK(first.state() == Hosting);
     CHECK(log.contains("host-failed:true state:Offline keyed:false"));
+    CHECK(log.contains("why:HostFailed:CannotStart:net."));
 }
 
 TEST_CASE("a client whose server goes is player 1 again, in its own world")
@@ -963,8 +980,9 @@ TEST_CASE("a join waits by the clock, not by frames, and one from the command li
     Machine client;
     client.project.write("src/client/join.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.JoinFailed:Connect(function()
+        NetworkService.JoinFailed:Connect(function(_reason: string, failure: EnumItem, key: string)
             print("join-failed")
+            print(`why:JoinFailed:{failure.Name}:{key}`)
         end)
         NetworkService:Join("memory:47990")
     )");
@@ -982,6 +1000,8 @@ TEST_CASE("a join waits by the clock, not by frames, and one from the command li
     client.frame();
     client.frame();
     CHECK(log.contains("join-failed"));
+    // Out of time, by the clock: what a game decides by.
+    CHECK(log.contains("why:JoinFailed:TimedOut:net.err.join_failed"));
     CHECK(client.topology() == scene::NetworkTopology::Solo);
 
     // From the command line it dials until the server answers.
@@ -1035,8 +1055,9 @@ TEST_CASE("a server whose key is not the one expected is a refusal, said as such
     Machine joiner;
     joiner.project.write("src/client/join.luau", R"(
         local NetworkService = game:GetService("NetworkService")
-        NetworkService.JoinFailed:Connect(function(reason: string)
+        NetworkService.JoinFailed:Connect(function(reason: string, failure: EnumItem, key: string)
             print(`refused-because:{reason}`)
+            print(`why:JoinFailed:{failure.Name}:{key}`)
         end)
         NetworkService:Join("memory:47103")
     )");
@@ -1047,6 +1068,7 @@ TEST_CASE("a server whose key is not the one expected is a refusal, said as such
         joiner.frame();
     }
     CHECK(log.contains("refused-because:This server's key is not the one"));
+    CHECK(log.contains("why:JoinFailed:KeyChanged:net.err.join_key_changed"));
 }
 
 TEST_CASE("a script reads how the connection is doing (multiplayer smoothness)")
@@ -1126,7 +1148,8 @@ TEST_CASE("a script that joins again after leaving is welcomed back as the same 
                 NetworkService:Disconnect()
             end
         end)
-        NetworkService.Disconnected:Connect(function()
+        NetworkService.Disconnected:Connect(function(_reason: string, failure: EnumItem, key: string)
+            print(`why:Disconnected:{failure.Name}:{key}`)
             if joins == 1 then
                 NetworkService:Join("memory:47102")
             end
@@ -1140,6 +1163,8 @@ TEST_CASE("a script that joins again after leaving is welcomed back as the same 
     CHECK(log.contains("joined:1 user:2"));
     CHECK(log.contains("joined:2 user:2"));
     CHECK_FALSE(log.contains("joined:2 user:3"));
+    // `Disconnect` from a script: this machine left.
+    CHECK(log.contains("why:Disconnected:Left:net.info.left"));
 }
 
 // --- Stage 2 (ADR 0133): what a jump onto a corner costs ------------------------------
@@ -4678,4 +4703,63 @@ end
     };
     CHECK(flag("NotAPlayer"));
     CHECK(flag("Solo"));
+}
+
+TEST_CASE("every refusal and every relay failure is handed with its Enum.NetworkFailure value and its key")
+{
+    // **Decided by the value, not the words**: a game matched our sentences,
+    // and a sentence that changed between versions broke its match without a
+    // word. Every code a match or a relay can answer with, each with the value
+    // `api/defs/enums.api.luau` gives it, a catalog key and words to show.
+    Captured log;
+    struct Expected
+    {
+        core::u8 code;
+        core::i32 failure;
+        std::string_view key;
+    };
+    // Enum.NetworkFailure: Full 3, AddressLimit 4, VersionMismatch 5,
+    // Insecure 6, KeyChanged 7, RefusedByGame 8, Removed 9.
+    for (const Expected& refusal : {
+             Expected{replication::RefusedVersion, 5, "net.err.refused_version"},
+             Expected{replication::RefusedFull, 3, "net.err.refused_full"},
+             Expected{replication::RefusedRemoved, 9, "net.info.removed"},
+             Expected{replication::RefusedAddressLimit, 4, "net.err.refused_address_limit"},
+             Expected{replication::RefusedLuauFlags, 5, "net.err.refused_luau_flags"},
+             Expected{replication::RefusedInsecure, 6, "net.err.refused_insecure"},
+             Expected{replication::RefusedByGame, 8, "net.err.refused_by_game"},
+             Expected{replication::RefusedServerKey, 7, "net.err.join_key_changed"},
+             Expected{replication::RefusedNotEncrypted, 6, "net.err.join_insecure"},
+         }) {
+        CAPTURE(static_cast<int>(refusal.code));
+        const app::NetworkFailureReason why = app::networkRefusal(refusal.code, {});
+        CHECK(why.failure == refusal.failure);
+        CHECK(why.key == refusal.key);
+        CHECK_FALSE(why.text.empty());
+    }
+    // The game's own words for a refusal or a removal are the text; the value
+    // and the key stay the engine's.
+    const app::NetworkFailureReason removed = app::networkRefusal(replication::RefusedRemoved, "afk too long");
+    CHECK(removed.text == "afk too long");
+    CHECK(removed.failure == 9);
+    CHECK(removed.key == "net.info.removed");
+
+    // Enum.NetworkFailure: TimedOut 0, Full 3, Insecure 6, KeyChanged 7,
+    // Blocked 10, RelayUnreachable 11, RelayBusy 12, NoMatch 13.
+    for (const Expected& failure : {
+             Expected{static_cast<core::u8>(net::ConnectFailure::RelayUnreachable), 11, "net.err.join_relay_unreachable"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::NoSession), 13, "net.err.join_no_session"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::Full), 3, "net.err.refused_full"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::Refused), 10, "net.err.join_kept_away"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::Busy), 12, "net.err.join_relay_busy"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::KeyChanged), 7, "net.err.join_key_changed"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::Insecure), 6, "net.err.join_insecure"},
+             Expected{static_cast<core::u8>(net::ConnectFailure::TimedOut), 0, "net.err.join_no_path"},
+         }) {
+        CAPTURE(static_cast<int>(failure.code));
+        const app::NetworkFailureReason why = app::networkJoinFailure(failure.code, "relay.example:7789", "ABCD2345");
+        CHECK(why.failure == failure.failure);
+        CHECK(why.key == failure.key);
+        CHECK_FALSE(why.text.empty());
+    }
 }

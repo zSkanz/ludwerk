@@ -56,6 +56,24 @@ namespace engine::app {
 
 class WorldHost;
 
+// **Why a connection did not happen or ended**, in the three forms a game is
+// handed: the text in the player's language, the `Enum.NetworkFailure` value
+// and the catalog key the text was made from.
+struct NetworkFailureReason
+{
+    std::string text;
+    core::i32 failure = 0;
+    std::string key;
+};
+
+// **The reasons a match can refuse a player and a relay can fail a join**,
+// each with its `Enum.NetworkFailure` value and key: what `JoinFailed` and
+// `Disconnected` are handed. `words` is the game's own reason, where it gave
+// one. Named here for a test to read every code.
+[[nodiscard]] NetworkFailureReason networkRefusal(core::u8 reason, const std::string& words);
+[[nodiscard]] NetworkFailureReason networkJoinFailure(core::u8 failure, const std::string& relay,
+                                                      const std::string& code);
+
 class NetworkSession
 {
 public:
@@ -184,7 +202,7 @@ private:
     void signIns(scene::EngineState& state);
     std::vector<std::unique_ptr<SignIn>> m_signIns;
     void wire();
-    void goSolo(std::string_view event, std::string_view reason, bool wasAuthority);
+    void goSolo(std::string_view event, const NetworkFailureReason& why, bool wasAuthority);
     void setState(core::i32 state);
 
     std::function<WorldHost*()> m_host;

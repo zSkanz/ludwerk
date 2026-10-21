@@ -6208,6 +6208,14 @@
             {
               "Name": "reason",
               "Type": "string"
+            },
+            {
+              "Name": "failure",
+              "Type": "Enum.NetworkFailure"
+            },
+            {
+              "Name": "key",
+              "Type": "string"
             }
           ]
         },
@@ -6217,6 +6225,14 @@
             {
               "Name": "reason",
               "Type": "string"
+            },
+            {
+              "Name": "failure",
+              "Type": "Enum.NetworkFailure"
+            },
+            {
+              "Name": "key",
+              "Type": "string"
             }
           ]
         },
@@ -6225,6 +6241,14 @@
           "Parameters": [
             {
               "Name": "reason",
+              "Type": "string"
+            },
+            {
+              "Name": "failure",
+              "Type": "Enum.NetworkFailure"
+            },
+            {
+              "Name": "key",
               "Type": "string"
             }
           ]
@@ -17409,6 +17433,71 @@
         {
           "Name": "Warning",
           "Value": 3
+        }
+      ]
+    },
+    {
+      "Name": "NetworkFailure",
+      "Items": [
+        {
+          "Name": "AddressLimit",
+          "Value": 4
+        },
+        {
+          "Name": "Blocked",
+          "Value": 10
+        },
+        {
+          "Name": "CannotStart",
+          "Value": 14
+        },
+        {
+          "Name": "Full",
+          "Value": 3
+        },
+        {
+          "Name": "Insecure",
+          "Value": 6
+        },
+        {
+          "Name": "KeyChanged",
+          "Value": 7
+        },
+        {
+          "Name": "Left",
+          "Value": 2
+        },
+        {
+          "Name": "NoMatch",
+          "Value": 13
+        },
+        {
+          "Name": "RefusedByGame",
+          "Value": 8
+        },
+        {
+          "Name": "RelayBusy",
+          "Value": 12
+        },
+        {
+          "Name": "RelayUnreachable",
+          "Value": 11
+        },
+        {
+          "Name": "Removed",
+          "Value": 9
+        },
+        {
+          "Name": "ServerGone",
+          "Value": 1
+        },
+        {
+          "Name": "TimedOut",
+          "Value": 0
+        },
+        {
+          "Name": "VersionMismatch",
+          "Value": 5
         }
       ]
     },
