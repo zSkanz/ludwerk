@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <doctest/doctest.h>
@@ -227,6 +228,66 @@ TEST_CASE("the LOD chain shrinks and stops when it stops paying")
     // unit, so simplifying it can move the surface by a fraction of a unit and
     // not by hundreds -- which is what the old division produced.
     CHECK(compiled.lods.back().error < 1.0f);
+}
+
+// The same grid flat-shaded, as a low-poly prop is exported: every triangle
+// with three vertices of its own and its own face normal, so no two faces
+// share a vertex -- only a position.
+[[nodiscard]] static Model flatShaded(const Model& smooth)
+{
+    Model model = smooth;
+    model.mesh.vertices.clear();
+    model.mesh.indices.clear();
+    for (usize first = 0; first + 2 < smooth.mesh.indices.size(); first += 3) {
+        const Vertex& a = smooth.mesh.vertices[smooth.mesh.indices[first]];
+        const Vertex& b = smooth.mesh.vertices[smooth.mesh.indices[first + 1]];
+        const Vertex& c = smooth.mesh.vertices[smooth.mesh.indices[first + 2]];
+        const engine::core::Vec3 face =
+            engine::core::normalize(engine::core::cross(b.position - a.position, c.position - a.position));
+        for (Vertex corner : {a, b, c}) {
+            corner.normal = face;
+            model.mesh.indices.push_back(static_cast<u32>(model.mesh.vertices.size()));
+            model.mesh.vertices.push_back(corner);
+        }
+    }
+    model.mesh.submeshes.resize(1);
+    model.mesh.submeshes[0].firstIndex = 0;
+    model.mesh.submeshes[0].indexCount = static_cast<u32>(model.mesh.indices.size());
+    return model;
+}
+
+// What a level covers seen from above: a hole, or a face pulled off and lost,
+// is area gone.
+[[nodiscard]] static f32 coveredFromAbove(const CompiledMesh& mesh, const MeshLod& lod)
+{
+    f32 area = 0.0f;
+    for (usize first = 0; first + 2 < lod.indices.size(); first += 3) {
+        const engine::core::Vec3 a = mesh.vertices[lod.indices[first]].position;
+        const engine::core::Vec3 b = mesh.vertices[lod.indices[first + 1]].position;
+        const engine::core::Vec3 c = mesh.vertices[lod.indices[first + 2]].position;
+        area += 0.5f * std::abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z));
+    }
+    return area;
+}
+
+TEST_CASE("a flat-shaded mesh simplifies as one surface, and no level loses a face it covered")
+{
+    const Model model = flatShaded(gridModel(24));
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+
+    // Simplified at all: faces that only share their corners' positions are
+    // one surface, not six hundred islands.
+    REQUIRE(compiled.lods.size() >= 2);
+    const f32 whole = coveredFromAbove(compiled, compiled.lods[0]);
+    REQUIRE(whole > 99.0f);
+    for (usize level = 1; level < compiled.lods.size(); ++level) {
+        CHECK(compiled.lods[level].indices.size() < compiled.lods[level - 1].indices.size());
+        // Simplified as islands, each level lost whole faces: a twig gone, a
+        // leaf shelf torn into wedges. As one surface, the grid is still
+        // covered wall to wall.
+        CHECK(coveredFromAbove(compiled, compiled.lods[level]) > whole * 0.99f);
+    }
 }
 
 TEST_CASE("simplification never welds across a material boundary")

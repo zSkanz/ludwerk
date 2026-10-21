@@ -137,7 +137,10 @@ using asset::AssetKind;
 //
 // 11: a skeleton under a node that is turned or scaled stands where the file's
 // graph has it: its joints, binds and clips are other numbers.
-constexpr core::u32 kCompilerRules = 11;
+//
+// 12: faces that meet at a corner without sharing its vertex are simplified
+// as one surface, so a flat-shaded mesh's levels keep its twigs and leaves on.
+constexpr core::u32 kCompilerRules = 12;
 
 // What one source compiled to, remembered between runs.
 //

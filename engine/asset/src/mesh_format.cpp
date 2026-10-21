@@ -450,6 +450,50 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
         }
     }
 
+    // **Faces that meet at a corner without sharing its vertex are one
+    // surface to the simplifier** (`meshopt_SimplifyPermissive`). A
+    // flat-shaded mesh gives every face its own vertices, differing only in
+    // their normal, and simplified as islands it lost whole faces: a tree's
+    // twigs gone at its first level, its leaf shelves torn into wedges, its
+    // trunks off the ground by the last. Where the copies at one corner differ
+    // in what the mesh is TEXTURED by -- a seam, a palette's colour -- the
+    // corner is protected, so a colour never runs into its neighbour's; and
+    // the normal is weighed, so a level does not light a face as another.
+    //
+    // Only a mesh with such faces is simplified this way: one whose copies at
+    // a corner all differ in what textures them -- a smooth mesh's seams --
+    // is simplified as it always was, and compiles to the bytes it did.
+    std::vector<unsigned int> positionRemap(out.vertices.size());
+    meshopt_generatePositionRemap(positionRemap.data(), positions, out.vertices.size(), positionStride);
+    std::vector<unsigned char> seams(out.vertices.size(), 0);
+    bool facesApart = false;
+    for (usize vertex = 0; vertex < positionRemap.size(); ++vertex) {
+        const usize first = positionRemap[vertex];
+        if (first == vertex)
+            continue;
+        const Vertex& a = out.vertices[vertex];
+        const Vertex& b = out.vertices[first];
+        const bool textured = std::abs(a.uv[0] - b.uv[0]) > 1.0e-5f || std::abs(a.uv[1] - b.uv[1]) > 1.0e-5f ||
+                              (!out.lightmapUvs.empty() && (out.lightmapUvs[vertex].u != out.lightmapUvs[first].u ||
+                                                            out.lightmapUvs[vertex].v != out.lightmapUvs[first].v));
+        if (textured) {
+            seams[vertex] = meshopt_SimplifyVertex_Protect;
+            seams[first] = meshopt_SimplifyVertex_Protect;
+        }
+        else {
+            facesApart = true;
+        }
+    }
+    if (facesApart) {
+        if (locks.empty())
+            locks.assign(out.vertices.size(), 0);
+        for (usize vertex = 0; vertex < locks.size(); ++vertex)
+            locks[vertex] |= seams[vertex];
+    }
+    const unsigned int simplifyOptions = facesApart ? meshopt_SimplifyPermissive : 0;
+    const f32* const normals = &out.vertices[0].normal.x;
+    constexpr std::array<f32, 3> NormalWeights{0.5f, 0.5f, 0.5f};
+
     // Each level simplifies each SUBMESH separately, so a material boundary is
     // never welded across -- a tree whose leaves start being drawn with the
     // trunk's shader is the failure that buys.
@@ -482,6 +526,11 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
                 locks.empty()
                     ? meshopt_simplify(destination.data(), source.data(), source.size(), positions, out.vertices.size(),
                                        positionStride, target, options.lodTargetError, 0, &error)
+                : facesApart
+                    ? meshopt_simplifyWithAttributes(destination.data(), source.data(), source.size(), positions,
+                                                     out.vertices.size(), positionStride, normals, sizeof(Vertex),
+                                                     NormalWeights.data(), NormalWeights.size(), locks.data(), target,
+                                                     options.lodTargetError, simplifyOptions, &error)
                     : meshopt_simplifyWithAttributes(destination.data(), source.data(), source.size(), positions,
                                                      out.vertices.size(), positionStride, nullptr, 0, nullptr, 0,
                                                      locks.data(), target, options.lodTargetError, 0, &error);
