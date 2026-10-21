@@ -606,4 +606,16 @@ u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transfo
     return 0;
 }
 
+u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transform, core::f32 pixelsPerUnit,
+                  core::f32 bias, u32 finest) noexcept
+{
+    // A smaller bias is a nearer change: the same error is reached at the
+    // distance times the bias, which is the pixels a unit covers times it.
+    const core::f32 scaled = bias > 0.0f ? pixelsPerUnit * bias : pixelsPerUnit;
+    const u32 level = selectMeshLod(resolved, transform, scaled);
+    if (resolved.lods.size() <= 1)
+        return level;
+    return std::max(level, std::min(finest, static_cast<u32>(resolved.lods.size() - 1)));
+}
+
 } // namespace engine::render

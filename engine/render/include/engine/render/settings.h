@@ -302,6 +302,16 @@ struct GraphicsSettings
     // scale, no hexagonal cells, no procedural variation over it. The level's:
     // Low, and a handheld's Medium.
     bool terrainLean = false;
+    // **How soon a mesh changes to a coarser level of detail**
+    // (`GraphicsService.LODBias`): a multiplier on the distance at which it
+    // does -- a half changes at half the distance, so a Low picture draws a
+    // crowd and a forest in fewer triangles than a High one. One is the
+    // levels as the compiler measured them.
+    f32 lodBias = 1.0f;
+    // The finest level a mesh is drawn at (`GraphicsService.MaximumLODLevel`):
+    // nought is its finest; one leaves its finest out, where it has others.
+    u32 maximumLodLevel = 0;
+
     // **The lean path for a window** (the mobile lean path): a tile GPU's
     // picture at Low and Medium -- what a handheld draws there unless the
     // project says otherwise (`[graphics] lean_path`), and on a PC to try it

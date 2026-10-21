@@ -588,6 +588,8 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.depthOfField = value(GraphicsSetting::DepthOfField) != 0.0;
     settings.sunRays = value(GraphicsSetting::SunRays) != 0.0;
     settings.terrainPixelError = static_cast<f32>(2.0 / value(GraphicsSetting::TerrainDetail));
+    settings.lodBias = static_cast<f32>(value(GraphicsSetting::LODBias));
+    settings.maximumLodLevel = static_cast<u32>(value(GraphicsSetting::MaximumLODLevel));
     settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
     // **The filter's taps are the shadow quality's** (ADR 0172): one past the
     // level, zero for off -- so a player who turns shadows down alone gets the

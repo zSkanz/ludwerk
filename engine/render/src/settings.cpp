@@ -1,6 +1,7 @@
 #include "engine/render/settings.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "engine/render/clusters.h"
 #include "engine/render/shadow.h"
@@ -36,6 +37,8 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.contactShadows = false;
         settings.foliageDecals = false;
         settings.terrainPixelError = 4.0f;
+        settings.lodBias = 0.5f;
+        settings.maximumLodLevel = 1u;
         settings.antiAliasing = AntiAliasingMode::Fxaa;
         // The world at three quarters, brought up by FSR 1 rather than
         // filtered: the edges a reduced scale softens, kept (ADR 0158).
@@ -60,6 +63,8 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.contactShadows = true;
         settings.foliageDecals = true;
         settings.terrainPixelError = 3.0f;
+        settings.lodBias = 0.75f;
+        settings.maximumLodLevel = 0u;
         settings.antiAliasing = AntiAliasingMode::Smaa;
         settings.autoExposure = true;
         settings.depthOfField = false;
@@ -78,6 +83,8 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.contactShadows = true;
         settings.foliageDecals = true;
         settings.terrainPixelError = 2.0f;
+        settings.lodBias = 1.0f;
+        settings.maximumLodLevel = 0u;
         // SMAA rather than FXAA (ADR 0158): an edge found by its shape and
         // blended by the area it covers, which keeps what FXAA blurs.
         settings.antiAliasing = AntiAliasingMode::Smaa;
@@ -117,6 +124,8 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.contactShadows = true;
         settings.foliageDecals = true;
         settings.terrainPixelError = 1.5f;
+        settings.lodBias = 1.5f;
+        settings.maximumLodLevel = 0u;
         // The temporal pass: what still crawls in motion under SMAA -- a fence,
         // a wire, the far grass -- is sampled at eight places over eight frames.
         settings.antiAliasing = AntiAliasingMode::Taa;
@@ -266,6 +275,8 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     // Ten seconds: a part unseen longer than that is a part missing.
     settings.materialWaitMs = std::min(settings.materialWaitMs, 10000u);
     settings.pipelineThreads = std::min(settings.pipelineThreads, 4u);
+    settings.lodBias = std::isfinite(settings.lodBias) ? std::clamp(settings.lodBias, 0.25f, 4.0f) : 1.0f;
+    settings.maximumLodLevel = std::min(settings.maximumLodLevel, 8u);
     // A cap below 360 is a picture of blocks; zero is "none".
     if (settings.renderResolutionCap != 0)
         settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);

@@ -4701,7 +4701,8 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             ++index;
             continue;
         }
-        const u32 lod = selectMeshLod(*resolved, first.transform, pixelsPerUnit);
+        const u32 lod =
+            selectMeshLod(*resolved, first.transform, pixelsPerUnit, settings_.lodBias, settings_.maximumLodLevel);
 
         core::usize last = index + 1;
         while (last < world.draws.size()) {
@@ -4730,7 +4731,8 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             const bool surfaced = first.material < materialSurface_.size() && materialSurface_[first.material] != 0;
             if (surfaced && next.material != first.material)
                 break;
-            if (selectMeshLod(*resolved, next.transform, pixelsPerUnit) != lod)
+            if (selectMeshLod(*resolved, next.transform, pixelsPerUnit, settings_.lodBias, settings_.maximumLodLevel) !=
+                lod)
                 break;
             ++last;
         }
@@ -5098,7 +5100,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         if (resolved == nullptr || resolved->lods.empty())
             continue;
 
-        const u32 lod = batch != nullptr ? batch->lod : selectMeshLod(*resolved, draw.transform, pixelsPerUnit);
+        const u32 lod = batch != nullptr ? batch->lod
+                                         : selectMeshLod(*resolved, draw.transform, pixelsPerUnit, settings_.lodBias,
+                                                         settings_.maximumLodLevel);
         const MeshLodRange& level = resolved->lods[lod];
         if (draw.section >= level.sectionCount || level.firstSection + draw.section >= resolved->sections.size())
             continue;
@@ -6404,7 +6408,8 @@ void DefaultRenderer::drawWarpMotion(rhi::IDevice& device, rhi::ICmdList& cmd, c
         const MeshCache::Resolved* resolved = meshes.resolve(draw.mesh);
         if (resolved == nullptr || resolved->lods.empty())
             continue;
-        const u32 lod = selectMeshLod(*resolved, draw.transform, pixelsPerUnit);
+        const u32 lod =
+            selectMeshLod(*resolved, draw.transform, pixelsPerUnit, settings_.lodBias, settings_.maximumLodLevel);
         const MeshLodRange& level = resolved->lods[lod];
         if (draw.section >= level.sectionCount || level.firstSection + draw.section >= resolved->sections.size())
             continue;
@@ -6562,7 +6567,8 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
         const MeshCache::Resolved* resolved = meshes.resolve(draw.mesh);
         if (resolved == nullptr || resolved->lods.empty())
             continue;
-        const u32 lod = selectMeshLod(*resolved, draw.transform, pixelsPerUnit);
+        const u32 lod =
+            selectMeshLod(*resolved, draw.transform, pixelsPerUnit, settings_.lodBias, settings_.maximumLodLevel);
         const MeshLodRange& level = resolved->lods[lod];
         if (draw.section >= level.sectionCount || level.firstSection + draw.section >= resolved->sections.size())
             continue;
@@ -9258,7 +9264,8 @@ void DefaultRenderer::cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, cons
         for (u32 lod = 0; lod < levels; ++lod) {
             // Where level `lod + 1` takes over, for a unit-scale instance.
             if (lod + 1 < levels)
-                lodDistances[bucket][lod] = resolved->lods[lod + 1].error * pixelsPerUnit / LodPixelError;
+                lodDistances[bucket][lod] =
+                    resolved->lods[lod + 1].error * pixelsPerUnit * settings_.lodBias / LodPixelError;
             foliageLodCommand_[bucket * kFoliageMaxLods + lod] = static_cast<u32>(arguments.size());
             const MeshLodRange& level = resolved->lods[lod];
             for (u32 section = 0; section < level.sectionCount; ++section) {

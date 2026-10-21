@@ -448,6 +448,23 @@ TEST_CASE("a tighter pixel budget picks a finer level")
     CHECK(tight < loose);
 }
 
+TEST_CASE("a quality level's bias moves the change nearer, and its finest level holds")
+{
+    // `GraphicsService.LODBias`: at a half, level 1 -- one pixel at 6.235 m --
+    // takes over at half that distance. `MaximumLODLevel`: at one, a mesh with
+    // a coarser level never draws its finest, and a mesh with none still draws
+    // the one it has.
+    const LodFixture fixture{0.0f, 0.01f};
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(4.0f), PixelsPerUnit, 1.0f, 0u) == 0);
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(3.0f), PixelsPerUnit, 0.5f, 0u) == 0);
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(3.3f), PixelsPerUnit, 0.5f, 0u) == 1);
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(12.0f), PixelsPerUnit, 2.0f, 0u) == 0);
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(1.0f), PixelsPerUnit, 1.0f, 1u) == 1);
+    CHECK(selectMeshLod(fixture.resolved, instanceAt(1.0f), PixelsPerUnit, 1.0f, 8u) == 1);
+    const LodFixture single{0.0f};
+    CHECK(selectMeshLod(single.resolved, instanceAt(1.0f), PixelsPerUnit, 1.0f, 1u) == 0);
+}
+
 TEST_CASE("a degenerate camera or a zero distance draws the best level")
 {
     // Both are real: a headless run before the first frame has no projection,

@@ -345,4 +345,10 @@ private:
 [[nodiscard]] u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transform,
                                 core::f32 pixelsPerUnit, core::f32 pixelError = LodPixelError) noexcept;
 
+// **The level of detail as a quality level has it** (`GraphicsService.LODBias`,
+// `MaximumLODLevel`): the level chosen with the distance scaled by `bias`, and
+// never finer than `finest` where the mesh has a level that coarse.
+[[nodiscard]] u32 selectMeshLod(const MeshCache::Resolved& resolved, const core::Mat4& transform,
+                                core::f32 pixelsPerUnit, core::f32 bias, u32 finest) noexcept;
+
 } // namespace engine::render

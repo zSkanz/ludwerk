@@ -9891,7 +9891,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     const render::MeshCache::Resolved* resolved = meshCache.resolve(draw.mesh);
                     if (resolved == nullptr || resolved->lods.empty())
                         continue;
-                    const core::u32 level = render::selectMeshLod(*resolved, draw.transform, lodPixelsPerUnit);
+                    const render::GraphicsSettings& drawn = renderer != nullptr ? renderer->settings() : liveGraphics;
+                    const core::u32 level = render::selectMeshLod(*resolved, draw.transform, lodPixelsPerUnit,
+                                                                  drawn.lodBias, drawn.maximumLodLevel);
                     const render::MeshLodRange& range = resolved->lods[level];
                     if (draw.section >= range.sectionCount ||
                         range.firstSection + draw.section >= resolved->sections.size())

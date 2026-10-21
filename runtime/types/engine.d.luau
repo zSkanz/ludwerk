@@ -5347,11 +5347,12 @@ declare extern type GraphicsService extends Instance with
     --- How sharp textures stay when seen at a shallow angle, from 1 to 16. This setting is saved and
     --- reported but has no effect yet.
     AnisotropicFiltering: number
-    --- A multiplier on the distance at which a mesh changes level of detail. This setting is saved and
-    --- reported but has no effect yet.
+    --- A multiplier on the distance at which a mesh changes to a coarser level of detail. At 0.5 each
+    --- mesh changes at half the distance, and is drawn with fewer triangles; at 2, at twice the
+    --- distance. Low is 0.5, Medium 0.75, High 1 and Ultra 1.5.
     LODBias: number
-    --- The finest level of detail a mesh can be drawn at; 0 is the mesh's finest. This setting is saved
-    --- and reported but has no effect yet.
+    --- The finest level of detail a mesh can be drawn at; 0 is the mesh's finest. At 1, a mesh that has
+    --- coarser levels is never drawn at its finest. Low is 1, the other levels 0.
     MaximumLODLevel: number
     --- The largest number of particles alive at once. This setting is saved and reported but has no
     --- effect yet.
