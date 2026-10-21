@@ -224,6 +224,57 @@ TEST_CASE("opening a project again reads none of its unchanged sources, and says
     CHECK(changed.compiled == std::vector<std::string>{"textures/base.png"});
 }
 
+TEST_CASE("the meshes' own rules raised compile the meshes again, and no texture")
+{
+    // Raising the importer's one number of rules for a change to meshes
+    // compiled every source again, textures and all: a game's first open after
+    // the update was 1,643 sources and minutes. A kind has rules of its own
+    // now, and a stamp says the rules its source compiled under -- here, as
+    // the stamps of a build before the meshes had rules said none.
+    if (!ENG_DEBUG_UI) {
+        MESSAGE("ENG_TEST_SKIP: this build carries no compiler, so a project cannot compile itself");
+        return;
+    }
+    REQUIRE(assetc::rulesOf(assetc::SourceKind::Mesh) != 0);
+    REQUIRE(assetc::rulesOf(assetc::SourceKind::Texture) == 0);
+
+    seedRealCatalog();
+    const Project project;
+    asset::ContentMounts first;
+    const app::ContentImportReport compiled = app::openProjectContent(project.root, project.content(), first);
+    REQUIRE(compiled.compiled.size() == 2);
+
+    // The stamps as an older build wrote them: no rules on any source.
+    std::string stamps;
+    REQUIRE(platform::readTextFile(app::importSourcesPath(project.root), stamps));
+    CHECK(stamps.find("\"rules\"") != std::string::npos);
+    std::string older;
+    for (std::size_t at = 0; at < stamps.size();) {
+        const std::size_t line = stamps.find('\n', at);
+        const std::string_view text(stamps.data() + at, (line == std::string::npos ? stamps.size() : line) - at);
+        if (text.find("\"rules\"") == std::string_view::npos) {
+            older.append(text);
+            older.push_back('\n');
+        }
+        else if (!older.empty() && older.size() >= 2 && older[older.size() - 2] == ',') {
+            // The field before it is the last one now.
+            older.erase(older.size() - 2, 1);
+        }
+        at = line == std::string::npos ? stamps.size() : line + 1;
+    }
+    REQUIRE(platform::writeTextFile(app::importSourcesPath(project.root), older));
+
+    asset::ContentMounts second;
+    const app::ContentImportReport again = app::openProjectContent(project.root, project.content(), second);
+    CHECK(again.compiled == std::vector<std::string>{"models/quad.gltf"});
+    CHECK(second.resolve("asset://models/quad.gltf").found());
+    CHECK(second.resolve("asset://textures/base.png").found());
+
+    // And then, under the rules it compiled with, nothing again.
+    asset::ContentMounts third;
+    CHECK(app::openProjectContent(project.root, project.content(), third).compiled.empty());
+}
+
 TEST_CASE("a material that names no image differently leaves every source compiled")
 {
     // The stamps were good for as long as no material file's size or time

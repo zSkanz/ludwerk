@@ -138,9 +138,22 @@ using asset::AssetKind;
 // 11: a skeleton under a node that is turned or scaled stands where the file's
 // graph has it: its joints, binds and clips are other numbers.
 //
-// 12: faces that meet at a corner without sharing its vertex are simplified
-// as one surface, so a flat-shaded mesh's levels keep its twigs and leaves on.
-constexpr core::u32 kCompilerRules = 12;
+// **Only for what changes every kind of answer** -- a format, the naming.
+// Raised, it is every source of every project compiled again: textures and
+// all, minutes on a game's first open after an update. What changes one
+// kind's answer raises that kind's rules below instead.
+constexpr core::u32 kCompilerRules = 11;
+
+// **A kind's own rules**, raised when what this tool produces for that kind
+// alone changes: a source of another kind keeps its key, and is not compiled
+// again. Hashed only when not zero, so a kind that never had rules of its own
+// keeps every key it had.
+//
+// Meshes, 1: faces that meet at a corner without sharing its vertex are
+// simplified as one surface, so a flat-shaded mesh's levels keep its twigs
+// and leaves on.
+constexpr core::u32 kMeshRules = 1;
+constexpr core::u32 kTextureRules = 0;
 
 // What one source compiled to, remembered between runs.
 //
@@ -231,6 +244,8 @@ void hashPinned(core::ContentHasher& hasher, const CompileOptions& options)
     hashPinned(hasher, options);
     const auto kindValue = static_cast<core::u32>(kind);
     hasher.update(std::as_bytes(std::span<const core::u32, 1>{&kindValue, 1}));
+    if (const core::u32 rules = rulesOf(kind); rules != 0)
+        hasher.update(std::as_bytes(std::span<const core::u32, 1>{&rules, 1}));
     // **What the project's materials say a loose image is for**, because it
     // decides the transfer function and so the bytes. Without it, the sRGB blob
     // written before the material existed comes back under the same name after
@@ -1449,6 +1464,18 @@ bool writeFile(const std::filesystem::path& path, std::span<const std::byte> byt
         return false;
     }
     return true;
+}
+
+core::u32 rulesOf(SourceKind kind) noexcept
+{
+    switch (kind) {
+    case SourceKind::Mesh:
+        return kMeshRules;
+    case SourceKind::Texture:
+        return kTextureRules;
+    default:
+        return 0;
+    }
 }
 
 ContentHash importerFingerprint(const CompileOptions& options)

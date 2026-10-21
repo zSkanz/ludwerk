@@ -229,6 +229,12 @@ struct CompileResult
 // has seen without reading it.
 [[nodiscard]] core::ContentHash importerFingerprint(const CompileOptions& options);
 
+// **The rules one kind of source is compiled under**, apart from the
+// importer's: raised when what this tool produces for that kind alone
+// changes, so a source of that kind -- and only of that kind -- is compiled
+// again. 0 for a kind that has never had rules of its own.
+[[nodiscard]] core::u32 rulesOf(SourceKind kind) noexcept;
+
 // **The files a source reads beside itself**: a glTF's external buffers and
 // images, by the `uri` it names them with, as absolute paths in the order
 // the file lists them. Empty for a source that is whole in one file -- a

@@ -54,8 +54,21 @@ struct SourceStamp
 {
     std::string size;
     std::string written;
+    // **The rules its kind compiled under** (`assetc::rulesOf`), empty for
+    // none: a mesh compiled before the meshes' rules were raised is compiled
+    // again, and every texture -- whose rules were not -- is skipped unread.
+    std::string rules;
     bool operator==(const SourceStamp&) const = default;
 };
+
+[[nodiscard]] std::string rulesStampOf(const std::filesystem::path& file)
+{
+    const ContentKind kind = contentKindOf(file.filename().string());
+    const core::u32 rules = kind == ContentKind::Mesh      ? assetc::rulesOf(assetc::SourceKind::Mesh)
+                            : kind == ContentKind::Texture ? assetc::rulesOf(assetc::SourceKind::Texture)
+                                                           : 0u;
+    return rules == 0 ? std::string() : std::to_string(rules);
+}
 
 [[nodiscard]] std::optional<SourceStamp> stampOf(const std::filesystem::path& file)
 {
@@ -69,7 +82,7 @@ struct SourceStamp
     // As a 64-bit count: the clock's own count is 128 bits on macOS, which
     // `std::to_string` has no overload for.
     return SourceStamp{std::to_string(static_cast<unsigned long long>(size)),
-                       std::to_string(static_cast<long long>(written.time_since_epoch().count()))};
+                       std::to_string(static_cast<long long>(written.time_since_epoch().count())), std::string()};
 }
 
 // A source's stamp with those of the files it reads beside itself: a
@@ -86,6 +99,7 @@ struct SourceStamp
             stamp->written += "+" + beside->written;
         }
     }
+    stamp->rules = rulesStampOf(file);
     return stamp;
 }
 
@@ -110,8 +124,10 @@ struct SourceStamp
     const core::JsonValue sources = root["sources"];
     for (core::usize at = 0; at < sources.size(); ++at) {
         const core::JsonValue entry = sources.at(at);
+        // A stamp written before kinds had rules says none.
         stamps.emplace(std::string(entry["path"].asString()),
-                       SourceStamp{std::string(entry["size"].asString()), std::string(entry["written"].asString())});
+                       SourceStamp{std::string(entry["size"].asString()), std::string(entry["written"].asString()),
+                                   std::string(entry["rules"].asString())});
     }
     return stamps;
 }
@@ -149,6 +165,8 @@ void writeStamps(const std::filesystem::path& projectRoot, std::string_view fing
         out.field("path", path);
         out.field("size", stamp.size);
         out.field("written", stamp.written);
+        if (!stamp.rules.empty())
+            out.field("rules", stamp.rules);
         out.endObject();
     }
     out.endArray();
