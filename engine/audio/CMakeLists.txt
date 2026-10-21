@@ -19,6 +19,7 @@ engine_add_module(audio
         src/audio.cpp
         src/native_accessors.cpp
         src/vorbis.cpp
+        src/voice.cpp
         generated/class_descriptors.gen.cpp
     DEPS
         asset
@@ -43,6 +44,7 @@ engine_add_module_tests(audio
         audio
     SOURCES
         tests/audio_tests.cpp
+        tests/voice_tests.cpp
 )
 # Real Ogg Vorbis files: tones a libvorbis encoder wrote, since the
 # engine has none to write them with at test time.
