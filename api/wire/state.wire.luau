@@ -4468,6 +4468,15 @@ local Channels: { Schema.Channel } = {
             .. "agents the later one did not name; sequenced, a link whose packets swap places lost a "
             .. "third of them to the rule.",
     },
+    {
+        Name = "Voice",
+        Id = 6,
+        Delivery = "Unreliable",
+        Doc = "Players' voices (ADR 0256, protocol 66): a frame late is worth nothing, and the codec covers "
+            .. "one lost. **Not sequenced**: every frame carries its number, and the listener's jitter "
+            .. "buffer puts frames that swapped places back in order, where sequencing would drop the "
+            .. "earlier of the two. Its own channel, so a voice never delays a snapshot.",
+    },
 }
 
 local Messages: { Schema.Message } = {
@@ -5889,6 +5898,53 @@ local Messages: { Schema.Message } = {
             .. "tween's clock, a tick at a time, to the tick it predicts: the part is where the authority "
             .. "will have it. A `Position` tween blends in the 32-bit floats a script's `vector` holds, as "
             .. "the authority does.",
+    },
+    {
+        Name = "VoiceUp",
+        Id = 42,
+        Channel = "Voice",
+        Direction = "ToAuthority",
+        Layout = {
+            { Name = "codec", Type = "u8", Doc = "`VoiceCodecId`: 2 Opus. A frame in a codec the server has not got is dropped." },
+            { Name = "sequence", Type = "u16", Doc = "The frame's number, one more each 20 ms, wrapping." },
+            { Name = "speaking", Type = "u8", Doc = "1 while the speaker's gate is open; 0 on the frame that closes it." },
+            { Name = "length", Type = "u16", Doc = "The frame's bytes, at most 512." },
+            {
+                Name = "frame",
+                Type = "repeat",
+                Count = "length",
+                Each = { { Name = "byte", Type = "u8", Doc = "One byte of the encoded frame." } },
+            },
+        },
+        Doc = "20 ms of a player's microphone, encoded (ADR 0256 §2). The server takes at most 50 frames and "
+            .. "4 KB a second from one player, drops the rest and says so once (ADR 0241), and sends each "
+            .. "frame on to the players who hear the speaker. The speaker is the connection's player, never "
+            .. "one the message names.",
+    },
+    {
+        Name = "VoiceDown",
+        Id = 43,
+        Channel = "Voice",
+        Direction = "ToReplica",
+        Layout = {
+            { Name = "speaker", Type = "u32", Doc = "The `UserId` of the player speaking." },
+            { Name = "codec", Type = "u8", Doc = "As `VoiceUp` carried it." },
+            { Name = "sequence", Type = "u16", Doc = "As `VoiceUp` carried it." },
+            {
+                Name = "flags",
+                Type = "u8",
+                Doc = "1: heard where the speaker's character is (`Proximity`); 2: the speaker's gate is open.",
+            },
+            { Name = "length", Type = "u16", Doc = "The frame's bytes, at most 512." },
+            {
+                Name = "frame",
+                Type = "repeat",
+                Count = "length",
+                Each = { { Name = "byte", Type = "u8", Doc = "One byte of the encoded frame." } },
+            },
+        },
+        Doc = "A speaker's frame, to a player the server decided hears them (ADR 0256 §1). The listener's "
+            .. "jitter buffer plays it in turn, and `SpeakingChanged` follows the gate.",
     },
 }
 

@@ -227,7 +227,9 @@ TEST_CASE("the generated schema is what the module was built against")
     // cloth (protocol 52, ADR 0214): `Cloth`. And the shapes drawn on a part
     // (protocol 60, ADR 0251): `Adornment` and its eight.
     CHECK(std::size(generated::Classes) == 76);
-    CHECK(std::size(generated::Channels) == 6);
+    // And players' voices on a channel of their own (protocol 66, ADR 0256).
+    CHECK(std::size(generated::Channels) == 7);
+    CHECK(generated::Channels[6].name == "Voice");
 
     // Channel 3 was claimed from protocol 1 so the numbering could not shift
     // when ownership arrived (ADR 0099).

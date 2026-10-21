@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 65;
+inline constexpr u32 ProtocolVersion = 66;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -1090,6 +1090,7 @@ inline constexpr ChannelDesc Channels[] = {
     {"Ownership", 3, Delivery::UnreliableSequenced},
     {"Remote", 4, Delivery::UnreliableSequenced},
     {"Swarm", 5, Delivery::Unreliable},
+    {"Voice", 6, Delivery::Unreliable},
 };
 
 // The message types. An enum rather than bare numbers, so a switch over them
@@ -1136,6 +1137,8 @@ enum class MessageType : u8
     SwarmState = 28,
     SwarmAck = 29,
     MovingCurve = 41,
+    VoiceUp = 42,
+    VoiceDown = 43,
 };
 
 // Which direction a message may travel. A server that accepted a
@@ -1196,6 +1199,8 @@ inline constexpr MessageDesc Messages[] = {
     {"SwarmState", MessageType::SwarmState, 5, Direction::ToReplica},
     {"SwarmAck", MessageType::SwarmAck, 5, Direction::ToAuthority},
     {"MovingCurve", MessageType::MovingCurve, 0, Direction::ToReplica},
+    {"VoiceUp", MessageType::VoiceUp, 6, Direction::ToAuthority},
+    {"VoiceDown", MessageType::VoiceDown, 6, Direction::ToReplica},
 };
 
 } // namespace engine::replication::generated
