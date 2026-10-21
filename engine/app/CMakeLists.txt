@@ -1275,6 +1275,24 @@ if(ENG_BUILD_TESTS)
             -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_fracture.cmake)
     set_tests_properties(netcode_fracture PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
 
+    # **Two players talking** (ADR 0256): a server and two joiners, each
+    # speaking a recorded phrase of its own in place of a microphone, over a
+    # clean link and then with the second's losing a tenth both ways; each
+    # has heard most of the other's voice, a little of it concealed, at the
+    # level it was said, and with the spectral envelope of the other's
+    # phrase rather than its own. Twenty-five seconds of real time.
+    add_test(NAME netcode_voice
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DMATCH=$<TARGET_FILE:voice_match>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/netcode/voice
+            -DFIRST_PHRASE=${CMAKE_SOURCE_DIR}/examples/38-dubbing/content/l10n/pt-BR/voice/booth/anna_1.wav
+            -DSECOND_PHRASE=${CMAKE_SOURCE_DIR}/examples/38-dubbing/content/l10n/pt-BR/voice/booth/bruno_1.wav
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/netcode-voice
+            -DPORT=${ENG_PORT_47936}
+            -P ${CMAKE_SOURCE_DIR}/tests/netcode/run_voice.cmake)
+    set_tests_properties(netcode_voice PROPERTIES TIMEOUT 300 LABELS "netcode" RUN_SERIAL TRUE)
+
     # **`examples/15-multiplayer` with a second player at the joining machine**
     # (ADR 0208): the example's own test run seats a guest over a link held
     # 75 ms each way and holds both sticks for two seconds, and both racers

@@ -8,7 +8,7 @@ namespace {
 
 VoiceCodec& installed() noexcept
 {
-    static VoiceCodec codec;
+    static VoiceCodec codec = builtInVoiceCodec();
     return codec;
 }
 
@@ -28,6 +28,11 @@ constexpr usize MostWaiting = VoiceJitterBuffer::MaxDepth * 4;
 const VoiceCodec& voiceCodec() noexcept
 {
     return installed();
+}
+
+VoiceCodec builtInVoiceCodec() noexcept
+{
+    return opusVoiceCodec();
 }
 
 void setVoiceCodecForTests(const VoiceCodec& codec) noexcept
@@ -108,16 +113,20 @@ std::optional<VoiceJitterBuffer::Turn> VoiceJitterBuffer::pop()
         m_playing = false;
         m_concealed += 1;
         m_next = static_cast<u16>(m_next + 1);
-        return Turn{{}, true};
+        return Turn{{}, true, {}};
     }
     if (m_frames.front().sequence != m_next) {
-        // Its frame is missing, and the next has come: concealed in its turn.
+        // Its frame is missing, and a later one has come: concealed in its
+        // turn, from the frame right after it when that is the one.
         m_concealed += 1;
         m_smooth = 0;
         m_next = static_cast<u16>(m_next + 1);
-        return Turn{{}, true};
+        Turn turn{{}, true, {}};
+        if (m_frames.front().sequence == m_next)
+            turn.next = m_frames.front().packet;
+        return turn;
     }
-    Turn turn{std::move(m_frames.front().packet), false};
+    Turn turn{std::move(m_frames.front().packet), false, {}};
     m_frames.erase(m_frames.begin());
     m_next = static_cast<u16>(m_next + 1);
     // **And shallower again** after a long stretch with nothing missing: a

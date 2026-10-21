@@ -896,6 +896,12 @@ struct AudioSystem::Impl
     bool captureStarted = false;
     std::mutex captureLock;
     std::vector<f32> captured;
+    // A file in place of the microphone (`useMicrophoneFile`): its samples,
+    // how many of them have been given, and since when.
+    std::vector<f32> micFile;
+    bool micFromFile = false;
+    std::chrono::steady_clock::time_point micSince{};
+    u64 micGiven = 0;
 
     void keepCaptured(const f32* samples, usize count)
     {
@@ -931,18 +937,38 @@ struct AudioSystem::Impl
     std::vector<Speaker> speakers;
     core::CFrameD lastEar{};
 
+    // The frames the voices have played and concealed, and, while
+    // `recordVoices` is on, what they played, mixed to mono: all under the
+    // voices' lock. Two minutes at most are kept.
+    u64 framesPlayed = 0;
+    u64 framesConcealed = 0;
+    bool recording = false;
+    std::filesystem::path recordPath;
+    std::vector<f32> recorded;
+    std::vector<f32> recordScratch;
+    // With no device, the voices are played for the file at real time:
+    // since when, and how many samples have been.
+    std::chrono::steady_clock::time_point recordSince{};
+    u64 recordMixed = 0;
+    std::vector<f32> headlessMix;
+    static constexpr usize MostRecorded = static_cast<usize>(kVoiceSampleRate) * 120;
+
     void mixSpeakers(float* samples, ma_uint32 frameCount) noexcept
     {
+        if (recording)
+            recordScratch.assign(frameCount, 0.0f);
         for (Speaker& speaker : speakers) {
             for (ma_uint32 frame = 0; frame < frameCount; ++frame) {
                 if (speaker.played >= kVoiceFrameSamples) {
                     std::optional<VoiceJitterBuffer::Turn> turn = speaker.jitter.pop();
                     if (!turn.has_value())
                         break;
+                    framesPlayed += 1;
                     if (turn->missing || speaker.decoder == nullptr ||
                         !speaker.decoder->decode(turn->packet, speaker.pcm)) {
+                        framesConcealed += 1;
                         if (speaker.decoder != nullptr)
-                            speaker.decoder->conceal(speaker.pcm);
+                            speaker.decoder->conceal(turn->next, speaker.pcm);
                         else
                             speaker.pcm.fill(0.0f);
                     }
@@ -951,8 +977,12 @@ struct AudioSystem::Impl
                 const f32 sample = speaker.pcm[speaker.played++];
                 samples[frame * kChannels] += sample * speaker.left;
                 samples[frame * kChannels + 1] += sample * speaker.right;
+                if (recording)
+                    recordScratch[frame] += sample;
             }
         }
+        if (recording && recorded.size() < MostRecorded)
+            recorded.insert(recorded.end(), recordScratch.begin(), recordScratch.end());
     }
 
     std::mutex mutex;
@@ -1625,6 +1655,8 @@ void AudioSystem::stop()
     // fast machine and never on a slow one.
     m_impl->releasePrefetch();
     closeMicrophone();
+    if (m_impl->recording)
+        writeRecordedVoices();
     if (m_impl->deviceStarted) {
 #if ENG_PLATFORM_UWP
         m_impl->output.reset();
@@ -1643,6 +1675,19 @@ bool AudioSystem::openMicrophone()
         return false;
     if (m_impl->captureStarted)
         return true;
+    if (!m_impl->micFile.empty()) {
+        m_impl->micFromFile = true;
+        m_impl->micSince = std::chrono::steady_clock::now();
+        m_impl->micGiven = 0;
+        m_impl->captureStarted = true;
+        // When the file's first sample was said, on the clock every process
+        // on the machine shares: what a listener's latency is measured from.
+        const std::string at = std::to_string(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(m_impl->micSince.time_since_epoch()).count());
+        const core::I18nArg args[] = {{"at", at}};
+        core::log(core::LogLevel::Info, ENG_TR("audio.info.voice_in_opened"), args);
+        return true;
+    }
 #if ENG_PLATFORM_UWP
     // The packaged app's capture is the platform's own API, and nothing asks
     // it for a microphone yet.
@@ -1673,8 +1718,10 @@ void AudioSystem::closeMicrophone()
     if (m_impl == nullptr || !m_impl->captureStarted)
         return;
 #if !ENG_PLATFORM_UWP
-    ma_device_uninit(&m_impl->capture);
+    if (!m_impl->micFromFile)
+        ma_device_uninit(&m_impl->capture);
 #endif
+    m_impl->micFromFile = false;
     m_impl->captureStarted = false;
     const std::lock_guard guard(m_impl->captureLock);
     m_impl->captured.clear();
@@ -1689,6 +1736,22 @@ void AudioSystem::takeMicrophone(std::vector<f32>& out)
 {
     if (m_impl == nullptr)
         return;
+    if (m_impl->micFromFile) {
+        // As much of the file as a microphone would have delivered since it
+        // opened, a whole frame at a time, from its start again at its end.
+        const auto since = std::chrono::steady_clock::now() - m_impl->micSince;
+        const auto due = static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(since).count()) *
+                         kVoiceSampleRate / 1'000'000u;
+        if (due > m_impl->micGiven + kVoiceSampleRate)
+            m_impl->micGiven = due - kVoiceSampleRate;
+        const std::vector<f32>& file = m_impl->micFile;
+        while (m_impl->micGiven + kVoiceFrameSamples <= due) {
+            for (usize at = 0; at < kVoiceFrameSamples; ++at)
+                out.push_back(file[static_cast<usize>((m_impl->micGiven + at) % file.size())]);
+            m_impl->micGiven += kVoiceFrameSamples;
+        }
+        return;
+    }
     const std::lock_guard guard(m_impl->captureLock);
     const usize whole = m_impl->captured.size() / kVoiceFrameSamples * kVoiceFrameSamples;
     out.insert(out.end(), m_impl->captured.begin(), m_impl->captured.begin() + static_cast<std::ptrdiff_t>(whole));
@@ -1759,6 +1822,120 @@ void AudioSystem::mixVoicesForTests(std::span<f32> stereo)
         return;
     const std::lock_guard guard(m_impl->mutex);
     m_impl->mixSpeakers(stereo.data(), static_cast<ma_uint32>(stereo.size() / kChannels));
+}
+
+bool AudioSystem::useMicrophoneFile(const std::filesystem::path& path)
+{
+    if (m_impl == nullptr)
+        return false;
+    std::vector<std::byte> bytes;
+    if (!platform::readFile(path, bytes))
+        return false;
+    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 1, kVoiceSampleRate);
+    ma_decoder decoder;
+    if (ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &decoder) != MA_SUCCESS)
+        return false;
+    std::vector<f32> samples;
+    std::array<f32, 4096> chunk{};
+    for (;;) {
+        ma_uint64 read = 0;
+        if (ma_decoder_read_pcm_frames(&decoder, chunk.data(), chunk.size(), &read) != MA_SUCCESS || read == 0)
+            break;
+        samples.insert(samples.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(read));
+    }
+    ma_decoder_uninit(&decoder);
+    if (samples.size() < kVoiceFrameSamples)
+        return false;
+    m_impl->micFile = std::move(samples);
+    return true;
+}
+
+void AudioSystem::recordVoices(const std::filesystem::path& path)
+{
+    if (m_impl == nullptr)
+        return;
+    const std::lock_guard guard(m_impl->mutex);
+    m_impl->recording = true;
+    m_impl->recordPath = path;
+    m_impl->recorded.clear();
+    m_impl->recordSince = std::chrono::steady_clock::now();
+    m_impl->recordMixed = 0;
+}
+
+AudioSystem::VoicesPlayed AudioSystem::voicesPlayed() const
+{
+    VoicesPlayed played;
+    if (m_impl == nullptr)
+        return played;
+    const std::lock_guard guard(m_impl->mutex);
+    played.frames = m_impl->framesPlayed;
+    played.concealed = m_impl->framesConcealed;
+    // The level of the frames with a voice in them: the silence before the
+    // first word and between phrases is not what is being heard.
+    double sum = 0.0;
+    usize counted = 0;
+    const std::vector<f32>& recorded = m_impl->recorded;
+    for (usize start = 0; start + kVoiceFrameSamples <= recorded.size(); start += kVoiceFrameSamples) {
+        const std::span<const f32> frame(recorded.data() + start, kVoiceFrameSamples);
+        if (VoiceGate::levelDb(frame) < -60.0f)
+            continue;
+        for (const f32 sample : frame)
+            sum += static_cast<double>(sample) * static_cast<double>(sample);
+        counted += kVoiceFrameSamples;
+    }
+    if (counted > 0 && sum > 0.0)
+        played.levelDb = static_cast<f32>(10.0 * std::log10(sum / static_cast<double>(counted)));
+    return played;
+}
+
+void AudioSystem::writeRecordedVoices()
+{
+    const VoicesPlayed played = voicesPlayed();
+    std::vector<std::byte> wav;
+    {
+        const std::lock_guard guard(m_impl->mutex);
+        const std::vector<f32>& recorded = m_impl->recorded;
+        const auto put = [&wav](u32 value, usize bytes) {
+            for (usize at = 0; at < bytes; ++at)
+                wav.push_back(static_cast<std::byte>((value >> (8 * at)) & 0xFFu));
+        };
+        const auto tag = [&wav](std::string_view text) {
+            for (const char c : text)
+                wav.push_back(static_cast<std::byte>(c));
+        };
+        const auto dataBytes = static_cast<u32>(recorded.size() * 2);
+        tag("RIFF");
+        put(36 + dataBytes, 4);
+        tag("WAVEfmt ");
+        put(16, 4);
+        put(1, 2);
+        put(1, 2);
+        put(kVoiceSampleRate, 4);
+        put(kVoiceSampleRate * 2, 4);
+        put(2, 2);
+        put(16, 2);
+        tag("data");
+        put(dataBytes, 4);
+        for (const f32 sample : recorded)
+            put(static_cast<u32>(
+                    static_cast<u16>(static_cast<core::i16>(std::lround(std::clamp(sample, -1.0f, 1.0f) * 32767.0f)))),
+                2);
+        m_impl->recording = false;
+    }
+    const std::string path = m_impl->recordPath.string();
+    if (!platform::writeFile(m_impl->recordPath, wav)) {
+        const core::I18nArg args[] = {{"path", path}};
+        core::log(core::LogLevel::Warn, ENG_TR("audio.warn.voices_not_written"), args);
+        return;
+    }
+    const std::string since = std::to_string(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(m_impl->recordSince.time_since_epoch()).count());
+    const core::I18nArg args[] = {{"path", path},
+                                  {"since", since},
+                                  {"played", std::to_string(played.frames)},
+                                  {"concealed", std::to_string(played.concealed)},
+                                  {"level", std::to_string(static_cast<int>(std::lround(played.levelDb)))}};
+    core::log(core::LogLevel::Info, ENG_TR("audio.info.voices_written"), args);
 }
 
 void AudioSystem::tick(scene::World& world, f64 fixedDt)
@@ -1860,6 +2037,20 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
     if (m_impl == nullptr)
         return;
     m_impl->sayFailedReloads();
+    if (m_impl->recording && !m_impl->deviceStarted) {
+        // No device to pull the voices: they are played here, as much as a
+        // device would have played since the recording began.
+        const std::lock_guard guard(m_impl->mutex);
+        const auto since = std::chrono::steady_clock::now() - m_impl->recordSince;
+        const auto due = static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(since).count()) *
+                         kSampleRate / 1'000'000u;
+        const u64 count = std::min<u64>(due - std::min(due, m_impl->recordMixed), kSampleRate);
+        m_impl->recordMixed = due;
+        if (count > 0) {
+            m_impl->headlessMix.assign(static_cast<usize>(count) * kChannels, 0.0f);
+            m_impl->mixSpeakers(m_impl->headlessMix.data(), static_cast<ma_uint32>(count));
+        }
+    }
 
     // The whole frame, not just the point: the rotation is what decides left
     // from right, and reading only the position is what made every positional

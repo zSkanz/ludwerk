@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
@@ -228,6 +229,25 @@ public:
     // and nothing else, without a device.
     void mixVoicesForTests(std::span<core::f32> stereo);
 
+    // **A file in place of the microphone, and the voices heard written to
+    // one** (`--voice-in=`, `--voice-out=`): what two machines talking are
+    // measured with where nobody is speaking. The file is decoded now, played
+    // at real time and from its start again when it ends, through the gate and
+    // the codec as a microphone is; false when it cannot be read.
+    bool useMicrophoneFile(const std::filesystem::path& path);
+    // Every voice played from here on, mixed to mono, written to `path` as a
+    // 16-bit WAV at `stop`. With no device -- a headless run -- the voices
+    // are still played, at real time, for the file alone.
+    void recordVoices(const std::filesystem::path& path);
+    struct VoicesPlayed
+    {
+        core::u64 frames = 0;
+        core::u64 concealed = 0;
+        // Of the frames written with a voice in them: their RMS, in dBFS.
+        core::f32 levelDb = -120.0f;
+    };
+    [[nodiscard]] VoicesPlayed voicesPlayed() const;
+
     // Advances every playing sound by one tick and raises `Ended` and `Loaded`
     // on the world's change queue. Called from the sim tick.
     void tick(scene::World& world, f64 fixedDt);
@@ -403,6 +423,9 @@ public:
     void renderInto(std::span<f32> interleaved);
 
 private:
+    // `recordVoices`' file, written and said at `stop`.
+    void writeRecordedVoices();
+
     bool m_suspended = false;
 
     struct Impl;

@@ -6,9 +6,9 @@
 // at all are played evenly.
 //
 // The codec is an interface. Opus, which ADR 0122 approved, is the one a game
-// ships with once it is vendored; until then no codec is built in, voice says
-// so and stays off, and a test gives one of its own. Nothing here changes when
-// Opus arrives.
+// ships with; a build without it has no codec, and voice says so and stays
+// off. A test gives one of its own, and nothing above the interface knows
+// which codec it is.
 
 #include <array>
 #include <cstddef>
@@ -62,11 +62,15 @@ public:
     // not a frame this decoder reads.
     [[nodiscard]] virtual bool decode(std::span<const u8> packet, std::span<f32> out) = 0;
     // A frame that did not arrive: the codec's guess at it, or silence.
-    virtual void conceal(std::span<f32> out) = 0;
+    // `next` is the frame after it when that one has already come, which a
+    // codec that sends each frame's outline inside the next one rebuilds the
+    // missing frame from; empty when it has not.
+    virtual void conceal(std::span<const u8> next, std::span<f32> out) = 0;
 };
 
 // **The codec voice is sent with**, or none: what the build carries. A test
-// installs its own (`setVoiceCodecForTests`), and the game ships Opus.
+// installs its own (`setVoiceCodecForTests`) and puts the build's back after
+// (`builtInVoiceCodec`).
 struct VoiceCodec
 {
     VoiceCodecId id = VoiceCodecId::None;
@@ -74,7 +78,14 @@ struct VoiceCodec
     std::unique_ptr<VoiceDecoder> (*makeDecoder)() = nullptr;
 };
 [[nodiscard]] const VoiceCodec& voiceCodec() noexcept;
+[[nodiscard]] VoiceCodec builtInVoiceCodec() noexcept;
 void setVoiceCodecForTests(const VoiceCodec& codec) noexcept;
+
+// **Opus at 24 kbit/s** (ADR 0256 §2): speech, with each frame's outline sent
+// again inside the next so a lone lost frame is rebuilt rather than guessed,
+// and the encoder told to expect a tenth of them lost. A frame is about 60
+// bytes. `None` in a build without libopus.
+[[nodiscard]] VoiceCodec opusVoiceCodec() noexcept;
 
 // --- Which frames are speech --------------------------------------------------
 
@@ -134,6 +145,9 @@ public:
     {
         std::vector<u8> packet;
         bool missing = false;
+        // For a missing frame, the one after it if it is already here: what
+        // the decoder conceals it from (`VoiceDecoder::conceal`).
+        std::vector<u8> next;
     };
     [[nodiscard]] std::optional<Turn> pop();
 
@@ -153,7 +167,6 @@ private:
     bool m_playing = false;
     u32 m_depth = MinDepth;
     u32 m_smooth = 0;
-    u32 m_missingRun = 0;
     u32 m_late = 0;
     u32 m_concealed = 0;
 };

@@ -1,0 +1,9 @@
+# Two players talking over a lossy link (ADR 0256): each speaks from a
+# recorded phrase in place of a microphone, and writes down what it heard of
+# the other.
+
+[project]
+name = "Netcode Voice"
+id = "dev.ludwerk.netcode-voice"
+version = "1.0.0"
+engine = "0.1"

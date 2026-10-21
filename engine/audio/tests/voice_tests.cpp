@@ -56,7 +56,7 @@ public:
         }
         return true;
     }
-    void conceal(std::span<f32> out) override { std::fill(out.begin(), out.end(), 0.0f); }
+    void conceal(std::span<const u8>, std::span<f32> out) override { std::fill(out.begin(), out.end(), 0.0f); }
 };
 
 [[nodiscard]] std::vector<u8> numbered(u16 sequence)
@@ -66,9 +66,10 @@ public:
 
 } // namespace
 
-TEST_CASE("ADR 0256: no codec is built in until Opus is, and a test can give one")
+TEST_CASE("ADR 0256: the build's codec is Opus, and a test can give its own and put Opus back")
 {
-    CHECK(voiceCodec().id == VoiceCodecId::None);
+    CHECK(voiceCodec().id == VoiceCodecId::Opus);
+    CHECK(builtInVoiceCodec().id == VoiceCodecId::Opus);
     setVoiceCodecForTests(VoiceCodec{VoiceCodecId::Pcm16,
                                      []() -> std::unique_ptr<VoiceEncoder> { return std::make_unique<PcmEncoder>(); },
                                      []() -> std::unique_ptr<VoiceDecoder> { return std::make_unique<PcmDecoder>(); }});
@@ -82,8 +83,123 @@ TEST_CASE("ADR 0256: no codec is built in until Opus is, and a test can give one
     REQUIRE(decoder->decode(packet, heard));
     for (usize at = 0; at < heard.size(); at += 97)
         CHECK(heard[at] == doctest::Approx(static_cast<double>(sent[at])).epsilon(0.001));
-    setVoiceCodecForTests(VoiceCodec{});
-    CHECK(voiceCodec().id == VoiceCodecId::None);
+    setVoiceCodecForTests(builtInVoiceCodec());
+    CHECK(voiceCodec().id == VoiceCodecId::Opus);
+}
+
+namespace {
+
+// A voice-like signal: a 180 Hz fundamental and its harmonics, rising and
+// falling in level the way syllables do. `frame` counts from the start.
+[[nodiscard]] std::vector<f32> syllables(usize frame)
+{
+    std::vector<f32> out(kVoiceFrameSamples);
+    for (usize at = 0; at < out.size(); ++at) {
+        const f32 t = static_cast<f32>(frame * kVoiceFrameSamples + at) / static_cast<f32>(kVoiceSampleRate);
+        const f32 envelope = 0.6f + 0.4f * std::sin(t * 2.0f * 3.14159265f * 4.0f);
+        f32 sample = 0.0f;
+        for (int harmonic = 1; harmonic <= 6; ++harmonic)
+            sample +=
+                std::sin(t * 2.0f * 3.14159265f * 180.0f * static_cast<f32>(harmonic)) / static_cast<f32>(harmonic);
+        out[at] = 0.2f * envelope * sample;
+    }
+    return out;
+}
+
+[[nodiscard]] f32 rms(std::span<const f32> frame)
+{
+    double sum = 0.0;
+    for (const f32 sample : frame)
+        sum += static_cast<double>(sample) * static_cast<double>(sample);
+    return static_cast<f32>(std::sqrt(sum / static_cast<double>(frame.size())));
+}
+
+} // namespace
+
+TEST_CASE("ADR 0256: Opus sends a voice in about 60 bytes a frame and plays it back at its level")
+{
+    const VoiceCodec codec = opusVoiceCodec();
+    REQUIRE(codec.id == VoiceCodecId::Opus);
+    const std::unique_ptr<VoiceEncoder> encoder = codec.makeEncoder();
+    const std::unique_ptr<VoiceDecoder> decoder = codec.makeDecoder();
+    CHECK(encoder->id() == VoiceCodecId::Opus);
+    CHECK(decoder->id() == VoiceCodecId::Opus);
+
+    usize bytes = 0;
+    f32 sentLevel = 0.0f;
+    f32 heardLevel = 0.0f;
+    std::vector<u8> packet;
+    std::vector<f32> heard(kVoiceFrameSamples);
+    constexpr usize Frames = 100;
+    for (usize frame = 0; frame < Frames; ++frame) {
+        const std::vector<f32> sent = syllables(frame);
+        REQUIRE(encoder->encode(sent, packet));
+        CHECK(packet.size() <= 512);
+        bytes += packet.size();
+        REQUIRE(decoder->decode(packet, heard));
+        // The first frames are the codec settling in.
+        if (frame >= 10) {
+            sentLevel += rms(sent);
+            heardLevel += rms(heard);
+        }
+    }
+    // 24 kbit/s is 60 bytes a 20 ms frame; the encoder lands near it.
+    const usize perFrame = bytes / Frames;
+    CHECK(perFrame >= 30);
+    CHECK(perFrame <= 90);
+    // Within 3 dB of what was said.
+    CHECK(heardLevel > sentLevel * 0.7f);
+    CHECK(heardLevel < sentLevel * 1.4f);
+
+    // A frame that is not Opus is refused rather than played.
+    const std::vector<u8> noise(40, 0xFF);
+    CHECK_FALSE(decoder->decode(std::span<const u8>{}, heard));
+    (void)decoder->decode(noise, heard);
+}
+
+TEST_CASE("ADR 0256: a lost Opus frame is rebuilt from the next one, and guessed when that has not come")
+{
+    const VoiceCodec codec = opusVoiceCodec();
+    REQUIRE(codec.id == VoiceCodecId::Opus);
+    const std::unique_ptr<VoiceEncoder> encoder = codec.makeEncoder();
+    const std::unique_ptr<VoiceDecoder> decoder = codec.makeDecoder();
+    std::vector<std::vector<u8>> packets;
+    for (usize frame = 0; frame < 60; ++frame) {
+        std::vector<u8> packet;
+        REQUIRE(encoder->encode(syllables(frame), packet));
+        packets.push_back(std::move(packet));
+    }
+    std::vector<f32> heard(kVoiceFrameSamples);
+    for (usize frame = 0; frame < 40; ++frame)
+        REQUIRE(decoder->decode(packets[frame], heard));
+    // Frame 40 is lost and 41 has come: rebuilt from 41's copy of it, at the
+    // level of speech rather than silence.
+    decoder->conceal(packets[41], heard);
+    CHECK(rms(heard) > 0.5f * rms(syllables(40)));
+    REQUIRE(decoder->decode(packets[41], heard));
+    // Frame 42 is lost and nothing after it has come: still a voice-like
+    // guess, not a click to nothing.
+    decoder->conceal({}, heard);
+    CHECK(rms(heard) > 0.0f);
+    REQUIRE(decoder->decode(packets[43], heard));
+}
+
+TEST_CASE("ADR 0256: a missing frame's turn carries the frame after it, when that one is here")
+{
+    VoiceJitterBuffer buffer;
+    buffer.push(1, numbered(1));
+    buffer.push(3, numbered(3));
+    buffer.push(5, numbered(5));
+    REQUIRE(buffer.pop()->packet == numbered(1));
+    const auto two = buffer.pop();
+    REQUIRE(two.has_value());
+    CHECK(two->missing);
+    CHECK(two->next == numbered(3));
+    REQUIRE(buffer.pop()->packet == numbered(3));
+    buffer.push(7, numbered(7));
+    const auto four = buffer.pop();
+    REQUIRE(four.has_value());
+    CHECK(four->next == numbered(5));
 }
 
 TEST_CASE("ADR 0256: a frame's level is its RMS against full scale")
@@ -232,7 +348,7 @@ TEST_CASE("ADR 0256: a voice heard is played by its jitter buffer, in the middle
     std::vector<u8> packet;
     REQUIRE(encoder.encode(std::vector<f32>(kVoiceFrameSamples, 0.5f), packet));
 
-    // A frame in a codec this build has not got: nothing.
+    // A frame in a codec other than the one in use: nothing.
     system.hearVoice(7, static_cast<u8>(VoiceCodecId::Opus), 0, packet);
     CHECK(system.voicesHeard() == 0);
 
@@ -251,5 +367,5 @@ TEST_CASE("ADR 0256: a voice heard is played by its jitter buffer, in the middle
     system.forgetVoice(7);
     CHECK(system.voicesHeard() == 0);
     system.stop();
-    setVoiceCodecForTests(VoiceCodec{});
+    setVoiceCodecForTests(builtInVoiceCodec());
 }

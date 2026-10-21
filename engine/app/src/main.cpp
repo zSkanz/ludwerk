@@ -550,6 +550,23 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
                 options.network.simulatedLossPercent = static_cast<engine::core::f32>(value);
             continue;
         }
+        // **A file for the microphone, and a file for what is heard** (ADR
+        // 0256): voice between machines measured where nobody speaks.
+        if (arg.starts_with("--voice-in=") || arg.starts_with("--voice-out=")) {
+            if (std::string_view(ENG_PROFILE_NAME) == "shipping") {
+                const std::array<I18nArg, 1> refused{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.not_in_shipping"), refused);
+                return kExitUsage;
+            }
+            const std::filesystem::path file(std::string(arg.substr(arg.find('=') + 1)));
+            if (file.empty()) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            (arg.starts_with("--voice-in=") ? options.voiceIn : options.voiceOut) = file;
+            continue;
+        }
         // **A world a manager started** (ADR 0220): its name, and the key it
         // takes passes from. The manager's to pass; a person has no use for
         // them.

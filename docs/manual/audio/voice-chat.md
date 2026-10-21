@@ -4,10 +4,12 @@ Players in a match talk to each other through `VoiceChatService`. The server
 decides who hears whom. Each machine sends its own player's microphone and
 plays the voices it is sent. Nothing is recorded: a frame is played and gone.
 
-> Voice needs a codec, and this build carries none yet. Until it does,
-> `VoiceChatService.Available` is false, nothing is sent, and a game that
-> turns voice on is told so once in the log. Everything on this page is in
-> place for when it arrives.
+Voice is sent with Opus, at about 60 bytes for each 20 ms of speech. A
+lost frame is rebuilt from the copy of it the next frame carries, so a link
+that drops one frame in ten still sounds like speech.
+`VoiceChatService.Available` is true wherever the engine's codec is in the
+build, which is every build it ships; where it is not, nothing is sent, and
+a game that turns voice on is told so once in the log.
 
 ## Turning it on
 
@@ -102,6 +104,23 @@ turned on. A player who refuses still hears everyone; they are just not
 heard. On a phone or a standalone headset the microphone uses the system's
 voice preset, which cancels the game's own sound from it. On a desktop, the
 game is assumed to be played with headphones.
+
+## Trying it alone
+
+Voice between two machines can be tried with nobody talking. A sound file
+stands in for each machine's microphone, and what each one hears is written
+to a file:
+
+```
+run.bat --join=127.0.0.1 --voice-in=phrase.wav --voice-out=heard.wav --net-loss=10
+```
+
+The file is played at real time, through the same gate and codec as a
+microphone, and again from its start when it ends. When the run ends, the log
+says how many frames of other players' voices were played, how many were
+concealed, and at what level. With `--net-loss` and `--net-jitter`, this is
+how a voice sounds on a bad link. For measuring; a shipping build refuses
+both options.
 
 ## Where to look next
 

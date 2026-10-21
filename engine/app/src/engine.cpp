@@ -3421,6 +3421,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     platform::FileLock matchKeyHeld;
     NetworkSession network([&host]() { return host.get(); }, networkBase);
     VoiceChat voiceChat;
+    const WorldHost* voiceStandInFor = nullptr;
     // **A server's console** (ADR 0218): a process that serves with no window
     // reads its standard input; any authority runs what its scripts ask of
     // the console. Bans are kept beside the saves.
@@ -7565,7 +7566,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // changed: an identity check when it has not.
         host->audio().setVoiceLocale(host->world().engineState().voiceLocale);
         // Players' voices (ADR 0256): the microphone to the match, and the
-        // match's voices to this machine's speakers.
+        // match's voices to this machine's speakers. `--voice-in` and
+        // `--voice-out` are given to each host this run makes.
+        if (voiceStandInFor != host.get()) {
+            voiceStandInFor = host.get();
+            if (!options.voiceIn.empty() && !host->audio().useMicrophoneFile(options.voiceIn)) {
+                const std::string path = options.voiceIn.string();
+                const std::array<core::I18nArg, 1> args{core::I18nArg{"path", path}};
+                core::log(core::LogLevel::Error, ENG_TR("audio.err.voice_in_unreadable"), args);
+            }
+            if (!options.voiceOut.empty())
+                host->audio().recordVoices(options.voiceOut);
+        }
         voiceChat.frame(host->world(), host->audio(), network, platform::nowNs());
         // The ear goes where the eye is: with the sequence's camera while it
         // has the view.

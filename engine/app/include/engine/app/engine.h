@@ -279,6 +279,11 @@ struct EngineOptions
     std::filesystem::path saveDirectory;
     // Whether `--saves=DIR` named it: nothing chooses it for the run then.
     bool saveDirectoryGiven = false;
+    // `--voice-in=` and `--voice-out=` (ADR 0256): a sound file in place of
+    // the microphone, and the voices this machine hears written to one. For
+    // measuring; not in a shipping build.
+    std::filesystem::path voiceIn;
+    std::filesystem::path voiceOut;
     core::u64 saveMaxSlotBytes = 4u * 1024u * 1024u;
     core::u32 saveMaxSlots = 64;
     // `[scene] close_grace_seconds` (ADR 0124).

@@ -1,4 +1,5 @@
-// Voice in a build with no codec (ADR 0256): unavailable, said once, and the
+// Voice and the build's codec (ADR 0256): with Opus in the build, voice is
+// available; in a build with none, it is unavailable, said once, and the
 // microphone never opened -- a game that turns voice on before its codec is in
 // the build sends nothing, and certainly not raw samples.
 #include <algorithm>
@@ -17,8 +18,39 @@ using engine::app::testing::bootOptions;
 using engine::app::testing::Captured;
 using engine::app::testing::Project;
 
+namespace {
+
+// A build with no codec, for as long as it is in scope: the build's own is
+// put back after, however the test ends.
+struct NoCodec
+{
+    NoCodec() { audio::setVoiceCodecForTests(audio::VoiceCodec{}); }
+    ~NoCodec() { audio::setVoiceCodecForTests(audio::builtInVoiceCodec()); }
+    NoCodec(const NoCodec&) = delete;
+    NoCodec& operator=(const NoCodec&) = delete;
+};
+
+} // namespace
+
+TEST_CASE("ADR 0256: with Opus in the build, voice is available")
+{
+    REQUIRE(audio::voiceCodec().id == audio::VoiceCodecId::Opus);
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local VoiceChatService = game:GetService("VoiceChatService")
+        print(`voice-available:{VoiceChatService.Available}`)
+    )");
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    host.tick();
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+    CHECK(log.contains("voice-available:true"));
+}
+
 TEST_CASE("ADR 0256: with no codec in the build, voice is unavailable, says so once, and opens no microphone")
 {
+    const NoCodec none;
     REQUIRE(audio::voiceCodec().id == audio::VoiceCodecId::None);
     Captured log;
     Project project;

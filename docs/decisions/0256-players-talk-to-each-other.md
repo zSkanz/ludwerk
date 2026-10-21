@@ -1,11 +1,10 @@
 # 0256 — Players talk to each other
 
-- Status: accepted. Built: the ear (§5), and everything of voice but the
-  codec -- the capture, the gate, the wire, the server's routing and cap,
-  the jitter buffer, the playback, the service and the phone's permission --
-  behind a codec interface. libopus drops into that interface once it is
-  vendored, which its approval in ADR 0122 does not yet carry out; until
-  then `VoiceChatService.Available` is false and nothing is sent.
+- Status: accepted and built: the ear (§5), the capture, the gate, the
+  wire, the server's routing and cap, the jitter buffer, the playback, the
+  service and the phone's permission, behind a codec interface that libopus
+  1.6.1 fills. A build without libopus has no codec, and there
+  `VoiceChatService.Available` is false and nothing is sent.
 - Date: 2026-10-20
 - Approved: libopus (BSD-3) as its codec, by the project's maintainer on
   2026-10-21: the latest release, pinned, the codec alone, the copy the
@@ -149,6 +148,16 @@ which is why it waited for this protocol.
 - Measured: bytes a second a speaker, and the time from the microphone's
   buffer to the other machine's speakers, on loopback and over the
   conditioner.
+
+Measured, on one machine with 25 ms each way added to each joiner's link
+(`netcode_voice`): a frame of speech is about 60 bytes, 3 KB a second. Over
+the clean link nothing was concealed, and what each joiner heard had a
+spectral similarity of 0.93 and 0.96 to the phrase the other spoke, against
+0.20 and 0.24 to its own. With a tenth lost both ways on one link and 10 ms
+of jitter, 9 and 11% of the frames were concealed, and the similarity was
+0.91 against 0.29 and 0.25. From the speaker's microphone to the listener's
+ear took 109 to 111 ms over the clean link and 123 to 127 ms over the lossy
+one: a captured frame, the 50 ms of round trip, and the jitter buffer.
 
 ## Not decided here
 

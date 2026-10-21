@@ -18,6 +18,7 @@ engine_add_module(audio
     SOURCES
         src/audio.cpp
         src/native_accessors.cpp
+        src/opus_codec.cpp
         src/vorbis.cpp
         src/voice.cpp
         generated/class_descriptors.gen.cpp
@@ -34,6 +35,12 @@ engine_add_module(audio
 )
 
 target_include_directories(engine_audio SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/miniaudio")
+# libopus is named by `src/opus_codec.cpp` alone, the miniaudio rule. A tree
+# without it builds voice with no codec, which says so and stays off.
+if(TARGET opus)
+    target_link_libraries(engine_audio PRIVATE opus)
+    target_compile_definitions(engine_audio PRIVATE ENG_HAVE_OPUS=1)
+endif()
 if(ENG_PLATFORM_UWP)
     target_sources(engine_audio PRIVATE src/uwp_output.cpp)
     target_link_libraries(engine_audio PRIVATE xaudio2)
@@ -51,4 +58,8 @@ engine_add_module_tests(audio
 if(TARGET engine_audio_tests)
     target_compile_definitions(engine_audio_tests PRIVATE
         ENG_AUDIO_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+    # Whether a voice heard is the speech that was said: `netcode_voice`'s
+    # comparison of two sound files. Standalone, and nothing of the engine's.
+    add_executable(voice_match tests/voice_match.cpp)
+    target_compile_features(voice_match PRIVATE cxx_std_20)
 endif()
