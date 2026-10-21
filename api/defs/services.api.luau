@@ -5911,13 +5911,14 @@ local Classes: { Schema.Class } = {
             {
                 Name = "OcclusionEnabled",
                 Type = "boolean",
-                Default = "true",
+                Default = "false",
                 Presentation = true,
                 Records = { "ADR 0255" },
-                Doc = "Whether a sound behind a wall is muffled. A sound on a part is muffled by the parts, "
-                    .. "terrain and blocks between it and the listener, not by characters, and not by its own "
-                    .. "part or the model that part is in. Each machine muffles what it hears, so set it on the "
-                    .. "client.",
+                Doc = "Whether a sound behind a wall is muffled. Off until the game turns it on. When on, a sound "
+                    .. "on a part is muffled by the parts, terrain and blocks between it and the listener, not by "
+                    .. "characters, and not by its own part or the model that part is in. Each machine muffles "
+                    .. "what it hears, so set it on the client. A game whose listener is a camera high above the "
+                    .. "action hears trees and roofs between the two, and may want it off.",
             },
             {
                 Name = "OcclusionMuffle",

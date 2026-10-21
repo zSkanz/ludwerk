@@ -524,8 +524,8 @@ struct EngineState
     // wall is muffled, how much, and how many rays a frame looks with. Each
     // machine's, as what it hears is: none of it is hashed or sent.
     // `occlusionRays` is -1 until a script writes it, and reads as the
-    // quality level's then.
-    bool occlusionEnabled = true;
+    // quality level's then. Off until a game turns it on.
+    bool occlusionEnabled = false;
     f32 occlusionMuffle = 900.0f;
     f32 occlusionVolume = 0.5f;
     i32 occlusionRays = -1;

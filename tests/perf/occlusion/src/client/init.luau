@@ -15,6 +15,8 @@
 
 local RunService = game:GetService("RunService")
 
+game:GetService("AudioService").OcclusionEnabled = true
+
 for row = 0, 7 do
     local wall = Instance.new("Part")
     wall.Anchored = true

@@ -2008,11 +2008,14 @@ TEST_CASE("a sound made to be played once is gone a couple of ticks after it end
 namespace {
 
 // Sounds on parts in front of a listener at the origin facing -Z, heard
-// through whatever probe a case gives.
+// through whatever probe a case gives, with occlusion turned on as a game
+// turns it on.
 struct WallRig
 {
     Fixture fixture;
     engine::core::CFrameD ear = listenerAt({0.0, 0.0, 0.0}, {0.0, 0.0, -10.0});
+
+    WallRig() { fixture.world->engineState().occlusionEnabled = true; }
 
     InstanceId sound(engine::core::DVec3 at, float volume = 0.25f)
     {
@@ -2197,4 +2200,26 @@ TEST_CASE("ADR 0255: a wall that comes between closes over about a tenth of a se
     const float between = rig.fixture.system.occlusionOf(id);
     CHECK(between > 0.05f);
     CHECK(between < 0.95f);
+}
+
+TEST_CASE("ADR 0255: a game that has not turned occlusion on hears every sound open")
+{
+    // Off until a game turns it on: a game heard from a camera high above its
+    // fights has a tree or a roof between the two most of the time.
+    Fixture fixture;
+    CHECK_FALSE(fixture.world->engineState().occlusionEnabled);
+    const InstanceId part = fixture.make("Part");
+    fixture.world->parts().find(part)->cframe.position = {0.0, 0.0, -5.0};
+    const InstanceId id = fixture.make("Sound");
+    REQUIRE_FALSE(fixture.world->setParent(id, part).has_value());
+    fixture.sound(id).playing = true;
+    int casts = 0;
+    fixture.system.setOcclusionProbe([&casts](engine::core::DVec3, engine::core::DVec3, InstanceId, engine::core::u32) {
+        casts += 1;
+        return audio::OcclusionCast{1u, 1u};
+    });
+    const engine::core::CFrameD ear = listenerAt({0.0, 0.0, 0.0}, {0.0, 0.0, -10.0});
+    fixture.system.update(*fixture.world, InstanceId{}, &ear);
+    CHECK(casts == 0);
+    CHECK(fixture.system.occlusionOf(id) == 0.0f);
 }

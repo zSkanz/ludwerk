@@ -461,7 +461,7 @@
         {
           "Name": "OcclusionEnabled",
           "Type": "boolean",
-          "Default": "true"
+          "Default": "false"
         },
         {
           "Name": "OcclusionMuffle",

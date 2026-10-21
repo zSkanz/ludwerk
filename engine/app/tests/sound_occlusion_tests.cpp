@@ -48,6 +48,7 @@ TEST_CASE("ADR 0255: walls between muffle a sound, a character crossing does not
     Captured log;
     Project project;
     project.write("src/client/init.luau", R"(
+        game:GetService("AudioService").OcclusionEnabled = true
         local function block(name: string, at: vector, size: vector, parent: Instance?)
             local part = Instance.new("Part")
             part.Name = name
@@ -127,6 +128,7 @@ TEST_CASE("ADR 0255: sixty-four sounds behind walls, what a frame costs" *
     Captured log;
     Project project;
     project.write("src/client/init.luau", R"(
+        game:GetService("AudioService").OcclusionEnabled = true
         for row = 0, 7 do
             local wall = Instance.new("Part")
             wall.Anchored = true

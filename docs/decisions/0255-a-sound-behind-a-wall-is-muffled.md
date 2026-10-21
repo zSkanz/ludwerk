@@ -56,8 +56,18 @@ A sound muffled by an amount `m` -- 0 open, 1 behind one wall, 1.5 behind
 two or more -- goes through a low-pass at `20000 * (OcclusionMuffle /
 20000) ^ m` Hz and has its volume multiplied by `OcclusionVolume ^ m`. The
 defaults are 900 Hz and 0.5: a wall takes the brightness and half the level
-off, a second wall more of both. `OcclusionEnabled` turns it off for the
-game.
+off, a second wall more of both.
+
+### 3b. Off until a game turns it on
+
+`AudioService.OcclusionEnabled` is `false` by default, and a game sets it.
+The professional engines ship occlusion as a choice, per sound or per
+project; what a game sounds like is the game's to decide, so the engine
+does not change it unasked; and the games
+made with the engine today hear from a camera high above the action -- a
+top-down fight under a tree's crown or a ruin's wall would be muffled by
+them, where the player sees it plainly. Built first on by default and turned
+off before it shipped, after the sweep of two such games.
 
 ### 4. Each machine's, and none of the world's
 
@@ -69,7 +79,7 @@ a script on each machine sets them for that machine.
 
 ## Script surface
 
-- `AudioService.OcclusionEnabled` (bool, `true`)
+- `AudioService.OcclusionEnabled` (bool, `false`)
 - `AudioService.OcclusionMuffle` (number, Hz, `900`, 60 to 20000)
 - `AudioService.OcclusionVolume` (number, `0.5`, 0 to 1)
 - `AudioService.OcclusionRays` (number, whole, 0 to 1024; reads the quality
