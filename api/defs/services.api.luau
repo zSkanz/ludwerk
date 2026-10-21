@@ -4374,6 +4374,16 @@ local Classes: { Schema.Class } = {
                     .. "game gives its players (`NetworkService.OnJoinRequest`).",
             },
             {
+                Name = "VoiceMuted",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Records = { "ADR 0256" },
+                Doc = "Whether nobody hears this player speak. Set it on the server: it is the server that "
+                    .. "sends a voice on, and a client's own value changes nothing for anyone else. "
+                    .. "`VoiceChatService:SetLocallyMuted` is what one player uses to stop hearing another.",
+            },
+            {
                 Name = "AccountId",
                 Type = "string?",
                 ReadOnly = true,
@@ -5832,6 +5842,125 @@ local Classes: { Schema.Class } = {
                 Doc = "Fires when `SelectedObject` changes. Passes the newly selected object, or nil.",
             },
         } :: { Schema.Event },
+    },
+    {
+        Name = "VoiceChatService",
+        Extends = "Instance",
+        Module = "audio",
+        Tags = { "Service", "NotCreatable" } :: { Schema.ClassTag },
+        Records = { "ADR 0256" },
+        Doc = "Players talking to each other in a match. Off until the game sets `Enabled` and the player's "
+            .. "own `PlayerEnabled` allows it. The server decides who hears whom by `Mode`; each machine "
+            .. "sends its player's microphone, by push to talk or by voice activity, and plays the voices it "
+            .. "is sent. Nothing is recorded: a frame is played and gone.\n\n"
+            .. "Voice needs a codec. Until the build carries one, `Available` is false and nothing is sent.",
+        Properties = {
+            {
+                Name = "Enabled",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Doc = "Whether this game uses voice. Set it on the server, which then sends voices on, and on "
+                    .. "each client, which then opens its microphone.",
+            },
+            {
+                Name = "PlayerEnabled",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "The player's own choice: false, this machine neither sends its microphone nor plays "
+                    .. "anyone. A settings menu sets it.",
+            },
+            {
+                Name = "Available",
+                Type = "boolean",
+                ReadOnly = true,
+                Presentation = true,
+                Doc = "Whether this build carries a voice codec. False until it does, and voice stays off.",
+            },
+            {
+                Name = "Mode",
+                Type = "Enum.VoiceChatMode",
+                Default = "Enum.VoiceChatMode.Global",
+                Presentation = true,
+                Doc = "Who hears whom. The server's value is the one that counts.",
+            },
+            {
+                Name = "ProximityDistance",
+                Type = "number",
+                Default = "40",
+                Presentation = true,
+                ErrorKey = "scene.err.number_out_of_range",
+                Doc = "In `Proximity` mode, the distance in meters within which a character is heard, from 1 "
+                    .. "to 1000. A voice fades to nothing at it, heard from where the speaker's character is.",
+            },
+            {
+                Name = "PushToTalk",
+                Type = "boolean",
+                Default = "true",
+                Presentation = true,
+                Doc = "True, the microphone is sent only while `Talking` is true. False, it is sent while the "
+                    .. "player's voice is louder than `ActivityThreshold`, and a moment after.",
+            },
+            {
+                Name = "Talking",
+                Type = "boolean",
+                Default = "false",
+                Presentation = true,
+                Doc = "With `PushToTalk`, whether the player is holding the key to talk. The game sets it from "
+                    .. "its own input: a key, a gamepad button, a button on a phone's screen.",
+            },
+            {
+                Name = "ActivityThreshold",
+                Type = "number",
+                Default = "-40",
+                Presentation = true,
+                ErrorKey = "scene.err.number_out_of_range",
+                Doc = "Without `PushToTalk`, how loud the microphone must be to be sent, in decibels below "
+                    .. "full scale, from -80 to 0. Lower sends quieter speech, and more of the room.",
+            },
+        } :: { Schema.Property },
+        Methods = {
+            {
+                Name = "SetLocallyMuted",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "muted", Type = "boolean" } },
+                Returns = {},
+                Doc = "Stops this machine playing `player`'s voice, or starts it again. No other machine knows.",
+            },
+            {
+                Name = "IsLocallyMuted",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "boolean" },
+                Doc = "Whether this machine does not play `player`'s voice.",
+            },
+            {
+                Name = "IsSpeaking",
+                Parameters = { { Name = "player", Type = "Player" } },
+                Returns = { "boolean" },
+                Doc = "Whether this machine hears `player` speaking now, or, for this machine's own player, "
+                    .. "whether their microphone is being sent.",
+            },
+            {
+                Name = "SetCanHear",
+                Parameters = {
+                    { Name = "listener", Type = "Player" },
+                    { Name = "speaker", Type = "Player" },
+                    { Name = "hears", Type = "boolean" },
+                },
+                Returns = {},
+                Doc = "In `Script` mode, on the server: whether `listener` hears `speaker`. A pair never set does "
+                    .. "not. A game that puts players in rooms, parties or radio channels says so here.",
+            },
+        },
+        Events = {
+            {
+                Name = "SpeakingChanged",
+                Parameters = { { Name = "player", Type = "Player" }, { Name = "speaking", Type = "boolean" } },
+                Doc = "Fires on this machine when a player it hears starts or stops speaking. It fires for this "
+                    .. "machine's own player when their microphone starts or stops being sent. A speaking icon "
+                    .. "follows it.",
+            },
+        },
     },
     {
         Name = "AudioService",

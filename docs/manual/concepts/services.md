@@ -65,6 +65,7 @@ instance.
 | `SaveService` | Data kept on the player's machine between runs, in named slots ([Saving the game](manual:guides/saves)). |
 | `LocalizationService` | The game's text by key, in the player's language ([Localization](manual:guides/i18n)). |
 | `DialogueService` | Lines of dialogue, their voices and their captions ([Dubbing](manual:audio/dubbing)). |
+| `VoiceChatService` | Players talking to each other in a match, and who hears whom ([Voice chat](manual:audio/voice-chat)). |
 | `ContentProvider` | Loading assets before they are shown, behind a loading screen. |
 | `HapticService` | Vibration: a gamepad's motors and a phone's ([Vibration](manual:input/vibration)). |
 | `CryptoService` | Unpredictable random values and hashes, for tokens and passwords; never the simulation's randomness. |

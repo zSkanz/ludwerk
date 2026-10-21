@@ -678,6 +678,9 @@ void fireSubWorldMessages(lua_State* L);
 // 0106), fired by the host when the connection it manages changes; the last
 // two carry a readable reason.
 void fireNetworkEvent(lua_State* L, std::string_view eventName, std::optional<std::string_view> reason);
+// `VoiceChatService.SpeakingChanged` (ADR 0256), for each player this machine
+// began or stopped hearing speak since the last call.
+void fireVoiceEvents(lua_State* L);
 
 // **`JoinFailed`, `HostFailed` or `Disconnected` with why**: the text in the
 // player's language, the `Enum.NetworkFailure` value a game decides by, and

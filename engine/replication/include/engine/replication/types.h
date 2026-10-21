@@ -493,4 +493,17 @@ struct CarriedOffset
     return CarriedOffset{summed, core::DVec3{summed.x - offset.x, summed.y - offset.y, summed.z - offset.z}};
 }
 
+// **A voice frame this machine is to play** (ADR 0256): whose it is, as their
+// `UserId`; the codec, the frame's number and its bytes; whether it is heard
+// where the speaker's character is, and whether their gate is open.
+struct HeardVoice
+{
+    u32 speaker = 0;
+    u8 codec = 0;
+    u16 sequence = 0;
+    bool positional = false;
+    bool speaking = true;
+    std::vector<u8> frame;
+};
+
 } // namespace engine::replication

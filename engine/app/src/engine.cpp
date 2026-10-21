@@ -106,6 +106,7 @@
 #include "engine/app/ui_pointer.h"
 #include "engine/app/ui_text.h"
 #include "engine/app/view_host.h"
+#include "engine/app/voice_chat.h"
 #include "engine/app/world_host.h"
 #include "engine/app/world_ui.h"
 #include "engine/asset/content.h"
@@ -3419,6 +3420,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // game is another player rather than the first one again.
     platform::FileLock matchKeyHeld;
     NetworkSession network([&host]() { return host.get(); }, networkBase);
+    VoiceChat voiceChat;
     // **A server's console** (ADR 0218): a process that serves with no window
     // reads its standard input; any authority runs what its scripts ask of
     // the console. Bans are kept beside the saves.
@@ -7562,6 +7564,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // In the language this machine hears, which a script may have just
         // changed: an identity check when it has not.
         host->audio().setVoiceLocale(host->world().engineState().voiceLocale);
+        // Players' voices (ADR 0256): the microphone to the match, and the
+        // match's voices to this machine's speakers.
+        voiceChat.frame(host->world(), host->audio(), network, platform::nowNs());
         // The ear goes where the eye is: with the sequence's camera while it
         // has the view.
         //

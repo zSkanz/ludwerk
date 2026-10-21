@@ -3426,7 +3426,8 @@ void AuthoritySession::routeVoice(scene::World& world, core::InstanceId speaker,
 {
     const scene::EngineState::Voice& voice = world.engineState().voice;
     const scene::PlayerComponent* who = world.players().find(speaker);
-    if (!voice.enabled || who == nullptr || who->voiceMuted || frame.size() > MaxVoiceFrameBytes)
+    if (!voice.enabled || who == nullptr || who->voiceMuted || frame.size() > MaxVoiceFrameBytes || m_voiceCodec == 0 ||
+        codec != m_voiceCodec)
         return;
     const bool positional = voice.mode == 2;
     Writer out;
@@ -3451,8 +3452,8 @@ void AuthoritySession::routeVoice(scene::World& world, core::InstanceId speaker,
     for (const core::InstanceId listener : here) {
         if (listener == speaker || !hears(world, listener, speaker))
             continue;
-        m_voiceHeard.push_back(
-            HeardVoice{who->userId, codec, sequence, positional, speaking, std::vector<u8>(frame.begin(), frame.end())});
+        m_voiceHeard.push_back(HeardVoice{who->userId, codec, sequence, positional, speaking,
+                                          std::vector<u8>(frame.begin(), frame.end())});
         break;
     }
 }

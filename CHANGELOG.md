@@ -11,6 +11,14 @@ here.
 
 ### Added
 
+- `VoiceChatService`: players talking to each other in a match. The server
+  decides who hears whom -- everybody, a team, those near, or the pairs the
+  game names -- within fifty frames and four kilobytes a second from each
+  speaker; push to talk or voice activity; a jitter buffer on each listener;
+  `SpeakingChanged`, local mutes and `Player.VoiceMuted`; the microphone
+  permission on Android. Its codec is not in the build yet:
+  `VoiceChatService.Available` says so, and nothing is sent until it is.
+
 - `AudioService.ListenerMode` hears from the camera, from the local player's
   character (`ListenerBlend` of the way from the camera, facing as it does), or
   from `ListenerCFrame`. It is for a game whose camera hangs high above the

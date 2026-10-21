@@ -110,6 +110,20 @@ void sleepNs(u64 ns) noexcept;
 // system will not say.
 [[nodiscard]] u64 systemMemoryBytes() noexcept;
 
+// **The microphone, as the player allowed it** (ADR 0256): on a phone or a
+// standalone headset the system asks the player, the first time voice is
+// turned on, and answers on another thread; everywhere else it is allowed.
+enum class MicrophoneAccess : core::u8
+{
+    NotAsked = 0,
+    Asking = 1,
+    Allowed = 2,
+    Refused = 3,
+};
+[[nodiscard]] MicrophoneAccess microphoneAccess() noexcept;
+// Asks, once: what is already asked or answered stays as it is.
+void askForMicrophone();
+
 // **The machine's memory free now**, in bytes: what a manager asks before it
 // starts one more world (ADR 0221 §6). Zero where the system will not say.
 [[nodiscard]] u64 freeMemoryBytes() noexcept;

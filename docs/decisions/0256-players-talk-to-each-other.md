@@ -1,8 +1,15 @@
 # 0256 — Players talk to each other
 
-- Status: accepted. §5, the ear, is built; the rest waits for libopus to be
-  vendored, which its approval in ADR 0122 does not yet carry out.
+- Status: accepted. Built: the ear (§5), and everything of voice but the
+  codec -- the capture, the gate, the wire, the server's routing and cap,
+  the jitter buffer, the playback, the service and the phone's permission --
+  behind a codec interface. libopus drops into that interface once it is
+  vendored, which its approval in ADR 0122 does not yet carry out; until
+  then `VoiceChatService.Available` is false and nothing is sent.
 - Date: 2026-10-20
+- Approved: libopus (BSD-3) as its codec, by the project's maintainer on
+  2026-10-21: the latest release, pinned, the codec alone, the copy the
+  video player takes too.
 - Builds on: ADR 0009 (miniaudio is the seam), ADR 0122 (libopus, approved
   as a dependency), ADR 0205 (an ear a view), ADR 0241 (what a peer may send
   is bounded and said), ADR 0255 (a sound behind a wall is muffled)
@@ -32,9 +39,10 @@ from `VoiceChatService.Mode`:
 - `Team`: a player hears the players of their own team (`Player.Team`).
 - `Proximity`: a player hears those within `ProximityDistance` of their
   character, the voice placed at the speaker's character as a sound is.
-- `Script`: the server's `VoiceChatService.CanHear(listener, speaker)`
-  callback decides, called for each pair when it changes and not every
-  frame.
+- `Script`: the pairs the server's `VoiceChatService:SetCanHear(listener,
+  speaker, hears)` named. A declaration rather than a callback: the server
+  reads it while it routes a frame, in the middle of taking in the network,
+  where calling into a script is a re-entry nothing else does.
 
 `Player.VoiceMuted` (server, written by the game) stops a player being heard
 by anyone. `VoiceChatService:SetLocallyMuted(player, muted)` (client) stops
@@ -52,6 +60,11 @@ heard by the speaker themself.
 - **A cap a speaker** (ADR 0241): a server takes at most 50 frames a second
   and 4 KB a second from one player's microphone, and what is over is
   dropped and said once in the log, as any other peer's excess is.
+- **Only the server's own codec**: a server relays frames in its build's
+  codec and drops any other. A build with none relays nothing, so a client
+  cannot make a server pass on raw samples. A raw 16-bit frame is 1920
+  bytes, over a frame's 512-byte bound, and is never sent at all; that
+  codec exists only in the tests.
 - **A jitter buffer on the listener**, 40 ms deep and growing to 120 ms on a
   link that needs it, with Opus's loss concealment for a frame that does
   not arrive.
@@ -59,10 +72,12 @@ heard by the speaker themself.
 ### 3. The microphone
 
 miniaudio's capture device, opened only while voice is on and the player
-allows it. **Push to talk** is the default (`VoiceChatService.PushToTalk`,
-bound to an `InputAction` the game names); `VoiceActivity` opens the
-microphone and sends while the level is above `ActivityThreshold`, with
-Opus's own silence detection between words.
+allows it. **Push to talk** is the default (`VoiceChatService.PushToTalk`):
+the microphone is sent while `Talking` is true, which the game sets from its
+own input -- a key, a gamepad button and a phone's on-screen button alike.
+With `PushToTalk` false it is sent while the level is above
+`ActivityThreshold`, and for 300 ms after, so the pauses inside a sentence
+are not cut.
 
 **Echo**: on Android and on a standalone headset the capture is opened with
 the system's voice-communication preset (AAudio's `VoiceCommunication`),
@@ -108,11 +123,11 @@ which is why it waited for this protocol.
 
 ## Script surface
 
-- `VoiceChatService`: `Enabled`, `PlayerEnabled`, `Mode`
-  (`Enum.VoiceChatMode`), `ProximityDistance`, `PushToTalk`,
-  `VoiceActivity`, `ActivityThreshold`, `CanHear` (server callback),
-  `SetLocallyMuted(player, muted)`, `IsLocallyMuted(player)`,
-  `SpeakingChanged(player, speaking)`, `IsSpeaking(player)`.
+- `VoiceChatService`: `Enabled`, `PlayerEnabled`, `Available` (read only),
+  `Mode` (`Enum.VoiceChatMode`), `ProximityDistance`, `PushToTalk`,
+  `Talking`, `ActivityThreshold`, `SetLocallyMuted(player, muted)`,
+  `IsLocallyMuted(player)`, `IsSpeaking(player)`, `SetCanHear(listener,
+  speaker, hears)` (server), `SpeakingChanged(player, speaking)`.
 - `Player.VoiceMuted` (server).
 - `AudioService.ListenerMode` (`Enum.ListenerMode`), `ListenerBlend`,
   `ListenerCFrame`.

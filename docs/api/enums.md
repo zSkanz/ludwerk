@@ -1246,6 +1246,17 @@ How completely a `CameraTexture` or a `SubWorld` view is drawn.
 | `Full` | 0 | Everything the main view draws, including shadows and post-processing effects. |
 | `Simple` | 1 | No shadows and no post-processing effects. It suits a monitor feed or a minimap. |
 
+## Enum.VoiceChatMode
+
+Who hears whom, as the server decides it, set by `VoiceChatService.Mode`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Global` | 0 | Every player hears every other. |
+| `Team` | 1 | A player hears the players whose `Team` attribute is the same as theirs. |
+| `Proximity` | 2 | A player hears those whose character is within `ProximityDistance` of theirs, heard from where that character is. |
+| `Script` | 3 | A player hears whom the server's `VoiceChatService:SetCanHear` said they do, and nobody else. |
+
 ## Enum.WaterShape
 
 The extent of a `Water`.

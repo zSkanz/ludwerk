@@ -324,10 +324,12 @@ export type Settings = {
     -- a release makes one unless the project says not, a debug build when it
     -- says so.
     bundle: boolean,
-    -- `internet` and `vibrate`, when the project says: otherwise each is
-    -- declared when the project's code uses what needs it (`projectUses`).
+    -- `internet`, `vibrate` and `microphone`, when the project says:
+    -- otherwise each is declared when the project's code uses what needs it
+    -- (`projectUses`).
     internet: boolean?,
     vibrate: boolean?,
+    microphone: boolean?,
 }
 
 --- `Enum.ScreenOrientation`, by name and by number, as the manifest spells it.
@@ -417,7 +419,7 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         then path.format(path.resolve(projectlib.joined(project.root, section.debug_keystore)))
         else nil
     local debugKeyAlias: string? = if typeof(section.debug_key_alias) == "string" then section.debug_key_alias else nil
-    for _, name in { "internet", "vibrate" } do
+    for _, name in { "internet", "vibrate", "microphone" } do
         if section[name] ~= nil and typeof(section[name]) ~= "boolean" then
             return nil, tr("cli.build.err.android_permission_value", { name = name })
         end
@@ -440,6 +442,7 @@ local function settings(project: projectlib.Project): (Settings?, string?)
         bundle = bundle,
         internet = section.internet,
         vibrate = section.vibrate,
+        microphone = section.microphone,
     },
         nil
 end
@@ -450,6 +453,8 @@ export type Uses = {
     network: boolean,
     -- A script names `HapticService`.
     haptics: boolean,
+    -- A script names `VoiceChatService` (ADR 0256).
+    voice: boolean,
 }
 
 --- **What the project's own code reaches for that a phone gates behind a
@@ -459,7 +464,7 @@ export type Uses = {
 --- internet = true` is for -- and a name in a comment is, which costs a
 --- permission nobody is asked for.
 local function projectUses(project: projectlib.Project): Uses
-    local uses: Uses = { network = false, haptics = false }
+    local uses: Uses = { network = false, haptics = false, voice = false }
     local config = project.config
     if typeof(config.network) == "table" or typeof(config.net) == "table" then
         uses.network = true
@@ -479,6 +484,9 @@ local function projectUses(project: projectlib.Project): Uses
         if string.find(text, "HapticService", 1, true) ~= nil then
             uses.haptics = true
         end
+        if string.find(text, "VoiceChatService", 1, true) ~= nil then
+            uses.voice = true
+        end
     end
     local function walk(folder: string, wanted: (string) -> boolean)
         if not fs.exists(folder) then
@@ -488,7 +496,11 @@ local function projectUses(project: projectlib.Project): Uses
             local child = projectlib.joined(folder, entry.name)
             if entry.type == "dir" then
                 walk(child, wanted)
-            elseif entry.type == "file" and wanted(entry.name) and not (uses.network and uses.haptics) then
+            elseif
+                entry.type == "file"
+                and wanted(entry.name)
+                and not (uses.network and uses.haptics and uses.voice)
+            then
                 read(child)
             end
         end
@@ -511,16 +523,27 @@ end
 --- `INTERNET` is what Android gates every socket behind, and
 --- `ACCESS_NETWORK_STATE` goes with it: joining, hosting and HTTPS.
 --- `VIBRATE` is `HapticService` on the phone itself.
+---
+--- **And the microphone, which is not normal** (ADR 0256): `RECORD_AUDIO`
+--- is asked of the player, the first time voice is turned on, and
+--- `MODIFY_AUDIO_SETTINGS` lets the capture take the system's voice preset,
+--- which cancels the speaker's sound. Only a game whose code names
+--- `VoiceChatService`, or that says `[export.android] microphone = true`.
 local function permissions(configured: Settings, uses: Uses): { string }
     local out: { string } = {}
     local internet = if configured.internet ~= nil then configured.internet :: boolean else uses.network
     local vibrate = if configured.vibrate ~= nil then configured.vibrate :: boolean else uses.haptics
+    local microphone = if configured.microphone ~= nil then configured.microphone :: boolean else uses.voice
     if internet then
         table.insert(out, "android.permission.INTERNET")
         table.insert(out, "android.permission.ACCESS_NETWORK_STATE")
     end
     if vibrate then
         table.insert(out, "android.permission.VIBRATE")
+    end
+    if microphone then
+        table.insert(out, "android.permission.RECORD_AUDIO")
+        table.insert(out, "android.permission.MODIFY_AUDIO_SETTINGS")
     end
     return out
 end

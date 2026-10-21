@@ -912,6 +912,49 @@ struct AudioSystem::Impl
             static_cast<Impl*>(device->pUserData)->keepCaptured(static_cast<const f32*>(input), frameCount);
     }
 
+    // **The voices this machine hears** (ADR 0256), under the voices' lock:
+    // each speaker's jitter buffer and decoder, what was decoded and not yet
+    // played, and the gains `update` set from where they are.
+    struct Speaker
+    {
+        u32 user = 0;
+        VoiceJitterBuffer jitter;
+        std::unique_ptr<VoiceDecoder> decoder;
+        std::array<f32, kVoiceFrameSamples> pcm{};
+        usize played = kVoiceFrameSamples;
+        bool positional = false;
+        core::DVec3 at{};
+        f32 reach = 40.0f;
+        f32 left = 0.7071f;
+        f32 right = 0.7071f;
+    };
+    std::vector<Speaker> speakers;
+    core::CFrameD lastEar{};
+
+    void mixSpeakers(float* samples, ma_uint32 frameCount) noexcept
+    {
+        for (Speaker& speaker : speakers) {
+            for (ma_uint32 frame = 0; frame < frameCount; ++frame) {
+                if (speaker.played >= kVoiceFrameSamples) {
+                    std::optional<VoiceJitterBuffer::Turn> turn = speaker.jitter.pop();
+                    if (!turn.has_value())
+                        break;
+                    if (turn->missing || speaker.decoder == nullptr ||
+                        !speaker.decoder->decode(turn->packet, speaker.pcm)) {
+                        if (speaker.decoder != nullptr)
+                            speaker.decoder->conceal(speaker.pcm);
+                        else
+                            speaker.pcm.fill(0.0f);
+                    }
+                    speaker.played = 0;
+                }
+                const f32 sample = speaker.pcm[speaker.played++];
+                samples[frame * kChannels] += sample * speaker.left;
+                samples[frame * kChannels + 1] += sample * speaker.right;
+            }
+        }
+    }
+
     std::mutex mutex;
     std::vector<Voice> voices;
     Audition audition;
@@ -1224,6 +1267,8 @@ void AudioSystem::Impl::mix(float* samples, ma_uint32 frameCount) noexcept
         mixBlock(samples + static_cast<core::usize>(done) * kChannels, count);
         done += count;
     }
+    // Players' voices, on top of the world's sounds (ADR 0256).
+    mixSpeakers(samples, frameCount);
 
     // Soft-clipped rather than left to wrap: a mix past full scale is a game
     // balance problem, and clipping it is what a mixer does. Wrapping is
@@ -1656,6 +1701,66 @@ void AudioSystem::feedMicrophoneForTests(std::span<const f32> samples)
         m_impl->keepCaptured(samples.data(), samples.size());
 }
 
+void AudioSystem::hearVoice(u32 speaker, u8 codec, u16 sequence, std::span<const u8> frame)
+{
+    if (m_impl == nullptr)
+        return;
+    const VoiceCodec& installed = voiceCodec();
+    if (installed.id == VoiceCodecId::None || codec != static_cast<u8>(installed.id))
+        return;
+    const std::lock_guard guard(m_impl->mutex);
+    auto found = std::find_if(m_impl->speakers.begin(), m_impl->speakers.end(),
+                              [&](const Impl::Speaker& held) { return held.user == speaker; });
+    if (found == m_impl->speakers.end()) {
+        m_impl->speakers.emplace_back();
+        found = std::prev(m_impl->speakers.end());
+        found->user = speaker;
+        if (installed.makeDecoder != nullptr)
+            found->decoder = installed.makeDecoder();
+    }
+    found->jitter.push(sequence, frame);
+}
+
+void AudioSystem::placeVoice(u32 speaker, const core::DVec3* at, f32 reach)
+{
+    if (m_impl == nullptr)
+        return;
+    const std::lock_guard guard(m_impl->mutex);
+    for (Impl::Speaker& held : m_impl->speakers) {
+        if (held.user != speaker)
+            continue;
+        held.positional = at != nullptr;
+        if (at != nullptr)
+            held.at = *at;
+        held.reach = std::fmax(reach, 0.001f);
+    }
+}
+
+void AudioSystem::forgetVoice(u32 speaker)
+{
+    if (m_impl == nullptr)
+        return;
+    const std::lock_guard guard(m_impl->mutex);
+    std::erase_if(m_impl->speakers, [&](const Impl::Speaker& held) { return held.user == speaker; });
+}
+
+usize AudioSystem::voicesHeard() const
+{
+    if (m_impl == nullptr)
+        return 0;
+    const std::lock_guard guard(m_impl->mutex);
+    return m_impl->speakers.size();
+}
+
+void AudioSystem::mixVoicesForTests(std::span<f32> stereo)
+{
+    std::fill(stereo.begin(), stereo.end(), 0.0f);
+    if (m_impl == nullptr)
+        return;
+    const std::lock_guard guard(m_impl->mutex);
+    m_impl->mixSpeakers(stereo.data(), static_cast<ma_uint32>(stereo.size() / kChannels));
+}
+
 void AudioSystem::tick(scene::World& world, f64 fixedDt)
 {
     const core::NameAtom ended = world.atoms().intern("Ended");
@@ -1765,6 +1870,29 @@ void AudioSystem::update(scene::World& world, core::InstanceId listener, const c
     }
     else if (const scene::CameraComponent* camera = world.cameras().find(listener); camera != nullptr) {
         ear = camera->cframe;
+    }
+
+    // **Players' voices, from this ear** (ADR 0256): one placed at their
+    // character fades to nothing at its reach and sits to the side it is on;
+    // the rest are in the middle. The game's master volume is theirs too.
+    {
+        const f32 master = world.engineState().masterVolume;
+        const std::lock_guard guard(m_impl->mutex);
+        for (Impl::Speaker& speaker : m_impl->speakers) {
+            if (!speaker.positional) {
+                speaker.left = 0.7071f * master;
+                speaker.right = 0.7071f * master;
+                continue;
+            }
+            const core::DVec3 apart = speaker.at - ear.position;
+            const f32 distance = static_cast<f32>(std::sqrt(apart.x * apart.x + apart.y * apart.y + apart.z * apart.z));
+            const f32 falloff = std::clamp((speaker.reach - distance) / speaker.reach, 0.0f, 1.0f);
+            f32 left = 0.0f;
+            f32 right = 0.0f;
+            detail::panGains(detail::panOf(ear, speaker.at), left, right);
+            speaker.left = left * falloff * master;
+            speaker.right = right * falloff * master;
+        }
     }
 
     // **Here and not in the tick**. The read is asynchronous and its

@@ -140,13 +140,14 @@ inline constexpr scene::EnumId ParticleFlipbookModeEnumId = 97;
 inline constexpr scene::EnumId SwarmAgentRemovalEnumId = 98;
 inline constexpr scene::EnumId RelayStateEnumId = 99;
 inline constexpr scene::EnumId SoundCategoryEnumId = 100;
-inline constexpr scene::EnumId ListenerModeEnumId = 101;
-inline constexpr scene::EnumId SubtitleModeEnumId = 102;
-inline constexpr scene::EnumId LipSyncModeEnumId = 103;
-inline constexpr scene::EnumId IrradianceModeEnumId = 104;
-inline constexpr scene::EnumId ScreenSplitEnumId = 105;
-inline constexpr scene::EnumId SequenceControlEnumId = 106;
-inline constexpr scene::EnumId NetworkFailureEnumId = 107;
+inline constexpr scene::EnumId VoiceChatModeEnumId = 101;
+inline constexpr scene::EnumId ListenerModeEnumId = 102;
+inline constexpr scene::EnumId SubtitleModeEnumId = 103;
+inline constexpr scene::EnumId LipSyncModeEnumId = 104;
+inline constexpr scene::EnumId IrradianceModeEnumId = 105;
+inline constexpr scene::EnumId ScreenSplitEnumId = 106;
+inline constexpr scene::EnumId SequenceControlEnumId = 107;
+inline constexpr scene::EnumId NetworkFailureEnumId = 108;
 
 } // namespace generated
 
@@ -302,6 +303,23 @@ scene::Value getCaptionSeconds(const scene::World& world, core::InstanceId id);
 bool setCaptionSeconds(scene::World& world, core::InstanceId id, const scene::Value& value);
 void attachCaptionComponents(scene::World& world, core::InstanceId id);
 void detachCaptionComponents(scene::World& world, core::InstanceId id);
+
+// VoiceChatService
+scene::Value getVoiceChatServiceEnabled(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServiceEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServicePlayerEnabled(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServicePlayerEnabled(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServiceAvailable(const scene::World& world, core::InstanceId id);
+scene::Value getVoiceChatServiceMode(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServiceMode(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServiceProximityDistance(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServiceProximityDistance(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServicePushToTalk(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServicePushToTalk(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServiceTalking(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServiceTalking(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getVoiceChatServiceActivityThreshold(const scene::World& world, core::InstanceId id);
+bool setVoiceChatServiceActivityThreshold(scene::World& world, core::InstanceId id, const scene::Value& value);
 
 // AudioService
 scene::Value getAudioServiceMasterVolume(const scene::World& world, core::InstanceId id);

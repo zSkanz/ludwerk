@@ -7067,6 +7067,11 @@
           "Type": "number",
           "ReadOnly": true,
           "ThreadSafety": "Safe"
+        },
+        {
+          "Name": "VoiceMuted",
+          "Type": "boolean",
+          "Default": "false"
         }
       ],
       "Methods": [
@@ -11876,6 +11881,122 @@
       ],
       "Methods": [],
       "Events": []
+    },
+    {
+      "Name": "VoiceChatService",
+      "Extends": "Instance",
+      "Tags": ["NotCreatable", "Service"],
+      "Properties": [
+        {
+          "Name": "ActivityThreshold",
+          "Type": "number",
+          "Default": "-40"
+        },
+        {
+          "Name": "Available",
+          "Type": "boolean",
+          "ReadOnly": true
+        },
+        {
+          "Name": "Enabled",
+          "Type": "boolean",
+          "Default": "false"
+        },
+        {
+          "Name": "Mode",
+          "Type": "Enum.VoiceChatMode",
+          "Default": "Enum.VoiceChatMode.Global"
+        },
+        {
+          "Name": "PlayerEnabled",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "ProximityDistance",
+          "Type": "number",
+          "Default": "40"
+        },
+        {
+          "Name": "PushToTalk",
+          "Type": "boolean",
+          "Default": "true"
+        },
+        {
+          "Name": "Talking",
+          "Type": "boolean",
+          "Default": "false"
+        }
+      ],
+      "Methods": [
+        {
+          "Name": "IsLocallyMuted",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "IsSpeaking",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            }
+          ],
+          "Returns": ["boolean"]
+        },
+        {
+          "Name": "SetCanHear",
+          "Parameters": [
+            {
+              "Name": "listener",
+              "Type": "Player"
+            },
+            {
+              "Name": "speaker",
+              "Type": "Player"
+            },
+            {
+              "Name": "hears",
+              "Type": "boolean"
+            }
+          ],
+          "Returns": []
+        },
+        {
+          "Name": "SetLocallyMuted",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "muted",
+              "Type": "boolean"
+            }
+          ],
+          "Returns": []
+        }
+      ],
+      "Events": [
+        {
+          "Name": "SpeakingChanged",
+          "Parameters": [
+            {
+              "Name": "player",
+              "Type": "Player"
+            },
+            {
+              "Name": "speaking",
+              "Type": "boolean"
+            }
+          ]
+        }
+      ]
     },
     {
       "Name": "VoxelService",
@@ -18699,6 +18820,27 @@
         },
         {
           "Name": "Simple",
+          "Value": 1
+        }
+      ]
+    },
+    {
+      "Name": "VoiceChatMode",
+      "Items": [
+        {
+          "Name": "Global",
+          "Value": 0
+        },
+        {
+          "Name": "Proximity",
+          "Value": 2
+        },
+        {
+          "Name": "Script",
+          "Value": 3
+        },
+        {
+          "Name": "Team",
           "Value": 1
         }
       ]

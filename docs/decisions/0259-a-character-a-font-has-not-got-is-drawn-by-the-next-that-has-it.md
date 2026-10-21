@@ -153,8 +153,7 @@ metrics unlike Inter's.
 
 - **Shaping and direction.** Arabic letters join, Devanagari and Thai stack
   their marks, and Arabic and Hebrew run right to left. These need a shaper
-  and the bidirectional algorithm. ADR 0260 is the draft that weighs them,
-  and a new dependency waits on its approval (R5, R6).
+  and the bidirectional algorithm. ADR 0260 decides them: HarfBuzz and SheenBidi, approved on 2026-10-21.
 - **Thai, Lao, Khmer and Burmese line breaking.** These write words with no
   spaces and break between words, which takes a dictionary. That belongs with
   the shaper.

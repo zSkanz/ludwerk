@@ -138,13 +138,14 @@ inline constexpr EnumId ParticleFlipbookModeEnumId = 97;
 inline constexpr EnumId SwarmAgentRemovalEnumId = 98;
 inline constexpr EnumId RelayStateEnumId = 99;
 inline constexpr EnumId SoundCategoryEnumId = 100;
-inline constexpr EnumId ListenerModeEnumId = 101;
-inline constexpr EnumId SubtitleModeEnumId = 102;
-inline constexpr EnumId LipSyncModeEnumId = 103;
-inline constexpr EnumId IrradianceModeEnumId = 104;
-inline constexpr EnumId ScreenSplitEnumId = 105;
-inline constexpr EnumId SequenceControlEnumId = 106;
-inline constexpr EnumId NetworkFailureEnumId = 107;
+inline constexpr EnumId VoiceChatModeEnumId = 101;
+inline constexpr EnumId ListenerModeEnumId = 102;
+inline constexpr EnumId SubtitleModeEnumId = 103;
+inline constexpr EnumId LipSyncModeEnumId = 104;
+inline constexpr EnumId IrradianceModeEnumId = 105;
+inline constexpr EnumId ScreenSplitEnumId = 106;
+inline constexpr EnumId SequenceControlEnumId = 107;
+inline constexpr EnumId NetworkFailureEnumId = 108;
 
 } // namespace generated
 
@@ -1157,6 +1158,8 @@ bool setPlayerCamera(World& world, core::InstanceId id, const Value& value);
 Value getPlayerGamepadId(const World& world, core::InstanceId id);
 bool setPlayerGamepadId(World& world, core::InstanceId id, const Value& value);
 Value getPlayerUserId(const World& world, core::InstanceId id);
+Value getPlayerVoiceMuted(const World& world, core::InstanceId id);
+bool setPlayerVoiceMuted(World& world, core::InstanceId id, const Value& value);
 Value getPlayerAccountId(const World& world, core::InstanceId id);
 Value getPlayerPublicKey(const World& world, core::InstanceId id);
 Value getPlayerCharacter(const World& world, core::InstanceId id);

@@ -2220,6 +2220,68 @@ int sceneServiceIsSubWorld(lua_State* L)
     return 1;
 }
 
+// --- VoiceChatService (ADR 0256) -----------------------------------------------
+
+// The `UserId` of the player at `index`, or an error that says it is not one.
+[[nodiscard]] core::u32 voicePlayer(lua_State* L, int index)
+{
+    const scene::PlayerComponent* player = world(L).players().find(checkInstance(L, index));
+    if (player == nullptr)
+        raise(L, ENG_TR("scene.err.voice_needs_player"));
+    return player->userId;
+}
+
+void keepSorted(std::vector<core::u32>& set, core::u32 value, bool in)
+{
+    const auto at = std::lower_bound(set.begin(), set.end(), value);
+    const bool there = at != set.end() && *at == value;
+    if (in && !there)
+        set.insert(at, value);
+    else if (!in && there)
+        set.erase(at);
+}
+
+int voiceChatServiceSetLocallyMuted(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::u32 user = voicePlayer(L, 2);
+    keepSorted(world(L).engineState().voice.locallyMuted, user, lua_toboolean(L, 3) != 0);
+    return 0;
+}
+
+int voiceChatServiceIsLocallyMuted(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::u32 user = voicePlayer(L, 2);
+    const std::vector<core::u32>& muted = world(L).engineState().voice.locallyMuted;
+    lua_pushboolean(L, std::binary_search(muted.begin(), muted.end(), user) ? 1 : 0);
+    return 1;
+}
+
+int voiceChatServiceIsSpeaking(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const core::u32 user = voicePlayer(L, 2);
+    const std::vector<core::u32>& speaking = world(L).engineState().voice.speaking;
+    lua_pushboolean(L, std::binary_search(speaking.begin(), speaking.end(), user) ? 1 : 0);
+    return 1;
+}
+
+int voiceChatServiceSetCanHear(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::pair<core::u32, core::u32> pair{voicePlayer(L, 2), voicePlayer(L, 3)};
+    const bool hears = lua_toboolean(L, 4) != 0;
+    std::vector<std::pair<core::u32, core::u32>>& pairs = world(L).engineState().voice.canHear;
+    const auto at = std::lower_bound(pairs.begin(), pairs.end(), pair);
+    const bool there = at != pairs.end() && *at == pair;
+    if (hears && !there)
+        pairs.insert(at, pair);
+    else if (!hears && there)
+        pairs.erase(at);
+    return 0;
+}
+
 // --- NetworkService at run time (ADR 0106) -------------------------------------
 
 // A dedicated server is one for its whole run: `--serve` is the only way in,
@@ -4046,6 +4108,10 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"MatchmakingService", "StartLobbyAsync", matchmakingServiceStartLobbyAsync},
     {"NetworkService", "SignInAsync", networkServiceSignInAsync},
     {"NetworkService", "RegisterAsync", networkServiceRegisterAsync},
+    {"VoiceChatService", "SetLocallyMuted", voiceChatServiceSetLocallyMuted},
+    {"VoiceChatService", "IsLocallyMuted", voiceChatServiceIsLocallyMuted},
+    {"VoiceChatService", "IsSpeaking", voiceChatServiceIsSpeaking},
+    {"VoiceChatService", "SetCanHear", voiceChatServiceSetCanHear},
     {"ConsoleService", "Register", serverConsoleRegister},
     {"ConsoleService", "Unregister", serverConsoleUnregister},
     {"ConsoleService", "ExecuteAsync", serverConsoleExecuteAsync},
@@ -4486,6 +4552,31 @@ void fireSubWorldMessages(lua_State* L)
         if (decoded >= 0)
             fireInstanceEvent(L, service, event->slot, top + 1, decoded);
         lua_settop(L, top);
+    }
+}
+
+void fireVoiceEvents(lua_State* L)
+{
+    World& w = world(L);
+    std::vector<std::pair<core::u32, bool>> changes;
+    changes.swap(w.engineState().voice.speakingChanges);
+    if (changes.empty())
+        return;
+    const ClassId voiceClass = w.classes().findId(w.atoms().lookup("VoiceChatService"));
+    const core::InstanceId service = findServiceOfClass(L, voiceClass);
+    const scene::EventDesc* descriptor =
+        service.valid() ? w.classes().findEvent(voiceClass, w.atoms().intern("SpeakingChanged")) : nullptr;
+    if (descriptor == nullptr)
+        return;
+    for (const auto& [user, began] : changes) {
+        const core::InstanceId player = scene::playerByUserId(w, user);
+        if (!player.valid())
+            continue;
+        const int first = lua_gettop(L) + 1;
+        pushInstance(L, player);
+        lua_pushboolean(L, began ? 1 : 0);
+        fireInstanceEvent(L, service, descriptor->slot, first, 2);
+        lua_settop(L, first - 1);
     }
 }
 

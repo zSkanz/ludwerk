@@ -209,9 +209,24 @@ public:
     // Every whole 20 ms frame (`kVoiceFrameSamples`) captured since the last
     // call, oldest first, appended to `out`. What is past a second behind is
     // gone: a frame that late is worth nothing to anybody listening.
-    void takeMicrophone(std::vector<f32>& out);
+    void takeMicrophone(std::vector<core::f32>& out);
     // What a capture device would have delivered, for a test.
-    void feedMicrophoneForTests(std::span<const f32> samples);
+    void feedMicrophoneForTests(std::span<const core::f32> samples);
+
+    // **A voice this machine hears** (ADR 0256): a speaker's frame, by their
+    // `UserId`, played by their jitter buffer in its turn. A frame in a codec
+    // this build has not got is dropped.
+    void hearVoice(core::u32 speaker, core::u8 codec, core::u16 sequence, std::span<const core::u8> frame);
+    // **Where a speaker is heard**: at `at`, fading to nothing at `reach`
+    // metres from the ear; or, with `at` null, in the middle at full level.
+    void placeVoice(core::u32 speaker, const core::DVec3* at, core::f32 reach);
+    // A speaker not heard for a while: their buffer and decoder go.
+    void forgetVoice(core::u32 speaker);
+    // The speakers being played, for a test.
+    [[nodiscard]] core::usize voicesHeard() const;
+    // `frames` of what the mixer would put out now, for a test: the voices
+    // and nothing else, without a device.
+    void mixVoicesForTests(std::span<core::f32> stereo);
 
     // Advances every playing sound by one tick and raises `Ended` and `Loaded`
     // on the world's change queue. Called from the sim tick.

@@ -42,6 +42,7 @@ engine_add_module(app
         src/frame_pacing.cpp
         src/frame_scheduler.cpp
         src/listener_ear.cpp
+        src/voice_chat.cpp
         src/backends.cpp
         src/engine.cpp
         src/preserved.cpp
@@ -442,6 +443,7 @@ engine_add_module_tests(app
         tests/draw_poses_tests.cpp
         tests/sound_occlusion_tests.cpp
         tests/listener_ear_tests.cpp
+        tests/voice_chat_tests.cpp
         tests/script_files_tests.cpp
         tests/external_changes_tests.cpp
         tests/admin_server_tests.cpp

@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -147,6 +148,12 @@ public:
     // This machine dropped simulated time this frame: a replica tells
     // its authority.
     void noteTimeDropped();
+    // **Voice** (ADR 0256): this machine's player speaks a frame; the frames
+    // it is to play; and the game's answer to who hears whom.
+    void speak(core::u8 codec, core::u16 sequence, bool speaking, std::span<const core::u8> frame);
+    void takeVoice(std::vector<replication::HeardVoice>& out);
+    void setVoiceFilter(std::function<bool(core::InstanceId listener, core::InstanceId speaker)> filter);
+    void setVoiceCodec(core::u8 codec);
     // **Snapshots held while a server catches up** (ADR 0228 §7), and whether
     // the last send sent one: the frame loop paces them by real time.
     void holdSnapshots(bool held);

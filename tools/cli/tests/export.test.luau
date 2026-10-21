@@ -138,8 +138,8 @@ test.suite("export", function(suite)
                     vibrate = vibrate,
                 }
             end
-            local alone = { network = false, haptics = false }
-            local online = { network = true, haptics = true }
+            local alone = { network = false, haptics = false, voice = false }
+            local online = { network = true, haptics = true, voice = false }
             assert.eq(#android.permissions(configured(nil, nil), alone), 0)
             assert.eq(
                 table.concat(android.permissions(configured(nil, nil), online), " "),
@@ -155,6 +155,14 @@ test.suite("export", function(suite)
                 "android.permission.VIBRATE"
             )
             assert.eq(#android.permissions(configured(false, false), online), 0)
+            -- A game that talks asks for the microphone, and the system's voice preset with it.
+            assert.eq(
+                table.concat(
+                    android.permissions(configured(false, false), { network = true, haptics = false, voice = true }),
+                    " "
+                ),
+                "android.permission.RECORD_AUDIO android.permission.MODIFY_AUDIO_SETTINGS"
+            )
         end
     )
 

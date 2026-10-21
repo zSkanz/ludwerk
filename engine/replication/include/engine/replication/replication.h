@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -142,6 +143,24 @@ public:
     // its tick numbers fell behind because its clock moved, not because its
     // packets were slow. An authority has nothing to tell.
     virtual void noteTimeDropped() {}
+
+    // **Voice** (ADR 0256): this machine's player speaks a frame, which the
+    // authority sends on to who hears them; the frames this machine is to
+    // play; and the game's answer to who hears whom, on the authority.
+    virtual void speak(scene::World& world, u8 codec, u16 sequence, bool speaking, std::span<const u8> frame)
+    {
+        (void)world;
+        (void)codec;
+        (void)sequence;
+        (void)speaking;
+        (void)frame;
+    }
+    virtual void takeVoice(std::vector<HeardVoice>& out) { (void)out; }
+    virtual void setVoiceFilter(std::function<bool(core::InstanceId listener, core::InstanceId speaker)> filter)
+    {
+        (void)filter;
+    }
+    virtual void setVoiceCodec(u8 codec) { (void)codec; }
 
     // **Losing interest is streaming out** (ADR 0069 decision 6). On a replica,
     // an instance the authority stopped sending is kept as a husk, reparented to

@@ -591,6 +591,22 @@ Value getPlayerPublicKey(const World& world, core::InstanceId id)
     return player == nullptr ? Value{} : Value{player->publicKey};
 }
 
+Value getPlayerVoiceMuted(const World& world, core::InstanceId id)
+{
+    const PlayerComponent* player = world.players().find(id);
+    return Value{player != nullptr && player->voiceMuted};
+}
+
+bool setPlayerVoiceMuted(World& world, core::InstanceId id, const Value& value)
+{
+    PlayerComponent* player = world.players().find(id);
+    const auto* muted = std::get_if<bool>(&value);
+    if (player == nullptr || muted == nullptr)
+        return false;
+    player->voiceMuted = *muted;
+    return true;
+}
+
 Value getPlayerAccountId(const World& world, core::InstanceId id)
 {
     const PlayerComponent* player = world.players().find(id);

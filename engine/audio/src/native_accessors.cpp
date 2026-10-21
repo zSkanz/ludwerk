@@ -10,6 +10,7 @@
 #include "../generated/class_descriptors.gen.h"
 #include "engine/audio/audio.h"
 #include "engine/audio/scene_types.h"
+#include "engine/audio/voice.h"
 #include "engine/scene/world.h"
 
 namespace engine::audio {
@@ -438,6 +439,104 @@ Value getAudioServiceMusicUnderVoice(const scene::World& world, core::InstanceId
 bool setAudioServiceMusicUnderVoice(scene::World& world, core::InstanceId, const Value& value)
 {
     return takeBetween(value, 0.0f, 1.0f, world.engineState().musicUnderVoice);
+}
+
+// --- Voice (ADR 0256) -------------------------------------------------------------
+
+Value getVoiceChatServiceEnabled(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().voice.enabled};
+}
+
+bool setVoiceChatServiceEnabled(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr)
+        return false;
+    world.engineState().voice.enabled = *next;
+    return true;
+}
+
+Value getVoiceChatServicePlayerEnabled(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().voice.playerEnabled};
+}
+
+bool setVoiceChatServicePlayerEnabled(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr)
+        return false;
+    world.engineState().voice.playerEnabled = *next;
+    return true;
+}
+
+Value getVoiceChatServiceAvailable(const scene::World&, core::InstanceId)
+{
+    return Value{voiceCodec().id != VoiceCodecId::None};
+}
+
+Value getVoiceChatServiceMode(const scene::World& world, core::InstanceId)
+{
+    return Value{scene::EnumValue{generated::VoiceChatModeEnumId, world.engineState().voice.mode}};
+}
+
+bool setVoiceChatServiceMode(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* item = std::get_if<scene::EnumValue>(&value);
+    if (item == nullptr || item->enumId != generated::VoiceChatModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    world.engineState().voice.mode = item->value;
+    return true;
+}
+
+Value getVoiceChatServiceProximityDistance(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().voice.proximityDistance)};
+}
+
+bool setVoiceChatServiceProximityDistance(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, 1.0f, 1000.0f, world.engineState().voice.proximityDistance);
+}
+
+Value getVoiceChatServicePushToTalk(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().voice.pushToTalk};
+}
+
+bool setVoiceChatServicePushToTalk(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr)
+        return false;
+    world.engineState().voice.pushToTalk = *next;
+    return true;
+}
+
+Value getVoiceChatServiceTalking(const scene::World& world, core::InstanceId)
+{
+    return Value{world.engineState().voice.talking};
+}
+
+bool setVoiceChatServiceTalking(scene::World& world, core::InstanceId, const Value& value)
+{
+    const auto* next = std::get_if<bool>(&value);
+    if (next == nullptr)
+        return false;
+    world.engineState().voice.talking = *next;
+    return true;
+}
+
+Value getVoiceChatServiceActivityThreshold(const scene::World& world, core::InstanceId)
+{
+    return Value{static_cast<f64>(world.engineState().voice.activityThreshold)};
+}
+
+bool setVoiceChatServiceActivityThreshold(scene::World& world, core::InstanceId, const Value& value)
+{
+    return takeBetween(value, -80.0f, 0.0f, world.engineState().voice.activityThreshold);
 }
 
 // --- The ear (ADR 0256 §5) ---------------------------------------------------------

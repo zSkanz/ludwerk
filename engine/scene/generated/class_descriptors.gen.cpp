@@ -8217,7 +8217,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(remoteFunctionDesc);
 
     // --- Player ---
-    static std::array<PropertyDesc, 9> playerProperties;
+    static std::array<PropertyDesc, 10> playerProperties;
     playerProperties = {{
         PropertyDesc{
             .name = atoms.intern("Camera"),
@@ -8254,6 +8254,18 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
             .get = native::getPlayerUserId,
             .set = nullptr,
+        },
+        PropertyDesc{
+            .name = atoms.intern("VoiceMuted"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether nobody hears this player speak. Set it on the server: it is the server that sends a voice on, and a client's own value changes nothing for anyone else. `VoiceChatService:SetLocallyMuted` is what one player uses to stop hearing another.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getPlayerVoiceMuted,
+            .set = native::setPlayerVoiceMuted,
         },
         PropertyDesc{
             .name = atoms.intern("AccountId"),
@@ -13021,6 +13033,36 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     soundCategoryDesc.doc = "The kind of sound a `Sound` is. It selects which of the player's three volume settings applies, and music is lowered while a voice plays.";
     soundCategoryDesc.items = soundCategoryItems;
     enums.registerEnum(soundCategoryDesc);
+
+    // --- VoiceChatMode ---
+    static std::array<EnumItemDesc, 4> voiceChatModeItems;
+    voiceChatModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Global"),
+            .value = 0,
+            .doc = "Every player hears every other.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Team"),
+            .value = 1,
+            .doc = "A player hears the players whose `Team` attribute is the same as theirs.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Proximity"),
+            .value = 2,
+            .doc = "A player hears those whose character is within `ProximityDistance` of theirs, heard from where that character is.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Script"),
+            .value = 3,
+            .doc = "A player hears whom the server's `VoiceChatService:SetCanHear` said they do, and nobody else.",
+        },
+    }};
+    EnumDescriptor voiceChatModeDesc;
+    voiceChatModeDesc.name = atoms.intern("VoiceChatMode");
+    voiceChatModeDesc.doc = "Who hears whom, as the server decides it, set by `VoiceChatService.Mode`.";
+    voiceChatModeDesc.items = voiceChatModeItems;
+    enums.registerEnum(voiceChatModeDesc);
 
     // --- ListenerMode ---
     static std::array<EnumItemDesc, 3> listenerModeItems;

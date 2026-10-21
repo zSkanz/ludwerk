@@ -1,7 +1,13 @@
 # 0260 — Text that joins, stacks and runs right to left
 
-- Status: proposed -- a draft. It names a dependency, and nothing is
-  vendored until one is approved (R5, R6).
+- Status: accepted. Option A, with the Thai and Lao dictionary, approved by
+  the project's maintainer on 2026-10-21 (R5, R6): HarfBuzz (MIT) for
+  shaping, SheenBidi (Apache-2.0) for bidi, and a word-break dictionary under
+  a permissive licence -- ICU's data, under the Unicode licence, or one like
+  it; nothing LGPL or GPL. Each at a pinned release, vendored through
+  `vendor.luau` and never edited in place; built lean, through the engine's
+  own font loading; the size each adds measured on every shipping platform
+  before it ships.
 - Date: 2026-10-21
 - Builds on: ADR 0011 (stb_truetype for the UI's text), ADR 0259 (the faces
   a character falls back on, and where a CJK line may end)
@@ -117,6 +123,7 @@ needed for this.
 
 ## Not decided here
 
-Everything above. This draft is the question and the options. Which
-dependency to add, if any, waits on its approval, and the work starts after
-that.
+- **The sizes.** The table above is estimates; the measured cost on each
+  platform is part of the work, and is written here when it is known.
+- **The right-to-left alignment property's name and values**, decided with
+  the API when the work reaches it.

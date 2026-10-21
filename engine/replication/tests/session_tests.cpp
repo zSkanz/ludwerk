@@ -722,9 +722,9 @@ struct PlayedMatch
             held = wrapped.get();
             clientTransport = std::move(wrapped);
         }
-        REQUIRE_FALSE(serverTransport
-                          ->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = transportChannels()})
-                          .has_value());
+        REQUIRE_FALSE(
+            serverTransport->open(net::TransportConfig{.port = Port, .maxPeers = 4, .channels = transportChannels()})
+                .has_value());
         REQUIRE_FALSE(
             clientTransport->open(net::TransportConfig{.port = 0, .maxPeers = 1, .channels = transportChannels()})
                 .has_value());
@@ -7232,6 +7232,7 @@ TEST_CASE("ADR 0256: a player's voice reaches who hears them, and nobody while v
 {
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     // Off until the game turns it on: nothing is sent.
     match.replica->speak(1, 0, true, voiceFrame(0));
     match.step();
@@ -7264,6 +7265,7 @@ TEST_CASE("ADR 0256: a muted player is heard by nobody, and a speaker never hear
 {
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     match.server.world.engineState().voice.enabled = true;
     match.server.world.players().find(match.remote())->voiceMuted = true;
     match.replica->speak(1, 0, true, voiceFrame(0));
@@ -7281,6 +7283,7 @@ TEST_CASE("ADR 0256: in Proximity a speaker is heard within the distance, and pl
 {
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     scene::EngineState::Voice& voice = match.server.world.engineState().voice;
     voice.enabled = true;
     voice.mode = 2;
@@ -7314,6 +7317,7 @@ TEST_CASE("ADR 0256: by Team, a player hears the players of their own team")
 {
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     scene::World& world = match.server.world;
     world.engineState().voice.enabled = true;
     world.engineState().voice.mode = 1;
@@ -7336,6 +7340,7 @@ TEST_CASE("ADR 0256: in Script mode the game decides, and its answer is kept a s
 {
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     match.server.world.engineState().voice.enabled = true;
     match.server.world.engineState().voice.mode = 3;
     int asked = 0;
@@ -7373,6 +7378,7 @@ TEST_CASE("ADR 0256: a speaker is held to fifty frames and four kilobytes a seco
     });
     PlayedMatch match;
     match.run(10);
+    match.authority->setVoiceCodec(1);
     match.server.world.engineState().voice.enabled = true;
     // A burst: twice what a second may hold, in one tick.
     for (core::u16 at = 0; at < 100; ++at)
@@ -7403,4 +7409,33 @@ TEST_CASE("ADR 0256: a speaker is held to fifty frames and four kilobytes a seco
         (void)core::setLogSink(before);
     else
         core::resetLogSink();
+}
+
+TEST_CASE("ADR 0256: a server relays no voice but in its own build's codec, and with none it relays nothing")
+{
+    PlayedMatch match;
+    match.run(10);
+    match.server.world.engineState().voice.enabled = true;
+    std::vector<HeardVoice> heard;
+    // No codec in the build: a frame is dropped, whatever it says it is.
+    match.replica->speak(1, 0, true, voiceFrame(0));
+    match.replica->speak(2, 1, true, voiceFrame(1));
+    match.step();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
+    // A build with Opus relays Opus, and nothing else.
+    match.authority->setVoiceCodec(2);
+    match.replica->speak(1, 2, true, voiceFrame(2));
+    match.replica->speak(2, 3, true, voiceFrame(3));
+    match.step();
+    match.authority->takeVoice(heard);
+    REQUIRE(heard.size() == 1);
+    CHECK(heard[0].codec == 2);
+    // Raw 16-bit samples are 1920 bytes a frame: over the frame's bound, so
+    // never sent at all.
+    match.replica->speak(2, 4, true, voiceFrame(4, 1920));
+    match.step();
+    heard.clear();
+    match.authority->takeVoice(heard);
+    CHECK(heard.empty());
 }

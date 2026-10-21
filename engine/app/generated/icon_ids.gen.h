@@ -303,6 +303,7 @@ inline constexpr std::string_view ClassVehicleController = "class.VehicleControl
 inline constexpr std::string_view ClassVehicleWheel = "class.VehicleWheel";
 inline constexpr std::string_view ClassVideoPlayer = "class.VideoPlayer";
 inline constexpr std::string_view ClassViewportFrame = "class.ViewportFrame";
+inline constexpr std::string_view ClassVoiceChatService = "class.VoiceChatService";
 inline constexpr std::string_view ClassVoxelService = "class.VoxelService";
 inline constexpr std::string_view ClassWater = "class.Water";
 inline constexpr std::string_view ClassWaterPoint = "class.WaterPoint";

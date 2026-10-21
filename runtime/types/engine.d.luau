@@ -330,6 +330,9 @@ end
 declare extern type EnumSoundCategory extends EnumItem with
 end
 
+declare extern type EnumVoiceChatMode extends EnumItem with
+end
+
 declare extern type EnumListenerMode extends EnumItem with
 end
 
@@ -4950,6 +4953,7 @@ declare extern type DataModel extends Instance with
     function GetService(self, name: "InputService"): InputService
     function GetService(self, name: "TweenService"): TweenService
     function GetService(self, name: "UIService"): UIService
+    function GetService(self, name: "VoiceChatService"): VoiceChatService
     function GetService(self, name: "AudioService"): AudioService
     function GetService(self, name: "DialogueService"): DialogueService
     function GetService(self, name: "VoxelService"): VoxelService
@@ -6348,6 +6352,10 @@ declare extern type Player extends Instance with
     --- server restarts: what lasts is `PublicKey`, and an account id a game gives its players
     --- (`NetworkService.OnJoinRequest`).
     read UserId: number
+    --- Whether nobody hears this player speak. Set it on the server: it is the server that sends a
+    --- voice on, and a client's own value changes nothing for anyone else.
+    --- `VoiceChatService:SetLocallyMuted` is what one player uses to stop hearing another.
+    VoiceMuted: boolean
     --- The account the game knows this player as, on the server: what its
     --- `NetworkService.OnJoinRequest` set when they joined, or nil. Two joins with the same account are
     --- one player: the second drops the first.
@@ -6948,6 +6956,45 @@ declare extern type UIService extends Instance with
     --- Returns the `TextInput` that has keyboard focus, or nil. A chat hotkey can check it before
     --- opening the chat box.
     function GetFocusedTextInput(self): TextInput?
+end
+
+declare extern type VoiceChatService extends Instance with
+    --- Whether this game uses voice. Set it on the server, which then sends voices on, and on each
+    --- client, which then opens its microphone.
+    Enabled: boolean
+    --- The player's own choice: false, this machine neither sends its microphone nor plays anyone. A
+    --- settings menu sets it.
+    PlayerEnabled: boolean
+    --- Whether this build carries a voice codec. False until it does, and voice stays off.
+    read Available: boolean
+    --- Who hears whom. The server's value is the one that counts.
+    Mode: EnumVoiceChatMode
+    --- In `Proximity` mode, the distance in meters within which a character is heard, from 1 to 1000. A
+    --- voice fades to nothing at it, heard from where the speaker's character is.
+    ProximityDistance: number
+    --- True, the microphone is sent only while `Talking` is true. False, it is sent while the player's
+    --- voice is louder than `ActivityThreshold`, and a moment after.
+    PushToTalk: boolean
+    --- With `PushToTalk`, whether the player is holding the key to talk. The game sets it from its own
+    --- input: a key, a gamepad button, a button on a phone's screen.
+    Talking: boolean
+    --- Without `PushToTalk`, how loud the microphone must be to be sent, in decibels below full scale,
+    --- from -80 to 0. Lower sends quieter speech, and more of the room.
+    ActivityThreshold: number
+    --- Fires on this machine when a player it hears starts or stops speaking. It fires for this
+    --- machine's own player when their microphone starts or stops being sent. A speaking icon follows
+    --- it.
+    read SpeakingChanged: Signal<Player, boolean>
+    --- Stops this machine playing `player`'s voice, or starts it again. No other machine knows.
+    function SetLocallyMuted(self, player: Player, muted: boolean): ()
+    --- Whether this machine does not play `player`'s voice.
+    function IsLocallyMuted(self, player: Player): boolean
+    --- Whether this machine hears `player` speaking now, or, for this machine's own player, whether
+    --- their microphone is being sent.
+    function IsSpeaking(self, player: Player): boolean
+    --- In `Script` mode, on the server: whether `listener` hears `speaker`. A pair never set does not.
+    --- A game that puts players in rooms, parties or radio channels says so here.
+    function SetCanHear(self, listener: Player, speaker: Player, hears: boolean): ()
 end
 
 declare extern type AudioService extends Instance with
@@ -8034,6 +8081,13 @@ declare Enum: {
         Music: EnumSoundCategory,
         Voice: EnumSoundCategory,
         GetEnumItems: (self: any) -> { EnumSoundCategory },
+    },
+    VoiceChatMode: {
+        Global: EnumVoiceChatMode,
+        Team: EnumVoiceChatMode,
+        Proximity: EnumVoiceChatMode,
+        Script: EnumVoiceChatMode,
+        GetEnumItems: (self: any) -> { EnumVoiceChatMode },
     },
     ListenerMode: {
         Camera: EnumListenerMode,

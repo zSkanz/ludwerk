@@ -56,6 +56,7 @@ For a guided tour, read [`../migrating.md`](../migrating.md).
 | [`TagService`](tagservice.md) | [`Instance`](instance.md) | Finds instances by tag. |
 | [`TweenService`](tweenservice.md) | [`Instance`](instance.md) | Animates properties over time. |
 | [`UIService`](uiservice.md) | [`Instance`](instance.md) | The parent of every `ScreenGui`. |
+| [`VoiceChatService`](voicechatservice.md) | [`Instance`](instance.md) | Players talking to each other in a match. |
 | [`VoxelService`](voxelservice.md) | [`Instance`](instance.md) | A world made of blocks, for games about mining and building with cubes. |
 | [`Workspace`](workspace.md) | [`Instance`](instance.md) | The root of the 3D world, available as the global `workspace` and through `game:GetService`. |
 | [`XRService`](xrservice.md) | [`Instance`](instance.md) | Where the player is in a headset: the head and the two hands. |

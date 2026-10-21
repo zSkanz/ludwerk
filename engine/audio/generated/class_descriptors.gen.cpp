@@ -866,6 +866,153 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     captionDesc.detachComponents = native::detachCaptionComponents;
     classes.registerClass(captionDesc);
 
+    // --- VoiceChatService ---
+    static std::array<scene::PropertyDesc, 8> voiceChatServiceProperties;
+    voiceChatServiceProperties = {{
+        scene::PropertyDesc{
+            .name = atoms.intern("Enabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether this game uses voice. Set it on the server, which then sends voices on, and on each client, which then opens its microphone.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVoiceChatServiceEnabled,
+            .set = native::setVoiceChatServiceEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PlayerEnabled"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "The player's own choice: false, this machine neither sends its microphone nor plays anyone. A settings menu sets it.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVoiceChatServicePlayerEnabled,
+            .set = native::setVoiceChatServicePlayerEnabled,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Available"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = true,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether this build carries a voice codec. False until it does, and voice stays off.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVoiceChatServiceAvailable,
+            .set = nullptr,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Mode"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("VoiceChatMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Who hears whom. The server's value is the one that counts.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getVoiceChatServiceMode,
+            .set = native::setVoiceChatServiceMode,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ProximityDistance"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "In `Proximity` mode, the distance in meters within which a character is heard, from 1 to 1000. A voice fades to nothing at it, heard from where the speaker's character is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getVoiceChatServiceProximityDistance,
+            .set = native::setVoiceChatServiceProximityDistance,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("PushToTalk"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "True, the microphone is sent only while `Talking` is true. False, it is sent while the player's voice is louder than `ActivityThreshold`, and a moment after.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVoiceChatServicePushToTalk,
+            .set = native::setVoiceChatServicePushToTalk,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("Talking"),
+            .type = scene::ValueType::Bool,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "With `PushToTalk`, whether the player is holding the key to talk. The game sets it from its own input: a key, a gamepad button, a button on a phone's screen.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_boolean"),
+            .get = native::getVoiceChatServiceTalking,
+            .set = native::setVoiceChatServiceTalking,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("ActivityThreshold"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Without `PushToTalk`, how loud the microphone must be to be sent, in decibels below full scale, from -80 to 0. Lower sends quieter speech, and more of the room.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.number_out_of_range"),
+            .get = native::getVoiceChatServiceActivityThreshold,
+            .set = native::setVoiceChatServiceActivityThreshold,
+        },
+    }};
+    static std::array<scene::MethodDesc, 4> voiceChatServiceMethods;
+    voiceChatServiceMethods = {{
+        scene::MethodDesc{
+            .name = atoms.intern("SetLocallyMuted"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Stops this machine playing `player`'s voice, or starts it again. No other machine knows.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("IsLocallyMuted"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Whether this machine does not play `player`'s voice.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("IsSpeaking"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "Whether this machine hears `player` speaking now, or, for this machine's own player, whether their microphone is being sent.",
+        },
+        scene::MethodDesc{
+            .name = atoms.intern("SetCanHear"),
+            .yields = false,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .doc = "In `Script` mode, on the server: whether `listener` hears `speaker`. A pair never set does not. A game that puts players in rooms, parties or radio channels says so here.",
+        },
+    }};
+    static std::array<scene::EventDesc, 1> voiceChatServiceEvents;
+    voiceChatServiceEvents = {{
+        scene::EventDesc{
+            .name = atoms.intern("SpeakingChanged"),
+            .slot = 7,
+            .doc = "Fires on this machine when a player it hears starts or stops speaking. It fires for this machine's own player when their microphone starts or stops being sent. A speaking icon follows it.",
+        },
+    }};
+    scene::ClassDescriptor voiceChatServiceDesc;
+    voiceChatServiceDesc.name = atoms.intern("VoiceChatService");
+    voiceChatServiceDesc.super = instanceClass;
+    voiceChatServiceDesc.flags = scene::ClassFlags::Service | scene::ClassFlags::NotCreatable;
+    voiceChatServiceDesc.defaultName = atoms.intern("VoiceChatService");
+    voiceChatServiceDesc.doc = "Players talking to each other in a match. Off until the game sets `Enabled` and the player's own `PlayerEnabled` allows it. The server decides who hears whom by `Mode`; each machine sends its player's microphone, by push to talk or by voice activity, and plays the voices it is sent. Nothing is recorded: a frame is played and gone.\012\012Voice needs a codec. Until the build carries one, `Available` is false and nothing is sent.";
+    voiceChatServiceDesc.properties = voiceChatServiceProperties;
+    voiceChatServiceDesc.methods = voiceChatServiceMethods;
+    voiceChatServiceDesc.events = voiceChatServiceEvents;
+    classes.registerClass(voiceChatServiceDesc);
+
     // --- AudioService ---
     static std::array<scene::PropertyDesc, 13> audioServiceProperties;
     audioServiceProperties = {{

@@ -1732,6 +1732,7 @@ void WorldHost::tick()
         // And events from the game's other worlds (ADR 0223).
         script::fireCrossWorldMessages(m_runtime->state());
         script::fireServerMessages(m_runtime->state());
+        script::fireVoiceEvents(m_runtime->state());
     }
 
     // This tick's input, as the local player's intent: after the dispatch

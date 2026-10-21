@@ -159,6 +159,7 @@ local Sections: { Section } = {
             { Slug = "sounds", Title = "Sounds" },
             { Slug = "mixing", Title = "Groups, mixing and the listener" },
             { Slug = "dubbing", Title = "Dubbing: voices, languages and subtitles" },
+            { Slug = "voice-chat", Title = "Voice chat" },
         },
     },
     {

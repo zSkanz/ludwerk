@@ -185,18 +185,6 @@ inline constexpr usize MaxQueuedIntents = 64;
 // as anchoring again, and not reported as the player's burst.
 inline constexpr u32 HostStallGraceTicks = 30;
 
-// **A voice frame this machine is to play** (ADR 0256): whose it is, as their
-// `UserId`; the codec, the frame's number and its bytes; whether it is heard
-// where the speaker's character is, and whether their gate is open.
-struct HeardVoice
-{
-    u32 speaker = 0;
-    u8 codec = 0;
-    u16 sequence = 0;
-    bool positional = false;
-    bool speaking = true;
-    std::vector<u8> frame;
-};
 // **What one speaker may send** (ADR 0241, ADR 0256 §2): fifty frames and
 // four kilobytes a second, and no frame over 512 bytes -- Opus at 24 kbit/s
 // is about 60 bytes a frame, so the cap is a speaker five times over.
@@ -582,6 +570,11 @@ public:
         m_voiceFilter = std::move(filter);
         m_hearing.clear();
     }
+    // **The one codec this server sends on** (ADR 0256): its build's, and
+    // none until the build carries one -- a frame in any other is dropped, so
+    // a client that sends what the server has no codec for cannot make it
+    // relay it.
+    void setVoiceCodec(u8 codec) noexcept { m_voiceCodec = codec; }
     // **Removes the peer that is player `userId`** (`Player:Kick`, ADR 0167):
     // told why, let go, and its player taken out of the world as one who
     // left is. False when no peer is that player -- the host's own is not.
@@ -1122,6 +1115,7 @@ private:
     // game's answer to who hears whom and how long each is kept, and the
     // receives counted, which that is measured in.
     std::vector<HeardVoice> m_voiceHeard;
+    u8 m_voiceCodec = 0;
     std::function<bool(core::InstanceId listener, core::InstanceId speaker)> m_voiceFilter;
     struct Hearing
     {

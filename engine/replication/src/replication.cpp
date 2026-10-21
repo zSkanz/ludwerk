@@ -206,6 +206,34 @@ public:
             m_authority->noteTimeDropped();
     }
 
+    void speak(scene::World& world, u8 codec, u16 sequence, bool speaking, std::span<const u8> frame) override
+    {
+        if (m_authority.has_value())
+            m_authority->speak(world, codec, sequence, speaking, frame);
+        else if (m_replica.has_value())
+            m_replica->speak(codec, sequence, speaking, frame);
+    }
+
+    void takeVoice(std::vector<HeardVoice>& out) override
+    {
+        if (m_authority.has_value())
+            m_authority->takeVoice(out);
+        if (m_replica.has_value())
+            m_replica->takeVoice(out);
+    }
+
+    void setVoiceFilter(std::function<bool(core::InstanceId listener, core::InstanceId speaker)> filter) override
+    {
+        if (m_authority.has_value())
+            m_authority->setVoiceFilter(std::move(filter));
+    }
+
+    void setVoiceCodec(u8 codec) override
+    {
+        if (m_authority.has_value())
+            m_authority->setVoiceCodec(codec);
+    }
+
     [[nodiscard]] Status status() const override
     {
         Status status;

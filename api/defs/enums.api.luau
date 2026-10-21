@@ -2625,6 +2625,31 @@ local Definition: Schema.Definition = {
             } :: { Schema.EnumItem },
         },
         {
+            Name = "VoiceChatMode",
+            Records = { "ADR 0256" },
+            Doc = "Who hears whom, as the server decides it, set by `VoiceChatService.Mode`.",
+            Items = {
+                { Name = "Global", Value = 0, Doc = "Every player hears every other." },
+                {
+                    Name = "Team",
+                    Value = 1,
+                    Doc = "A player hears the players whose `Team` attribute is the same as theirs.",
+                },
+                {
+                    Name = "Proximity",
+                    Value = 2,
+                    Doc = "A player hears those whose character is within `ProximityDistance` of theirs, heard "
+                        .. "from where that character is.",
+                },
+                {
+                    Name = "Script",
+                    Value = 3,
+                    Doc = "A player hears whom the server's `VoiceChatService:SetCanHear` said they do, and "
+                        .. "nobody else.",
+                },
+            } :: { Schema.EnumItem },
+        },
+        {
             Name = "ListenerMode",
             Records = { "ADR 0256" },
             Doc = "Where this machine hears its sounds from, set by `AudioService.ListenerMode`.",

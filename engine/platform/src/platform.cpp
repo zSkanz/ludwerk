@@ -354,6 +354,38 @@ core::i64 threadCpuNs() noexcept
 #endif
 }
 
+#if defined(SDL_PLATFORM_ANDROID)
+namespace {
+std::atomic<core::u8> g_microphone{static_cast<core::u8>(MicrophoneAccess::NotAsked)};
+} // namespace
+#endif
+
+MicrophoneAccess microphoneAccess() noexcept
+{
+#if defined(SDL_PLATFORM_ANDROID)
+    return static_cast<MicrophoneAccess>(g_microphone.load());
+#else
+    return MicrophoneAccess::Allowed;
+#endif
+}
+
+void askForMicrophone()
+{
+#if defined(SDL_PLATFORM_ANDROID)
+    core::u8 expected = static_cast<core::u8>(MicrophoneAccess::NotAsked);
+    if (!g_microphone.compare_exchange_strong(expected, static_cast<core::u8>(MicrophoneAccess::Asking)))
+        return;
+    if (!SDL_RequestAndroidPermission(
+            "android.permission.RECORD_AUDIO",
+            [](void*, const char*, bool granted) {
+                g_microphone.store(
+                    static_cast<core::u8>(granted ? MicrophoneAccess::Allowed : MicrophoneAccess::Refused));
+            },
+            nullptr))
+        g_microphone.store(static_cast<core::u8>(MicrophoneAccess::Refused));
+#endif
+}
+
 u64 systemMemoryBytes() noexcept
 {
     const int megabytes = SDL_GetSystemRAM();

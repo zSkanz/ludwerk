@@ -69,9 +69,8 @@ public:
 TEST_CASE("ADR 0256: no codec is built in until Opus is, and a test can give one")
 {
     CHECK(voiceCodec().id == VoiceCodecId::None);
-    setVoiceCodecForTests(VoiceCodec{VoiceCodecId::Pcm16, []() -> std::unique_ptr<VoiceEncoder> {
-                                         return std::make_unique<PcmEncoder>();
-                                     },
+    setVoiceCodecForTests(VoiceCodec{VoiceCodecId::Pcm16,
+                                     []() -> std::unique_ptr<VoiceEncoder> { return std::make_unique<PcmEncoder>(); },
                                      []() -> std::unique_ptr<VoiceDecoder> { return std::make_unique<PcmDecoder>(); }});
     REQUIRE(voiceCodec().id == VoiceCodecId::Pcm16);
     const std::unique_ptr<VoiceEncoder> encoder = voiceCodec().makeEncoder();
@@ -220,4 +219,37 @@ TEST_CASE("ADR 0256: the microphone is taken a whole frame at a time, and no mor
     system.takeMicrophone(taken);
     CHECK(taken.size() == kVoiceSampleRate);
     system.stop();
+}
+
+TEST_CASE("ADR 0256: a voice heard is played by its jitter buffer, in the middle, once the buffer has filled")
+{
+    setVoiceCodecForTests(VoiceCodec{VoiceCodecId::Pcm16,
+                                     []() -> std::unique_ptr<VoiceEncoder> { return std::make_unique<PcmEncoder>(); },
+                                     []() -> std::unique_ptr<VoiceDecoder> { return std::make_unique<PcmDecoder>(); }});
+    AudioSystem system;
+    REQUIRE_FALSE(system.start(true).has_value());
+    PcmEncoder encoder;
+    std::vector<u8> packet;
+    REQUIRE(encoder.encode(std::vector<f32>(kVoiceFrameSamples, 0.5f), packet));
+
+    // A frame in a codec this build has not got: nothing.
+    system.hearVoice(7, static_cast<u8>(VoiceCodecId::Opus), 0, packet);
+    CHECK(system.voicesHeard() == 0);
+
+    std::vector<f32> stereo(kVoiceFrameSamples * 2);
+    system.hearVoice(7, static_cast<u8>(VoiceCodecId::Pcm16), 0, packet);
+    CHECK(system.voicesHeard() == 1);
+    // One frame is under the buffer's depth: still silence.
+    system.mixVoicesForTests(stereo);
+    CHECK(stereo[0] == 0.0f);
+    system.hearVoice(7, static_cast<u8>(VoiceCodecId::Pcm16), 1, packet);
+    system.mixVoicesForTests(stereo);
+    // Half scale, equally in both ears.
+    CHECK(stereo[0] == doctest::Approx(0.5 * 0.7071).epsilon(0.01));
+    CHECK(stereo[1] == doctest::Approx(0.5 * 0.7071).epsilon(0.01));
+
+    system.forgetVoice(7);
+    CHECK(system.voicesHeard() == 0);
+    system.stop();
+    setVoiceCodecForTests(VoiceCodec{});
 }

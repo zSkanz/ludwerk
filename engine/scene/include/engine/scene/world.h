@@ -560,6 +560,9 @@ struct EngineState
         // they began.
         std::vector<u32> speaking;
         std::vector<std::pair<u32, bool>> speakingChanges;
+        // `SetCanHear` (`Script` mode), on the server: the listener and the
+        // speaker of each pair that hears, by `UserId`, sorted.
+        std::vector<std::pair<u32, u32>> canHear;
     };
     Voice voice;
     f32 occlusionMuffle = 900.0f;

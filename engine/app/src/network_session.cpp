@@ -590,6 +590,37 @@ void NetworkSession::noteTimeDropped()
         m_replication->noteTimeDropped();
 }
 
+void NetworkSession::speak(core::u8 codec, core::u16 sequence, bool speaking, std::span<const core::u8> frame)
+{
+#if ENG_ENABLE_REPLICATION
+    if (WorldHost* host = m_host(); host != nullptr && m_replication != nullptr)
+        m_replication->speak(host->world(), codec, sequence, speaking, frame);
+#else
+    (void)codec;
+    (void)sequence;
+    (void)speaking;
+    (void)frame;
+#endif
+}
+
+void NetworkSession::takeVoice(std::vector<replication::HeardVoice>& out)
+{
+    if (m_replication != nullptr)
+        m_replication->takeVoice(out);
+}
+
+void NetworkSession::setVoiceFilter(std::function<bool(core::InstanceId listener, core::InstanceId speaker)> filter)
+{
+    if (m_replication != nullptr)
+        m_replication->setVoiceFilter(std::move(filter));
+}
+
+void NetworkSession::setVoiceCodec(core::u8 codec)
+{
+    if (m_replication != nullptr)
+        m_replication->setVoiceCodec(codec);
+}
+
 void NetworkSession::sendMessages()
 {
 #if ENG_ENABLE_REPLICATION

@@ -5905,9 +5905,17 @@ local Messages: { Schema.Message } = {
         Channel = "Voice",
         Direction = "ToAuthority",
         Layout = {
-            { Name = "codec", Type = "u8", Doc = "`VoiceCodecId`: 2 Opus. A frame in a codec the server has not got is dropped." },
+            {
+                Name = "codec",
+                Type = "u8",
+                Doc = "`VoiceCodecId`: 2 Opus. A frame in a codec the server has not got is dropped.",
+            },
             { Name = "sequence", Type = "u16", Doc = "The frame's number, one more each 20 ms, wrapping." },
-            { Name = "speaking", Type = "u8", Doc = "1 while the speaker's gate is open; 0 on the frame that closes it." },
+            {
+                Name = "speaking",
+                Type = "u8",
+                Doc = "1 while the speaker's gate is open; 0 on the frame that closes it.",
+            },
             { Name = "length", Type = "u16", Doc = "The frame's bytes, at most 512." },
             {
                 Name = "frame",
