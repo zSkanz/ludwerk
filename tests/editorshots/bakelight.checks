@@ -1,0 +1,5 @@
+# shot, then what must be so in it: `x,y=r,g,b` at fractions of the frame (imgprobe), within ten of each channel.
+# The bake done: the scene is marked changed (the dot after its name in the status bar), since its Lighting
+# now names the file the bake wrote, and Bake can be pressed again. That the file was written is the
+# driver's `-DMADE`.
+baked 0.12312,0.98778=157,157,157 0.80625,0.96222=49,49,49

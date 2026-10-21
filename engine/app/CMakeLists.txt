@@ -2296,9 +2296,12 @@ if(ENG_BUILD_TESTS)
         # on a copy of the example, because that drive saves a graph with a
         # line typed wrong, and with the error it is to say named; and a
         # character's animation graph while it is edited and while it runs.
+        # And `Lighting`'s Bake (ADR 0253): pressed, on a copy of a room whose
+        # parts keep their light, and its file written.
         foreach(shots "timeline|40-cinematic" "timeline-popups|40-cinematic" "properties|40-cinematic"
                       "character|37-character" "profiler|43-ambush" "profiler-capture|43-ambush"
-                      "graph-surface|23-surfaces" "graph-animation|37-character" "graph-running|37-character")
+                      "graph-surface|23-surfaces" "graph-animation|37-character" "graph-running|37-character"
+                      "bakelight|../tests/editorshots/bakelight")
             string(REPLACE "|" ";" parts "${shots}")
             list(GET parts 0 shot_name)
             list(GET parts 1 shot_project)
@@ -2308,6 +2311,9 @@ if(ENG_BUILD_TESTS)
             endif()
             if(shot_name STREQUAL "graph-surface")
                 set(shot_capture -DCOPY=1 -DSAID=nothingCalledThis)
+            endif()
+            if(shot_name STREQUAL "bakelight")
+                set(shot_capture -DCOPY=1 -DMADE=content/light/room.lightmap)
             endif()
             add_test(NAME editor_shots_${shot_name}
                 COMMAND ${CMAKE_COMMAND}
@@ -3320,7 +3326,7 @@ if(ENG_BUILD_TESTS)
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels terrain_glow
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
-        decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
+        decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running editor_shots_bakelight foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
         temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate scene_release_gate
         screen_light_gate shadow_edge_gate shadow_reach_gate probe_read_gate ceiling_joint_gate ceiling_joint_bare_gate
         cloth_shadow_flicker_gate vehicle_gate breaking_wall_gate cloth_gate)

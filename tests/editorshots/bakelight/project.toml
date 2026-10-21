@@ -1,0 +1,10 @@
+# The light of what stands still, baked from the editor (ADR 0253): a floor,
+# two walls and a crate that keep their light, which `Lighting`'s Bake works
+# out and writes to a file. The drive is `bakelight.drive`.
+
+[project]
+name = "Ludwerk Bake Light"
+id = "dev.ludwerk.bakelight"
+version = "1.0.0"
+engine = "0.1"
+scene = "scenes/room.scene.json"

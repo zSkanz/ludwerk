@@ -23,6 +23,9 @@
 # in it, and must: a compiler's error that the picture is of. Any other error
 # is still a failure.
 #
+# `-DMADE=<path>`: a file the drive is to have written, under the project --
+# a bake's (ADR 0253), and with `-DCOPY=1`, under the copy.
+#
 # `-DCAPTURE=<file>`: first a run of the project with no editor and no device
 # that writes a profile there (`--profile-capture`, ADR 0210) -- asked to be
 # one: the format's name, its frames, the scope every frame has -- and
@@ -155,6 +158,10 @@ endif()
 if(DEFINED SAID AND NOT expected_said)
     message("${host_output}")
     message(FATAL_ERROR "editor shots: the editor was to say an error with `${SAID}` in it, and said none")
+endif()
+if(DEFINED MADE AND NOT EXISTS "${PROJECT}/${MADE}")
+    message("${host_output}")
+    message(FATAL_ERROR "editor shots: the drive was to write ${MADE}, and nothing is there")
 endif()
 
 file(STRINGS "${CHECKS}" lines)

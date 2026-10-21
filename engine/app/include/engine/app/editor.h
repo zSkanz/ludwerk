@@ -495,6 +495,10 @@ struct EditorCommands
     // file if the volume names none, works the volume out by rays, and
     // writes it when it is whole.
     core::InstanceId bakeVolume;
+    // **The light of what stands still, baked** (ADR 0253 §7): `Lighting`'s
+    // Bake. The loop bakes every part with `BakedLight` on and writes the
+    // file `Lighting.Baked` names -- one it is given if it names none.
+    bool bakeLighting = false;
     // A `Script` or `ModuleScript` to open a tab on (ADR 0057). The loop reads
     // its `Source` and works out which file it came from, neither of which a
     // tree row knows.
@@ -2159,6 +2163,10 @@ public:
     // the status belongs to the editor, and a refusal nobody is told about is a
     // value that silently did not change.
     void report(std::string message, bool failed) { m_status = EditorStatus{std::move(message), failed}; }
+    // **How far a bake of the light is, from 0 to 1** (ADR 0253 §7), while
+    // one runs; nothing otherwise. What `Lighting`'s Bake shows beside it.
+    void setLightingBake(std::optional<core::f32> progress) noexcept { m_lightingBake = progress; }
+    [[nodiscard]] std::optional<core::f32> lightingBake() const noexcept { return m_lightingBake; }
 
     [[nodiscard]] UndoStack& history() noexcept { return m_history; }
     [[nodiscard]] const UndoStack& history() const noexcept { return m_history; }
@@ -3644,6 +3652,7 @@ private:
     bool m_viewportFocused = true;
     bool m_typing = false;
     StatusSlot m_status;
+    std::optional<core::f32> m_lightingBake;
     ContentTree m_content;
     std::string m_openScene;
     // `rememberDiskText`'s record, and the questions waiting for an answer.

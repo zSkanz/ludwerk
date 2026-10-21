@@ -2348,6 +2348,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     IndirectLight indirectLight;
     // `--bake-lighting` (ADR 0253): whether this run's bake is done.
     bool lightingBaked = false;
+    // **A bake the editor's Bake on `Lighting` asked for** (ADR 0253 §7),
+    // until it is written.
+    bool lightingBakeAsked = false;
     // **The bake into the file `Lighting.Baked` names** (ADR 0253 §6), under
     // the project's content -- or, where it names none, into
     // `light/<scene>.lightmap`, and `Lighting.Baked` names that from then on.
@@ -2362,9 +2365,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         std::string name(world.atoms().text(lighting->baked));
         constexpr std::string_view Scheme = "asset://";
         if (!name.starts_with(Scheme)) {
-            const std::string scene = options.startupScene.empty()
-                                          ? std::string("world")
-                                          : std::filesystem::path(options.startupScene).stem().string();
+            // The scene open now, which in the editor is the one being
+            // edited, else the one the run started with.
+            const std::string& open = world.engineState().currentScene;
+            const std::string& named = open.empty() ? options.startupScene : open;
+            // `scenes/room.scene.json` is `room`: its file is `light/room.lightmap`.
+            std::string scene = named.empty() ? std::string("world") : std::filesystem::path(named).stem().string();
+            if (constexpr std::string_view Kind = ".scene"; scene.size() > Kind.size() && scene.ends_with(Kind))
+                scene.resize(scene.size() - Kind.size());
             name = std::string(Scheme) + "light/" + scene + ".lightmap";
             lighting->baked = world.atoms().intern(name);
         }
@@ -5083,6 +5091,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // scene's other light -- and asked for afresh, as `Refresh`
                 // asks: the rays are cast whatever it was showing. The loop
                 // writes the file the frame the volume is whole.
+                if (editorCommands.bakeLighting && !lightingBakeAsked) {
+                    lightingBakeAsked = true;
+                    lightingBaked = false;
+                    editor.setLightingBake(0.0f);
+                    editor.report(core::tr(ENG_TR("engine.editor.status.baking_lighting")), false);
+                }
                 if (editorCommands.bakeVolume.valid()) {
                     scene::World& edited = host->world();
                     scene::IrradianceVolumeComponent* volume =
@@ -9344,12 +9358,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         .baking = options.bakeIrradiance || bakeAsked.valid(),
                         .bakingOne = options.bakeIrradiance ? core::InstanceId{} : bakeAsked,
                         // Once what a script builds as it starts is there.
-                        .bakingLightmaps = options.bakeLighting && !lightingBaked && lit.engineState().tick >= 4,
+                        .bakingLightmaps = !lightingBaked &&
+                                           (lightingBakeAsked || (options.bakeLighting && lit.engineState().tick >= 4)),
                     });
                     // **The bake of what stands still, once whole** (ADR 0253):
                     // drawn with from the next frame on.
-                    if (options.bakeLighting && !lightingBaked) {
+                    if ((options.bakeLighting || lightingBakeAsked) && !lightingBaked) {
                         LightmapBakeResult baked;
+                        if (lightingBakeAsked) {
+                            const core::f32 progress = indirectLight.lightmapProgress();
+                            editor.setLightingBake(progress >= 0.0f ? progress : 0.0f);
+                        }
                         if (indirectLight.takeLightmapBake(baked)) {
                             lightingBaked = true;
                             // **What is drawn is what is kept** (ADR 0253 §6):
@@ -9383,6 +9402,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             core::log(core::LogLevel::Info, ENG_TR("engine.info.lighting_baked"), args);
                             core::u32 missing = 0;
                             indirectLight.giveLightmap(compressed ? lightmapFromKept(lit, kept, missing) : baked);
+                            // **Said where the Bake was pressed**, and the
+                            // scene, which may have been given its file's
+                            // name, is to be saved.
+                            if (lightingBakeAsked) {
+                                lightingBakeAsked = false;
+                                editor.setLightingBake(std::nullopt);
+                                editor.touch();
+                                editor.report(
+                                    core::tr(ENG_TR("engine.editor.status.lighting_baked"),
+                                             {core::I18nArg{"parts", static_cast<core::i64>(baked.parts.size())}}),
+                                    false);
+                            }
                         }
                     }
                     indirectLight.append(snapshot);

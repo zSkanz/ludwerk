@@ -1,0 +1,24 @@
+# Lighting's Bake on tests/editorshots/bakelight, a copy of it (the bake
+# writes a file and names it in the scene): the light of the parts with
+# BakedLight on is worked out and its file written. Coordinates are a 1600 by
+# 900 frame's.
+wait 60
+click 170 106
+wait 4
+text Lighting
+wait 12
+click 116 134
+wait 30
+move 1420 500
+wheel -40
+wait 8
+wheel -40
+wait 8
+wheel -40
+wait 8
+click 1279 860
+move 760 340
+sleep 20000
+wait 10
+shot baked
+quit

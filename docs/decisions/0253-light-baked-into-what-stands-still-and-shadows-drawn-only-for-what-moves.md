@@ -121,6 +121,12 @@ commercial titles on these headsets light their places this way.
    seam reads its own. A room of a million texels is seconds; a level,
    minutes. Nothing about the bake is in the simulation (R10): it is
    picture, and each machine reads its copy of the file.
+
+   **As built**, the Bake is under `Lighting`'s properties, and greyed out
+   with a bar beside it while a bake runs. When `Lighting.Baked` names no
+   file, the bake gives it one after the scene open in the editor --
+   `scenes/room.scene.json` bakes to `light/room.lightmap` -- and the scene
+   is marked changed, so saving it keeps the name.
 8. **When the world changes what was baked**: a baked part that moves, is
    resized or is destroyed is drawn from then on as a moving thing is, and
    the light and shadow it left in the bake stay where they were until the

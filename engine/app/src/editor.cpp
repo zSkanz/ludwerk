@@ -1076,6 +1076,8 @@ bool EditorCommands::refuseAuthoring() noexcept
     drop(importParent, none.importParent);
     // A volume's light worked out and kept: it names a file in the scene.
     drop(bakeVolume, none.bakeVolume);
+    // The light of what stands still, baked: the scene names its file.
+    drop(bakeLighting, none.bakeLighting);
     // Stamps: made from the scene, placed in it, broken, pushed up, opened.
     drop(stampSubject, none.stampSubject);
     drop(stampName, none.stampName);

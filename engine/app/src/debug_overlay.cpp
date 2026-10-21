@@ -6596,6 +6596,22 @@ void drawProperties(scene::World& world, core::InstanceId root, Inspector& inspe
             itemTip("%s", core::tr(volume->followsCamera ? ENG_TR("engine.editor.properties.bake_irradiance_follows")
                                                          : ENG_TR("engine.editor.properties.bake_irradiance_tip")));
         }
+        // **The light of what stands still** (ADR 0253 §7): `Lighting`'s
+        // Bake, with how far it is while it runs.
+        if (world.lighting().find(targets.front()) != nullptr) {
+            ImGui::Separator();
+            const std::optional<core::f32> baking =
+                editor != nullptr ? editor->lightingBake() : std::optional<core::f32>{};
+            ImGui::BeginDisabled(baking.has_value());
+            if (ImGui::Button(core::tr(ENG_TR("engine.editor.properties.bake_lighting"))))
+                commands->bakeLighting = true;
+            ImGui::EndDisabled();
+            itemTip("%s", core::tr(ENG_TR("engine.editor.properties.bake_lighting_tip")));
+            if (baking.has_value()) {
+                ImGui::SameLine();
+                ImGui::ProgressBar(std::clamp(*baking, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
+            }
+        }
     }
 
     const bool holding = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsAnyItemActive();

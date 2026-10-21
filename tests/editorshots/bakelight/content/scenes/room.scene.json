@@ -1,0 +1,170 @@
+{
+ "format": "scene",
+ "version": 2,
+ "root": {
+  "class": "Workspace",
+  "name": "Workspace",
+  "properties": {
+   "CurrentCamera": "Workspace.Eye"
+  },
+  "children": [
+   {
+    "class": "Camera",
+    "name": "Eye",
+    "properties": {
+     "CFrame": [
+      0.0,
+      4.0,
+      9.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.9578,
+      0.2873,
+      0.0,
+      -0.2873,
+      0.9578
+     ],
+     "FieldOfView": 60.0
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Floor",
+    "properties": {
+     "CFrame": [
+      0.0,
+      -0.2,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      10.0,
+      0.4,
+      10.0
+     ],
+     "MaterialParameters": {
+      "Color": [
+       0.7,
+       0.7,
+       0.68
+      ]
+     },
+     "Anchored": true,
+     "BakedLight": true
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Back",
+    "properties": {
+     "CFrame": [
+      0.0,
+      1.5,
+      -3.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      8.0,
+      3.0,
+      0.3
+     ],
+     "MaterialParameters": {
+      "Color": [
+       0.85,
+       0.84,
+       0.8
+      ]
+     },
+     "Anchored": true,
+     "BakedLight": true
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Side",
+    "properties": {
+     "CFrame": [
+      -4.0,
+      1.5,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      0.3,
+      3.0,
+      6.0
+     ],
+     "MaterialParameters": {
+      "Color": [
+       0.8,
+       0.2,
+       0.15
+      ]
+     },
+     "Anchored": true,
+     "BakedLight": true
+    }
+   },
+   {
+    "class": "Part",
+    "name": "Crate",
+    "properties": {
+     "CFrame": [
+      1.5,
+      0.5,
+      -1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ],
+     "Size": [
+      1.0,
+      1.0,
+      1.0
+     ],
+     "MaterialParameters": {
+      "Color": [
+       0.85,
+       0.84,
+       0.8
+      ]
+     },
+     "Anchored": true,
+     "BakedLight": true
+    }
+   }
+  ]
+ }
+}
