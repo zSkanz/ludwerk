@@ -453,6 +453,20 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             std::string_view target = arg.substr(std::string_view("--join=").size());
             options.network.topology = engine::replication::Topology::Replica;
             options.network.port = kDefaultGamePort;
+            // **A join code written whole**, `relay://host:port/CODE`, as
+            // `NetworkService:Join` takes it: the relay and the code are the
+            // session's to read, and the port in it is the relay's, not the
+            // game's. It was cut at its last colon and refused as a port.
+            if (constexpr std::string_view Scheme = "relay://"; target.starts_with(Scheme)) {
+                const std::string_view rest = target.substr(Scheme.size());
+                const std::size_t slash = rest.rfind('/');
+                if (slash == std::string_view::npos || slash == 0 || slash + 1 == rest.size()) {
+                    engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_join_code"));
+                    return kExitUsage;
+                }
+                options.network.address = std::string(target);
+                continue;
+            }
             if (const std::size_t colon = target.rfind(':'); colon != std::string_view::npos) {
                 engine::core::u64 port = 0;
                 if (!numericValue(target.substr(colon + 1), port) || port == 0 || port > 65535) {

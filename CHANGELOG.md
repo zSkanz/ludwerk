@@ -157,6 +157,8 @@ here.
 
 ### Fixed
 
+- `--join=relay://host:port/CODE` joins by code from the command line, as
+  `NetworkService:Join` does; it was refused as a bad port.
 - A game's player no longer carries the build machine's folders and user
   name: the player, shipping and editor builds compile without them, and
   the gate reads the shipped binaries for them.

@@ -3582,7 +3582,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             networkError.has_value())
             return networkError;
         if (options.network.topology == replication::Topology::Replica && !network.joinedByCode().empty()) {
-            const core::I18nArg args[] = {{"relay", networkBase.relay}, {"code", network.joinedByCode()}};
+            const core::I18nArg args[] = {{"relay", network.joinedThrough()}, {"code", network.joinedByCode()}};
             core::log(core::LogLevel::Info, ENG_TR("net.info.joining_by_code"), args);
         }
         else if (options.network.topology == replication::Topology::Replica) {

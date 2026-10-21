@@ -68,6 +68,9 @@ run.bat --join=127.0.0.1       a window showing a world another machine decides
 ```
 
 A host and a server listen on port 7777; `--join=address:port` names another.
+`--join` takes every form `Join` does: an address, a join code with
+`--relay=host:port` beside it, or the code written whole as
+`--join=relay://host:port/CODE`.
 `--serve` is the only way to be a dedicated server. A client started with
 `--join=` dials again if the connection drops; one that joined from a script
 hears `Disconnected` and decides for itself.

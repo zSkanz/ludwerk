@@ -36,6 +36,7 @@
   "engine.cli.err.scene_data": "--scene-data takes JSON, and this is not JSON: {reason}",
   "engine.cli.err.unknown_backend": "Unknown render backend \"{name}\". This build has: {available}.",
   "engine.cli.err.one_posture": "--host, --serve and --join each set how this process takes part in a game, and only one can be given.",
+  "engine.cli.err.bad_join_code": "--join=relay://host:port/CODE needs a relay before the last slash and a join code after it.",
   "engine.cli.err.bad_port": "A port is a number from 1 to 65535, and --join needs an address: --join=192.168.0.10:7777.",
   "engine.cli.err.bad_max_players": "--max-players is a number from 1 to 4095.",
   "engine.cli.err.bad_max_per_address": "--max-per-address takes a whole number from 0 to 4095; 0 is no limit.",

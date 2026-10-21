@@ -12,6 +12,7 @@
 #include "engine/app/network_session.h"
 #include "engine/app/world_host.h"
 #include "engine/net/relay_service.h"
+#include "engine/platform/process.h"
 #include "engine/replication/replication.h"
 #include "engine/scene/world.h"
 #include "engine_test_ports.h"
@@ -218,4 +219,32 @@ TEST_CASE("a script asks a relay how far it is before it has a match, and is tol
     CHECK(log.contains("state:Offline"));
     CHECK(machine.state().networkState == Offline);
     relay.stop();
+}
+
+TEST_CASE("a join code written whole is taken from the command line, as a script's Join takes it")
+{
+    // `--join=relay://host:port/CODE` was cut at its last colon and refused as
+    // a port; `--join=CODE --relay=host:port` worked. Every form `Join` takes,
+    // the command line takes. The relay here answers nobody: what is proved is
+    // that the join is by code, through that relay, and that the run goes on.
+    Project project;
+    project.write("src/client/idle.luau", "print('client-up')");
+    const std::string relay = "127.0.0.1:" + std::to_string(engine::testing::port(47930));
+    const platform::ProcessResult joined = platform::runProcess(
+        {ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/K7QWM2ZP", "--headless", "--rhi=null",
+         "--frames=30", "--exit"});
+    REQUIRE(joined.started);
+    CHECK_MESSAGE(joined.exitCode == 0, joined.output);
+    CHECK_MESSAGE(joined.output.find("Joining the match K7QWM2ZP through the relay " + relay) != std::string::npos,
+                  joined.output);
+
+    // Written wrong, it is refused for what it is -- not as a port.
+    const platform::ProcessResult refused = platform::runProcess(
+        {ENG_TEST_HOST, project.root.string(), "--join=relay://" + relay + "/", "--headless", "--rhi=null",
+         "--frames=1", "--exit"});
+    REQUIRE(refused.started);
+    CHECK(refused.exitCode == 2);
+    CHECK_MESSAGE(refused.output.find("needs a relay before the last slash and a join code after it") !=
+                      std::string::npos,
+                  refused.output);
 }

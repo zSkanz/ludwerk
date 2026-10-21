@@ -168,6 +168,9 @@ public:
     void setJoinTimeout(core::f64 seconds) noexcept { m_joinTimeoutSeconds = seconds; }
     // The code this machine's join is by (ADR 0178); empty for one by address.
     [[nodiscard]] const std::string& joinedByCode() const noexcept { return m_relay.code; }
+    // And the relay it went through: `--relay`'s, or the one a
+    // `relay://host:port/CODE` named.
+    [[nodiscard]] const std::string& joinedThrough() const noexcept { return m_relay.relay; }
     // The clock the timeout is read from; `platform::nowNs` unless a test
     // gives another.
     void setClock(std::function<core::u64()> nowNs) { m_clock = std::move(nowNs); }
