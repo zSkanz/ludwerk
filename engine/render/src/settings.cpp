@@ -224,6 +224,12 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
         settings.terrainFast = true;
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium)
         settings.antiAliasing = AntiAliasingMode::Fxaa;
+    // **And the lean path at both** (the mobile lean path): one pass on the
+    // tile where the frame allows, FXAA where it does not.
+    if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium) {
+        settings.leanPath = true;
+        settings.leanSamples = settings.quality == QualityLevel::Low ? 2u : 4u;
+    }
     else if (settings.antiAliasing == AntiAliasingMode::Taa)
         settings.antiAliasing = AntiAliasingMode::Smaa;
     switch (settings.quality) {

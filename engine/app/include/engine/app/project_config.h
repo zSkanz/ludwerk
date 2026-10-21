@@ -55,6 +55,9 @@ struct GraphicsOverrides
     std::optional<bool> autoExposure;
     std::optional<bool> contactShadows;
     std::optional<bool> foliageDecals;
+    // `--lean`, `--no-lean`: the lean path for the window, over the level's
+    // and the file's (the mobile lean path).
+    std::optional<bool> leanPath;
     // `--reflections=LEVEL` and `--global-illumination=LEVEL` (ADRs 0202,
     // 0203), an `Enum.GraphicsLevel` each: low, medium, high, ultra.
     std::optional<core::i32> reflections;

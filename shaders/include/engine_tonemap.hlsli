@@ -96,16 +96,19 @@ float3 untonemapPbrNeutral(float3 mapped)
 }
 
 // **What a forward pass with the tonemap folded into it writes** (a headset's
-// eye, ADR 0250): `exposure` nought is the 16-bit target's linear HDR as it
-// always was; otherwise the colour exposed, through the curve, dithered as the
-// tonemap pass dithers, and decoded again -- linear, into the runtime's 8-bit
-// sRGB image, whose hardware encodes it.
+// eye, ADR 0250; a lean window): `exposure` nought is the 16-bit target's
+// linear HDR as it always was; otherwise the colour exposed, through the
+// curve and dithered as the tonemap pass dithers. **Positive**, decoded again
+// -- linear, into an 8-bit sRGB image whose hardware encodes it (a runtime's
+// eye). **Negative**, left encoded -- into a plain 8-bit image, which a
+// window's swapchain is.
 float4 foldOutput(float4 color, float exposure, float2 pixel)
 {
-    if (exposure <= 0.0f)
+    if (exposure == 0.0f)
         return color;
-    const float3 exposed = max(color.rgb * exposure, float3(0.0f, 0.0f, 0.0f));
-    return float4(decodeSrgb(ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), pixel)), color.a);
+    const float3 exposed = max(color.rgb * abs(exposure), float3(0.0f, 0.0f, 0.0f));
+    const float3 shown = ditherOutput(encodeSrgb(tonemapPbrNeutral(exposed)), pixel);
+    return float4(exposure > 0.0f ? decodeSrgb(shown) : shown, color.a);
 }
 
 #endif // ENG_TONEMAP_HLSLI

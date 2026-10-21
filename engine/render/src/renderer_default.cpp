@@ -616,6 +616,13 @@ struct ViewState
     // **The exposure this view's forward pass writes with**, the tonemap
     // folded into it (ADR 0250): nought where it is not folded.
     f32 foldExposure_ = 0.0f;
+    // Whether what is folded is written encoded, into a plain 8-bit image --
+    // a lean window's swapchain -- rather than into an sRGB one: the shaders
+    // are given the exposure negative.
+    bool foldEncoded_ = false;
+    rhi::TextureFormat foldMeterFormat_ = rhi::TextureFormat::Rgba8UnormSrgb;
+    // The exposure as the shaders are given it.
+    [[nodiscard]] f32 foldForShaders() const noexcept { return foldEncoded_ ? -foldExposure_ : foldExposure_; }
     // A folded eye blitted down for its meter, `kFoldMeterSize` square.
     rhi::TextureHandle foldMeter_{};
     // The fragment density map that shades `msaaColor_`'s passes, and what
@@ -5538,7 +5545,7 @@ void DefaultRenderer::drawWorldUi(rhi::ICmdList& cmd, const RenderWorld& world, 
                 continue;
             GpuWorldUiLook look;
             look.params[0] = run.brightness;
-            look.params[1] = foldExposure_;
+            look.params[1] = foldForShaders();
             look.params[2] = displayed ? 1.0f : 0.0f;
             look.params[3] = std::exp2(world.environment.exposureCompensation);
             look.light[0] = run.lightInfluence;
@@ -10209,6 +10216,20 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // straight into the runtime's image by the tonemap.
         settings_.antiAliasing = AntiAliasingMode::Off;
     }
+    // **A lean window** (`leanPath`, the mobile lean path): what a tile GPU
+    // pays a pass over every pixel for, left out -- each such pass leaves the
+    // tile and comes back, in bandwidth and heat. The anti-aliasing is the
+    // forward pass's samples where the frame allows them (below).
+    const bool leanWindow = !world.headsetEye && settings_.leanPath;
+    if (leanWindow) {
+        settings_.bloom = false;
+        settings_.sunRays = false;
+        settings_.depthOfField = false;
+        settings_.ambientOcclusion = false;
+        settings_.contactShadows = false;
+        settings_.screenReflectionSteps = 0;
+        settings_.screenBounceRays = 0;
+    }
     // **And the project's word over both** (`[xr]`, `HeadsetQuality`): what
     // it sets, in place of the level's or the numbers above.
     if (world.headsetEye) {
@@ -11028,7 +11049,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // tiled GPU the prepass is the scene binned once more and a depth target
     // of three million texels stored, an eye. The forward pass clears and
     // writes the depth itself, which is the depth the runtime is given.
-    const bool leanEye = world.headsetEye && world.headsetLean;
+    // Nor in a lean window, for the same reason.
+    const bool leanEye = (world.headsetEye && world.headsetLean) || (!world.headsetEye && settings_.leanPath);
     prepassDrawn_ = depthRead || sided || (!leanEye && (settings_.measuredSkip & MeasureSkip::DepthPrepass) == 0u);
     if (prepassDrawn_) {
         cmd.pushDebugGroup("depth-prepass");
@@ -11235,7 +11257,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     const bool forwardWhole = world.decals.empty() && !airDrawn && !spriteExactLive_ && particleCount_ == 0 &&
                               ribbonVertexCount_ == 0 && world.gpuEmitters.empty() && !readsScene && !prepassDrawn_ &&
                               !(world.look.depthOfField && settings_.depthOfField);
-    u32 samples = world.headsetEye && !world.headsetDepthRead && forwardWhole ? world.headsetSamples : 1u;
+    u32 samples = world.headsetEye && !world.headsetDepthRead && forwardWhole ? world.headsetSamples
+                  : leanWindow && forwardWhole ? std::clamp(settings_.leanSamples, 1u, 8u)
+                                               : 1u;
     // **The tonemap folded into the pass** (ADR 0250): a headset's eye drawn
     // with samples straight into its runtime's 8-bit image -- the forward
     // shaders expose, tonemap and dither what they write, the samples resolve
@@ -11268,10 +11292,18 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // The samples resolve into the image itself, so at its own size: an
         // eye drawn smaller (`[xr] render_scale`) is brought up by the
         // tonemap pass, and is not folded.
-        const bool intoImage = target.color.valid() && target.colorReadable &&
-                               (target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
-                                target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb) &&
-                               renderWidth_ == target.width && renderHeight_ == target.height;
+        const bool srgbImage = target.colorFormat == rhi::TextureFormat::Rgba8UnormSrgb ||
+                               target.colorFormat == rhi::TextureFormat::Bgra8UnormSrgb;
+        // A lean window's swapchain is plain 8-bit: written encoded.
+        const bool plainImage = leanWindow && (target.colorFormat == rhi::TextureFormat::Rgba8Unorm ||
+                                               target.colorFormat == rhi::TextureFormat::Bgra8Unorm);
+        // Metered, the image is read back for the next frames' exposure, so
+        // it must be one that can be: a window's swapchain is not, and is
+        // folded only at a fixed exposure.
+        const bool intoImage = target.color.valid() && (target.colorReadable || !metering) &&
+                               (srgbImage || plainImage) && renderWidth_ == target.width &&
+                               renderHeight_ == target.height;
+        foldEncoded_ = plainImage;
         bool foldable = world.terrains.empty() && world.foliageRuns.empty() && world.sprites.empty();
         for (const DrawItem& draw : world.draws) {
             if (!foldable)
@@ -11280,9 +11312,10 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 (draw.material < materialSurface_.size() && materialSurface_[draw.material] != 0))
                 foldable = false;
         }
-        const bool fold = (settings_.measuredSkip & MeasureSkip::Fold) == 0u && samples > 1 && world.headsetEye &&
-                          !world.environment.transparentBackground && world.headsetLean && intoImage &&
-                          exposure > 0.0f && foldable && !world.look.graded && world.look.blurSize <= 0.0f &&
+        const bool fold = (settings_.measuredSkip & MeasureSkip::Fold) == 0u && samples > 1 &&
+                          ((world.headsetEye && world.headsetLean) || leanWindow) &&
+                          !world.environment.transparentBackground && intoImage && exposure > 0.0f && foldable &&
+                          !world.look.graded && world.look.blurSize <= 0.0f &&
                           !(settings_.bloom && world.look.bloomEnabled) && !(settings_.sunRays && world.look.sunRays);
         foldExposure_ = fold ? exposure : 0.0f;
     }
@@ -11385,6 +11418,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         samples = 1;
         foldExposure_ = 0.0f;
     }
+    // A lean window's samples are its anti-aliasing: no pass after them.
+    if (leanWindow && samples > 1)
+        settings_.antiAliasing = AntiAliasingMode::Off;
     // **The world's interface, as the display shows it or as light** (ADR
     // 0250): a run at a brightness of 1 or less is drawn as authored. Folded,
     // every run is drawn in the pass, in the order it came; otherwise those
@@ -11460,7 +11496,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         skyUniforms.zenithColor[1] = sky.zenithColor.g;
         skyUniforms.zenithColor[2] = sky.zenithColor.b;
         // w: the tonemap folded into this pass (`foldOutput`).
-        skyUniforms.zenithColor[3] = foldExposure_;
+        skyUniforms.zenithColor[3] = foldForShaders();
         skyUniforms.sunColor[0] = sky.sunColor.r;
         skyUniforms.sunColor[1] = sky.sunColor.g;
         skyUniforms.sunColor[2] = sky.sunColor.b;
@@ -11580,7 +11616,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             frame.occluderParams[0] = static_cast<f32>(count);
             frame.occluderParams[1] = 1.0f;
         }
-        frame.forwardFold[0] = foldExposure_;
+        frame.forwardFold[0] = foldForShaders();
         frame.ambient[0] = world.environment.ambient.r;
         frame.ambient[1] = world.environment.ambient.g;
         frame.ambient[2] = world.environment.ambient.b;
@@ -12348,10 +12384,19 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     rhi::TextureHandle meteredColor = sceneColor;
     u32 meteredWidth = renderWidth_;
     u32 meteredHeight = renderHeight_;
-    if (foldExposure_ > 0.0f) {
+    if (foldExposure_ > 0.0f && target.colorReadable) {
+        // In the image's own kind: an encoded picture copied as it is, and
+        // decoded by the meter.
+        const rhi::TextureFormat meterFormat =
+            foldEncoded_ ? rhi::TextureFormat::Rgba8Unorm : rhi::TextureFormat::Rgba8UnormSrgb;
+        if (foldMeter_.valid() && foldMeterFormat_ != meterFormat) {
+            device.destroy(foldMeter_);
+            foldMeter_ = {};
+        }
+        foldMeterFormat_ = meterFormat;
         if (!foldMeter_.valid())
             foldMeter_ = device.createTexture({
-                .format = rhi::TextureFormat::Rgba8UnormSrgb,
+                .format = meterFormat,
                 .usage = rhi::TextureUsage::Sampled | rhi::TextureUsage::ColorTarget,
                 .width = kFoldMeterSize,
                 .height = kFoldMeterSize,
@@ -12478,7 +12523,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         luminance.texelRate[0] = 1.0f / static_cast<f32>(meteredApart ? meteredWidth : sceneWidth);
         luminance.texelRate[1] = 1.0f / static_cast<f32>(meteredApart ? meteredHeight : sceneHeight);
         // Folded: the meter undoes the curve and this frame's exposure.
-        luminance.texelRate[3] = foldExposure_ > 0.0f ? 1.0f / foldExposure_ : 0.0f;
+        luminance.texelRate[3] = foldExposure_ > 0.0f ? (foldEncoded_ ? -1.0f : 1.0f) / foldExposure_ : 0.0f;
         // **A view seen on one side of a line is metered on that side** (ADR
         // 0205): the other is black, and half a picture of black read as a
         // dark room and opened the exposure. The line goes through the
@@ -12521,7 +12566,8 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         exposureInitialised_ = true;
         // **And read back for a folded eye's next frames**, a few frames
         // late: never more than a handful asked for at once.
-        if (world.headsetEye && world.headsetLean && foldReadbacks_.size() < 4) {
+        if (((world.headsetEye && world.headsetLean) || (!world.headsetEye && settings_.leanPath)) &&
+            foldReadbacks_.size() < 4) {
             if (const u32 ticket = device.requestReadback(exposure_[nextExposure], 1, 1); ticket != 0)
                 foldReadbacks_.push_back(ticket);
         }

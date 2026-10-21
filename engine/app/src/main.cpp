@@ -1341,6 +1341,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.bloom = arg == "--bloom";
             continue;
         }
+        if (arg == "--lean" || arg == "--no-lean") {
+            graphics.leanPath = arg == "--lean";
+            continue;
+        }
         if (arg == "--contact-shadows" || arg == "--no-contact-shadows") {
             graphics.contactShadows = arg == "--contact-shadows";
             continue;

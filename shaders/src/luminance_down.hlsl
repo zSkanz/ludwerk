@@ -43,8 +43,10 @@ float3 meteredTap(float2 uv)
     // exposure. Tap by tap, never on their average: the inverse is steepest
     // near white, so a lit edge averaged with a shadow first read darker
     // than it is. Nought for the 16-bit picture every other frame meters.
-    if (LuminanceTexelRate.w > 0.0f)
-        return untonemapPbrNeutral(scene) * LuminanceTexelRate.w;
+    // Negative where it was written encoded, into a plain 8-bit image (a lean
+    // window): decoded first.
+    if (LuminanceTexelRate.w != 0.0f)
+        return untonemapPbrNeutral(LuminanceTexelRate.w > 0.0f ? scene : decodeSrgb(scene)) * abs(LuminanceTexelRate.w);
     const float4 layer = UiLayerTexture.SampleLevel(UiLayerSampler, uv, 0.0f);
     // **Nothing drawn, nothing measured** (the room seen through behind a
     // headset's picture): such a pixel counts as the light measured the

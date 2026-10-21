@@ -302,6 +302,17 @@ struct GraphicsSettings
     // scale, no hexagonal cells, no procedural variation over it. The level's:
     // Low, and a handheld's Medium.
     bool terrainLean = false;
+    // **The lean path for a window** (the mobile lean path): a tile GPU's
+    // picture at Low and Medium -- what a handheld draws there unless the
+    // project says otherwise (`[graphics] lean_path`), and on a PC to try it
+    // (`--lean`). The forward pass draws with `leanSamples` samples resolved
+    // on the tile where nothing after it needs the frame's light, the
+    // tonemap folded into it where the image allows, and no bloom, sun rays,
+    // depth of field or screen-space pass.
+    bool leanPath = false;
+    // The samples a lean window's forward pass draws with: two at Low, four
+    // at Medium.
+    u32 leanSamples = 2;
     // What the project said of it (`[graphics] terrain_surface`, or
     // `--terrain-surface=`), over the level: `Level` is nothing said. Carried
     // across a player's settings changes, since no setting of theirs is it.

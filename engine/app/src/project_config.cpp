@@ -81,6 +81,12 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
         settings.lightBudget = static_cast<u32>(*value);
     if (const std::optional<bool> value = flag("bloom"))
         settings.bloom = *value;
+    // The lean path for the window (the mobile lean path): a handheld's at
+    // Low and Medium unless the file says.
+    if (const std::optional<bool> value = flag("lean_path")) {
+        settings.leanPath = *value;
+        settings.leanSamples = settings.quality == render::QualityLevel::Low ? 2u : 4u;
+    }
     if (const std::optional<bool> value = flag("ambient_occlusion"))
         settings.ambientOcclusion = *value;
     // A name -- "off", "fxaa", "smaa", "taa" -- or, as it has always been
@@ -197,6 +203,10 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.contactShadows = *overrides.contactShadows;
     if (overrides.foliageDecals)
         settings.foliageDecals = *overrides.foliageDecals;
+    if (overrides.leanPath) {
+        settings.leanPath = *overrides.leanPath;
+        settings.leanSamples = settings.quality == render::QualityLevel::Low ? 2u : 4u;
+    }
     if (overrides.reflections) {
         const render::ReflectionLevel level = render::reflectionsFor(*overrides.reflections, false);
         settings.reflectionProbes = level.probes;

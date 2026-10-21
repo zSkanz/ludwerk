@@ -383,6 +383,7 @@ apply, because they were typed by the same person as the preset.
 --shadow-taps=N
 --log-ui-touches
 --bloom            / --no-bloom
+--lean             / --no-lean
 --ambient-occlusion / --no-ambient-occlusion
 --shadow-under-casters / --no-shadow-under-casters
 --anti-aliasing    / --no-anti-aliasing
@@ -548,6 +549,16 @@ headless run does; `--pipelines=off-frame` makes them off it there too. On
 Vulkan, the pipelines a run makes are kept in `pipelines.vulkan.cache` in the
 user's folder and read by the next run; `--pipeline-cache=FILE` keeps them
 elsewhere, and `--pipeline-cache=` keeps none.
+
+`lean_path` is the picture a phone draws at Low and Medium: the world in one
+pass, its edges smoothed by the pass's own samples (two at Low, four at
+Medium) where nothing drawn after it needs the frame's light, and no bloom,
+sun rays, depth of field or screen-space shading. Each of those passes leaves
+a phone GPU's tile memory and comes back, in battery and heat. Where the
+frame has decals, particles, sprites or a surface shader that reads the
+scene, the samples are left out and FXAA smooths the edges. On by default on
+a phone at Low and Medium, off elsewhere; `--lean` draws a computer's window
+that way to try it.
 
 `pipeline_threads` is how many threads make those pipelines: one on a
 computer with four hardware threads or fewer and two above unless you say,
