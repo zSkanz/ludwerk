@@ -715,6 +715,11 @@ ctest --preset win-msvc-dev --output-on-failure --no-tests=error -L perf || exit
     }
     if ($SkipLinux) { return }
     Write-Host '[gate] perf (linux): ALONE -- no other stage of the gate is running.' -ForegroundColor Cyan
+    # A run of this stage alone, or a lane that built no image, has none yet:
+    # `docker run` was handed nothing where the image goes, took `bash` for the
+    # image's name, and ran the public `bash` image, which has no repository
+    # in it ("/scripts/gates/linux-build.sh: No such file or directory").
+    if (-not $script:tier2Image) { Use-Tier2Image }
     $existing = docker ps -aq --filter "name=^${perfContainer}$"
     if ($existing) { docker rm -f $perfContainer | Out-Null }
     docker run --name $perfContainer `

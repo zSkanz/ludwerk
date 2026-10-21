@@ -50,6 +50,14 @@ if(output MATCHES "No shader compiler was found")
     message("ENG_TEST_SKIP: no shader compiler on this host")
     return()
 endif()
+# **A software rasterizer is not what this measures.** llvmpipe compiles a
+# shader the first time it draws with it, whatever made the pipeline before,
+# and keeps nothing in a pipeline cache: on it the frame waits in its present
+# and the cache file is a header alone, and neither says anything of a GPU.
+if(output MATCHES "Drawing on (llvmpipe|lavapipe|SwiftShader)")
+    message("ENG_TEST_SKIP: a software rasterizer compiles a shader at its first draw and caches nothing")
+    return()
+endif()
 if(NOT output MATCHES "render\\.info\\.surface_pipelines_off_frame")
     message("${output}")
     message(FATAL_ERROR "pipeline cache kill: the shader's pipelines were never made before the kill")
