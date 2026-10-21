@@ -177,6 +177,13 @@ inline constexpr u32 PaceAbove = 2;
 inline constexpr u32 PaceBelow = 1;
 inline constexpr core::f64 ClockNudge = 0.04;
 inline constexpr usize MaxQueuedIntents = 64;
+// **How long after this machine dropped simulated time a queue caught up is
+// this machine's doing** (`AuthoritySession::noteTimeDropped`): the ticks of
+// the first frames after a stall, whose messages were waiting when it ended.
+// Every player's stream ran on while this machine stood still, and catching
+// it up then is taking it up again from where each player is now -- counted
+// as anchoring again, and not reported as the player's burst.
+inline constexpr u32 HostStallGraceTicks = 30;
 // **How long the last intent stands in while the peer says nothing**:
 // half a second of ticks in which no intent message came at all. Counted by
 // silence, not by ticks without a real intent: a client's long frame is
@@ -538,6 +545,10 @@ public:
     // Once a class, in the log. Not the classes that are each machine's own by
     // nature (`QuietClasses`), and never in a player's game.
     void setUncarriedWarnings(bool on) noexcept { m_warnUncarried = on; }
+    // **This machine dropped simulated time** -- a frame so long its ticks were
+    // not all run. Every player's queue is about to be found far ahead of what
+    // was applied, through no fault of theirs (`HostStallGraceTicks`).
+    void noteTimeDropped() noexcept;
     // **Removes the peer that is player `userId`** (`Player:Kick`, ADR 0167):
     // told why, let go, and its player taken out of the world as one who
     // left is. False when no peer is that player -- the host's own is not.
@@ -745,6 +756,12 @@ private:
         // queued again by the messages that arrive with it.
         bool anchoredAgain = false;
         u64 anchorFloor = 0;
+        // Ticks left in which a queue caught up is this machine's stall and
+        // not the peer's burst (`HostStallGraceTicks`), and whether the stall
+        // has been counted as anchoring again: the input that waited arrives
+        // over several ticks, and is caught up as often, but it is one stall.
+        u32 hostStallGrace = 0;
+        bool hostStallCounted = false;
         // Ticks since an intent message last came from this peer, and since
         // any message did.
         u32 silentTicks = 0;

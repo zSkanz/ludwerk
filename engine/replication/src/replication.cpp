@@ -202,6 +202,8 @@ public:
     {
         if (m_replica.has_value())
             m_replica->noteTimeDropped();
+        if (m_authority.has_value())
+            m_authority->noteTimeDropped();
     }
 
     [[nodiscard]] Status status() const override

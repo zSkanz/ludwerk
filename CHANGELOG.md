@@ -176,6 +176,10 @@ here.
 
 ### Fixed
 
+- A server whose frame ran so long it dropped ticks -- a scene loading -- takes
+  every player's input up again from where they are, and no longer reports
+  each moving player's input as a burst of theirs. A button pressed in the
+  oldest of the input that piled up meanwhile is pressed, not lost.
 - `ludwerk check` and `--check-scripts` compile every script, as the game
   compiles it in development and as an exported game's package does, and
   say which refused it: a function past the compiler's limits -- two hundred

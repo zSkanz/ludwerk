@@ -2880,9 +2880,16 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
                     peer->intentQueue.emplace(tick, std::move(intents));
                 }
                 // Bounded: a peer that sends far ahead is caught up by
-                // `applyIntents`, and one that floods loses its oldest.
-                while (peer->intentQueue.size() > MaxQueuedIntents)
+                // `applyIntents`, and one that floods loses its oldest -- but
+                // not a button pressed in them, carried as a skipped tick's
+                // is. A burst after a stall is longer than the queue.
+                while (peer->intentQueue.size() > MaxQueuedIntents) {
+                    for (const scene::PlayerIntent& intent : peer->intentQueue.begin()->second) {
+                        if (intent.type == 0 && intent.pressed)
+                            carryPress(*peer, intent.seat, intent.action);
+                    }
                     peer->intentQueue.erase(peer->intentQueue.begin());
+                }
                 break;
             }
             if (event.channel == OwnershipChannel && type == MessageType::OwnedState && peer->welcomed) {
@@ -3320,6 +3327,14 @@ void AuthoritySession::receive(scene::World& world, InstanceId root, bool tickin
         applyIntents(world);
 }
 
+void AuthoritySession::noteTimeDropped() noexcept
+{
+    for (Peer& peer : m_peers) {
+        peer.hostStallGrace = HostStallGraceTicks;
+        peer.hostStallCounted = false;
+    }
+}
+
 // A press to be applied at the next tick: once, however often it is found.
 void AuthoritySession::carryPress(Peer& peer, u8 seat, core::NameAtom action)
 {
@@ -3528,15 +3543,25 @@ void AuthoritySession::applyIntents(scene::World& world)
                 other != nullptr && other->character.valid() ? world.characterBodies().find(other->character) : nullptr;
             predictedState = predictedState || (body != nullptr && !body->predictedAttributes.empty());
         }
+        const bool afterStall = peer.hostStallGrace > 0;
+        if (afterStall)
+            peer.hostStallGrace -= 1;
         if (depth > static_cast<u64>(peer.intentDelay) + IntentCatchUp ||
             (resting && !predictedState && depth > static_cast<u64>(peer.intentDelay) + 1)) {
             // Too far behind the newest: caught up, what is skipped dropped --
             // but not a button pressed in it.
             next = newest - peer.intentDelay;
+            // **Behind because this machine stood still**: the player went on
+            // playing, and is taken up again from where they are now -- once.
+            if (afterStall && depth > static_cast<u64>(peer.intentDelay) + IntentCatchUp) {
+                if (!peer.hostStallCounted)
+                    m_stats.intentReanchors += 1;
+                peer.hostStallCounted = true;
+            }
             // **Past the ceiling, and moving**: the replica's slowed clock
             // did not drain it, so it stalled and sent a burst, or it floods.
             // Every tick dropped is one it stepped and this world did not.
-            if (!resting && next > peer.appliedTick + 1) {
+            else if (!resting && next > peer.appliedTick + 1) {
                 const u64 dropped = next - peer.appliedTick - 1;
                 m_stats.intentsSkipped += dropped;
                 const std::array<core::I18nArg, 2> args{core::I18nArg{"user", static_cast<core::i64>(peer.userId)},

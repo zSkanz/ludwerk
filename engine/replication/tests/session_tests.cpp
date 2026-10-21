@@ -3505,6 +3505,56 @@ TEST_CASE("a replica that dropped simulated time is heard again, a few ticks on"
     CHECK(match.authority->stats().intentReanchors == 1);
 }
 
+TEST_CASE("an authority that stood still takes every player's input up again, and loses no press in it")
+{
+    // A host's frame long enough that its ticks were dropped -- a scene
+    // loading -- while its players went on playing: their messages wait, more
+    // of them than the queue holds, and the first tick after finds every
+    // queue far ahead of what was applied. That was reported as the player's
+    // burst, and a press in the oldest of them was lost with them.
+    const auto stall = [](bool noted) {
+        PlayedMatch match;
+        match.run(10);
+        MoveStream stream(match);
+        const core::NameAtom jump = match.server.atoms.intern("Jump");
+        core::u64 sent = match.tick;
+        for (int at = 0; at < 20; ++at) {
+            stream.send(++sent, 1.0f);
+            stream.tick();
+        }
+        REQUIRE(stream.moving() == 1.0f);
+        // A hundred of the player's ticks while the authority runs none, a
+        // jump pressed in the fifth: older than the queue keeps.
+        for (int at = 0; at < 100; ++at) {
+            Bytes intent;
+            intent.u8v(7).u32v(stream.epoch).u16v(0).u8v(1).u64v(++sent);
+            intent.u16v(at == 4 ? 2 : 1).intent(0, 2, 1.0f, false);
+            if (at == 4)
+                intent.intent(1, 0, 0.0f, true);
+            REQUIRE_FALSE(
+                match.clientTransport->send(match.toServer, intent.data, net::Delivery::Unreliable, 2).has_value());
+        }
+        if (noted)
+            match.authority->noteTimeDropped();
+        bool jumped = false;
+        for (int at = 0; at < 10; ++at) {
+            stream.send(++sent, 1.0f);
+            stream.tick();
+            for (const scene::PlayerIntent& each : stream.player->intents)
+                jumped = jumped || (each.action == jump && each.pressed);
+        }
+        CHECK(jumped);
+        CHECK(stream.moving() == 1.0f);
+        return match.authority->stats();
+    };
+    // Not told it stood still: the player's burst, as a replica's own stall is.
+    CHECK(stall(false).intentsSkipped > 0);
+    // Told: taken up again, and nothing reported as the player's.
+    const auto told = stall(true);
+    CHECK(told.intentsSkipped == 0);
+    CHECK(told.intentReanchors == 1);
+}
+
 TEST_CASE("a key held when a replica's clock fell behind is let go when the replica lets it go")
 {
     PlayedMatch match;
