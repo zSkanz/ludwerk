@@ -718,6 +718,78 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libsodium/src/libsodium/sodium/core.c")
 endif()
 
 # ---------------------------------------------------------------------------
+# libopus 1.6.1 (ADR 0122, ADR 0256): the codec players' voices are sent with,
+# and the one the video player's sound takes when it is built.
+#
+# Its sources directly, and not its build -- the libsodium reasoning. The file
+# lists are upstream's own `*_sources.mk`, read here, so a new release that
+# adds a file adds it to this build too and nothing is listed twice. What is
+# compiled is the portable float build: CELT, SILK's float path and the Opus
+# layer, with none of the instruction-set files (`*_SSE*`, `*_ARM_*`, the
+# run-time CPU detection), so it is the same code on every tier. A voice at
+# 24 kbit/s is a fraction of a millisecond of one core a frame either way.
+#
+# Not compiled: the programs and tests, which the include list leaves out, and
+# the neural-network extensions (DRED, deep PLC, OSCE), reached only behind
+# `ENABLE_*` macros nothing here defines.
+#
+# No `config.h`: `OPUS_BUILD` says the sources are being built, and
+# `USE_ALLOCA` gives their scratch space the stack, which MSVC (no variable
+# length arrays) needs and the others take as well.
+# ---------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/opus/src/opus_encoder.c")
+    set(ENG_OPUS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/opus")
+    # The `.c` files of one list in an upstream `.mk` file: `NAME = \` and
+    # the continued lines under it.
+    function(_eng_opus_list file name out)
+        file(STRINGS "${ENG_OPUS_DIR}/${file}" lines)
+        set(files "")
+        set(inside FALSE)
+        foreach(line IN LISTS lines)
+            if(line MATCHES "^${name} =")
+                set(inside TRUE)
+            elseif(NOT inside)
+                continue()
+            endif()
+            string(REGEX MATCHALL "[A-Za-z0-9_/]+[.]c" found "${line}")
+            list(APPEND files ${found})
+            # A list goes on while its lines end in a backslash.
+            if(NOT line MATCHES "\\\\[ \t\r]*$")
+                break()
+            endif()
+        endforeach()
+        if(NOT files)
+            message(FATAL_ERROR "libopus: no ${name} in ${file}")
+        endif()
+        list(TRANSFORM files PREPEND "${ENG_OPUS_DIR}/")
+        set(${out} ${files} PARENT_SCOPE)
+    endfunction()
+    _eng_opus_list(celt_sources.mk CELT_SOURCES ENG_OPUS_CELT)
+    _eng_opus_list(silk_sources.mk SILK_SOURCES ENG_OPUS_SILK)
+    _eng_opus_list(silk_sources.mk SILK_SOURCES_FLOAT ENG_OPUS_SILK_FLOAT)
+    _eng_opus_list(opus_sources.mk OPUS_SOURCES ENG_OPUS_OPUS)
+    _eng_opus_list(opus_sources.mk OPUS_SOURCES_FLOAT ENG_OPUS_OPUS_FLOAT)
+    add_library(opus STATIC ${ENG_OPUS_CELT} ${ENG_OPUS_SILK} ${ENG_OPUS_SILK_FLOAT} ${ENG_OPUS_OPUS}
+        ${ENG_OPUS_OPUS_FLOAT})
+    target_include_directories(opus SYSTEM PUBLIC "${ENG_OPUS_DIR}/include")
+    target_include_directories(opus PRIVATE "${ENG_OPUS_DIR}" "${ENG_OPUS_DIR}/celt" "${ENG_OPUS_DIR}/silk"
+        "${ENG_OPUS_DIR}/silk/float" "${ENG_OPUS_DIR}/src")
+    target_compile_definitions(opus PRIVATE OPUS_BUILD USE_ALLOCA)
+    set_target_properties(opus PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS YES)
+    # Upstream's warnings are upstream's (the Jolt rule).
+    if(MSVC)
+        target_compile_options(opus PRIVATE /W0)
+        target_compile_definitions(opus PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(opus PRIVATE -w)
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(opus PRIVATE m)
+    endif()
+    add_library(Opus::opus ALIAS opus)
+endif()
+
+# ---------------------------------------------------------------------------
 # basis_universal (ADR 0010: one transcodable texture per platform, in a KTX2
 # container). Vendored narrowed -- ADR 0042 and the manifest row say why.
 #

@@ -23,6 +23,7 @@ vendored yet; the roadmap allows lazy vendoring so long as the row exists.
 | jolt | 5.6.0 | `e77f175595e6` | MIT | https://github.com/jrouwe/JoltPhysics | `third_party/jolt/` |
 | box2d | 3.1.1 | `8c661469c950` | MIT | https://github.com/erincatto/box2d | `third_party/box2d/` |
 | miniaudio | 0.11.25 | `9634bedb5b5a` | MIT-0 OR Unlicense | https://github.com/mackron/miniaudio | `third_party/miniaudio/` |
+| opus | 1.6.1 | `22244de5a79b` | BSD-3-Clause | https://github.com/xiph/opus | `third_party/opus/` |
 | fastgltf | 0.9.1 | `705564d4d545` | MIT | https://github.com/spnda/fastgltf | `third_party/fastgltf/` |
 | simdjson | 4.6.11 | `f5de14f09256` | Apache-2.0 OR MIT | https://github.com/simdjson/simdjson | `third_party/simdjson/` |
 | meshoptimizer | 1.3 | `9e1f07b159d3` | MIT | https://github.com/zeux/meshoptimizer | `third_party/meshoptimizer/` |
