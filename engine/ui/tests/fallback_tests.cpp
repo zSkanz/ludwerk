@@ -277,10 +277,10 @@ TEST_CASE("ADR 0259: a label's own FallbackFont is tried with no project fallbac
 {
     Faces faces;
     resetGlyphCache();
-    const std::string_view font = engine::ui::fontWithFallback(Latin, Squares);
+    const std::string_view font = engine::ui::labelFont(Latin, Squares);
     // One view for one pair, whoever asks.
-    CHECK(engine::ui::fontWithFallback(Latin, Squares).data() == font.data());
-    CHECK(engine::ui::fontWithFallback(Latin, {}) == Latin);
+    CHECK(engine::ui::labelFont(Latin, Squares).data() == font.data());
+    CHECK(engine::ui::labelFont(Latin, {}) == Latin);
     (void)measureText("Привет 日本語", font, 16.0f, 0.0f);
     CHECK(glyphCacheStats().missingGlyphs == 0);
 }
@@ -377,4 +377,40 @@ TEST_CASE("ADR 0259: rich text in Japanese wraps by the same rules")
     CHECK(metrics.lineCount > 2);
     CHECK(metrics.size.x <= 120.0f + 0.01f);
     CHECK(glyphCacheStats().missingGlyphs == 0);
+}
+
+TEST_CASE("ADR 0259: letter spacing widens Latin text by its share of the size, and not CJK")
+{
+    Faces faces(SquaresAfter);
+    resetGlyphCache();
+    const f32 plain = textWidth("Hello", Latin, 20.0f);
+    const std::string_view tracked = engine::ui::labelFont(Latin, {}, 0.1f);
+    // Two px after each of five letters at 20 px.
+    CHECK(textWidth("Hello", tracked, 20.0f) == doctest::Approx(static_cast<double>(plain + 10.0f)).epsilon(0.001));
+    // Ideographs are set at their full width: no room is added after them.
+    CHECK(textWidth("日本語", tracked, 20.0f) == doctest::Approx(static_cast<double>(textWidth("日本語", Latin, 20.0f))));
+    // Negative draws closer, and a value past the clamp is the clamp.
+    CHECK(textWidth("Hello", engine::ui::labelFont(Latin, {}, -0.05f), 20.0f) < plain);
+    CHECK(engine::ui::labelFont(Latin, {}, 50.0f) == engine::ui::labelFont(Latin, {}, 2.0f));
+    // It shares the glyphs of the label without it.
+    const auto fills = glyphCacheStats().fills;
+    (void)measureText("Hello", tracked, 20.0f, 0.0f);
+    CHECK(glyphCacheStats().fills == fills);
+}
+
+TEST_CASE("ADR 0259: wrapping, ellipsis and rich text measure with the letter spacing")
+{
+    Faces faces(SquaresAfter);
+    const std::string_view tracked = engine::ui::labelFont(Latin, {}, 0.2f);
+    constexpr std::string_view Words = "spread letters wrap sooner than tight ones do";
+    const f32 width = textWidth("spread letters", Latin, 16.0f) + 1.0f;
+    const std::vector<TextLine> tight = textLines(Words, Latin, 16.0f, width);
+    const std::vector<TextLine> spread = textLines(Words, tracked, 16.0f, width);
+    CHECK(spread.size() > tight.size());
+    for (const TextLine& line : spread)
+        CHECK(line.width <= width * 1.0001f + 0.01f);
+    const std::string cut = engine::ui::ellipsizedText(Words, tracked, 16.0f, 0.0f, Vec2{100.0f, 24.0f});
+    CHECK(measureText(cut, tracked, 16.0f, 0.0f).size.x <= 100.0f);
+    CHECK(engine::ui::measureRichText("<b>spread</b>", tracked, 16.0f, 0.0f).size.x >
+          engine::ui::measureRichText("<b>spread</b>", Latin, 16.0f, 0.0f).size.x + 6.0f * 16.0f * 0.2f - 0.5f);
 }

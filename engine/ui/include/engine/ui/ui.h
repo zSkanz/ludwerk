@@ -354,12 +354,15 @@ void setFaceProvider(FaceProvider provider, void* user) noexcept;
 // `TextLabel.Font` does.
 void setFontFallbacks(std::span<const std::string> names);
 // What separates a label's own face from the faces it falls back on, in the
-// `font` every function below takes. No face's name holds it.
+// `font` every function below takes. No face's name holds it. A part that
+// begins with `kLetterSpacingMark` is the label's letter spacing.
 inline constexpr char kFontFallbackSeparator = '\n';
-// The `font` a label is measured and drawn with: `font` when `fallback` is
-// empty, and the two joined when it is not -- kept for the process, so the
-// view stays good as long as anything holds it.
-[[nodiscard]] std::string_view fontWithFallback(std::string_view font, std::string_view fallback);
+inline constexpr char kLetterSpacingMark = '\x01';
+// The `font` a label is measured and drawn with: `font` itself when it has no
+// fallback and no letter spacing (`TextLabel.LetterSpacing`, in ems), and the
+// three joined when it has -- kept for the process, so the view stays good as
+// long as anything holds it.
+[[nodiscard]] std::string_view labelFont(std::string_view font, std::string_view fallback, f32 letterSpacing = 0.0f);
 
 // What an `ImageLabel.Image` resolves to: which texture index to sample and how
 // big the picture is in its own pixels.

@@ -48,6 +48,7 @@
 // What changed was what fills an entry.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -361,10 +362,14 @@ struct Face
 struct FaceChain
 {
     // As asked: a name, and after `kFontFallbackSeparator` the label's own
-    // fallbacks.
+    // fallbacks and its letter spacing (`labelFont`).
     std::string font;
     u32 hash = 0;
     std::vector<Face*> faces;
+    // `TextLabel.LetterSpacing`: room after each character, in ems. Not part
+    // of `hash`: it moves glyphs, it does not change them, so a label with it
+    // and one without share every glyph.
+    f32 tracking = 0.0f;
 
     [[nodiscard]] Face& primary() const noexcept { return *faces.front(); }
 };
@@ -522,8 +527,17 @@ FaceTable& faceTable()
         std::string_view own = cut == std::string_view::npos ? std::string_view{} : font.substr(cut + 1);
         while (!own.empty()) {
             const usize next = own.find(kFontFallbackSeparator);
-            if (const std::string_view name = own.substr(0, next); !name.empty())
+            const std::string_view name = own.substr(0, next);
+            if (!name.empty() && name.front() == kLetterSpacingMark) {
+                // A number `labelFont` wrote: read back the way it was written.
+                char digits[32] = {};
+                const usize length = std::min(name.size() - 1, sizeof(digits) - 1);
+                std::memcpy(digits, name.data() + 1, length);
+                chain->tracking = std::strtof(digits, nullptr);
+            }
+            else if (!name.empty()) {
                 add(name);
+            }
             own = next == std::string_view::npos ? std::string_view{} : own.substr(next + 1);
         }
         for (const std::string& name : table.fallbacks)
@@ -1096,6 +1110,19 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     return maxWidth * 1.0001f;
 }
 
+[[nodiscard]] bool breaksAround(u32 c) noexcept;
+
+// **The letter spacing after a character**, in face units at `pixelSize`
+// (`TextLabel.LetterSpacing`): none after an ideograph, a kana or a Hangul
+// syllable -- set at their full width, they are spaced by the font and
+// tracked text of them reads as gaps -- and none after what takes no room.
+[[nodiscard]] f32 trackingOf(const FaceChain& chain, f32 pixelSize, u32 codepoint) noexcept
+{
+    if (chain.tracking == 0.0f || codepoint == '\n' || zeroWidth(codepoint) || breaksAround(codepoint))
+        return 0.0f;
+    return chain.tracking * pixelSize / scaleFor(chain.primary(), pixelSize);
+}
+
 // The advance of one run, in face units. Every width in this file goes through
 // the cache, so a measurement and a draw can never disagree about how wide a
 // character is. `faces`, given, gains a bit for each face of the chain the run
@@ -1107,7 +1134,7 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
     while (index < run.size()) {
         const Decoded decoded = decodeUtf8(run, index);
         const GlyphEntry& entry = store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)];
-        total += entry.advance;
+        total += entry.advance + trackingOf(chain, pixelSize, decoded.codepoint);
         if (faces != nullptr)
             *faces |= 1u << entry.face;
         index += decoded.length;
@@ -1265,7 +1292,8 @@ void breakLines(std::string_view text, FaceChain& chain, f32 pixelSize, f32 scal
             breakEnd = index;
             breakNext = index + 1;
         }
-        const f32 advance = store().entries[glyphIndex(chain, pixelSize, codepoint)].advance;
+        const f32 advance =
+            store().entries[glyphIndex(chain, pixelSize, codepoint)].advance + trackingOf(chain, pixelSize, codepoint);
 
         if (maxWidth > 0.0f) {
             const f32 width = (running + advance) * scale;
@@ -1673,8 +1701,10 @@ struct RichLine
 
 [[nodiscard]] f32 advanceOf(FaceChain& chain, const RichStyle& style, u32 codepoint)
 {
-    const f32 advance =
-        store().entries[glyphIndex(chain, style.size, codepoint)].advance * scaleFor(chain.primary(), style.size);
+    const f32 scale = scaleFor(chain.primary(), style.size);
+    const f32 advance = (store().entries[glyphIndex(chain, style.size, codepoint)].advance +
+                         trackingOf(chain, style.size, codepoint)) *
+                        scale;
     return advance + (style.bold ? boldOffsetOf(style.size) : 0.0f);
 }
 
@@ -1994,7 +2024,8 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                 const Decoded decoded = decodeUtf8(text, index);
                 // The plain glyph's advance places both passes, so an outline
                 // sits exactly under its letter.
-                const f32 advance = store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)].advance;
+                const f32 advance = store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)].advance +
+                                    trackingOf(chain, pixelSize, decoded.codepoint);
                 const usize slot = glyphIndex(chain, pixelSize, decoded.codepoint, outline ? key : GlyphStroke{});
                 // Copied out rather than referenced: the next `glyphIndex` may
                 // reallocate the entry vector, and this loop calls it again.
@@ -2106,8 +2137,7 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
                 // A glyph's quads are measured from the top of ITS size's line, so
                 // a smaller run is dropped until its baseline meets the line's.
                 const f32 top = baseline - ascentOf(face, style.size);
-                const f32 advance = store().entries[glyphIndex(chain, style.size, glyph.codepoint)].advance * scale +
-                                    (style.bold ? boldOffsetOf(style.size) : 0.0f);
+                const f32 advance = advanceOf(chain, style, glyph.codepoint);
                 const bool outlined = style.stroke.thickness > 0.0f && style.stroke.alpha > 0.0f;
                 if (outlinePass && !outlined) {
                     pen += advance;
@@ -2236,22 +2266,32 @@ void setFontFallbacks(std::span<const std::string> names)
     resetGlyphCache();
 }
 
-std::string_view fontWithFallback(std::string_view font, std::string_view fallback)
+std::string_view labelFont(std::string_view font, std::string_view fallback, f32 letterSpacing)
 {
-    if (fallback.empty())
+    // Half an em closer to two apart: past either, letters overlap or stand alone.
+    letterSpacing = std::isfinite(letterSpacing) ? std::clamp(letterSpacing, -0.5f, 2.0f) : 0.0f;
+    if (fallback.empty() && letterSpacing == 0.0f)
         return font;
-    // Kept for the process: a few pairs a game, and a view a caller may hold
-    // across frames.
+    std::string wanted(font);
+    if (!fallback.empty()) {
+        wanted.push_back(kFontFallbackSeparator);
+        wanted.append(fallback);
+    }
+    if (letterSpacing != 0.0f) {
+        char digits[32] = {};
+        std::snprintf(digits, sizeof(digits), "%.6g", static_cast<double>(letterSpacing));
+        wanted.push_back(kFontFallbackSeparator);
+        wanted.push_back(kLetterSpacingMark);
+        wanted.append(digits);
+    }
+    // Kept for the process: a few of them a game, and a view a caller may
+    // hold across frames.
     static std::vector<std::unique_ptr<std::string>> joined;
     for (const std::unique_ptr<std::string>& held : joined) {
-        if (held->size() == font.size() + 1 + fallback.size() && held->starts_with(font) &&
-            (*held)[font.size()] == kFontFallbackSeparator && held->ends_with(fallback))
+        if (*held == wanted)
             return *held;
     }
-    auto made = std::make_unique<std::string>(font);
-    made->push_back(kFontFallbackSeparator);
-    made->append(fallback);
-    joined.push_back(std::move(made));
+    joined.push_back(std::make_unique<std::string>(std::move(wanted)));
     return *joined.back();
 }
 

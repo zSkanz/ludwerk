@@ -11,6 +11,9 @@ here.
 
 ### Added
 
+- `TextLabel.LetterSpacing`: room after each character as a fraction of the
+  text's size, honoured by wrapping, `TextScaled`, `TextOverflow` and rich
+  text, and not added after Chinese, Japanese and Korean characters.
 - Text in Chinese, Japanese and Korean beside a game's own font: a character
   a label's font has not got is drawn with the next font that has it -- the
   label's `TextLabel.FallbackFont`, then the fonts the project lists in

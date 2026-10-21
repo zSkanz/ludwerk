@@ -23,6 +23,7 @@ title.Parent = screen
 | `TextLabel.TextSize` | 14 | The em size **in pixels**. |
 | `TextLabel.Font` | `""` | An `asset://` URI to a TrueType or OpenType file. |
 | `TextLabel.FallbackFont` | `""` | A font for the characters `Font` has not got. See Fonts. |
+| `TextLabel.LetterSpacing` | 0 | Room after each character, as a fraction of `TextSize`. |
 | `TextLabel.TextXAlignment` | `Center` | `Enum.HorizontalAlignment` |
 | `TextLabel.TextYAlignment` | `Center` | `Enum.VerticalAlignment` |
 | `TextLabel.TextWrapped` | `false` | |
@@ -80,6 +81,15 @@ the direction marks draw nothing, whichever font is asked.
 
 Japanese, Simplified Chinese and Traditional Chinese draw some of the same
 characters differently, so list the font made for your game's language.
+
+### Letter spacing
+
+`LetterSpacing` adds room after each character as a fraction of the text's
+size: 0.05 at a `TextSize` of 40 is two pixels a letter, and a negative value
+draws letters closer. Wrapping, scaling and the ellipsis measure with it, and so
+does a text field's caret. It is not added after a Chinese, Japanese or Korean
+character, which the font already sets at its full width. Use it instead of
+spaces between letters, which break kerning, selection and screen readers.
 
 Glyphs are rasterized on demand and cached by face, size and codepoint -- and
 **a size is one of a few**: every whole pixel to 24, every second pixel to 64,

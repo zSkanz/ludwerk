@@ -10350,6 +10350,11 @@
           "Default": "\"\""
         },
         {
+          "Name": "LetterSpacing",
+          "Type": "number",
+          "Default": "0"
+        },
+        {
           "Name": "RichText",
           "Type": "boolean",
           "Default": "false"

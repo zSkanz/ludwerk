@@ -170,7 +170,7 @@ void collectChildren(const scene::World& world, core::InstanceId parent, i32 sor
     // field being typed into (`draw.cpp` says why).
     const f32 wrap = label->textWrapped ? wrapWidth : 0.0f;
     const bool rich = label->richText && world.textInputs().find(id) == nullptr;
-    const std::string_view font = fontWithFallback(label->font, label->fallbackFont);
+    const std::string_view font = labelFont(label->font, label->fallbackFont, label->letterSpacing);
     const TextRunMetrics metrics = rich ? measureRichText(label->text, font, label->textSize, wrap)
                                         : measureText(label->text, font, label->textSize, wrap);
     return metrics.size;

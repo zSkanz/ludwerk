@@ -735,7 +735,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(viewportFrameDesc);
 
     // --- TextLabel ---
-    static std::array<scene::PropertyDesc, 12> textLabelProperties;
+    static std::array<scene::PropertyDesc, 13> textLabelProperties;
     textLabelProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("Text"),
@@ -805,6 +805,18 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_string"),
             .get = native::getTextLabelFallbackFont,
             .set = native::setTextLabelFallbackFont,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LetterSpacing"),
+            .type = scene::ValueType::Number,
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Extra room after each character, as a fraction of `TextSize`. At 0.05 every letter is followed by a twentieth of the size, and a negative value draws letters closer. Wrapping, `TextScaled`, `TextOverflow` and rich text all measure with it. It is not added after a Chinese, Japanese or Korean character, which the font already sets at its full width. Use it rather than spaces between letters, which break kerning and selection.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_number"),
+            .get = native::getTextLabelLetterSpacing,
+            .set = native::setTextLabelLetterSpacing,
         },
         scene::PropertyDesc{
             .name = atoms.intern("TextXAlignment"),

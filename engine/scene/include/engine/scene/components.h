@@ -2517,6 +2517,9 @@ struct TextLabelComponent
     // `TextLabel.FallbackFont` (ADR 0259): the face a character `font` has not
     // got is drawn with, before the project's fallbacks. Empty: none of its own.
     std::string fallbackFont;
+    // `TextLabel.LetterSpacing`: room after each character, in ems of the
+    // text's size. Stored as written; drawing clamps it.
+    f32 letterSpacing = 0.0f;
     core::Color3 textColor{0.0f, 0.0f, 0.0f};
     // `TextLabel.TextTransparency`: the words' own see-through, apart from the
     // box's. Stored as written; drawing clamps it to 0..1.

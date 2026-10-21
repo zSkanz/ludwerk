@@ -508,7 +508,7 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
     // An empty field that is not being typed into shows its placeholder.
     if (label.text.empty() && field.composition.empty() && !field.focused) {
         if (!field.placeholderText.empty())
-            buildTextGeometry(field.placeholderText, fontWithFallback(label.font, label.fallbackFont),
+            buildTextGeometry(field.placeholderText, labelFont(label.font, label.fallbackFont, label.letterSpacing),
                               label.textSize * unitScaleOf(world, entry.id),
                               field.multiLine ? box.max.x - box.min.x : 0.0f, box, label.horizontalAlignment,
                               label.verticalAlignment, field.placeholderColor, textAlpha, scissor, out.quads);
@@ -787,7 +787,7 @@ void emit(const scene::World& world, const Entry& entry, DrawList& out, const Re
         // Nothing to draw. A `TextInput`'s placeholder is `emitField`'s.
         if (text.empty())
             return;
-        const std::string_view font = fontWithFallback(label->font, label->fallbackFont);
+        const std::string_view font = labelFont(label->font, label->fallbackFont, label->letterSpacing);
 
         // `TextScaled` re-measures at the size that fills the box rather than
         // stretching a bitmap: there is no distance field in v1, and a stretched

@@ -106,11 +106,26 @@ Ellipsis truncation (ADR 0168) cuts the lines this breaking makes. It uses
 the first face in the chain that has an ellipsis, and three full stops when
 none has one. Rich text breaks by the same rules over its styled glyphs.
 
+### 5. Letter spacing
+
+`TextLabel.LetterSpacing` adds room after each character as a fraction
+of the text's size, from -0.5 to 2. It goes into every advance the text
+is measured and drawn by, so wrapping, scaling, the ellipsis, rich text
+and a text field's caret all agree with what is drawn. It is carried
+with the label's chain of faces and is not part of the glyphs' key, so
+spaced text shares its glyphs with text that is not spaced. It is not
+added after an ideograph, a kana, a Hangul syllable or a full-width form.
+The font sets those at their full width, and tracked CJK text reads as
+gaps. Games that faked spacing with no-break spaces between letters lost
+kerning and selection.
+
 ## Script surface
 
 - `TextLabel.FallbackFont` (`Content`, kind `Font`, `""`): presentation,
   outside the world's hash.
 - `[ui] font_fallbacks` in `project.toml`: a list of `asset://` paths.
+- `TextLabel.LetterSpacing` (`number`, `0`, fraction of `TextSize`):
+  presentation.
 
 ## Proof
 

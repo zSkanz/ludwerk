@@ -656,6 +656,25 @@ bool setTextLabelFallbackFont(scene::World& world, core::InstanceId id, const Va
     return true;
 }
 
+Value getTextLabelLetterSpacing(const scene::World& world, core::InstanceId id)
+{
+    const scene::TextLabelComponent* component = world.textLabels().find(id);
+    return component == nullptr ? Value{} : Value{static_cast<f64>(component->letterSpacing)};
+}
+
+bool setTextLabelLetterSpacing(scene::World& world, core::InstanceId id, const Value& value)
+{
+    scene::TextLabelComponent* component = world.textLabels().find(id);
+    if (component == nullptr)
+        return false;
+    const auto* number = std::get_if<f64>(&value);
+    if (number == nullptr || !std::isfinite(*number))
+        return false;
+    component->letterSpacing = static_cast<f32>(*number);
+    markLayoutDirty(world, id);
+    return true;
+}
+
 Value getTextLabelTextXAlignment(const scene::World& world, core::InstanceId id)
 {
     const scene::TextLabelComponent* component = world.textLabels().find(id);

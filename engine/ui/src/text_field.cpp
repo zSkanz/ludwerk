@@ -24,7 +24,7 @@ FieldView fieldView(const scene::World& world, core::InstanceId id)
     // Less the field's own padding: where its text, its caret and its
     // placeholder are, and where a press is turned into a place in the text.
     view.box = textRectOf(world, id, core::Rect{self->absolutePosition, self->absolutePosition + self->absoluteSize});
-    view.font = fontWithFallback(label->font, label->fallbackFont);
+    view.font = labelFont(label->font, label->fallbackFont, label->letterSpacing);
     view.size = label->textSize * self->unitScale;
     view.horizontalAlignment = label->horizontalAlignment;
     view.multiLine = field->multiLine;

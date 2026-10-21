@@ -3536,6 +3536,12 @@ declare extern type TextLabel extends UIObject with
     --- font made for Latin text, when the rest of the game needs no such fallback. Empty: only the
     --- project's fallbacks and the default font.
     FallbackFont: Content
+    --- Extra room after each character, as a fraction of `TextSize`. At 0.05 every letter is followed
+    --- by a twentieth of the size, and a negative value draws letters closer. Wrapping, `TextScaled`,
+    --- `TextOverflow` and rich text all measure with it. It is not added after a Chinese, Japanese or
+    --- Korean character, which the font already sets at its full width. Use it rather than spaces
+    --- between letters, which break kerning and selection.
+    LetterSpacing: number
     --- The horizontal position of the text in the object: `Left`, `Center` or `Right`.
     TextXAlignment: EnumHorizontalAlignment
     --- The vertical position of the text in the object: `Top`, `Center` or `Bottom`.
