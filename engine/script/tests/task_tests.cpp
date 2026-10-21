@@ -1,8 +1,12 @@
 #include <lua.h>
+#include <lualib.h>
 
+#include <chrono>
 #include <doctest/doctest.h>
 #include <ostream>
+#include <thread>
 
+#include "engine/platform/platform.h"
 #include "script_fixture.h"
 
 using engine::script::testing::Fixture;
@@ -403,6 +407,91 @@ TEST_CASE("a script that never yields is stopped by the watchdog, and the game g
     CHECK(fixture.failure(R"(
         assert(workspace:GetAttribute("After") == true, "the script went on past the stopped thread")
     )") == "");
+}
+
+namespace {
+
+// A native call that keeps the thread off the CPU for the milliseconds it is
+// given: what a starved machine does to a script, without the machine.
+int offCpu(lua_State* L)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(luaL_checknumber(L, 1))));
+    return 0;
+}
+
+} // namespace
+
+TEST_CASE("the watchdog counts a script's own running time, not the time it was kept off a CPU")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    fixture.runtime->setWatchdog(0.0, 0.3);
+    // Windows' thread clock answers a millisecond after its first read.
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    if (engine::platform::threadCpuNs() < 0) {
+        MESSAGE("no thread CPU clock on this system");
+        return;
+    }
+    lua_State* L = fixture.runtime->state();
+    lua_setreadonly(L, LUA_GLOBALSINDEX, false);
+    lua_pushcfunction(L, offCpu, "offCpu");
+    lua_setglobal(L, "offCpu");
+    lua_setreadonly(L, LUA_GLOBALSINDEX, true);
+
+    // Four times the limit by the wall clock, a few milliseconds of it run.
+    // And then a loop that never yields, which is still stopped.
+    CHECK(fixture.failure(R"(
+        task.spawn(function()
+            for _ = 1, 12 do
+                offCpu(100)
+                local sum = 0
+                for value = 1, 20000 do
+                    sum += value
+                end
+            end
+            workspace:SetAttribute("Starved", true)
+        end)
+        task.spawn(function()
+            while true do
+            end
+        end)
+        workspace:SetAttribute("After", true)
+    )") == "");
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Starved") == true, "a thread kept off the CPU was stopped as a runaway")
+        assert(workspace:GetAttribute("After") == true, "the script went on past the stopped thread")
+    )") == "");
+    CHECK(fixture.errors().find("script.err.script_timeout") != std::string::npos);
+}
+
+TEST_CASE("a script's body may run to the load limit, and a handler only to the running one")
+{
+    Fixture fixture;
+    REQUIRE(fixture.booted);
+    fixture.runtime->setWatchdog(0.0, 0.2, 5.0);
+
+    // Run as a chunk is run whole, as a body is: a second of work -- by the
+    // clock, so at most a second of its own running time on a busy machine
+    // -- is inside the load limit. A handler that never yields is stopped at
+    // the running one: counted in running time, which a loop that never
+    // ends reaches whatever the machine is doing.
+    CHECK(fixture.failure(R"(
+        local started = os.clock()
+        while os.clock() - started < 1 do
+        end
+        workspace:SetAttribute("Loaded", true)
+        task.defer(function()
+            while true do
+            end
+            workspace:SetAttribute("Handled", true)
+        end)
+    )") == "");
+    fixture.tick();
+    CHECK(fixture.failure(R"(
+        assert(workspace:GetAttribute("Loaded") == true, "a body was stopped inside the load limit")
+        assert(workspace:GetAttribute("Handled") == nil, "a handler ran past the running limit")
+    )") == "");
+    CHECK(fixture.errors().find("script.err.script_timeout") != std::string::npos);
 }
 
 TEST_CASE("the script heap stops at its cap with a keyed error, and the VM goes on")

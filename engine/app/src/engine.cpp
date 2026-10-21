@@ -3201,6 +3201,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         .saveMaxSlots = options.saveMaxSlots,
         .sceneCloseGrace = options.sceneCloseGrace,
         .scriptMemoryMb = options.scriptMemoryMb,
+        .scriptTimeout = options.scriptTimeout,
+        .scriptLoadTimeout = options.scriptLoadTimeout,
         .developer = options.developerWarnings,
         .testRun = !options.conformanceRoot.empty(),
         // A prepared scene's meshes (ADR 0125), through the loader that draws

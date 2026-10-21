@@ -247,6 +247,19 @@ struct VmContext
     u64 resumeStartedNs = 0;
     u64 warnAfterNs = 0;
     u64 killAfterNs = 0;
+    // **What a resume is stopped by is its own thread's CPU time**,
+    // read where it began, and the limit that resume runs under: a script's
+    // body -- what it does as it loads, its requires included -- is given
+    // `loadKillAfterNs` where that is the longer. The wall clock counted the
+    // time a starved machine kept the thread off a CPU, and a world built
+    // at a scene's load on a busy PC was stopped as a runaway.
+    u64 resumeStartedCpuNs = 0;
+    u64 resumeKillNs = 0;
+    u64 loadKillAfterNs = 0;
+    bool resumeLoading = false;
+    // Whether `resumeStartedCpuNs` is the thread's CPU time, or the wall
+    // clock where the system would not say.
+    bool resumeCpuClock = false;
     u64 lastLongFrameWarnNs = 0;
     u32 interruptTicks = 0;
 

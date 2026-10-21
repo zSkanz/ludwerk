@@ -126,6 +126,12 @@ enum class ThreadSide : core::u8
 
 [[nodiscard]] ThreadSide threadSide(lua_State* thread) noexcept;
 void setThreadSide(lua_State* thread, ThreadSide side) noexcept;
+// **A script's body, not yet run**: what the script does as it loads,
+// given the watchdog's load limit on its first resumption. Marked when the
+// body is queued and taken -- once -- when it is resumed; a thread it makes
+// is not marked.
+void markLoading(lua_State* thread) noexcept;
+[[nodiscard]] bool takeLoading(lua_State* thread) noexcept;
 // Once a VM: a thread made from another starts as its side.
 void installThreadSides(lua_State* L);
 // The side of the run the function at `index` was written in: its own

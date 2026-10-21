@@ -298,6 +298,13 @@ struct ProjectConfig
 #else
     core::u32 scriptMemoryMb = 1024;
 #endif
+    // `[script] timeout` and `load_timeout`: the seconds of its own
+    // running time a script may go without yielding before it is stopped,
+    // and the longer limit for what it does as it loads -- its body, the
+    // modules it requires. Running time, not the wall's: a busy machine
+    // stops nothing.
+    core::f64 scriptTimeout = 5.0;
+    core::f64 scriptLoadTimeout = 30.0;
 
     // `[debug] frame_report_seconds`: a line in the log every so many seconds
     // saying how the frames went -- for a machine nobody is sitting at with a

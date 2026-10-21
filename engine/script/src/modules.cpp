@@ -138,8 +138,9 @@ namespace {
         return false;
     }
 
-    // A `require` chain is resumes inside resumes too.
-    if (!enterResume(L)) {
+    // A `require` chain is resumes inside resumes too. A module's first run
+    // is loading, and given the load limit where it is the outermost.
+    if (!enterResume(L, true)) {
         lua_remove(L, rooted);
         raise(L, ENG_TR("script.err.resume_too_deep"));
     }
@@ -954,6 +955,8 @@ bool startScript(lua_State* L, core::InstanceId instance)
 
     // Deferred rather than resumed here, so every entry script's first
     // resumption happens inside a drain and in the order they were mounted.
+    // That first one is the script loading.
+    markLoading(co);
     const int threadRef = lua_ref(L, rooted);
     if (!enqueueTaskCallback(L, threadRef, 0, 0))
         (void)lua_unref(L, threadRef);
@@ -1062,9 +1065,14 @@ namespace {
 // Luau's hook: `parent` made `thread`, or -- null -- `thread` is going.
 void threadMade(lua_State* parent, lua_State* thread)
 {
+    // The side and nothing else: a thread a loading body makes is not loading.
     if (parent != nullptr)
-        lua_setthreaddata(thread, lua_getthreaddata(parent));
+        lua_setthreaddata(thread,
+                          reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(lua_getthreaddata(parent)) & 3u));
 }
+
+// Above the side's two bits.
+constexpr std::uintptr_t LoadingBit = 4u;
 
 } // namespace
 
@@ -1076,6 +1084,23 @@ ThreadSide threadSide(lua_State* thread) noexcept
 void setThreadSide(lua_State* thread, ThreadSide side) noexcept
 {
     lua_setthreaddata(thread, reinterpret_cast<void*>(static_cast<std::uintptr_t>(side)));
+}
+
+void markLoading(lua_State* thread) noexcept
+{
+    const auto data = reinterpret_cast<std::uintptr_t>(lua_getthreaddata(thread));
+    lua_setthreaddata(thread, reinterpret_cast<void*>(data | LoadingBit));
+}
+
+bool takeLoading(lua_State* thread) noexcept
+{
+    if (thread == nullptr)
+        return false;
+    const auto data = reinterpret_cast<std::uintptr_t>(lua_getthreaddata(thread));
+    if ((data & LoadingBit) == 0)
+        return false;
+    lua_setthreaddata(thread, reinterpret_cast<void*>(data & ~LoadingBit));
+    return true;
 }
 
 void installThreadSides(lua_State* L)

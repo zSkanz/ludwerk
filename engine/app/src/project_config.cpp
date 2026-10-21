@@ -886,6 +886,12 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
             config.luauFlags.push_back(LuauFlagSetting{name, static_cast<core::i64>(*number), false});
     }
     count("script.max_memory_mb", 16, 65536, config.scriptMemoryMb);
+    if (const std::optional<f64> value = document.number("script.timeout");
+        value.has_value() && *value >= 0.1 && *value <= 600.0)
+        config.scriptTimeout = *value;
+    if (const std::optional<f64> value = document.number("script.load_timeout");
+        value.has_value() && *value >= 0.1 && *value <= 600.0)
+        config.scriptLoadTimeout = *value;
     if (const std::optional<f64> value = document.number("render.foliage_density");
         value.has_value() && *value >= 0.0 && *value <= 1.0)
         config.foliageDensity = static_cast<core::f32>(*value);

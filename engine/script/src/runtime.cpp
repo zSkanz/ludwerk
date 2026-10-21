@@ -12,6 +12,7 @@
 #include "engine/core/i18n.h"
 #include "engine/core/log.h"
 #include "engine/core/random.h"
+#include "engine/platform/platform.h"
 #include "engine/scene/character_replay.h"
 #include "engine/script/builtins.h"
 #include "engine/script/bytecode.h"
@@ -240,15 +241,20 @@ void watchdogInterrupt(lua_State* L, int gc)
             }
         }
     }
-    if (ctx.killAfterNs == 0 || ctx.resumeStartedNs == 0 || (++ctx.interruptTicks & 255u) != 0)
+    if (ctx.resumeKillNs == 0 || ctx.resumeStartedNs == 0 || (++ctx.interruptTicks & 255u) != 0)
         return;
-    const u64 now = watchdogNow();
-    if (now - ctx.resumeStartedNs < ctx.killAfterNs)
+    // **The thread's own running time**, not the wall's: a machine
+    // that kept the thread off a CPU -- a busy PC, a starved container --
+    // is not a script that will not stop.
+    const core::i64 cpu = ctx.resumeCpuClock ? platform::threadCpuNs() : -1;
+    const u64 now = cpu >= 0 ? static_cast<u64>(cpu) : watchdogNow();
+    if (now - ctx.resumeStartedCpuNs < ctx.resumeKillNs)
         return;
     // The next thread gets a whole budget: this one is the runaway.
-    ctx.resumeStartedNs = now;
-    const core::I18nArg args[] = {{"seconds", static_cast<f64>(ctx.killAfterNs) / 1e9}};
-    raise(L, ENG_TR("script.err.script_timeout"), args);
+    ctx.resumeStartedCpuNs = now;
+    ctx.resumeStartedNs = watchdogNow();
+    const core::I18nArg args[] = {{"seconds", static_cast<f64>(ctx.resumeKillNs) / 1e9}};
+    raise(L, ctx.resumeLoading ? ENG_TR("script.err.script_load_timeout") : ENG_TR("script.err.script_timeout"), args);
 }
 
 // The runtime as the mirror's `scene::PredictedStepHost`.
@@ -745,7 +751,7 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
         return error;
     }
 
-    if (!enterResume(L)) {
+    if (!enterResume(L, true)) {
         lua_pop(L, 1); // the thread
         return core::makeError(ENG_TR("script.err.resume_too_deep"));
     }
@@ -766,10 +772,14 @@ std::optional<core::EngineError> ScriptRuntime::runSource(std::string_view sourc
     return std::nullopt;
 }
 
-void ScriptRuntime::setWatchdog(core::f64 warnSeconds, core::f64 killSeconds) noexcept
+void ScriptRuntime::setWatchdog(core::f64 warnSeconds, core::f64 killSeconds, core::f64 loadKillSeconds) noexcept
 {
     m_impl->context.warnAfterNs = static_cast<core::u64>(std::max(0.0, warnSeconds) * 1e9);
     m_impl->context.killAfterNs = static_cast<core::u64>(std::max(0.0, killSeconds) * 1e9);
+    m_impl->context.loadKillAfterNs = static_cast<core::u64>(std::max(0.0, loadKillSeconds) * 1e9);
+    // The thread clock's first read starts its calibration on Windows, which
+    // answers nothing for a millisecond: begun here, before any script runs.
+    (void)platform::threadCpuNs();
 }
 
 void ScriptRuntime::setMemoryLimit(core::usize bytes) noexcept

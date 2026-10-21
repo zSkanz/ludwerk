@@ -425,6 +425,8 @@ std::optional<core::EngineError> WorldHost::boot(const WorldHostOptions& options
     m_platformServices = options.platformServices;
     m_sceneCloseGrace = options.sceneCloseGrace;
     m_scriptMemoryMb = options.scriptMemoryMb;
+    m_scriptTimeout = options.scriptTimeout;
+    m_scriptLoadTimeout = options.scriptLoadTimeout;
     m_prepareInBackground = !options.headless;
     m_warmContent = options.warmContent;
     m_warmedContent = options.warmedContent;
@@ -2120,12 +2122,17 @@ void WorldHost::configureRuntime()
     // stuck script is never a frozen game.
     // And a run of specs is neither: a suite is one resumption, and
     // five seconds of it is a machine with a gate's other lanes on it.
+    //
+    // **Counted in the script's own running time**, and what a
+    // script does as it loads -- its body, its requires -- has the project's
+    // `[script] load_timeout`: a world generated at a scene's load on a slow
+    // PC was stopped as a runaway, its time spent off the CPU counted.
     if (m_testRun)
         m_runtime->setWatchdog(0.0, 60.0);
     else if (m_developer)
-        m_runtime->setWatchdog(0.010, 1.0);
+        m_runtime->setWatchdog(0.010, std::min(1.0, m_scriptTimeout), m_scriptLoadTimeout);
     else
-        m_runtime->setWatchdog(0.0, 5.0);
+        m_runtime->setWatchdog(0.0, m_scriptTimeout, m_scriptLoadTimeout);
     m_runtime->setMemoryLimit(static_cast<core::usize>(m_scriptMemoryMb) * 1024u * 1024u);
 }
 

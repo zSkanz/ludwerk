@@ -278,6 +278,9 @@ struct WorldHostOptions
     f64 sceneCloseGrace = 5.0;
     // `[script] max_memory_mb`: the scripts' heap cap; 0 for none.
     core::u32 scriptMemoryMb = 0;
+    // `[script] timeout` and `load_timeout`.
+    core::f64 scriptTimeout = 5.0;
+    core::f64 scriptLoadTimeout = 30.0;
     // **The warnings a person testing a game wants** and a player never reads:
     // a close handler dropped with its scene, a message nobody listens to. The
     // editor, `dev` and a match's windows; never an exported game.
@@ -917,6 +920,8 @@ private:
     std::unordered_map<std::string, std::string> m_integrationConfigurations;
     platform::PlatformServiceConfiguration m_platformServices;
     core::u32 m_scriptMemoryMb = 0;
+    core::f64 m_scriptTimeout = 5.0;
+    core::f64 m_scriptLoadTimeout = 30.0;
     // The watchdog and the heap cap onto a runtime just made.
     void configureRuntime();
     // Instances reparented to nil because a script held them when they

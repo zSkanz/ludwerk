@@ -3,6 +3,7 @@
 #include <lua.h>
 #include <lualib.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <string>
@@ -10,6 +11,7 @@
 
 #include "engine/core/log.h"
 #include "engine/core/run_record.h"
+#include "engine/platform/platform.h"
 #include "engine/scene/world.h"
 #include "engine/script/datatypes.h"
 #include "engine/script/instance_binding.h"
@@ -571,7 +573,7 @@ void reportHandlerError(lua_State* L, lua_State* co, int status)
 // finished with, so the caller can drop its root.
 [[nodiscard]] bool resumeHandler(lua_State* L, lua_State* co, int argCount)
 {
-    if (!enterResume(L)) {
+    if (!enterResume(L, takeLoading(co))) {
         lua_pushstring(co, core::formatKeyPrefixed(ENG_TR("script.err.resume_too_deep")).c_str());
         reportHandlerError(L, co, LUA_ERRRUN);
         return true;
@@ -818,7 +820,7 @@ bool resumeScheduledWithError(lua_State* L, lua_State* co)
 
 int startScheduled(lua_State* L, lua_State* co, int argCount)
 {
-    if (!enterResume(L)) {
+    if (!enterResume(L, takeLoading(co))) {
         lua_pushstring(co, core::formatKeyPrefixed(ENG_TR("script.err.resume_too_deep")).c_str());
         reportHandlerError(L, co, LUA_ERRRUN);
         return LUA_ERRRUN;
@@ -855,13 +857,22 @@ u64 watchdogNow() noexcept
             .count());
 }
 
-bool enterResume(lua_State* L) noexcept
+bool enterResume(lua_State* L, bool loading) noexcept
 {
     SignalSystem& sys = system(L);
     if (sys.nestedResumes >= MaxNestedResumes)
         return false;
-    if (sys.nestedResumes == 0)
-        context(L).resumeStartedNs = watchdogNow();
+    if (sys.nestedResumes == 0) {
+        VmContext& ctx = context(L);
+        ctx.resumeStartedNs = watchdogNow();
+        const core::i64 cpu = platform::threadCpuNs();
+        ctx.resumeCpuClock = cpu >= 0;
+        ctx.resumeStartedCpuNs = cpu >= 0 ? static_cast<u64>(cpu) : ctx.resumeStartedNs;
+        // Loading where that buys time: a load limit no longer than the
+        // running one is the running one, and says so.
+        ctx.resumeLoading = loading && ctx.killAfterNs != 0 && ctx.loadKillAfterNs > ctx.killAfterNs;
+        ctx.resumeKillNs = ctx.resumeLoading ? ctx.loadKillAfterNs : ctx.killAfterNs;
+    }
     ++sys.nestedResumes;
     return true;
 }

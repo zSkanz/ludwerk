@@ -181,7 +181,12 @@ public:
     // warned about, and one past `killSeconds` is stopped with an error in its
     // thread. 0 turns either off. The host sets it: 10 ms and 1 s where a
     // person is testing, 5 s and no warning in an exported game.
-    void setWatchdog(core::f64 warnSeconds, core::f64 killSeconds) noexcept;
+    //
+    // What is counted is the running thread's CPU time, not the wall's, so a
+    // machine that keeps the thread off a CPU never stops a script. A
+    // script's body and a module's first run -- what a game does as it loads
+    // -- may run for `loadKillSeconds` where that is the longer.
+    void setWatchdog(core::f64 warnSeconds, core::f64 killSeconds, core::f64 loadKillSeconds = 0.0) noexcept;
     // **The script heap's cap**, in bytes; 0 for none. May be set at
     // any time: it bounds what is allocated from then on.
     void setMemoryLimit(core::usize bytes) noexcept;

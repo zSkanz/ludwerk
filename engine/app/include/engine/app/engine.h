@@ -285,6 +285,9 @@ struct EngineOptions
     core::f64 sceneCloseGrace = 5.0;
     // `[script] max_memory_mb`; 0 for no cap.
     core::u32 scriptMemoryMb = 0;
+    // `[script] timeout` and `load_timeout`, in seconds of running time.
+    core::f64 scriptTimeout = 5.0;
+    core::f64 scriptLoadTimeout = 30.0;
     // The editor, `dev` and a match's windows: warnings a player never reads.
     bool developerWarnings = false;
 

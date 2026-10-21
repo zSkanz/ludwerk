@@ -2187,6 +2187,8 @@ static int hostMain(int argc, char** argv)
         options.saveMaxSlots = config.saveMaxSlots;
         options.sceneCloseGrace = config.sceneCloseGrace;
         options.scriptMemoryMb = config.scriptMemoryMb;
+        options.scriptTimeout = config.scriptTimeout;
+        options.scriptLoadTimeout = config.scriptLoadTimeout;
         // The flag beats the file, as every other one does.
         if (options.frameReportSeconds <= 0.0)
             options.frameReportSeconds = config.frameReportSeconds;

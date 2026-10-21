@@ -260,7 +260,9 @@ inline constexpr u32 MaxNestedResumes = 100;
 //
 // The outermost one also arms the watchdog, and leaving it warns
 // when it ran past the warning budget -- naming `co`'s script, when given.
-[[nodiscard]] bool enterResume(lua_State* L) noexcept;
+// `loading` is a script's body or a module's first run: what a game does as
+// it loads, which is given the load limit where that is the longer.
+[[nodiscard]] bool enterResume(lua_State* L, bool loading = false) noexcept;
 void leaveResume(lua_State* L, lua_State* co = nullptr) noexcept;
 
 // Monotonic nanoseconds, for the watchdog.

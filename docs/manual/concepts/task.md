@@ -114,6 +114,25 @@ Prefer a phase signal to a `while true do task.wait() end` loop. The signal says
 and it is disconnectable. The loop says none of those things and cannot be
 stopped from outside.
 
+## A script that never yields is stopped
+
+A script that runs without yielding for too long is stopped with an error, and
+the rest of the game goes on. The time counted is the script's **own running
+time**, not the time on the clock: a busy or slow computer that keeps the
+script waiting for the processor does not count against it.
+
+| Where the code runs | Stopped after | Set with |
+|---|---|---|
+| A script's first run, and a module's first run when it is required | 30 s | `[script] load_timeout` |
+| Everything else: handlers, tasks, loops | 5 s | `[script] timeout` |
+
+While you test in the editor or with `ludwerk dev`, a handler is stopped after
+1 s, so a runaway loop is found at once. The load limit is the same as in the
+game.
+
+Work that must take longer, such as generating a world, should yield now and
+then with `task.wait()`, so the game keeps drawing frames while it runs.
+
 ## task is a global, not a module
 
 `task` is on the global table. `require("@std/task")` does not resolve in the
