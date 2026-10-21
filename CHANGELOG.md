@@ -163,6 +163,11 @@ here.
 
 ### Fixed
 
+- `ludwerk check` and `--check-scripts` compile every script, as the game
+  compiles it in development and as an exported game's package does, and
+  say which refused it: a function past the compiler's limits -- two hundred
+  locals, upvalues, registers, constants -- failed only once the game loaded
+  it.
 - `--join=relay://host:port/CODE` joins by code from the command line, as
   `NetworkService:Join` does; it was refused as a bad port.
 - A game's player no longer carries the build machine's folders and user

@@ -97,6 +97,16 @@ problem is one line a terminal makes a link:
 src/client/Hud.luau(12,5): error: Type 'number' could not be converted into 'string'
 ```
 
+**And every script is compiled, twice.** Some limits belong to the compiler
+alone -- two hundred locals in a function, and the counts of upvalues,
+registers and constants -- and a script past one parses and type-checks and
+then fails as the game loads it. The engine's checker compiles each script as
+the game compiles it in development and as an exported game's package does,
+and says which refused it: the two do not always agree, because a package's
+compiler folds a local that holds a constant away. So a function of 201 locals
+that are all constants fails "in development" only, and one whose locals are
+computed fails "in development or in an exported game".
+
 **The analyzer is given your project's Luau settings.** It asks the engine
 for the values in `[luau.flags]` and for every parser flag the game runs
 with, so it accepts the syntax the game accepts and refuses what the game

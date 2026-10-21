@@ -3,11 +3,15 @@
 #include "engine/app/script_check.h"
 
 #include <algorithm>
+#include <span>
+#include <string>
+#include <string_view>
 
 #include "engine/app/script_complete.h"
 #include "engine/app/script_sides.h"
 #include "engine/core/i18n.h"
 #include "engine/scene/world.h"
+#include "engine/script/bytecode.h"
 #include "engine/script/modules.h"
 
 namespace engine::app {
@@ -48,6 +52,45 @@ void appendTreeDiagnostics(ScriptDocument& document, const scene::World& world, 
     document.appendDiagnostics(reached);
 }
 
+namespace {
+
+// **A compiler's refusal, as a diagnostic**: its own form is `:LINE:
+// message`, and `where` says which compile refused -- the runtime's, an
+// exported game's, or both.
+[[nodiscard]] Diagnostic compileRefusal(std::string_view refusal, core::TextKey where)
+{
+    core::u32 line = 1;
+    std::string_view words = refusal;
+    if (words.starts_with(':')) {
+        const std::size_t end = words.find(": ", 1);
+        if (end != std::string_view::npos) {
+            core::u32 read = 0;
+            bool number = end > 1;
+            for (std::size_t at = 1; at < end; ++at) {
+                if (words[at] < '0' || words[at] > '9') {
+                    number = false;
+                    break;
+                }
+                read = read * 10 + static_cast<core::u32>(words[at] - '0');
+            }
+            if (number && read > 0) {
+                line = read;
+                words.remove_prefix(end + 2);
+            }
+        }
+    }
+    const std::string whereText = core::engineCatalog().format(where);
+    const core::I18nArg args[] = {{"message", words}, {"where", std::string_view{whereText}}};
+    return Diagnostic{
+        .at = Position{line - 1, 0},
+        .length = 0,
+        .message = core::engineCatalog().format(ENG_TR("engine.check.err.compile"), args),
+        .severity = Severity::Error,
+    };
+}
+
+} // namespace
+
 ScriptCheckReport checkScripts(const scene::World& world, core::InstanceId dataModel, const ScriptCheckOptions& options)
 {
     ScriptCheckReport report;
@@ -67,6 +110,41 @@ ScriptCheckReport checkScripts(const scene::World& world, core::InstanceId dataM
         appendTreeDiagnostics(document, world, dataModel, node.id, options.files.projectRoot, options.sides);
         const LanguageCheck checked = core.check(node.path);
         document.appendDiagnostics(checked.diagnostics);
+        // **What only the compiler refuses**: more than two hundred locals in
+        // a function, upvalues, registers, constants. The parser and the type
+        // checker take such a script; the compiler does not, and a lobby
+        // module failed only once it was run. **Compiled twice**: as the
+        // runtime compiles what it loads in development (`bytecodeOf`) and as
+        // a package compiles what it ships (`compileForPackage`), whose
+        // options fold a local that holds a constant away -- so a script one
+        // takes the other can refuse, and the check names which. Said at the
+        // line the compiler names, unless the parser has already said why
+        // the script is not Luau.
+        const bool unparsed = std::any_of(document.diagnostics().begin(), document.diagnostics().end(),
+                                          [](const Diagnostic& diagnostic) { return diagnostic.syntax; });
+        if (!unparsed) {
+            std::string inDevelopment;
+            if (std::string bytecode; !script::bytecodeOf(node.source, node.path, bytecode).has_value() &&
+                                      !bytecode.empty() && bytecode.front() == '\0')
+                inDevelopment = bytecode.substr(1);
+            std::string inExport;
+            if (std::string bytecode; !script::compileForPackage(node.source, bytecode, inExport)) {
+                // A build with no compiler says so with its key; that is not
+                // the script's fault.
+                if (inExport.starts_with('['))
+                    inExport.clear();
+            }
+            std::vector<Diagnostic> compiled;
+            if (!inDevelopment.empty() && inDevelopment == inExport)
+                compiled.push_back(compileRefusal(inDevelopment, ENG_TR("engine.check.compile.everywhere")));
+            else {
+                if (!inDevelopment.empty())
+                    compiled.push_back(compileRefusal(inDevelopment, ENG_TR("engine.check.compile.development")));
+                if (!inExport.empty())
+                    compiled.push_back(compileRefusal(inExport, ENG_TR("engine.check.compile.export")));
+            }
+            document.appendDiagnostics(compiled);
+        }
 
         std::vector<Diagnostic> found(document.diagnostics().begin(), document.diagnostics().end());
         std::stable_sort(found.begin(), found.end(), [](const Diagnostic& a, const Diagnostic& b) {

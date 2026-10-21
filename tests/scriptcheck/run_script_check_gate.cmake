@@ -115,4 +115,44 @@ if(NOT second MATCHES "^src/client/Main\\.luau\\(6,[0-9]+\\): error: .*Rounds")
     message(FATAL_ERROR "A field the required module's type does not have was not said at its line: ${second}")
 endif()
 
-message(STATUS "The editor's checker is clean on the project and on ${checked} examples, and says the two mistakes.")
+# 4. What only the compiler refuses, in each build that compiles it. A
+# function of 201 locals parses and type-checks, and a compiler stops at 200
+# -- but an exported game's compiler folds a local that holds a constant away,
+# so the same function can load in one and not the other. Each one read, so
+# the only thing said is the compiler's.
+file(WRITE "${SCRATCH}/src/client/Main.luau" "--!strict
+print('modules that do not compile')
+")
+function(many_locals file value)
+    set(text "--!strict\nlocal function lobby(n: number): number\n")
+    set(sum "0")
+    foreach(index RANGE 0 200)
+        string(REPLACE "@" "${index}" written "${value}")
+        string(APPEND text "    local v${index} = ${written}\n")
+        string(APPEND sum " + v${index}")
+    endforeach()
+    string(APPEND text "    return ${sum}\nend\n\nreturn lobby\n")
+    file(WRITE "${file}" "${text}")
+endfunction()
+# Constants: refused where the game is developed, folded in the export.
+many_locals("${SCRATCH}/src/shared/Lobby.luau" "@")
+# Each from the argument, which no compiler can fold: refused in both.
+many_locals("${SCRATCH}/src/shared/Party.luau" "n + @")
+check_scripts("${SCRATCH}" result problems output)
+list(LENGTH problems count)
+if(result EQUAL 0 OR NOT count EQUAL 2)
+    string(REPLACE ";" "\n" listed "${problems}")
+    message(FATAL_ERROR
+        "Two functions of 201 locals were written into src/shared and the checker said ${count} (exit "
+        "${result}):\n${listed}\n--- output ---\n${output}")
+endif()
+string(REPLACE ";" "\n" listed "${problems}")
+if(NOT listed MATCHES "src/shared/Lobby\\.luau\\([0-9]+,1\\): error: The script does not compile in development: [^\n]*local")
+    message(FATAL_ERROR "A function only the development compiler refuses was not said as one:\n${listed}")
+endif()
+if(NOT listed MATCHES "src/shared/Party\\.luau\\([0-9]+,1\\): error: The script does not compile in development or in an exported game: [^\n]*local")
+    message(FATAL_ERROR "A function both compilers refuse was not said as one:\n${listed}")
+endif()
+
+message(STATUS "The editor's checker is clean on the project and on ${checked} examples, says the two mistakes, "
+               "and says what only the compiler refuses.")
