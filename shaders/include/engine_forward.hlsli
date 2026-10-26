@@ -33,8 +33,10 @@
 // **A surface shader's wrapper leaves these four out** (ADR 0091): its surface
 // is the user's, so the built-in maps are not read, and the slots are the
 // user's first four textures instead -- SDL_GPU allows sixteen samplers a
-// stage, and the lighting below takes nine of them.
-#if !defined(ENG_SURFACE_WRAPPER)
+// stage, and the lighting below takes nine of them. **And so does the
+// ground** (`ENG_NO_MATERIAL_MAPS`, ADR 0263), whose layers' arrays are its
+// first three.
+#if !defined(ENG_SURFACE_WRAPPER) && !defined(ENG_NO_MATERIAL_MAPS)
 Texture2D BaseColorTexture : register(t0, space2);
 SamplerState BaseColorSampler : register(s0, space2);
 Texture2D NormalTexture : register(t1, space2);

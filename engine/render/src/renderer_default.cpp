@@ -5399,10 +5399,13 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                                        ? rhi::TextureBinding{layers->arrays[slot], linearSampler_}
                                        : rhi::TextureBinding{fallback, linearSampler_};
                         };
-                        const std::array<rhi::TextureBinding, 16> textures{
-                            rhi::TextureBinding{whitePixel_, linearSampler_},
-                            rhi::TextureBinding{flatNormalPixel_, linearSampler_},
-                            rhi::TextureBinding{whitePixel_, linearSampler_},
+                        // **The layers' arrays where a mesh's maps go, and the
+                        // screen's two pictures where the arrays were** (ADR
+                        // 0263): the ground reads the screen as a mesh does.
+                        const std::array<rhi::TextureBinding, 15> textures{
+                            layerArray(0, whiteArray_),
+                            layerArray(1, flatNormalArray_),
+                            layerArray(2, whiteArray_),
                             rhi::TextureBinding{blackPixel_, linearSampler_},
                             rhi::TextureBinding{shadowMap_, shadowSampler_},
                             rhi::TextureBinding{environmentMap_, environmentSampler_},
@@ -5413,9 +5416,8 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
                             rhi::TextureBinding{occlusion_, linearSampler_},
                             rhi::TextureBinding{localShadowMap_, shadowSampler_},
                             rhi::TextureBinding{contact_, pointSampler_},
-                            layerArray(0, whiteArray_),
-                            layerArray(1, flatNormalArray_),
-                            layerArray(2, whiteArray_),
+                            screenReflectionBinding(false),
+                            screenBounceBinding(),
                         };
                         cmd.bindTextures(rhi::ShaderStage::Fragment, 0, textures);
                         const std::array<rhi::BufferHandle, 1> layerRows{

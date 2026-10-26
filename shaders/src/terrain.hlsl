@@ -18,9 +18,12 @@
 // and the geomorph's offset in `(normal.z, tangent.x, uv.y)`
 // (`engine_terrain_morph.hlsli`).
 
-// Reads nothing from the screen (ADR 0209): what it reflects is the probes'
-// and the sky's.
-#define ENG_NO_SCREEN_LIGHT
+// **Reads the screen** (ADR 0263): what the screen reflects and the light it
+// bounces, as every mesh does (ADR 0209). The ground's sixteen samplers were
+// spent, four of them on a mesh's material maps it never read; its layers'
+// arrays are those slots now, and the two screen pictures where the arrays
+// were.
+#define ENG_NO_MATERIAL_MAPS
 #define ENG_UNIFORMS_OBJECT
 #define ENG_UNIFORMS_FRAME
 #include "engine_forward.hlsli"
@@ -55,16 +58,23 @@ cbuffer GpuTerrainSurfaceUniforms : register(b1, space3)
     float4 TerrainDebug;
 };
 
-Texture2DArray LayerColorTexture : register(t13, space2);
-SamplerState LayerColorSampler : register(s13, space2);
-Texture2DArray LayerNormalTexture : register(t14, space2);
-SamplerState LayerNormalSampler : register(s14, space2);
-Texture2DArray LayerSurfaceTexture : register(t15, space2);
-SamplerState LayerSurfaceSampler : register(s15, space2);
+// The layers' arrays in the slots a mesh's material maps take (ADR 0263), and
+// the fourth kept named: SDL_GPU binds a stage's textures as one run from
+// zero, and a slot the shader does not name is a slot the compiler removes.
+Texture2DArray LayerColorTexture : register(t0, space2);
+SamplerState LayerColorSampler : register(s0, space2);
+Texture2DArray LayerNormalTexture : register(t1, space2);
+SamplerState LayerNormalSampler : register(s1, space2);
+Texture2DArray LayerSurfaceTexture : register(t2, space2);
+SamplerState LayerSurfaceSampler : register(s2, space2);
+Texture2D TerrainSpareTexture : register(t3, space2);
+SamplerState TerrainSpareSampler : register(s3, space2);
 
 // **Each layer, by material id** (0 is air and unused): `render::GpuTerrainLayer`.
 // A storage buffer rather than the block above, which SDL_GPU binds to Vulkan
-// 4 KiB at a time.
+// 4 KiB at a time. **Its register follows the last sampled texture's**: a
+// stage's storage buffers come after its textures in SDL_GPU's one run, so
+// with fifteen textures it is the sixteenth -- moved with them (ADR 0263).
 struct TerrainLayer
 {
     // What the layer looks like with no texture yet: its colour, flat; and in
@@ -84,7 +94,7 @@ struct TerrainLayer
     // to the lit ground, by as much of the pixel as the layer is.
     float4 Emissive;
 };
-StructuredBuffer<TerrainLayer> TerrainLayers : register(t16, space2);
+StructuredBuffer<TerrainLayer> TerrainLayers : register(t15, space2);
 
 struct VertexInput
 {
@@ -764,28 +774,18 @@ float4 FragmentMain(TerrainInterpolants input) : SV_Target0
         }
     }
 
-    // **The forward layout's four material slots stay in the shader and are
-    // never read** (ADR 0175). The renderer binds its neutral stand-ins there
-    // -- white, flat, white, black -- so the texture slots stay the contiguous
-    // run SDL_GPU binds from zero, and a slot the shader does not name is a
-    // slot the compiler removes. They were read to keep them: four texture
-    // reads at every pixel of the ground, to multiply by one and add nothing.
-    // Named inside a branch no frame takes -- `TerrainDebug.z` is never set --
-    // they are kept and cost nothing.
-    float3 standInColor = float3(1.0f, 1.0f, 1.0f);
-    float standInRoughness = 1.0f;
+    // **The spare slot stays in the shader and is never read** (ADR 0175,
+    // 0263). The renderer binds black there, so the texture slots stay the
+    // contiguous run SDL_GPU binds from zero. Named inside a branch no frame
+    // takes -- `TerrainDebug.z` is never set -- it is kept and costs nothing.
     float3 standInGlow = float3(0.0f, 0.0f, 0.0f);
     [branch] if (TerrainDebug.z > 0.5f)
     {
-        const float2 standIn = input.Ground.xz;
-        standInColor = BaseColorTexture.SampleLevel(BaseColorSampler, standIn, 0.0f).rgb;
-        standInRoughness = MetallicRoughnessTexture.SampleLevel(MetallicRoughnessSampler, standIn, 0.0f).g;
-        standInColor *= NormalTexture.SampleLevel(NormalSampler, standIn, 0.0f).z;
-        standInGlow = EmissiveTexture.SampleLevel(EmissiveSampler, standIn, 0.0f).rgb;
+        standInGlow = TerrainSpareTexture.SampleLevel(TerrainSpareSampler, input.Ground.xz, 0.0f).rgb;
     }
     const float3 shade = lerp(variation.Shade, float3(1.0f, 1.0f, 1.0f), saturate(plain));
-    const float3 albedo = mix.Albedo * shade * standInColor;
-    const float roughness = mix.Roughness * standInRoughness;
+    const float3 albedo = mix.Albedo * shade;
+    const float roughness = mix.Roughness;
     const float3 shadingNormal = terrainUnit(terrainUnit(mix.Normal, normal) + variation.Bend, normal);
 
     Surface surface = makeSurface(input.ShadingPosition, shadingNormal, albedo, mix.Metalness, roughness);

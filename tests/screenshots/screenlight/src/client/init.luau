@@ -9,7 +9,9 @@
 	  reflections on, the floor shows the box where it stands now and the wall
 	  where it stood; with them off it is the probe's picture, which has it
 	  where it was.
-	- `wall`: a white floor and a red wall standing on it, glowing. With the
+	- `ground`: the same wall on a terrain, whose ground reads the screen as a
+  part does (ADR 0263).
+- `wall`: a white floor and a red wall standing on it, glowing. With the
 	  screen's bounce on, the floor at the wall's foot is reddened. With
 	  `"late": true` the script turns the quality level to `Ultra` a moment in
 	  -- the level that turns both on -- so the picture is of a setting that
@@ -107,6 +109,21 @@ elseif scene == "wall" then
             end
         end)
     end
+elseif scene == "ground" then
+    -- **The ground reads the screen too** (ADR 0263): the same glowing wall,
+    -- standing on a terrain instead of a part. With the bounce on the ground
+    -- at its foot is reddened, as the floor is.
+    Lighting.ClockTime = 12
+    local terrain = Instance.new("Terrain")
+    terrain.Name = "Ground"
+    terrain.MinHeight = -64
+    terrain.MaxHeight = 64
+    terrain:SetLayers({ "engine://terrain/sand" })
+    terrain:FillBlock(vector.create(0, -2, 0), vector.create(40, 4, 40), 1)
+    terrain.Parent = workspace
+    local red = part("Red", vector.create(12, 6, 1), vector.create(0, 3, -3), Color3.fromRGB(230, 20, 20))
+    red:SetMaterialParameter("Emissive", Color3.new(4, 0.15, 0.15))
+    camera.CFrame = CFrame.lookAt(vector.create(2, 5, 9), vector.create(-1, 0.5, -1))
 elseif scene == "lake" then
     Lighting.ClockTime = 13
     local WaterLevel = 0

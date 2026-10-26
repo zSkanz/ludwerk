@@ -26,6 +26,10 @@
 #            the level pinned by the command line the same script changes
 #            nothing.
 #
+#   ground   The same wall on a terrain (ADR 0263): the ground at its foot
+#            is reddened with the bounce on and not with it off, as the floor
+#            is -- the ground reads the screen as a part does.
+#
 #   lake     A flat lake, three posts on its far bank and a beam hung over the
 #            water in front of them. `imgmirror` holds what the water shows
 #            against the scene through the camera mirrored in the water's
@@ -163,6 +167,20 @@ foreach(unlit wall-off wall-pinned)
         "0.5625,0.578=174,181,204")
 endforeach()
 
+# --- ground ---------------------------------------------------------------------
+
+picture(ground-on 40 "{\"scene\":\"ground\"}" ${ON})
+picture(ground-off 40 "{\"scene\":\"ground\"}" ${OFF})
+probe("the ground at the wall's foot is not reddened in `ground-on`" ground-on --tolerance=8
+    "0.5625,0.578=152,122,104"
+    "0.656,0.597=157,127,110"
+    # Away from the wall the ground is the ground.
+    "0.3125,0.833=124,120,102")
+probe("the ground at the wall's foot is reddened in `ground-off`, with no bounce to redden it" ground-off
+    --tolerance=8
+    "0.5625,0.578!=152,122,104"
+    "0.5625,0.578=133,123,106")
+
 # --- lake -----------------------------------------------------------------------
 
 picture(lake-on 8 "{\"scene\":\"lake\"}" ${ON})
@@ -203,4 +221,4 @@ if(NOT rendered MATCHES "screen-light/screen-trace [0-9]" OR NOT rendered MATCHE
         "above about `on` was made of a picture that had none.")
 endif()
 
-message("screen light gate: the floor, the ball, the wall, the lake and the frame with both off all hold")
+message("screen light gate: the floor, the ball, the wall, the ground, the lake and the frame with both off all hold")

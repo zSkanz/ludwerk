@@ -368,10 +368,11 @@ black**: a ray that leaves the picture, one that turns back to the camera, one
 that would land on what is hidden behind something else.
 
 **What reads the screen, in one sentence: parts, meshes and characters drawn
-with the built-in material or with a surface shader of your own take both;
-water reflects the screen from its own shader; the ground of a `Terrain`,
-blocks and grass take neither, and are lit by probes and volumes alone.** The
-bounced light a volume gives the ground is exactly what it was. And a curved
+with the built-in material or with a surface shader of your own take both,
+and so does the ground of a `Terrain`; water reflects the screen from its own
+shader; blocks and grass take neither, and are lit by probes and volumes
+alone.** Where both settings are off the ground is lit exactly as it was. And
+a curved
 surface shaded smooth -- a ball, a pillar, a character -- keeps the probe's
 reflection: the ray is walked from the mesh's own facets, and a chrome ball
 reflected through them is cut into flat patches.
@@ -454,8 +455,9 @@ with three levels round the camera, 1.04 with one box as six tiles.
 
 ## What there is not
 
-- **The ground reading the screen.** A `Terrain`, blocks and grass reflect
-  and are lit by probes and volumes alone (see *From the screen*).
+- **Blocks and grass reading the screen.** They reflect and are lit by
+  probes and volumes alone (see *From the screen*); a `Terrain`'s ground
+  reads it.
 - **Lightmaps**: the sharp bounced shadow a grid of points cannot draw.
 - **A file for a volume that follows the camera.** A box has one
   (`Baked`); the open is worked out as the camera goes.

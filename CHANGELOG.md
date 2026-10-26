@@ -11,6 +11,9 @@ here.
 
 ### Added
 
+- The ground of a `Terrain` reads the screen: what it reflects and the light
+  it bounces, as every part does, where the screen reflection and bounce
+  settings are on. With them off it is drawn exactly as before.
 - A mesh changes its level of detail without a pop: its level holds within
   a band, and where the quality allows a change fades over a quarter of a
   second through an ordered dither. `GraphicsService.ViewDistance` now does
