@@ -1205,13 +1205,22 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
 
 // What the codepoint-at-a-time layout cannot draw: the scripts whose letters
 // join, reorder or stack, the right-to-left ones, the combining marks, and the
-// joiners and marks that steer them.
+// marks that set a direction -- the left-to-right and right-to-left marks,
+// the embeddings, overrides and isolates.
+//
+// **Not the joiners, the zero-width space, the word joiner or the no-break
+// space.** They change nothing in text without one of the above -- each is
+// drawn as nothing, or as a space -- and a game puts them in plain text on
+// purpose: one before a title is what a game's own letter spacing marks its
+// titles with. Seen as a reason to shape, they moved every such Latin title
+// by a fraction of a pixel. In text that has a reason, they are shaped with
+// it.
 [[nodiscard]] bool complexCodepoint(u32 c) noexcept
 {
     return (c >= 0x0300 && c <= 0x036F) || (c >= 0x0483 && c <= 0x0489) || (c >= 0x0590 && c <= 0x08FF) ||
            (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0FFF) || (c >= 0x1000 && c <= 0x109F) ||
            (c >= 0x1700 && c <= 0x18AF) || (c >= 0x1900 && c <= 0x1C7F) || (c >= 0x1CD0 && c <= 0x1CFF) ||
-           (c >= 0x1DC0 && c <= 0x1DFF) || (c >= 0x200C && c <= 0x200F) || (c >= 0x202A && c <= 0x202E) ||
+           (c >= 0x1DC0 && c <= 0x1DFF) || c == 0x200E || c == 0x200F || (c >= 0x202A && c <= 0x202E) ||
            (c >= 0x2066 && c <= 0x2069) || (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xA800 && c <= 0xA8FF) ||
            (c >= 0xA900 && c <= 0xA9FF) || (c >= 0xAA00 && c <= 0xAAFF) || (c >= 0xABC0 && c <= 0xABFF) ||
            (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE20 && c <= 0xFE2F) || (c >= 0xFE70 && c <= 0xFEFE) ||

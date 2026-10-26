@@ -247,3 +247,30 @@ TEST_CASE("ADR 0260: rich text is shaped too, each run in its own style")
     const f32 precomposed = engine::ui::measureRichText("<b>\xC3\xA9</b>", Font, 32.0f, 0.0f).size.x;
     CHECK(combined == doctest::Approx(static_cast<double>(precomposed)).epsilon(0.01));
 }
+
+TEST_CASE("ADR 0260: a joiner or a zero-width space in Latin text leaves it laid out exactly as without")
+{
+    FaceGuard guard;
+    // What a game's own letter spacing marks a title with, and the other
+    // characters drawn as nothing: the title is the same quads, to the bit.
+    const std::vector<DrawQuad> plain = drawn("FORJA DE ALMAS");
+    for (const std::string_view marked : {std::string_view{"\xE2\x80\x8C"
+                                                           "FORJA DE ALMAS"},
+                                          std::string_view{"\xE2\x80\x8D"
+                                                           "FORJA DE ALMAS"},
+                                          std::string_view{"\xE2\x80\x8B"
+                                                           "FORJA DE ALMAS"},
+                                          std::string_view{"\xE2\x81\xA0"
+                                                           "FORJA DE ALMAS"}}) {
+        const std::vector<DrawQuad> quads = drawn(marked);
+        REQUIRE(quads.size() == plain.size());
+        for (usize at = 0; at < quads.size(); ++at) {
+            CHECK(quads[at].min.x == plain[at].min.x);
+            CHECK(quads[at].min.y == plain[at].min.y);
+            CHECK(quads[at].max.x == plain[at].max.x);
+            CHECK(quads[at].uvMin.x == plain[at].uvMin.x);
+        }
+        // And measured the same, letter spacing and all.
+        CHECK(engine::ui::textWidth(marked, Font, 32.0f) == engine::ui::textWidth("FORJA DE ALMAS", Font, 32.0f));
+    }
+}
