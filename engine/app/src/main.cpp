@@ -811,6 +811,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuAdapter = std::string(arg.substr(14));
             continue;
         }
+        if (arg == "--thermal-scaling") {
+            options.thermalScaling = true;
+            continue;
+        }
         if (arg == "--gpu-least") {
             options.gpuLeast = true;
             continue;
@@ -2134,6 +2138,7 @@ static int hostMain(int argc, char** argv)
         options.graphics.measuredSkip = engine::app::parseDebugSkip(options.debugSkip);
         options.graphicsModel = config.graphicsModel;
         options.rememberPlayerSettings = config.rememberPlayerSettings;
+        options.thermalScaling = options.thermalScaling || config.thermalScaling;
         options.defaultLocale = config.defaultLocale;
         options.pacing = engine::app::pacingWith(config.pacing, graphicsOverrides);
         options.windowTitle = config.windowTitle;

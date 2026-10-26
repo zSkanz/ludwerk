@@ -26,6 +26,7 @@
 #include "engine/app/script_editor_panel.h"
 #include "engine/core/id.h"
 #include "engine/platform/event.h"
+#include "engine/platform/thermal.h"
 #include "engine/rhi/types.h"
 #include "engine/script/runtime.h"
 
@@ -122,6 +123,10 @@ struct RenderCounters
     core::u32 terrainEditFrames = 0;
     double terrainEditWorstMs = 0.0;
     core::u32 terrainEditWorstFrames = 0;
+    // **How hot the device is, and the render scale's step for it**
+    // (`ThermalGovernor`): shown where the system says, or a step was taken.
+    platform::ThermalStatus thermal = platform::ThermalStatus::Unknown;
+    core::u32 thermalPercent = 100;
 };
 
 enum class Shell

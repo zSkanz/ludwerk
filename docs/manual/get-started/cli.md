@@ -413,6 +413,9 @@ device can be made through warns and falls back. It is what
 [a player with a wrong picture](manual:guides/shipping)
 is asked to try.
 
+`--thermal-scaling` turns on what `[display] thermal_scaling` does: the world
+drawn smaller as the device heats ([Quality](manual:rendering/quality)).
+
 `--gpu-adapter=NAME` names the graphics card the run draws on, by its name or
 a part of it -- `NVIDIA`, `UHD Graphics` -- through whichever API it draws
 through, over the player's `GraphicsService.Adapter`. A name no card has

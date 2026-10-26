@@ -603,6 +603,8 @@ struct EngineOptions
     // `settings.json` beside the saves before the first frame, and
     // `GraphicsService:SaveAsync` writes them there.
     bool rememberPlayerSettings = true;
+    // `[display] thermal_scaling`, `--thermal-scaling`: see `ThermalGovernor`.
+    bool thermalScaling = false;
     // `--locale=` and `--voice-locale=`: the text and the voice language for
     // this run, in front of what the player saved and never written to it.
     // For a developer checking a language, and for a test.

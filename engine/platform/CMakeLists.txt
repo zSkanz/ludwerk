@@ -11,7 +11,7 @@ engine_add_module(platform
     LAYER 1
     SOURCES src/uwp/platform.cpp src/uwp/file.cpp src/uwp/async_io.cpp src/uwp/host_support.cpp
             src/mapped_file.cpp src/file_lock.cpp src/event_names.cpp src/path_component.cpp
-            src/game_integration.cpp
+            src/game_integration.cpp src/thermal.cpp
     DEPS core)
 target_link_libraries(engine_platform PRIVATE WindowsApp mincore)
 return()
@@ -35,6 +35,7 @@ engine_add_module(platform
         src/console.cpp
         src/crash.cpp
         src/stop_signal.cpp
+        src/thermal.cpp
     DEPS
         core
     PRIVATE_DEPS

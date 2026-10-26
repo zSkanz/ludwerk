@@ -2,6 +2,7 @@
 
 #include "engine/app/editor_drive.h"
 #include "engine/app/streaming_host.h"
+#include "engine/app/thermal_governor.h"
 #include "engine/app/view_host.h"
 #include "engine/app/world_panels.h"
 #include "engine/asset/terrain_layers.h"
@@ -610,6 +611,13 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
                 backend.data());
         const platform::WindowSize size = platform::windowPixelSize(*g_window);
         statRow(core::tr(ENG_TR("engine.editor.stats.drawable")), "%d x %d", size.width, size.height);
+        if (counters.thermal != platform::ThermalStatus::Unknown || counters.thermalPercent != 100) {
+            statRow(core::tr(ENG_TR("engine.editor.stats.heat")), "%s",
+                    core::tr(ENG_TR("engine.editor.stats.value.heat"),
+                             {{"status", std::string_view{core::tr(thermalStatusKey(counters.thermal))}},
+                              {"percent", static_cast<core::i64>(counters.thermalPercent)}})
+                        .c_str());
+        }
         endSectionGrid();
     }
 

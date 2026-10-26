@@ -47,6 +47,7 @@ engine_add_module(app
         src/engine.cpp
         src/preserved.cpp
         src/project_config.cpp
+        src/thermal_governor.cpp
         src/reload.cpp
         src/require_paths.cpp
         src/replay.cpp
@@ -489,6 +490,7 @@ engine_add_module_tests(app
         tests/scene_definitions_tests.cpp
         tests/two_worlds_tests.cpp
         tests/project_config_tests.cpp
+        tests/thermal_governor_tests.cpp
         tests/export_runner_tests.cpp
         tests/command_palette_tests.cpp
         tests/view_host_tests.cpp

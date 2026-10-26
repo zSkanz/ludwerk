@@ -366,6 +366,9 @@ struct ProjectConfig
     // `[display] remember_player_settings`: whether the player's choices are
     // kept in their folder and read at start. On unless a game manages its own.
     bool rememberPlayerSettings = true;
+    // `[display] thermal_scaling`: the render scale stepped down as the device
+    // heats, and back up as it cools (`ThermalGovernor`). Off unless said.
+    bool thermalScaling = false;
 
     // `[project] default_locale` (ADR 0154): the locale a key falls back to,
     // and the one a player starts in when the system's is none of the game's.

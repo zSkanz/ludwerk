@@ -1100,6 +1100,8 @@ ProjectConfig loadProjectConfig(const std::filesystem::path& projectRoot, const 
         }
         if (const std::optional<bool> value = document.boolean("display.remember_player_settings"))
             config.rememberPlayerSettings = *value;
+        if (const std::optional<bool> value = document.boolean("display.thermal_scaling"))
+            config.thermalScaling = *value;
         if (const std::optional<std::string_view> value = document.string("project.default_locale");
             value.has_value() && !scene::canonicalLocale(*value).empty())
             config.defaultLocale = scene::canonicalLocale(*value);

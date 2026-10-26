@@ -562,6 +562,17 @@ each shading what lies around it as a sphere would, in the same pass; a phone
 has it on at Low and Medium. On by default on a phone at Low and Medium, off
 elsewhere; `--lean` draws a computer's window that way to try it.
 
+`[display] thermal_scaling = true` draws the world smaller as a phone heats,
+before the phone slows itself down. Every two seconds the engine reads how hot
+the system says the device is (Android 11 and later). When it is hot, the
+render scale steps down to 85%, then to 70% and 55% while it stays hot: one
+step every fifteen seconds when hot, and every five when very hot or worse.
+After thirty seconds cool, it steps back up one step. Each step is said in the
+log; the frame report and F3's Stats show the heat and the step. It is off
+unless the project turns it on; `--thermal-scaling` tries it on a computer,
+with `ENG_ASSUME_THERMAL_STATUS=severe` (or `moderate`, `none`...) standing
+in for the device.
+
 `pipeline_threads` is how many threads make those pipelines: one on a
 computer with four hardware threads or fewer and two above unless you say,
 four at most. They are threads of their own, so a material is never made

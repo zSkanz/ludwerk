@@ -100,6 +100,7 @@
 #include "engine/app/terrain_cells.h"
 #include "engine/app/terrain_overlay.h"
 #include "engine/app/text_input_focus.h"
+#include "engine/app/thermal_governor.h"
 #include "engine/app/thumbnails.h"
 #include "engine/app/timeline.h"
 #include "engine/app/ui_navigation.h"
@@ -124,6 +125,7 @@
 #include "engine/platform/platform.h"
 #include "engine/platform/process.h"
 #include "engine/platform/stop_signal.h"
+#include "engine/platform/thermal.h"
 #include "engine/platform/window.h"
 #include "engine/render/debug_draw.h"
 #include "engine/render/debug_renderer.h"
@@ -1424,6 +1426,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     render::GraphicsSettings liveGraphics =
         modelGiven ? graphicsSettingsOf(graphicsHost, Handheld, &options.graphics) : options.graphics;
     FramePacing livePacing = options.pacing;
+    // **How hot the device is, and the step it is drawn at for it**
+    // (`ThermalGovernor`): read every two seconds; the step taken only where
+    // the project asked (`[display] thermal_scaling`), and shown either way.
+    ThermalGovernor thermal;
+    platform::ThermalStatus thermalNow = platform::ThermalStatus::Unknown;
+    core::u64 thermalReadNs = 0;
+    // What the renderer is given: the settings, at the step's render scale.
+    const auto drawnGraphics = [&liveGraphics, &thermal]() {
+        render::GraphicsSettings drawn = liveGraphics;
+        drawn.renderScale *= thermal.factor();
+        return render::clampSettings(drawn);
+    };
     // The language the player chose last time, from the same file (ADR 0154).
     std::string savedLocale;
     // And what they hear, from the same file (ADR 0200): the voice language
@@ -2980,7 +2994,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // Before `create`, because the shadow atlas is sized by the settings and
         // building it twice on the first frame would be a wasted allocation the
         // size of the whole map.
-        renderer->setSettings(liveGraphics);
+        renderer->setSettings(drawnGraphics());
         if (auto error = renderer->create(*device, shaders, colorFormat); error.has_value()) {
             core::logText(LogLevel::Warn, error->message);
             renderer.reset();
@@ -4315,6 +4329,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     I18nArg{"quality", render::qualityName(quality)},
                 };
                 core::log(LogLevel::Info, ENG_TR("engine.frame.info.report"), report);
+                // **How hot the device was, and the step it was drawn at**:
+                // where the system says, or where a step was taken.
+                if (thermalNow != platform::ThermalStatus::Unknown || thermal.step() != 0) {
+                    const std::array<I18nArg, 2> heat{
+                        I18nArg{"status", std::string_view{core::tr(thermalStatusKey(thermalNow))}},
+                        I18nArg{"percent", static_cast<core::i64>(std::lround(thermal.factor() * 100.0f))}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.thermal"), heat);
+                }
                 // **What those draws were** -- the question a count that
                 // doubled asks, and one no total answers: a horde submitted
                 // again into each of the sun's cascades and the effects of a
@@ -4855,7 +4877,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 appliedViewportQuality = viewportQuality;
                 liveGraphics = graphicsSettingsOf(drawn, Handheld, &options.graphics);
                 if (renderer != nullptr)
-                    renderer->setSettings(liveGraphics);
+                    renderer->setSettings(drawnGraphics());
                 // For what is loaded from here on: a texture already on the
                 // card keeps the size it came in at.
                 meshLoader.setTextureSkip(textureSkipOf(drawn));
@@ -4897,6 +4919,21 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                            world.atoms().intern("QualityChanged")});
                     }
                 }
+            }
+        }
+
+        // **How hot the device is**, every two seconds: the step taken where
+        // the project asked for it, and said when it changes.
+        if (const core::u64 heatNs = platform::nowNs(); heatNs - thermalReadNs >= 2'000'000'000ull) {
+            thermalReadNs = heatNs;
+            thermalNow = platform::thermalStatus();
+            if (options.thermalScaling && thermal.sample(thermalNow, static_cast<f64>(heatNs) / 1.0e9)) {
+                const std::array<I18nArg, 2> stepArgs{
+                    I18nArg{"status", std::string_view{core::tr(thermalStatusKey(thermalNow))}},
+                    I18nArg{"percent", static_cast<core::i64>(std::lround(thermal.factor() * 100.0f))}};
+                core::log(LogLevel::Info, ENG_TR("engine.info.thermal_step"), stepArgs);
+                if (renderer != nullptr)
+                    renderer->setSettings(drawnGraphics());
             }
         }
 
@@ -11166,6 +11203,8 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         .terrainEditFrames = terrainLoader.editLatency().lastFrames,
                         .terrainEditWorstMs = terrainLoader.editLatency().worstMs,
                         .terrainEditWorstFrames = terrainLoader.editLatency().worstFrames,
+                        .thermal = thermalNow,
+                        .thermalPercent = static_cast<core::u32>(std::lround(thermal.factor() * 100.0f)),
                     });
                     overlay->render(*cmd, options.editor && present.valid() ? present : target, frame);
                 }
