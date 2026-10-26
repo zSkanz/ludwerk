@@ -790,6 +790,65 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/opus/src/opus_encoder.c")
 endif()
 
 # ---------------------------------------------------------------------------
+# HarfBuzz 15.0.0 (ADR 0260): the shaper -- a run of one script, one
+# direction and one face into glyph indices and positions, by the face's own
+# GSUB and GPOS tables.
+#
+# Its single-file build, `src/harfbuzz.cc`, and none of its own: upstream
+# configures with meson, and every feature that file reaches is fenced by a
+# macro of `src/hb-config.hh`. What is defined here is the whole of the
+# configuration:
+#
+#   - `HB_LEAN`: no subsetter, no hinting, no variable fonts' instancing (the
+#     UI draws a face's default instance, and shapes it), no glyph names, no
+#     MATH or vertical layout, no file or environment access -- the engine
+#     hands it a face's bytes from its own font loading -- and, with nothing
+#     to draw with, no outlines, colour or painting;
+#   - `HB_NO_AAT`: Apple's morx shaping, which no font a game ships needs;
+#   - `HB_NO_BEYOND_64K` and `HB_NO_CUBIC_GLYF`: the 15.0 formats for fonts
+#     past 65,536 glyphs and cubic TrueType outlines.
+#
+# What `HB_MINI` would also take is kept: the shaping a font with no GSUB
+# falls back on, and the old `kern` table, which older faces kern by.
+# Thread safety is kept too: labels are laid out off the main thread.
+# ---------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/harfbuzz/src/harfbuzz.cc")
+    add_library(harfbuzz STATIC "${CMAKE_CURRENT_SOURCE_DIR}/harfbuzz/src/harfbuzz.cc")
+    target_include_directories(harfbuzz SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/harfbuzz/src")
+    target_compile_definitions(harfbuzz
+        PUBLIC HB_LEAN HB_NO_AAT HB_NO_BEYOND_64K HB_NO_CUBIC_GLYF HB_OPTIMIZE_SIZE)
+    set_target_properties(harfbuzz PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+    # **Built for size** (ADR 0260): a label is shaped when its text changes
+    # and kept, and only text that needs shaping is shaped at all, so the
+    # speed given up is never per frame; what it saves is in every player.
+    if(MSVC)
+        target_compile_options(harfbuzz PRIVATE /W0 /bigobj /O1)
+    else()
+        target_compile_options(harfbuzz PRIVATE -w -fno-exceptions -fno-rtti -Os)
+    endif()
+    add_library(HarfBuzz::harfbuzz ALIAS harfbuzz)
+endif()
+
+# ---------------------------------------------------------------------------
+# SheenBidi 3.0.0 (ADR 0260): the Unicode Bidirectional Algorithm, UAX #9.
+# Its unity build, `Source/SheenBidi.c` with `SB_CONFIG_UNITY`: one
+# translation unit, its tables included.
+# ---------------------------------------------------------------------------
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sheenbidi/Source/SheenBidi.c")
+    add_library(sheenbidi STATIC "${CMAKE_CURRENT_SOURCE_DIR}/sheenbidi/Source/SheenBidi.c")
+    target_include_directories(sheenbidi SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/sheenbidi/Headers")
+    target_include_directories(sheenbidi PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sheenbidi/Source")
+    target_compile_definitions(sheenbidi PRIVATE SB_CONFIG_UNITY)
+    set_target_properties(sheenbidi PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
+    if(MSVC)
+        target_compile_options(sheenbidi PRIVATE /W0 /O1)
+    else()
+        target_compile_options(sheenbidi PRIVATE -w -Os)
+    endif()
+    add_library(SheenBidi::sheenbidi ALIAS sheenbidi)
+endif()
+
+# ---------------------------------------------------------------------------
 # basis_universal (ADR 0010: one transcodable texture per platform, in a KTX2
 # container). Vendored narrowed -- ADR 0042 and the manifest row say why.
 #

@@ -54,6 +54,10 @@ local Allowed: { [string]: boolean } = {
     -- SQLite's. No licence at all: the authors dedicate it to the public
     -- domain, and ADR 0238 §6 approves the dependency and names that.
     ["Public Domain"] = true,
+    -- The Unicode licence, ICU's data's. As permissive as MIT, and here by
+    -- the maintainer's decision: ADR 0260 approves the Thai and Lao word lists
+    -- under it.
+    ["Unicode-3.0"] = true,
 }
 
 --- Any of these, in a dependency's root, counts as the licence text being
