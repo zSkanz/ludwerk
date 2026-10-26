@@ -1503,9 +1503,15 @@ if(ENG_BUILD_TESTS)
             -DGROWTH=15
             -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_far_flight_gate.cmake)
     # Room for two flights: one that fails is flown again (see the driver).
+    # `perf`: what it holds of the streaming's share of a frame is the
+    # machine's to give, and among a gate's other lanes it failed twice at a
+    # median frame of 138 ms and passed alone in two minutes. The local gate
+    # runs it in its perf stage, alone; CI, where `quiet` is what is left out,
+    # still flies it.
     set_tests_properties(terrain_far_flight PROPERTIES
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
-        TIMEOUT 1500)
+        TIMEOUT 1500
+        LABELS perf)
 
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)
