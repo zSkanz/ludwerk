@@ -1,6 +1,7 @@
 #include "engine/app/data_worker.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 namespace engine::app {
@@ -36,25 +37,35 @@ bool DataWorker::post(Job job)
 
 void DataWorker::wait(const std::function<void(IDataStore&)>& job)
 {
-    std::mutex finishing;
-    std::condition_variable finished;
-    bool over = false;
+    // **What says the job is done lives as long as the job, not as long as
+    // this call.** It was on this stack, and the worker told it after letting
+    // go of its lock: a waiter woken in between -- a spurious wake is allowed
+    // -- saw the job done, returned, and the worker then told a condition
+    // variable that was gone, in memory the next call's stood in. On macOS
+    // that left the next wait asleep for good, the worker idle beside it: the
+    // `app` tests' hang there. Shared with the job instead, and told while
+    // its lock is held.
+    struct Done
+    {
+        std::mutex mutex;
+        std::condition_variable told;
+        bool over = false;
+    };
+    const auto done = std::make_shared<Done>();
     {
         const std::lock_guard<std::mutex> lock(m_mutex);
-        m_jobs.push_back(Queued{[&](IDataStore& store) -> Then {
+        m_jobs.push_back(Queued{[&job, done](IDataStore& store) -> Then {
                                     job(store);
-                                    {
-                                        const std::lock_guard<std::mutex> done(finishing);
-                                        over = true;
-                                    }
-                                    finished.notify_one();
+                                    const std::lock_guard<std::mutex> finished(done->mutex);
+                                    done->over = true;
+                                    done->told.notify_one();
                                     return {};
                                 },
                                 Clock::now()});
     }
     m_wake.notify_one();
-    std::unique_lock<std::mutex> lock(finishing);
-    finished.wait(lock, [&]() { return over; });
+    std::unique_lock<std::mutex> lock(done->mutex);
+    done->told.wait(lock, [&]() { return done->over; });
 }
 
 void DataWorker::pump()

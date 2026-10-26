@@ -44,6 +44,19 @@ TEST_CASE("data worker > jobs are done in the order asked, and answered on the a
     CHECK(worker.stats().done >= 50);
 }
 
+TEST_CASE("data worker > a wait returns every time, thousands of them back to back")
+{
+    // What a wait is told by must outlive the wait: told after the asker had
+    // returned, it was memory the next wait stood in, and on macOS that next
+    // wait slept for good. Back to back, so a wake that comes early lands in
+    // the next call's frame -- a hang here, an error under the sanitizers.
+    DataWorker worker(engine::app::makeMemoryDataStore());
+    int done = 0;
+    for (int round = 0; round < 20000; ++round)
+        worker.wait([&done](IDataStore&) { ++done; });
+    CHECK(done == 20000);
+}
+
 TEST_CASE("data worker > an answer ready wakes the asker's wait at once")
 {
     DataWorker worker(engine::app::makeMemoryDataStore());
