@@ -562,6 +562,14 @@ each shading what lies around it as a sphere would, in the same pass; a phone
 has it on at Low and Medium. On by default on a phone at Low and Medium, off
 elsewhere; `--lean` draws a computer's window that way to try it.
 
+`variable_rate_shading` (1 to 3; 0, the default, is off) shades the lean
+path's picture less toward its edges, using the fragment density map a
+headset's eye is shaded by. A fragment covers two pixels each way past the
+first ring and four past the second, and the rings tighten with the level.
+Only a device with a fragment density map (most phone GPUs, through Vulkan)
+does it; elsewhere the log says so and every pixel is shaded.
+`--variable-rate-shading=N` asks for it for one run.
+
 `[display] thermal_scaling = true` draws the world smaller as a phone heats,
 before the phone slows itself down. Every two seconds the engine reads how hot
 the system says the device is (Android 11 and later). When it is hot, the

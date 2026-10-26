@@ -85,6 +85,8 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
         settings.bloom = *value;
     // The lean path for the window (the mobile lean path): a handheld's at
     // Low and Medium unless the file says.
+    if (const std::optional<f64> value = number("variable_rate_shading", 0.0, 3.0))
+        settings.leanFoveation = static_cast<u32>(*value);
     if (const std::optional<bool> value = flag("lean_path")) {
         settings.leanPath = *value;
         settings.leanPathAsked = *value ? 1 : 0;
@@ -206,6 +208,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.contactShadows = *overrides.contactShadows;
     if (overrides.foliageDecals)
         settings.foliageDecals = *overrides.foliageDecals;
+    if (overrides.leanFoveation)
+        settings.leanFoveation = std::min(*overrides.leanFoveation, 3u);
     if (overrides.leanPath) {
         settings.leanPath = *overrides.leanPath;
         settings.leanPathAsked = *overrides.leanPath ? 1 : 0;
@@ -636,6 +640,7 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         // Not an instrument, and carried the same way: the project's word on
         // the ground's material is no setting a player has.
         settings.terrainSurface = instruments->terrainSurface;
+        settings.leanFoveation = instruments->leanFoveation;
         // And its word on the lean path, at whatever level is drawn now.
         if (instruments->leanPathAsked >= 0) {
             settings.leanPath = instruments->leanPathAsked != 0;

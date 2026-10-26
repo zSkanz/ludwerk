@@ -560,6 +560,8 @@
   "engine.frame.info.thermal": "Heat: {status}; the world drawn at {percent}% of its render scale.",
   "engine.editor.stats.heat": "Heat",
   "engine.editor.stats.value.heat": "{status}, drawn at {percent}%",
+  "render.info.lean_foveation": "Variable rate shading level {level} of 3: the picture shaded less toward its edges, a density texel {width} by {height} pixels.",
+  "render.info.lean_foveation_none": "Variable rate shading level {level} was asked for, but this device shades the whole picture at one density: it has no fragment density map.",
   "rhi.warn.adapter_not_found": "No graphics card here is named \"{adapter}\". Drawing on {card}, the system's choice.",
   "rhi.warn.driver_unavailable": "No graphics device could be created through {driver} ({detail}). Using the system's default instead.",
   "rhi.warn.readback_failed": "Reading an image back from the graphics device failed: {detail}",

@@ -13,7 +13,10 @@
 #     and the bloom the lean path leaves out;
 #   - and asked for ambient occlusion, as a phone's Low and Medium are, the
 #     lean path draws it from the balls' spheres in the forward pass: no
-#     occlusion pass, and the floor under the balls darker than without.
+#     occlusion pass, and the floor under the balls darker than without;
+#   - asked to shade less toward the edges (`--variable-rate-shading`), a
+#     device with a fragment density map says so, and one without -- this
+#     machine's, CI's -- says it has none and draws the very same picture.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DIMGCMP=<imgcmp> -DSCRIPT=<project> -DOUTPUT=<dir> -P run_lean_path.cmake
@@ -53,6 +56,7 @@ function(draw name)
     string(REGEX MATCHALL "GPU milliseconds by pass[^\n]*" reports "${output}")
     list(POP_BACK reports passes)
     set(${name}_passes "${passes}" PARENT_SCOPE)
+    set(${name}_output "${output}" PARENT_SCOPE)
 endfunction()
 
 draw(full --no-lean)
@@ -61,6 +65,7 @@ if(skipped)
 endif()
 draw(lean --lean)
 draw(shaded --lean --ambient-occlusion)
+draw(edges --lean --variable-rate-shading=2)
 
 if(NOT lean_passes MATCHES "forward/forward-samples")
     message(FATAL_ERROR "lean path: the forward pass did not draw with samples: ${lean_passes}")
@@ -84,6 +89,22 @@ execute_process(
     ERROR_QUIET)
 if(shaded_same EQUAL 0)
     message(FATAL_ERROR "lean path: asked for ambient occlusion, the lean picture is not shaded where the balls rest")
+endif()
+if(edges_output MATCHES "shaded less toward its edges")
+    message("lean path: this device shades the edges less")
+elseif(edges_output MATCHES "has no fragment density map")
+    execute_process(
+        COMMAND "${IMGCMP}" "${OUTPUT}/edges.png" "${OUTPUT}/lean.png" --tolerance 0 --max-different-pixels 0
+        RESULT_VARIABLE edges_same
+        OUTPUT_VARIABLE edges_said
+        ERROR_VARIABLE edges_said)
+    if(NOT edges_same EQUAL 0)
+        message("${edges_said}")
+        message(FATAL_ERROR "lean path: a device with no density map drew another picture when asked to shade "
+                            "the edges less")
+    endif()
+else()
+    message(FATAL_ERROR "lean path: asked to shade the edges less, the run said nothing of it")
 endif()
 # And the full path still has them, so the test says something.
 if(NOT full_passes MATCHES "tonemap" OR NOT full_passes MATCHES "bloom/bloom-down")

@@ -58,6 +58,9 @@ struct GraphicsOverrides
     // `--lean`, `--no-lean`: the lean path for the window, over the level's
     // and the file's (the mobile lean path).
     std::optional<bool> leanPath;
+    // `--variable-rate-shading=N`, nought to three, over `[graphics]
+    // variable_rate_shading`: the lean path's density map.
+    std::optional<core::u32> leanFoveation;
     // `--reflections=LEVEL` and `--global-illumination=LEVEL` (ADRs 0202,
     // 0203), an `Enum.GraphicsLevel` each: low, medium, high, ultra.
     std::optional<core::i32> reflections;

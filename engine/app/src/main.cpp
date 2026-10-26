@@ -1355,6 +1355,16 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.leanPath = arg == "--lean";
             continue;
         }
+        if (arg.starts_with("--variable-rate-shading=")) {
+            engine::core::u64 level = 0;
+            if (!numericValue(arg.substr(24), level) || level > 3) {
+                const std::array<I18nArg, 1> badValue{I18nArg{"option", arg}};
+                engine::core::log(LogLevel::Error, ENG_TR("engine.cli.err.bad_value"), badValue);
+                return kExitUsage;
+            }
+            graphics.leanFoveation = static_cast<engine::core::u32>(level);
+            continue;
+        }
         if (arg == "--contact-shadows" || arg == "--no-contact-shadows") {
             graphics.contactShadows = arg == "--contact-shadows";
             continue;

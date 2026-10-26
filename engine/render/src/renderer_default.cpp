@@ -628,6 +628,8 @@ struct ViewState
     // The fragment density map that shades `msaaColor_`'s passes, and what
     // it was drawn for: the level, and the eye's own middle on the screen.
     rhi::TextureHandle densityMap_{};
+    // The lean path's density level last said in the log (`leanFoveation`).
+    u32 leanFoveationSaid_ = 0;
     u32 densityLevel_ = 0;
     f32 densityCentre_[2]{};
     u32 msaaSamples_ = 0;
@@ -11332,9 +11334,25 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // screen, off the picture's centre for an eye that sees further out
     // than in.
     const rhi::Capabilities caps = device.caps();
-    const u32 foveation = samples > 1 && caps.densityTexelWidth > 0 && caps.densityTexelHeight > 0
-                              ? std::min(world.headsetFoveation, 3u)
-                              : 0u;
+    // And on the lean path, toward a window's edges, where the project asks
+    // (`leanFoveation`): the same map, about the picture's centre.
+    const u32 foveationAsked = world.headsetEye ? world.headsetFoveation : leanWindow ? settings_.leanFoveation : 0u;
+    const bool densityHere = caps.densityTexelWidth > 0 && caps.densityTexelHeight > 0;
+    const u32 foveation = samples > 1 && densityHere ? std::min(foveationAsked, 3u) : 0u;
+    if (leanWindow && foveationAsked > 0 && foveationAsked != leanFoveationSaid_) {
+        leanFoveationSaid_ = foveationAsked;
+        if (foveation > 0) {
+            const std::array<core::I18nArg, 3> args{
+                core::I18nArg{"level", static_cast<core::i64>(foveation)},
+                core::I18nArg{"width", static_cast<core::i64>(caps.densityTexelWidth)},
+                core::I18nArg{"height", static_cast<core::i64>(caps.densityTexelHeight)}};
+            core::log(core::LogLevel::Info, ENG_TR("render.info.lean_foveation"), args);
+        }
+        else {
+            const std::array<core::I18nArg, 1> args{core::I18nArg{"level", static_cast<core::i64>(foveationAsked)}};
+            core::log(core::LogLevel::Info, ENG_TR("render.info.lean_foveation_none"), args);
+        }
+    }
     const f32 centreU = 0.5f * (1.0f - world.camera.projection.m[2][0]);
     const f32 centreV = 0.5f * (1.0f + world.camera.projection.m[2][1]);
     bool densityRemade = false;

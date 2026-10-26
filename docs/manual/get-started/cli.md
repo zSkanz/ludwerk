@@ -413,6 +413,10 @@ device can be made through warns and falls back. It is what
 [a player with a wrong picture](manual:guides/shipping)
 is asked to try.
 
+`--variable-rate-shading=N`, 0 to 3, shades the lean path's picture less
+toward its edges where the device has a fragment density map
+([Quality](manual:rendering/quality)).
+
 `--thermal-scaling` turns on what `[display] thermal_scaling` does: the world
 drawn smaller as the device heats ([Quality](manual:rendering/quality)).
 

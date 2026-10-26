@@ -335,6 +335,11 @@ struct GraphicsSettings
     // the level's; 0 off; 1 on. Carried across a player's settings changes,
     // as `terrainSurface` is, since no setting of theirs is it.
     int leanPathAsked = -1;
+    // **Shaded less toward the picture's edges** on the lean path (variable
+    // rate shading, `[graphics] variable_rate_shading`): the fragment density
+    // map a headset's eye is shaded by, at a level from one to three, on a
+    // device that has one. Nought, the default, shades every pixel.
+    u32 leanFoveation = 0;
     // What the project said of it (`[graphics] terrain_surface`, or
     // `--terrain-surface=`), over the level: `Level` is nothing said. Carried
     // across a player's settings changes, since no setting of theirs is it.
