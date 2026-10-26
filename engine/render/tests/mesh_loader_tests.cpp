@@ -604,6 +604,81 @@ TEST_CASE("meshes arrive one frame at a time, or all at once, and it is a decisi
     }
 }
 
+TEST_CASE("a mesh no streamed cell names is let go once nothing in the world has named it for ten seconds")
+{
+    // ADR 0264. Every mesh is handed over as if its last cell had left; one
+    // part, under no Workspace -- a template a script clones -- goes on
+    // naming the first, which is kept. The rest are let go, and only after
+    // ten seconds unnamed: a player turning back at a cell's edge loads
+    // nothing again.
+    Fixture fixture;
+    const scene::ClassId meshPartClass = fixture.classes.registerClass({
+        .name = fixture.atoms.intern("MeshPart"),
+        .defaultName = fixture.atoms.intern("MeshPart"),
+    });
+    const scene::ClassId workspaceClass = fixture.classes.registerClass({
+        .name = fixture.atoms.intern("Workspace"),
+        .defaultName = fixture.atoms.intern("Workspace"),
+    });
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::temp_directory_path(ec) / "engine-mesh-loader-tests" / "let-go";
+    std::filesystem::remove_all(root, ec);
+    const CompiledFixtures compiled = compileFixtures(root);
+    if (compiled.urns.size() < 2) {
+        MESSAGE("ENG_TEST_SKIP: this build stages fewer than two glTF fixtures to compile");
+        return;
+    }
+    asset::ContentMounts mounts;
+    REQUIRE_FALSE(mounts.mountObjects(compiled.objects, compiled.index).has_value());
+
+    scene::World world(fixture.classes, fixture.enums, fixture.atoms, 1234u);
+    const core::InstanceId workspace = world.create(workspaceClass);
+    const core::usize named = fillWithMeshes(compiled, world, meshPartClass, workspace);
+    render::MeshCache cache;
+    render::MeshLibrary library;
+    render::TextureLibrary textures;
+    render::MeshLoader loader;
+    loader.setContentRoot(fixture.contentRoot);
+    loader.setContentMounts(&mounts);
+    (void)loader.sync(*fixture.device, *fixture.cmd, world, workspace, cache, library);
+    REQUIRE(library.size() == named);
+
+    // The cells leave: their parts are gone, but for one moved out of the
+    // Workspace that still wears the first mesh.
+    const core::NameAtom first = world.atoms().intern(compiled.urns[0]);
+    std::vector<core::NameAtom> handed;
+    bool keptOne = false;
+    std::vector<core::InstanceId> parts;
+    world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent&) { parts.push_back(id); });
+    for (const core::InstanceId id : parts) {
+        scene::MeshPartComponent* mesh = world.meshParts().find(id);
+        handed.push_back(mesh->meshContent);
+        if (mesh->meshContent == first && !keptOne) {
+            keptOne = true;
+            (void)world.setParent(id, core::InstanceId{});
+            continue;
+        }
+        mesh->meshContent = core::NameAtom{};
+    }
+    loader.letGoWhenUnnamed(handed);
+
+    // Found unnamed at nought, still unnamed at six and at nine: nothing yet.
+    CHECK(loader.releaseUnnamed(*fixture.device, world, 0.0, textures, library, cache) == 0);
+    CHECK(loader.releaseUnnamed(*fixture.device, world, 6.0, textures, library, cache) == 0);
+    CHECK(loader.releaseUnnamed(*fixture.device, world, 9.0, textures, library, cache) == 0);
+    CHECK(library.size() == named);
+    // Ten seconds on, but sooner than two after the last check: not asked.
+    CHECK(loader.releaseUnnamed(*fixture.device, world, 10.0, textures, library, cache) == 0);
+    // Asked again: all but the template's.
+    CHECK(loader.releaseUnnamed(*fixture.device, world, 11.0, textures, library, cache) >= named - 1);
+    CHECK(library.size() == 1);
+    CHECK(library.find(first) != nullptr);
+    CHECK(loader.candidates() == 0);
+
+    loader.destroy(*fixture.device);
+    cache.destroy(*fixture.device);
+}
+
 TEST_CASE("forgetting a mesh forgets that it failed, so a fixed file loads")
 {
     // **The defect this pins defeated `forget`'s whole purpose.** `failed_`
@@ -814,4 +889,32 @@ TEST_CASE("a scene that is left takes the textures it alone held, and what was p
     cache.destroy(*fixture.device);
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
+}
+
+TEST_CASE("the texture budget takes a level from the farthest first, never from what is near or worn by nothing")
+{
+    // ADR 0264. Four textures of 16 MiB whole: one worn 300 m off, one 100
+    // m, one 20 m -- inside the reach that is never made smaller -- and one
+    // no material names. 64 MiB against a budget of 40.
+    constexpr core::u64 MiB = 1024ull * 1024ull;
+    const std::array<render::TextureBudgetEntry, 4> entries{{
+        {.wholeBytes = 16 * MiB, .nearest = 300.0, .worn = true, .order = 1},
+        {.wholeBytes = 16 * MiB, .nearest = 100.0, .worn = true, .order = 2},
+        {.wholeBytes = 16 * MiB, .nearest = 20.0, .worn = true, .order = 3},
+        {.wholeBytes = 16 * MiB, .nearest = 0.0, .worn = false, .order = 4},
+    }};
+
+    // Within the budget, or with none: everything whole.
+    CHECK(render::planTextureBudget(entries, 64 * MiB, 2, 40.0) == std::vector<core::u32>{0, 0, 0, 0});
+    CHECK(render::planTextureBudget(entries, 0, 2, 40.0) == std::vector<core::u32>{0, 0, 0, 0});
+
+    // Over it by 24: the farthest loses a level (12 back), then the next
+    // (12 more), and they fit.
+    CHECK(render::planTextureBudget(entries, 40 * MiB, 2, 40.0) == std::vector<core::u32>{1, 1, 0, 0});
+    // Over it by more: a second round, the farthest first -- a level of a
+    // texture already a quarter is 3 MiB.
+    CHECK(render::planTextureBudget(entries, 38 * MiB, 2, 40.0) == std::vector<core::u32>{2, 1, 0, 0});
+    // More than can be taken: two levels each from the two far ones, and the
+    // near and the unworn untouched.
+    CHECK(render::planTextureBudget(entries, 1 * MiB, 2, 40.0) == std::vector<core::u32>{2, 2, 0, 0});
 }

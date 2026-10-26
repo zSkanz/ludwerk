@@ -114,6 +114,8 @@ public:
     // Instances that became husks this frame, for the host to turn into
     // deferred `InstanceStreamedOut` fires.
     [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut();
+    // The meshes no resident chunk names any more (ADR 0264).
+    [[nodiscard]] std::vector<core::NameAtom> drainUnusedMeshes();
 
     // A `LoadAreaAsync` whose area has arrived. The host resumes the coroutine
     // and fires `AreaLoaded`; deciding WHICH are ready is this class's job

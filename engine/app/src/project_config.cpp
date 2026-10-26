@@ -326,6 +326,12 @@ core::i32 textureQualityForMemory(core::u64 systemMemoryBytes) noexcept
     return systemMemoryBytes < 3 * GiB ? 0 : systemMemoryBytes < 5 * GiB ? 1 : 2;
 }
 
+core::u64 textureBudgetOf(const scene::GraphicsModel& model) noexcept
+{
+    const f64 mebibytes = std::max(0.0, model.effective(GraphicsSetting::TextureStreamingBudget));
+    return static_cast<core::u64>(mebibytes) * 1024ull * 1024ull;
+}
+
 core::u32 textureSkipOf(const scene::GraphicsModel& model) noexcept
 {
     const f64 quality = std::clamp(model.effective(GraphicsSetting::TextureQuality), 0.0, 2.0);

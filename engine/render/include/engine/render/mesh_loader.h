@@ -39,6 +39,25 @@ class World;
 
 namespace engine::render {
 
+// **One texture as the budget sees it** (ADR 0264): what it holds whole, how
+// near its nearest wearer is, whether a material names it at all, and a
+// number that breaks a tie the same way on every run.
+struct TextureBudgetEntry
+{
+    core::u64 wholeBytes = 0;
+    double nearest = 0.0;
+    bool worn = false;
+    core::u32 order = 0;
+};
+
+// **How many of its largest levels each is to be loaded without**: none
+// while they fit in `budget`; past it, the farthest worn beyond `nearMetres`
+// lose a level each, farthest first, round after round up to `mostLevels`,
+// until they fit or nothing more can be taken. A level is three quarters of
+// what a texture holds at the size above.
+[[nodiscard]] std::vector<core::u32> planTextureBudget(std::span<const TextureBudgetEntry> entries, core::u64 budget,
+                                                       core::u32 mostLevels, double nearMetres);
+
 class MeshLoader
 {
 public:
@@ -76,6 +95,26 @@ public:
     [[nodiscard]] core::u32 textureSkip() const noexcept { return textureSkip_; }
     // How many textures are on the card smaller than their file.
     [[nodiscard]] core::usize texturesReduced() const noexcept { return reduced_.size(); }
+
+    // **`GraphicsService.TextureStreamingBudget`** (ADR 0264), in bytes; nought
+    // is none. Asked every `CandidateCheckSeconds` by `applyTextureBudget`:
+    // while the textures of the project's compiled content this loader holds
+    // would come to more, the farthest -- by the nearest part whose material
+    // names them -- are loaded again without their largest level, a level
+    // at a time, at most `MostBudgetLevels`, and never one nearer than
+    // `NearMetres`. Those that fit are loaded whole again. Worked out afresh
+    // each time from where the camera is: the target, not a history. A
+    // texture no part's material names -- a decal's, a particle's, a
+    // picture's -- is never made smaller. The smaller copy replaces the
+    // larger one when it is up, and the larger is drawn until then.
+    void setTextureBudget(core::u64 bytes) noexcept { textureBudget_ = bytes; }
+    [[nodiscard]] core::u64 textureBudget() const noexcept { return textureBudget_; }
+    void applyTextureBudget(const scene::World& world, core::DVec3 camera, double nowSeconds);
+    // What those textures hold now, and how many are smaller for the budget.
+    [[nodiscard]] core::u64 budgetedTextureBytes() const noexcept;
+    [[nodiscard]] core::usize texturesKeptSmaller() const noexcept;
+    static constexpr core::u32 MostBudgetLevels = 2;
+    static constexpr double NearMetres = 40.0;
 
     // Loads every `MeshPart` content the world names and the library does not
     // yet hold. Call at the FrameStart safe point with a command list open and
@@ -294,6 +333,22 @@ public:
     // loads in flight, which are a handful.
     void watchLateLoads(bool watching) noexcept { lateWatching_ = watching; }
     [[nodiscard]] std::vector<core::NameAtom> takeLateLoads();
+    // **What streaming let go of** (ADR 0264): meshes no resident chunk names
+    // any more, handed over as the last chunk naming each leaves. One is
+    // forgotten -- with the images it carried and its buffers -- once no
+    // `MeshPart` anywhere in `world` has named it for `UnnamedSeconds`,
+    // asked every `CandidateCheckSeconds`: not only under the Workspace, so a
+    // template a script clones keeps what it wears. Never one `keep` holds, a
+    // preload asked for, or one on its way in. One named when asked is no
+    // longer a candidate; the next chunk to let it go hands it over again.
+    // Answers how many it forgot.
+    void letGoWhenUnnamed(std::span<const core::NameAtom> urns);
+    core::u32 releaseUnnamed(rhi::IDevice& device, const scene::World& world, double nowSeconds,
+                             TextureLibrary& textures, MeshLibrary& meshes, MeshCache& cache);
+    [[nodiscard]] core::usize candidates() const noexcept { return candidates_.size(); }
+    static constexpr double UnnamedSeconds = 10.0;
+    static constexpr double CandidateCheckSeconds = 2.0;
+
     core::u32 sweep(rhi::IDevice& device, const scene::World& world, TextureLibrary& textures, MeshLibrary& meshes,
                     MeshCache& cache);
     static constexpr core::u32 SweepFrames = 30;
@@ -325,12 +380,29 @@ private:
     // without them, in id order.
     core::u32 textureSkip_ = 0;
     std::vector<core::NameAtom> reduced_;
-    [[nodiscard]] asset::TranscodeOptions transcodeFor(bool whole) const noexcept
+    [[nodiscard]] asset::TranscodeOptions transcodeFor(bool whole, core::u32 budgetLevels = 0) const noexcept
     {
         asset::TranscodeOptions options = transcode_;
-        options.skipLevels = whole ? 0u : textureSkip_;
+        options.skipLevels = whole ? 0u : textureSkip_ + budgetLevels;
         return options;
     }
+    // **What the budget holds of each compiled texture** (ADR 0264), in atom
+    // order: its bytes as loaded, the levels the budget left out of that
+    // load, and the levels it wants left out now.
+    struct Budgeted
+    {
+        core::NameAtom urn;
+        core::u64 bytes = 0;
+        core::u32 levels = 0;
+        core::u32 wanted = 0;
+    };
+    std::vector<Budgeted> budgeted_;
+    core::u64 textureBudget_ = 0;
+    double nextBudgetCheck_ = 0.0;
+    [[nodiscard]] core::u32 budgetWanted(core::NameAtom urn) const noexcept;
+    [[nodiscard]] bool budgetChange(core::NameAtom urn) const noexcept;
+    void noteBudgeted(core::NameAtom urn, core::u64 bytes, core::u32 levels);
+    void forgetBudgeted(core::NameAtom urn) noexcept;
     void noteReduced(core::NameAtom urn, bool reduced);
     [[nodiscard]] bool isReduced(core::NameAtom urn) const noexcept;
     bool primitivesUploaded_ = false;
@@ -368,6 +440,8 @@ private:
         // Asked for by something drawn at its own size: taken whole, whatever
         // the texture quality.
         bool whole = false;
+        // The levels the budget leaves out of this load (ADR 0264).
+        core::u32 budgetLevels = 0;
         platform::IoRequest read;
         jobs::JobHandle decode;
         std::unique_ptr<TextureWork> work;
@@ -420,6 +494,15 @@ private:
     std::vector<Preloaded> preloaded_;
     // What a game asked to be held (`keep`), sorted by atom.
     std::vector<core::NameAtom> kept_;
+    // `letGoWhenUnnamed`'s candidates, in atom order, and since when each has
+    // been found unnamed (below nought: not yet asked).
+    struct Candidate
+    {
+        core::NameAtom urn;
+        double unnamedSince = -1.0;
+    };
+    std::vector<Candidate> candidates_;
+    double nextCandidateCheck_ = 0.0;
     // The late loads: what is exempt because it was in flight before the
     // watching began, what has been said already, and what is to be said.
     bool lateWatching_ = false;

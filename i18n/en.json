@@ -192,6 +192,8 @@
   "engine.frame.info.texture_quality": "Texture quality: the world's textures are loaded without their {levels} largest level(s) (GraphicsService.TextureQuality, chosen from this machine's memory unless the game set it). {reduced} texture(s) are in GPU memory at less than their file's size.",
   "engine.frame.info.secondary_motion": "Secondary motion: {chains} chains of {joints} joints stepped.",
   "engine.frame.info.cloth": "Cloth: {cloths} cloths of {vertices} vertices stepped, {milliseconds} ms the last frame.",
+  "engine.frame.info.texture_budget": "Textures: {mib} MiB of the game's own, against a budget of {budget} MiB; {smaller} kept smaller, the farthest from the camera.",
+  "engine.frame.info.let_go": "Let go of {count} meshes and what they carried, which no streamed cell named any more: {mib} MiB of GPU memory.",
   "engine.frame.info.memory": "Memory: the process uses {process} MiB of this machine's {machine}. In GPU memory: {textures} MiB in {texture_count} textures and {buffers} MiB in {buffer_count} buffers. Scripts: {scripts} MiB.",
   "engine.frame.info.occlusion": "Occlusion: {rays} rays a frame, {mean} ms a frame, worst {worst} ms; {muffled} sounds muffled.",
   "engine.frame.info.report": "{seconds} s: {fps} frames per second, median {median} ms, p95 {p95} ms, worst {worst} ms; {draws} draws, {triangles} triangles; the world at {width} by {height} ({quality}).",

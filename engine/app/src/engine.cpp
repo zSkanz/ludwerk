@@ -2921,6 +2921,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // How much of each texture of the world is loaded: the texture
     // quality, which a machine's memory starts and a game or a player sets.
     meshLoader.setTextureSkip(textureSkipOf(graphicsHost));
+    meshLoader.setTextureBudget(textureBudgetOf(graphicsHost));
     // And the UI's pictures, for the same reason and by the same predicate: an
     // `ImageLabel` names the same kind of PNG a material does, and the
     // synchronous path decoded every one a frame newly named, in that frame,
@@ -4009,6 +4010,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     core::f64 occlusionMs = 0.0;
     core::u32 occlusionFrames = 0;
     core::u32 occlusionRestingFrames = 0;
+    // **What no streamed cell names any more, let go** (ADR 0264), over the
+    // report's window: how many meshes, and the GPU memory that went with
+    // them.
+    core::u64 letGoMeshes = 0;
+    core::u64 letGoBytes = 0;
     snapshot.maxHighlights = options.maxHighlights;
 
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
@@ -4400,6 +4406,26 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     const std::array<I18nArg, 1> rested{
                         I18nArg{"frames", static_cast<core::i64>(occlusionRestingFrames)}};
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.occlusion_culling_resting"), rested);
+                }
+                // **What the texture budget holds** (ADR 0264), where a game
+                // or a player set one.
+                if (meshLoader.textureBudget() != 0) {
+                    const auto mib = [](core::u64 bytes) {
+                        return std::round(static_cast<f64>(bytes) / (1024.0 * 1024.0) * 10.0) / 10.0;
+                    };
+                    const std::array<I18nArg, 3> budget{
+                        I18nArg{"mib", mib(meshLoader.budgetedTextureBytes())},
+                        I18nArg{"budget", mib(meshLoader.textureBudget())},
+                        I18nArg{"smaller", static_cast<core::i64>(meshLoader.texturesKeptSmaller())}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.texture_budget"), budget);
+                }
+                if (letGoMeshes != 0) {
+                    const std::array<I18nArg, 2> letGo{
+                        I18nArg{"count", static_cast<core::i64>(letGoMeshes)},
+                        I18nArg{"mib", std::round(static_cast<f64>(letGoBytes) / (1024.0 * 1024.0) * 10.0) / 10.0}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.let_go"), letGo);
+                    letGoMeshes = 0;
+                    letGoBytes = 0;
                 }
                 occlusionHidden = 0;
                 occlusionCandidates = 0;
@@ -4931,6 +4957,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // For what is loaded from here on: a texture already on the
                 // card keeps the size it came in at.
                 meshLoader.setTextureSkip(textureSkipOf(drawn));
+                meshLoader.setTextureBudget(textureBudgetOf(drawn));
                 foliage.setSettings({.density = options.foliageDensity * static_cast<f32>(drawn.effective(
                                                                              scene::GraphicsSetting::FoliageDensity)),
                                      .shadowDistance = options.foliageShadowDistance,
@@ -9022,6 +9049,27 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     released != 0) {
                     const std::array<I18nArg, 1> gone{I18nArg{"count", static_cast<core::i64>(released)}};
                     core::log(LogLevel::Info, ENG_TR("engine.scene.info.released"), gone);
+                }
+                // **The textures kept within the budget** (ADR 0264), from
+                // where the camera last was.
+                if (snapshot.camera.valid)
+                    meshLoader.applyTextureBudget(host->world(), snapshot.camera.origin,
+                                                  static_cast<double>(platform::nowNs()) / 1.0e9);
+                // **And what the cells that left alone named** (ADR 0264),
+                // once nothing in the world has named it for a while.
+                meshLoader.letGoWhenUnnamed(streaming.drainUnusedMeshes());
+                if (meshLoader.candidates() != 0) {
+                    const rhi::DeviceMemory before = device->memory();
+                    if (const core::u32 dropped = meshLoader.releaseUnnamed(
+                            *device, host->world(), static_cast<double>(platform::nowNs()) / 1.0e9, textureLibrary,
+                            meshLibrary, meshCache);
+                        dropped != 0) {
+                        const rhi::DeviceMemory after = device->memory();
+                        const core::u64 heldBefore = before.textureBytes + before.bufferBytes;
+                        const core::u64 left = after.textureBytes + after.bufferBytes;
+                        letGoMeshes += dropped;
+                        letGoBytes += heldBefore > left ? heldBefore - left : 0;
+                    }
                 }
                 // **And what the game then loads in the middle of play is
                 // said, once a name, where a developer is looking**: the

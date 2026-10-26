@@ -505,6 +505,9 @@ struct LuauFlagsWritten
 // How many of a texture's largest levels the model's texture quality leaves
 // out: what `render::MeshLoader::setTextureSkip` is given.
 [[nodiscard]] core::u32 textureSkipOf(const scene::GraphicsModel& model) noexcept;
+// **`GraphicsService.TextureStreamingBudget`, in bytes** (ADR 0264): nought
+// for none.
+[[nodiscard]] core::u64 textureBudgetOf(const scene::GraphicsModel& model) noexcept;
 
 // The host's layers of a model with no project file: the presets and the
 // command line's.

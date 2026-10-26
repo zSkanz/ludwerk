@@ -144,6 +144,9 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
         if (isMesh) {
             if (MeshPartComponent* mesh = m_world.meshParts().find(id2); mesh != nullptr) {
                 mesh->meshContent = m_world.atoms().intern(chunk.stringAt(source.meshContent));
+                if (mesh->meshContent.valid() && std::find(resident.meshes.begin(), resident.meshes.end(),
+                                                           mesh->meshContent) == resident.meshes.end())
+                    resident.meshes.push_back(mesh->meshContent);
                 mesh->collisionFidelity = static_cast<core::i32>(source.collisionFidelity);
             }
         }
@@ -192,6 +195,8 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
     }
 
     m_residentInstances += static_cast<u32>(resident.instances.size());
+    for (const core::NameAtom mesh : resident.meshes)
+        ++m_meshUses[mesh.id];
     m_chunks.emplace(id, std::move(resident));
     return nowMs() - started;
 }
@@ -237,7 +242,24 @@ void StreamingGlue::evict(asset::ChunkId id)
         (void)m_world.destroy(at->second.folder);
     }
 
+    for (const core::NameAtom mesh : at->second.meshes) {
+        const auto uses = m_meshUses.find(mesh.id);
+        if (uses == m_meshUses.end())
+            continue;
+        if (--uses->second == 0) {
+            m_meshUses.erase(uses);
+            m_unusedMeshes.push_back(mesh);
+        }
+    }
+
     m_chunks.erase(at);
+}
+
+std::vector<core::NameAtom> StreamingGlue::drainUnusedMeshes()
+{
+    std::vector<core::NameAtom> drained;
+    drained.swap(m_unusedMeshes);
+    return drained;
 }
 
 std::vector<core::InstanceId> StreamingGlue::drainStreamedOut()
@@ -261,6 +283,8 @@ void StreamingGlue::clear()
     }
     m_chunks.clear();
     m_streamedOut.clear();
+    m_meshUses.clear();
+    m_unusedMeshes.clear();
     m_residentInstances = 0;
 }
 

@@ -426,6 +426,11 @@ std::vector<core::InstanceId> StreamingHost::drainStreamedOut()
     return m_glue != nullptr ? m_glue->drainStreamedOut() : std::vector<core::InstanceId>{};
 }
 
+std::vector<core::NameAtom> StreamingHost::drainUnusedMeshes()
+{
+    return m_glue != nullptr ? m_glue->drainUnusedMeshes() : std::vector<core::NameAtom>{};
+}
+
 bool StreamingHost::areaResident(core::DVec3 position, f64 radius) const
 {
     const f64 radiusSquared = radius * radius;

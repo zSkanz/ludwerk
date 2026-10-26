@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
+#include <limits>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -464,6 +467,11 @@ core::u32 MeshLoader::pumpTextures(rhi::IDevice& device, rhi::ICmdList& cmd, con
         }
         textures_.push_back(handle);
         if (made.compiled) {
+            if (const rhi::TextureHandle before = library.take(pending.urn); before.valid() && before != viewBlack_) {
+                std::erase(textures_, before);
+                device.destroy(before);
+            }
+            noteBudgeted(pending.urn, made.texture.pixels.size(), pending.budgetLevels);
             library.set(pending.urn, handle, made.texture.width, made.texture.height);
             library.setMean(pending.urn, Color3{made.texture.mean[0], made.texture.mean[1], made.texture.mean[2]});
             noteReduced(pending.urn, made.texture.skippedLevels > 0);
@@ -507,16 +515,27 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
         if (sweepRecording_)
             named_.push_back(urn);
         if (library.find(urn).valid()) {
+            // **Loaded at another size than the budget now wants** (ADR
+            // 0264): loaded again, and the copy drawn now is replaced when
+            // the new one is up.
+            if (!whole && budgetChange(urn)) {
+                if (textureInFlight(urn))
+                    return;
+            }
             // **Loaded smaller for a material, and now a sprite's**:
             // what is drawn at its own size has it whole. Let go and loaded
             // again -- once, since what comes back is not reduced.
-            if (!whole || !isReduced(urn))
+            else if (!whole || !isReduced(urn)) {
                 return;
-            if (const rhi::TextureHandle held = library.take(urn); held.valid() && held != viewBlack_) {
-                std::erase(textures_, held);
-                device.destroy(held);
             }
-            noteReduced(urn, false);
+            else {
+                if (const rhi::TextureHandle held = library.take(urn); held.valid() && held != viewBlack_) {
+                    std::erase(textures_, held);
+                    device.destroy(held);
+                }
+                forgetBudgeted(urn);
+                noteReduced(urn, false);
+            }
         }
         // **A `view://` name is drawn, not read** (ADR 0107): the view host
         // puts the texture here while something draws into it. Until then it
@@ -621,16 +640,19 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 pending.urn = urn;
                 pending.srgb = srgb;
                 pending.whole = whole;
+                pending.budgetLevels = whole ? 0u : budgetWanted(urn);
                 pending.work = std::make_unique<TextureWork>();
                 TextureWork* work = pending.work.get();
                 work->compiled = true;
                 work->bytes.assign(resolved.bytes.begin(), resolved.bytes.end());
-                pending.decode = jobs::schedule(
-                    "texture-transcode", jobs::Domain::AssetIo, [work, options = transcodeFor(whole)]() noexcept {
-                        work->ok = !asset::transcodeTexture(work->bytes, options, work->texture).has_value();
-                        work->bytes.clear();
-                        work->bytes.shrink_to_fit();
-                    });
+                pending.decode =
+                    jobs::schedule("texture-transcode", jobs::Domain::AssetIo,
+                                   [work, options = transcodeFor(whole, pending.budgetLevels)]() noexcept {
+                                       work->ok =
+                                           !asset::transcodeTexture(work->bytes, options, work->texture).has_value();
+                                       work->bytes.clear();
+                                       work->bytes.shrink_to_fit();
+                                   });
                 if (pending.decode.valid()) {
                     pendingTextures_.push_back(std::move(pending));
                     return;
@@ -638,7 +660,8 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 // No job to be had: transcoded here, as with nothing deferred.
             }
             asset::TextureAsset texture;
-            if (asset::transcodeTexture(resolved.bytes, transcodeFor(whole), texture).has_value()) {
+            const core::u32 budgetLevels = whole ? 0u : budgetWanted(urn);
+            if (asset::transcodeTexture(resolved.bytes, transcodeFor(whole, budgetLevels), texture).has_value()) {
                 markFailed();
                 return;
             }
@@ -648,6 +671,12 @@ core::u32 MeshLoader::syncTextures(rhi::IDevice& device, rhi::ICmdList& cmd, sce
                 return;
             }
             textures_.push_back(handle);
+            // A copy at another size, replacing the one drawn until now.
+            if (const rhi::TextureHandle before = library.take(urn); before.valid() && before != viewBlack_) {
+                std::erase(textures_, before);
+                device.destroy(before);
+            }
+            noteBudgeted(urn, texture.pixels.size(), budgetLevels);
             library.set(urn, handle, texture.width, texture.height);
             library.setMean(urn, Color3{texture.mean[0], texture.mean[1], texture.mean[2]});
             noteReduced(urn, texture.skippedLevels > 0);
@@ -1466,6 +1495,197 @@ void MeshLoader::leaveScene() noexcept
     named_.clear();
 }
 
+std::vector<core::u32> planTextureBudget(std::span<const TextureBudgetEntry> entries, core::u64 budget,
+                                         core::u32 mostLevels, double nearMetres)
+{
+    std::vector<core::u32> levels(entries.size(), 0);
+    core::u64 total = 0;
+    for (const TextureBudgetEntry& entry : entries)
+        total += entry.wholeBytes;
+    if (budget == 0 || total <= budget)
+        return levels;
+    std::vector<usize> order;
+    for (usize at = 0; at < entries.size(); ++at) {
+        if (entries[at].worn && entries[at].nearest > nearMetres)
+            order.push_back(at);
+    }
+    std::sort(order.begin(), order.end(), [&](usize a, usize b) {
+        if (entries[a].nearest != entries[b].nearest)
+            return entries[a].nearest > entries[b].nearest;
+        return entries[a].order < entries[b].order;
+    });
+    for (core::u32 round = 0; round < mostLevels && total > budget; ++round) {
+        for (const usize at : order) {
+            if (total <= budget)
+                break;
+            const core::u64 now = entries[at].wholeBytes >> (2u * levels[at]);
+            total -= now - (now >> 2u);
+            ++levels[at];
+        }
+    }
+    return levels;
+}
+
+core::u32 MeshLoader::budgetWanted(core::NameAtom urn) const noexcept
+{
+    const auto at = std::lower_bound(budgeted_.begin(), budgeted_.end(), urn,
+                                     [](const Budgeted& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+    return at != budgeted_.end() && at->urn.id == urn.id ? at->wanted : 0u;
+}
+
+bool MeshLoader::budgetChange(core::NameAtom urn) const noexcept
+{
+    const auto at = std::lower_bound(budgeted_.begin(), budgeted_.end(), urn,
+                                     [](const Budgeted& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+    return at != budgeted_.end() && at->urn.id == urn.id && at->wanted != at->levels;
+}
+
+void MeshLoader::noteBudgeted(core::NameAtom urn, core::u64 bytes, core::u32 levels)
+{
+    const auto at = std::lower_bound(budgeted_.begin(), budgeted_.end(), urn,
+                                     [](const Budgeted& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+    if (at != budgeted_.end() && at->urn.id == urn.id) {
+        at->bytes = bytes;
+        at->levels = levels;
+        return;
+    }
+    budgeted_.insert(at, Budgeted{urn, bytes, levels, levels});
+}
+
+void MeshLoader::forgetBudgeted(core::NameAtom urn) noexcept
+{
+    const auto at = std::lower_bound(budgeted_.begin(), budgeted_.end(), urn,
+                                     [](const Budgeted& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+    if (at != budgeted_.end() && at->urn.id == urn.id)
+        budgeted_.erase(at);
+}
+
+core::u64 MeshLoader::budgetedTextureBytes() const noexcept
+{
+    core::u64 bytes = 0;
+    for (const Budgeted& held : budgeted_)
+        bytes += held.bytes;
+    return bytes;
+}
+
+core::usize MeshLoader::texturesKeptSmaller() const noexcept
+{
+    return static_cast<core::usize>(
+        std::count_if(budgeted_.begin(), budgeted_.end(), [](const Budgeted& held) { return held.levels > 0; }));
+}
+
+void MeshLoader::applyTextureBudget(const scene::World& world, core::DVec3 camera, double nowSeconds)
+{
+    if (budgeted_.empty() || nowSeconds < nextBudgetCheck_)
+        return;
+    nextBudgetCheck_ = nowSeconds + CandidateCheckSeconds;
+    for (Budgeted& held : budgeted_)
+        held.wanted = 0;
+    if (textureBudget_ == 0)
+        return;
+
+    // **How near each is worn**: by the nearest part whose material names it,
+    // each material resolved once. Nothing naming it is as near as can be.
+    std::vector<double> nearest(budgeted_.size(), std::numeric_limits<double>::infinity());
+    std::vector<bool> worn(budgeted_.size(), false);
+    std::map<core::u64, std::vector<usize>> mapsOf;
+    world.parts().forEach([&](core::InstanceId, const scene::PartComponent& part) {
+        if (!part.material.valid())
+            return;
+        const core::u64 key = (static_cast<core::u64>(part.material.id) << 32) | part.materialClone;
+        auto found = mapsOf.find(key);
+        if (found == mapsOf.end()) {
+            std::vector<usize> indices;
+            const asset::ResolvedMaterial resolved = world.resolveMaterial(part.material, part.materialClone);
+            const asset::MaterialProperties& p = resolved.properties;
+            for (const std::string* map :
+                 {&p.colorMap, &p.normalMap, &p.metallicRoughnessMap, &p.emissiveMap, &p.heightMap}) {
+                if (map->empty())
+                    continue;
+                const core::NameAtom urn = world.atoms().lookup(*map);
+                const auto at =
+                    std::lower_bound(budgeted_.begin(), budgeted_.end(), urn,
+                                     [](const Budgeted& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+                if (urn.valid() && at != budgeted_.end() && at->urn.id == urn.id)
+                    indices.push_back(static_cast<usize>(at - budgeted_.begin()));
+            }
+            found = mapsOf.emplace(key, std::move(indices)).first;
+        }
+        if (found->second.empty())
+            return;
+        const double dx = part.cframe.position.x - camera.x;
+        const double dy = part.cframe.position.y - camera.y;
+        const double dz = part.cframe.position.z - camera.z;
+        const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        for (const usize index : found->second) {
+            worn[index] = true;
+            nearest[index] = std::min(nearest[index], distance);
+        }
+    });
+
+    std::vector<TextureBudgetEntry> entries(budgeted_.size());
+    for (usize at = 0; at < budgeted_.size(); ++at) {
+        entries[at] = TextureBudgetEntry{.wholeBytes = budgeted_[at].bytes << (2u * budgeted_[at].levels),
+                                         .nearest = nearest[at],
+                                         .worn = worn[at],
+                                         .order = budgeted_[at].urn.id};
+    }
+    const std::vector<core::u32> wanted = planTextureBudget(entries, textureBudget_, MostBudgetLevels, NearMetres);
+    for (usize at = 0; at < budgeted_.size(); ++at)
+        budgeted_[at].wanted = wanted[at];
+}
+
+void MeshLoader::letGoWhenUnnamed(std::span<const core::NameAtom> urns)
+{
+    for (const core::NameAtom urn : urns) {
+        if (!urn.valid())
+            continue;
+        const auto at =
+            std::lower_bound(candidates_.begin(), candidates_.end(), urn,
+                             [](const Candidate& held, core::NameAtom probe) { return held.urn.id < probe.id; });
+        if (at == candidates_.end() || at->urn.id != urn.id)
+            candidates_.insert(at, Candidate{urn});
+    }
+}
+
+core::u32 MeshLoader::releaseUnnamed(rhi::IDevice& device, const scene::World& world, double nowSeconds,
+                                     TextureLibrary& textures, MeshLibrary& meshes, MeshCache& cache)
+{
+    if (candidates_.empty() || nowSeconds < nextCandidateCheck_)
+        return 0;
+    nextCandidateCheck_ = nowSeconds + CandidateCheckSeconds;
+
+    // What is named: every mesh part in the world, whatever it is under, and
+    // what this loader holds for the game or is bringing in.
+    std::vector<u32> named;
+    world.meshParts().forEach([&named](core::InstanceId, const scene::MeshPartComponent& part) {
+        if (part.meshContent.valid())
+            named.push_back(part.meshContent.id);
+    });
+    for (const core::NameAtom held : kept_)
+        named.push_back(held.id);
+    for (const Preloaded& held : preloaded_)
+        named.push_back(held.urn.id);
+    for (const PendingMesh& pending : pendingMeshes_)
+        named.push_back(pending.content.id);
+    std::sort(named.begin(), named.end());
+
+    std::vector<core::NameAtom> gone;
+    std::erase_if(candidates_, [&](Candidate& candidate) {
+        if (std::binary_search(named.begin(), named.end(), candidate.urn.id))
+            return true;
+        if (candidate.unnamedSince < 0.0) {
+            candidate.unnamedSince = nowSeconds;
+            return false;
+        }
+        if (nowSeconds - candidate.unnamedSince < UnnamedSeconds)
+            return false;
+        gone.push_back(candidate.urn);
+        return true;
+    });
+    return gone.empty() ? 0u : forget(device, gone, textures, meshes, cache);
+}
+
 core::u32 MeshLoader::sweep(rhi::IDevice& device, const scene::World& world, TextureLibrary& textures,
                             MeshLibrary& meshes, MeshCache& cache)
 {
@@ -1563,6 +1783,7 @@ core::u32 MeshLoader::forget(rhi::IDevice& device, std::span<const core::NameAto
             device.destroy(held);
             ++dropped;
         }
+        forgetBudgeted(urn);
         noteReduced(urn, false);
 
         // One on its way in is another file's by the time it lands.

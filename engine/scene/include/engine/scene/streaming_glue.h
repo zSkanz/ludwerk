@@ -21,6 +21,7 @@
 
 #include "engine/asset/chunk.h"
 #include "engine/core/id.h"
+#include "engine/core/name_atom.h"
 #include "engine/core/types.h"
 
 namespace engine::scene {
@@ -57,6 +58,12 @@ public:
     // deferred signal `StreamingService.InstanceStreamedOut` names.
     [[nodiscard]] std::vector<core::InstanceId> drainStreamedOut();
 
+    // **The meshes no resident chunk names any more** (ADR 0264): a mesh
+    // content is counted once for each resident chunk whose records name it,
+    // and handed over here when the last of them is evicted -- for the
+    // renderer to let go of once nothing else in the world names it either.
+    [[nodiscard]] std::vector<core::NameAtom> drainUnusedMeshes();
+
     [[nodiscard]] usize residentChunks() const noexcept { return m_chunks.size(); }
     [[nodiscard]] u32 residentInstances() const noexcept { return m_residentInstances; }
     [[nodiscard]] u64 husksCreated() const noexcept { return m_husksCreated; }
@@ -74,6 +81,8 @@ private:
         // authored instance: what eviction takes away once they are empty.
         std::vector<core::InstanceId> models;
         std::vector<core::InstanceId> instances;
+        // The mesh contents its records name, each once.
+        std::vector<core::NameAtom> meshes;
     };
 
     World& m_world;
@@ -85,6 +94,9 @@ private:
     std::map<asset::ChunkId, Resident> m_chunks;
     std::function<bool(core::InstanceId)> m_probe;
     std::vector<core::InstanceId> m_streamedOut;
+    // How many resident chunks name each mesh content, by atom; ordered (R10).
+    std::map<u32, u32> m_meshUses;
+    std::vector<core::NameAtom> m_unusedMeshes;
     u32 m_residentInstances = 0;
     u64 m_husksCreated = 0;
 };

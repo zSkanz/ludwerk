@@ -11,6 +11,12 @@ here.
 
 ### Added
 
+- A streamed world lets go of what it has left behind: a mesh no resident
+  cell names, and nothing else in the world has named for ten seconds, is
+  freed from the GPU with what it carried. `GraphicsService.TextureStreamingBudget`
+  now does what it says: past it, the textures worn farthest from the camera
+  are kept a level or two smaller. The frame report says what was let go and
+  what the textures hold against the budget.
 - Occlusion culling: what a wall, a hill or a wall of blocks hides is not
   drawn. A small depth buffer of the biggest occluders is drawn in software
   each frame on the job system, never hiding anything that is seen, and the

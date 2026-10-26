@@ -1769,8 +1769,12 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "The memory that textures can keep loaded, in mebibytes; 0 is no limit. This setting is "
-                    .. "saved and reported but has no effect yet.",
+                Records = { "ADR 0264" },
+                Doc = "The memory that the game's own textures can keep loaded, in mebibytes; 0 is no limit. "
+                    .. "Over it, the textures worn farthest from the camera are loaded again without their "
+                    .. "largest level, a quarter of the memory each, at most twice, and loaded whole again when "
+                    .. "the camera comes near or there is room. A texture worn within 40 meters is never made "
+                    .. "smaller, and neither is one no material names, such as a decal's or a picture's.",
             },
             {
                 Name = "AsyncUploadBudget",

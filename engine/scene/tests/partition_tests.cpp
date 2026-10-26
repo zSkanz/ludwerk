@@ -971,3 +971,59 @@ TEST_CASE("a cell written before groups had anchors is still read, into its fold
     asset::Chunk refused;
     CHECK(asset::decodeChunk(asset::encodeChunk(broken), refused).has_value());
 }
+
+TEST_CASE("a mesh is handed over when the last resident chunk that names it leaves")
+{
+    // ADR 0264: two cells wearing one rock and one of them a tree of its
+    // own. The tree is the renderer's to let go of when its cell leaves; the
+    // rock only when both have.
+    seedRealCatalog();
+    const auto cellOf = [](core::i32 x, std::vector<std::string> meshes) {
+        asset::Chunk cell;
+        cell.id = asset::ChunkId{x, 0, 0};
+        cell.strings = {"Thing"};
+        for (const std::string& mesh : meshes) {
+            asset::ChunkInstance record;
+            record.kind = asset::ChunkInstance::Kind::MeshPart;
+            record.name = 0;
+            record.meshContent = static_cast<core::u32>(cell.strings.size());
+            cell.strings.push_back(mesh);
+            cell.instances.push_back(record);
+        }
+        return cell;
+    };
+    const asset::Chunk first = cellOf(1, {"asset://rock.mesh", "asset://tree.mesh", "asset://rock.mesh"});
+    const asset::Chunk second = cellOf(2, {"asset://rock.mesh"});
+
+    Sandbox sandbox;
+    // `MeshPart` is the renderer's class: a scene's registry has none, so
+    // the test makes one with the two components a streamed mesh carries.
+    (void)sandbox.registries.classes.registerClass({
+        .name = sandbox.registries.atoms.intern("MeshPart"),
+        .defaultName = sandbox.registries.atoms.intern("MeshPart"),
+        .attachComponents =
+            [](scene::World& w, core::InstanceId id) {
+                w.parts().add(id, scene::PartComponent{});
+                w.meshParts().add(id, scene::MeshPartComponent{});
+            },
+        .detachComponents =
+            [](scene::World& w, core::InstanceId id) {
+                w.parts().remove(id);
+                w.meshParts().remove(id);
+            },
+    });
+    scene::StreamingGlue glue(sandbox.world, sandbox.workspace);
+    (void)glue.materialize(first.id, first);
+    (void)glue.materialize(second.id, second);
+    CHECK(glue.drainUnusedMeshes().empty());
+    glue.evict(first.id);
+    const std::vector<core::NameAtom> tree = glue.drainUnusedMeshes();
+    REQUIRE(tree.size() == 1);
+    CHECK(sandbox.world.atoms().text(tree[0]) == "asset://tree.mesh");
+
+    glue.evict(second.id);
+    const std::vector<core::NameAtom> rock = glue.drainUnusedMeshes();
+    REQUIRE(rock.size() == 1);
+    CHECK(sandbox.world.atoms().text(rock[0]) == "asset://rock.mesh");
+    CHECK(glue.drainUnusedMeshes().empty());
+}

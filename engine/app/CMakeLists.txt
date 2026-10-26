@@ -1526,6 +1526,26 @@ if(ENG_BUILD_TESTS)
         TIMEOUT 1500
         LABELS perf)
 
+    # **The mesh flight** (ADR 0264): a strip of cells each wearing a mesh no
+    # other does, flown end to end at a paced sixty frames a second; what is
+    # left behind is let go, and the buffers on the card stay flat. `perf`
+    # because it is a minute of the clock, paced: what it measures is memory,
+    # not time, but a minute beside the other lanes is a minute they wait.
+    add_test(NAME mesh_flight
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DASSETC=$<TARGET_FILE:assetc>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/tests/streamsoak/meshflight
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/meshflight
+            -DFRAMES=3600
+            -DMIN_LET_GO=24
+            -DGROWTH_MB=1.5
+            -P ${CMAKE_SOURCE_DIR}/tests/streamsoak/run_mesh_flight_gate.cmake)
+    set_tests_properties(mesh_flight PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 600
+        LABELS perf)
+
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)
     # `quiet` (ADR 0148): the bench's budgets are the local gate's perf
