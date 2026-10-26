@@ -423,7 +423,10 @@ TEST_CASE("account door > a wrong name, a wrong password and a taken name take a
     REQUIRE(door.ask("ana_1", "correct horse battery", true).failure == Failure::None);
     REQUIRE(door.ask("bo_22", "correct horse battery", true).failure == Failure::None);
     // How long one ask takes to be answered, waited on a millisecond at a
-    // time: a coarser wait is a tenth of a hash's time.
+    // time: a coarser wait is a tenth of a hash's time. **The engine's precise
+    // wait, not the standard library's**: on Windows a millisecond's
+    // `sleep_for` is the system's whole tick, fifteen and a half, and every
+    // median came out three ticks or four whatever the path.
     int asked = 0;
     const auto timed = [&](std::string_view name, std::string password, bool registering) {
         asked += 1;
@@ -435,7 +438,7 @@ TEST_CASE("account door > a wrong name, a wrong password and a taken name take a
             door.door->frame();
             if (!door.door->take().empty())
                 return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            engine::platform::sleepNs(1'000'000);
         }
         FAIL("no answer in ten seconds");
         return 0.0;
