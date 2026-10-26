@@ -155,6 +155,8 @@ struct ChunkInstance
     // `BasePart.Occluder` (ADR 0262): `Enum.OccluderMode`'s value. A chunk
     // baked before it existed reads 0, `Automatic`.
     u8 occluder = 0;
+    // `MeshPart.LevelOfDetail` (ADR 0261), for a `MeshPart`: 1 `Finest`.
+    u8 levelOfDetail = 0;
 
     core::CFrameD cframe;
     core::Vec3 size{1.0f, 1.0f, 1.0f};

@@ -42,6 +42,9 @@ constexpr u32 FlagNoDecals = 1u << 4;
 // `Automatic`.
 constexpr u32 OccluderShift = 5;
 constexpr u32 OccluderMask = 3u << OccluderShift;
+// Set for a mesh part drawn at its finest level: a record from before the bit
+// is `Automatic`.
+constexpr u32 FlagFinest = 1u << 7;
 
 void writeU32(std::vector<std::byte>& out, u32 value)
 {
@@ -203,7 +206,8 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
         writeU32(out, (instance.anchored ? FlagAnchored : 0u) | (instance.canCollide ? FlagCanCollide : 0u) |
                           (instance.canQuery ? FlagCanQuery : 0u) | (instance.castShadow ? 0u : FlagNoShadow) |
                           (instance.receivesDecals ? 0u : FlagNoDecals) |
-                          ((static_cast<u32>(instance.occluder) << OccluderShift) & OccluderMask));
+                          ((static_cast<u32>(instance.occluder) << OccluderShift) & OccluderMask) |
+                          (instance.levelOfDetail != 0 ? FlagFinest : 0u));
         writeU32(out, instance.name);
         writeU32(out, instance.meshContent);
         writeU32(out, instance.collisionGroup);
@@ -315,6 +319,7 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         instance.castShadow = (flags & FlagNoShadow) == 0;
         instance.receivesDecals = (flags & FlagNoDecals) == 0;
         instance.occluder = static_cast<u8>((flags & OccluderMask) >> OccluderShift);
+        instance.levelOfDetail = (flags & FlagFinest) != 0 ? 1 : 0;
         instance.name = reader.u32v();
         instance.meshContent = reader.u32v();
         instance.collisionGroup = reader.u32v();

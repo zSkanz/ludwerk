@@ -149,6 +149,7 @@ inline constexpr scene::EnumId ScreenSplitEnumId = 106;
 inline constexpr scene::EnumId SequenceControlEnumId = 107;
 inline constexpr scene::EnumId NetworkFailureEnumId = 108;
 inline constexpr scene::EnumId OccluderModeEnumId = 109;
+inline constexpr scene::EnumId LevelOfDetailModeEnumId = 110;
 
 } // namespace generated
 
@@ -168,6 +169,8 @@ scene::Value getMeshPartMeshContent(const scene::World& world, core::InstanceId 
 bool setMeshPartMeshContent(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getMeshPartCollisionFidelity(const scene::World& world, core::InstanceId id);
 bool setMeshPartCollisionFidelity(scene::World& world, core::InstanceId id, const scene::Value& value);
+scene::Value getMeshPartLevelOfDetail(const scene::World& world, core::InstanceId id);
+bool setMeshPartLevelOfDetail(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getMeshPartMeshSize(const scene::World& world, core::InstanceId id);
 bool setMeshPartMeshSize(scene::World& world, core::InstanceId id, const scene::Value& value);
 scene::Value getMeshPartPoseFrom(const scene::World& world, core::InstanceId id);

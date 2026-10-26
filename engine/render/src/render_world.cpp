@@ -1537,6 +1537,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
                 .voxelBlock = false,
             });
             out.draws.back().motionKey = motionKey;
+            out.draws.back().finestLod = meshPart.levelOfDetail == 1;
             out.draws.back().castShadow = part->castShadow;
             out.draws.back().localCharacter = boneCount > 0 && ofOwnCharacter(id);
             // **A window onto the room seen through** (`BasePart.ShowsRoom`):
@@ -2623,9 +2624,23 @@ f32 decalReach(std::span<const RenderDecal> decals)
     return furthest;
 }
 
+f32 lodPixelsPerUnitOf(const RenderCamera& camera, u32 height) noexcept
+{
+    if (height == 0 || core::isOrthographic(camera.projection))
+        return 0.0f;
+    return 0.5f * static_cast<f32>(height) * camera.projection.m[1][1];
+}
+
 u32 selectDrawLod(const MeshCache::Resolved& resolved, const DrawItem& draw, f32 pixelsPerUnit,
                   const GraphicsSettings& settings) noexcept
 {
+    // **Decided for the frame** (ADR 0261): what every pass draws.
+    if (draw.lodFixed != DrawItem::NoLod) {
+        const u32 coarsest = resolved.lods.empty() ? 0u : static_cast<u32>(resolved.lods.size() - 1);
+        return std::min<u32>(draw.lodFixed, coarsest);
+    }
+    if (draw.finestLod)
+        return 0;
     u32 finest = settings.maximumLodLevel;
     // A skinned draw past the near distance, and not one of this machine's
     // characters, starts at the floor -- where the floor is coarser.

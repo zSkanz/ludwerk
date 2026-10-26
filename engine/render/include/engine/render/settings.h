@@ -308,6 +308,12 @@ struct GraphicsSettings
     // crowd and a forest in fewer triangles than a High one. One is the
     // levels as the compiler measured them.
     f32 lodBias = 1.0f;
+    // **`GraphicsService.ViewDistance`** (ADR 0261): what is smaller on the
+    // screen than `LodTransitions::SmallestPixels` divided by this is not
+    // drawn. And whether a change of level fades or cuts: a cut on Low and on
+    // a phone, where drawing both levels for a moment is what it cannot spare.
+    f32 viewDistance = 1.0f;
+    bool lodCrossfade = true;
     // The finest level a mesh is drawn at (`GraphicsService.MaximumLODLevel`):
     // nought is its finest; one leaves its finest out, where it has others.
     u32 maximumLodLevel = 0;

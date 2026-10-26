@@ -1087,6 +1087,20 @@ local Classes: { Schema.Class } = {
                     .. "value you set.",
             },
             {
+                Name = "LevelOfDetail",
+                Type = "Enum.LevelOfDetailMode",
+                Default = "Enum.LevelOfDetailMode.Automatic",
+                Records = { "ADR 0261" },
+                -- What is drawn of it, never what it is: it moves nothing a
+                -- world's trace records.
+                Presentation = true,
+                Doc = "Which of the mesh's levels of detail it is drawn at. `Automatic` draws the level its "
+                    .. "distance calls for, changing between levels without a visible pop where the quality "
+                    .. "allows; `Finest` always draws its finest level. Every mesh imported by the engine has "
+                    .. "levels made from it, coarser for the distance; a mesh drawn at its finest costs its "
+                    .. "full triangles wherever it is.",
+            },
+            {
                 Name = "MeshSize",
                 Type = "vector",
                 Default = "vector.create(1, 1, 1)",

@@ -44,16 +44,6 @@ using core::Mat4;
 using core::u32;
 using core::Vec3;
 
-// Pixels a metre covers at a metre's distance, for choosing a mesh's level of
-// detail. Zero -- always the finest level -- under an orthographic camera, where
-// how big a thing looks does not depend on how far away it is.
-[[nodiscard]] f32 lodPixelsPerUnit(const render::RenderCamera& camera, u32 height) noexcept
-{
-    if (height == 0 || core::isOrthographic(camera.projection))
-        return 0.0f;
-    return 0.5f * static_cast<f32>(height) * camera.projection.m[1][1];
-}
-
 // Further than any camera in this engine can see, so a cascade boundary set to
 // it is never the one a fragment selects.
 constexpr f32 kUnreachableDistance = 1.0e9f;
@@ -864,6 +854,10 @@ public:
     // Zero when the sun casts into no cascades at all, which is what turns the
     // whole caster-retention rule off rather than leaving it running for a
     // shadow map nothing writes.
+    [[nodiscard]] f32 lodPixelsPerUnit(const RenderWorld& world) const noexcept override
+    {
+        return world.camera.valid ? render::lodPixelsPerUnitOf(world.camera, height_) : 0.0f;
+    }
     [[nodiscard]] f32 shadowRadius() const noexcept override
     {
         if (settings_.shadowCascades == 0)
@@ -4676,7 +4670,7 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
     // The SAME level the submission will choose, from the same function and the
     // same camera -- a batch whose members disagreed about their level of detail
     // would draw one mesh with another's index range.
-    const f32 pixelsPerUnit = lodPixelsPerUnit(world.camera, height_);
+    const f32 pixelsPerUnit = lodPixelsPerUnitOf(world.camera, height_);
 
     // **A blended draw is batched where its order survives it.** Their order
     // is their correctness, and `drawSortKey` sorts them by material and then
@@ -4722,6 +4716,10 @@ void DefaultRenderer::buildInstanceBatches(const RenderWorld& world, const MeshC
             return false;
         // And so is a cloth (ADR 0214): its vertices are its own too.
         if (draw.cloth != NoCloth)
+            return false;
+        // And a level of detail fading in or out (ADR 0261): its share of the
+        // dither rides in its own block, which an instance has no room for.
+        if (draw.lodFade != 0.0f)
             return false;
         if (draw.transparent)
             return blendedRun(draw);
@@ -5038,7 +5036,7 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
     // so a shadow could be cast by different geometry than the object drawn --
     // which is a shadow that does not match its caster. Choosing once, from the
     // camera, keeps the two the same mesh.
-    const f32 pixelsPerUnit = world.camera.valid ? lodPixelsPerUnit(world.camera, height_) : 0.0f;
+    const f32 pixelsPerUnit = world.camera.valid ? lodPixelsPerUnitOf(world.camera, height_) : 0.0f;
     // The draws arrive sorted, so this walks them in order and
     // never reorders. Grouping is `extract`'s job and re-deriving it here would
     // be the backend doing work bgfx would have to repeat.
@@ -5221,10 +5219,16 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         // prepass depth hid -- the sky -- instead of what is behind them.
         if (selection == Selection::Prepass && surface != nullptr && world.materials[draw.material].masked)
             continue;
+        // **A level fading in or out** (ADR 0261) is a dither's holes, which
+        // the depth prepass draws no fragment to make: it writes its own depth,
+        // as a cutout does.
+        if (selection == Selection::Prepass && batch == nullptr && draw.lodFade != 0.0f)
+            continue;
         // **What the prepass drew is tested against its depth and writes none**
         // (ADR 0174): every opaque draw but a cutout and a masked surface,
         // which the prepass leaves out above and which write their own.
         const bool prepassed = prepassDrawn_ && selection == Selection::Opaque && !draw.cutout &&
+                               (batch != nullptr || draw.lodFade == 0.0f) &&
                                !(surface != nullptr && world.materials[draw.material].masked);
         const auto unlessPrepassed = [prepassed](rhi::PipelineHandle writing, rhi::PipelineHandle testing) {
             return prepassed && testing.valid() ? testing : writing;
@@ -5301,7 +5305,9 @@ void DefaultRenderer::drawGeometry(rhi::ICmdList& cmd, const RenderWorld& world,
         else {
             GpuObjectUniforms uniforms{viewProjection, batch != nullptr ? Mat4{} : draw.transform,
                                        batch != nullptr ? Mat4{} : normalMatrixOf(draw.transform)};
-            uniforms.instanceAlphaUnused[0] = batch != nullptr ? 1.0f : draw.alpha;
+            uniforms.instanceAlphaUnused[0] = batch != nullptr       ? 1.0f
+                                              : draw.lodFade != 0.0f ? draw.lodFade
+                                                                     : draw.alpha;
             // A terrain node's level, for the debug view of levels.
             uniforms.instanceAlphaUnused[1] = static_cast<f32>(draw.terrainLevel);
             cmd.bindUniforms(rhi::ShaderStage::Vertex, 0, asBytes(&uniforms, sizeof(uniforms)));
@@ -6427,7 +6433,7 @@ void DefaultRenderer::drawWarpMotion(rhi::IDevice& device, rhi::ICmdList& cmd, c
         return;
     const RenderCamera& camera = world.camera;
     const Mat4 view = camera.unjitteredViewProjection;
-    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnit(camera, height_) : 0.0f;
+    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnitOf(camera, height_) : 0.0f;
     warpPlacing_.clear();
     cmd.pushDebugGroup("space-warp");
     cmd.beginRenderPass({
@@ -6577,7 +6583,7 @@ void DefaultRenderer::writeVelocity(rhi::IDevice& device, rhi::ICmdList& cmd, co
     // from a frame ago, drawn with both places.
     placing_.clear();
     const bool drawable = ensureMotionPipelines(device);
-    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnit(camera, height_) : 0.0f;
+    const f32 pixelsPerUnit = camera.valid ? lodPixelsPerUnitOf(camera, height_) : 0.0f;
     bool begun = false;
     rhi::PipelineHandle bound{};
     for (const DrawItem& draw : world.draws) {
@@ -9288,7 +9294,7 @@ void DefaultRenderer::cullFoliage(rhi::IDevice& device, rhi::ICmdList& cmd, cons
     foliageBucketLods_.assign(bucketCount, 0);
     foliageLodCommand_.assign(static_cast<usize>(bucketCount) * kFoliageMaxLods, 0);
     std::vector<std::array<f32, 4>> lodDistances(bucketCount, std::array<f32, 4>{});
-    const f32 pixelsPerUnit = lodPixelsPerUnit(world.camera, height_);
+    const f32 pixelsPerUnit = lodPixelsPerUnitOf(world.camera, height_);
     std::vector<rhi::DrawIndexedIndirectCommand> arguments;
     std::vector<GpuFoliageCommand> commands;
     u32 total = 0;

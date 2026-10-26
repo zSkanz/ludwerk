@@ -68,7 +68,7 @@ listed on the page of the class that declares them.
 | `UnfocusedFrameRate` | `number` | `0` | read/write | The highest frame rate while the window can be seen but another window has the keyboard. 0, the default, means no limit: a game in view with a chat window focused beside it is still being played. In a multiplayer session it is never below 60. |
 | `Upscaling` | `Enum.UpscalingMode` | `Enum.UpscalingMode.None` | read/write | The method used to scale the world up to the window's resolution when `RenderScale` is below 1. At a scale of 1, `FSR1` does nothing and `FSR2` acts only as anti-aliasing. |
 | `VSync` | `boolean` | `true` | read/write | Whether each frame waits for the display's refresh. On by default, and always on for a handheld device. |
-| `ViewDistance` | `number` | `1` | read/write | A multiplier on the distance at which objects are drawn, from 0.25 to 4. This setting is saved and reported but has no effect yet. |
+| `ViewDistance` | `number` | `1` | read/write | A multiplier on the distance at which objects are drawn, from 0.25 to 4. A part or a mesh is drawn while it is at least two pixels across on the screen, divided by this: at 2 things are drawn twice as far, at 0.5 half as far. The ground, water and lights are drawn at their own distances. |
 | `WindowMode` | `Enum.WindowMode` | `Enum.WindowMode.Windowed` | read/write | Whether the game is windowed, borderless or fullscreen. A handheld device always uses the whole display. |
 
 ## Methods

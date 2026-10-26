@@ -133,6 +133,7 @@
 #include "engine/render/environment.h"
 #include "engine/render/foliage.h"
 #include "engine/render/lighting.h"
+#include "engine/render/lod_transition.h"
 #include "engine/render/mesh_loader.h"
 #include "engine/render/occlusion.h"
 #include "engine/render/particles.h"
@@ -4002,6 +4003,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // what the renderer spent recording a draw last frame -- what a hidden one
     // saves, against what the culler costs.
     render::OcclusionCuller occlusionCuller;
+    // The levels of detail kept from frame to frame (ADR 0261).
+    render::LodTransitions lodTransitions;
+    // What it did over the report's window: changes of level, draws left out
+    // for their size (a frame's, summed), and frames.
+    core::u64 lodChanges = 0;
+    core::u64 lodTooSmall = 0;
+    core::u64 lodFrames = 0;
     render::OcclusionStats occlusionFrame;
     core::f64 perDrawMs = 0.0;
     // Summed over a frame report's window.
@@ -4407,6 +4415,17 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         I18nArg{"frames", static_cast<core::i64>(occlusionRestingFrames)}};
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.occlusion_culling_resting"), rested);
                 }
+                // **The levels of detail** (ADR 0261): how often one changed,
+                // and how much was too small to draw.
+                if (lodFrames > 0 && (lodChanges != 0 || lodTooSmall != 0)) {
+                    const std::array<I18nArg, 2> lodLine{
+                        I18nArg{"changes", static_cast<core::i64>(lodChanges)},
+                        I18nArg{"small", static_cast<core::i64>(lodTooSmall / lodFrames)}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.levels_of_detail"), lodLine);
+                }
+                lodChanges = 0;
+                lodTooSmall = 0;
+                lodFrames = 0;
                 // **What the texture budget holds** (ADR 0264), where a game
                 // or a player set one.
                 if (meshLoader.textureBudget() != 0) {
@@ -9492,6 +9511,21 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     occlusionCuller.setAlwaysTest(renderer->settings().occlusionAlwaysTest);
                     occlusionFrame =
                         occlusionCuller.cull(snapshot, perDrawMs, static_cast<core::f64>(platform::nowNs()) / 1.0e9);
+                }
+                // **The frame's levels of detail** (ADR 0261): kept from the
+                // last frame within a band, faded rather than cut where the
+                // quality allows, and what is too small to see left out. A
+                // headless run cuts: its pictures are of the frame they are
+                // taken on, not of how far a fade on the wall clock had got.
+                if (renderer != nullptr) {
+                    ENG_PROFILE_SCOPE("render.lod");
+                    const render::LodTransitionStats lod = lodTransitions.apply(
+                        snapshot, meshCache, renderer->lodPixelsPerUnit(snapshot), renderer->settings(),
+                        renderer->settings().lodCrossfade && !options.headless,
+                        static_cast<core::f64>(platform::nowNs()) / 1.0e9);
+                    lodChanges += lod.changed;
+                    lodTooSmall += lod.tooSmall;
+                    ++lodFrames;
                 }
                 if (occlusionFrame.tested) {
                     occlusionHidden += occlusionFrame.hidden;

@@ -580,6 +580,15 @@ Some items are digital (a key or a button) and some are analog (an axis, a stick
 | `XRPinchLeft` | 169 | The left hand's thumb and index finger pinched, with hand tracking and no controller. |
 | `XRPinchRight` | 170 | The right hand's thumb and index finger pinched, with hand tracking and no controller. |
 
+## Enum.LevelOfDetailMode
+
+Which levels of detail a `MeshPart` is drawn at, set by `MeshPart.LevelOfDetail`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | The level its distance and size call for, changed without a pop where the quality allows. |
+| `Finest` | 1 | Always its finest level, however far: for a mesh whose silhouette a game reads, such as a sign or a landmark. |
+
 ## Enum.LineJoinMode
 
 How a `UIStroke` draws a corner.

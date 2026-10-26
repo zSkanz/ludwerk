@@ -2910,6 +2910,25 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "LevelOfDetailMode",
+            Records = { "ADR 0261" },
+            Doc = "Which levels of detail a `MeshPart` is drawn at, set by `MeshPart.LevelOfDetail`.",
+            Items = {
+                {
+                    Name = "Automatic",
+                    Value = 0,
+                    Doc = "The level its distance and size call for, changed without a pop where the quality "
+                        .. "allows.",
+                },
+                {
+                    Name = "Finest",
+                    Value = 1,
+                    Doc = "Always its finest level, however far: for a mesh whose silhouette a game reads, such "
+                        .. "as a sign or a landmark.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

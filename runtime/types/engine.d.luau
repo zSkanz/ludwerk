@@ -357,6 +357,9 @@ end
 declare extern type EnumOccluderMode extends EnumItem with
 end
 
+declare extern type EnumLevelOfDetailMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. The component names are lowercase because they are fields of Luau's native
     --- vector type. `v.X` also reads the component at run time, but only the lowercase name is
@@ -1455,6 +1458,11 @@ declare extern type MeshPart extends BasePart with
     --- collides as its bounding box. A mesh too thin or too small to form a solid also collides as its
     --- bounding box. The property reads back the value you set.
     CollisionFidelity: EnumCollisionFidelity
+    --- Which of the mesh's levels of detail it is drawn at. `Automatic` draws the level its distance
+    --- calls for, changing between levels without a visible pop where the quality allows; `Finest`
+    --- always draws its finest level. Every mesh imported by the engine has levels made from it,
+    --- coarser for the distance; a mesh drawn at its finest costs its full triangles wherever it is.
+    LevelOfDetail: EnumLevelOfDetailMode
     --- The size of the mesh as it was authored, in meters. The part is scaled by `Size` divided by
     --- `MeshSize`, so setting `Size` to twice `MeshSize` draws and collides the mesh at twice its
     --- authored size. Setting `MeshContent` from a script sets this to the size of the new mesh at
@@ -5343,8 +5351,10 @@ declare extern type GraphicsService extends Instance with
     --- and at 4 they are halved again. Raise it for a game whose camera is far from a crowd, since a
     --- crowd posed every fourth tick moves in visible steps. Higher values cost more.
     AnimationDetail: number
-    --- A multiplier on the distance at which objects are drawn, from 0.25 to 4. This setting is saved
-    --- and reported but has no effect yet.
+    --- A multiplier on the distance at which objects are drawn, from 0.25 to 4. A part or a mesh is
+    --- drawn while it is at least two pixels across on the screen, divided by this: at 2 things are
+    --- drawn twice as far, at 0.5 half as far. The ground, water and lights are drawn at their own
+    --- distances.
     ViewDistance: number
     --- How much of each texture is loaded. `High` loads the full size, `Medium` half the size (a
     --- quarter of the memory), and `Low` a quarter of the size (a sixteenth of the memory). The initial
@@ -8182,6 +8192,11 @@ declare Enum: {
         Never: EnumOccluderMode,
         Always: EnumOccluderMode,
         GetEnumItems: (self: any) -> { EnumOccluderMode },
+    },
+    LevelOfDetailMode: {
+        Automatic: EnumLevelOfDetailMode,
+        Finest: EnumLevelOfDetailMode,
+        GetEnumItems: (self: any) -> { EnumLevelOfDetailMode },
     },
 }
 

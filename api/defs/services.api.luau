@@ -1659,8 +1659,11 @@ local Classes: { Schema.Class } = {
                 ErrorKey = "scene.err.graphics_setting",
                 Transient = true,
                 HostFact = true,
-                Doc = "A multiplier on the distance at which objects are drawn, from 0.25 to 4. This setting is "
-                    .. "saved and reported but has no effect yet.",
+                Records = { "ADR 0261" },
+                Doc = "A multiplier on the distance at which objects are drawn, from 0.25 to 4. A part or a mesh "
+                    .. "is drawn while it is at least two pixels across on the screen, divided by this: at 2 "
+                    .. "things are drawn twice as far, at 0.5 half as far. The ground, water and lights are drawn "
+                    .. "at their own distances.",
             },
             {
                 Name = "TextureQuality",

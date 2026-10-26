@@ -147,6 +147,7 @@ inline constexpr EnumId ScreenSplitEnumId = 106;
 inline constexpr EnumId SequenceControlEnumId = 107;
 inline constexpr EnumId NetworkFailureEnumId = 108;
 inline constexpr EnumId OccluderModeEnumId = 109;
+inline constexpr EnumId LevelOfDetailModeEnumId = 110;
 
 } // namespace generated
 

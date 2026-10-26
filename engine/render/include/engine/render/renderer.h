@@ -255,6 +255,14 @@ public:
     // worth keeping as a caster, and the number belongs to the pass list rather
     // than to the host -- a renderer with cascades would answer differently.
     [[nodiscard]] virtual core::f32 shadowRadius() const noexcept = 0;
+    // **What a level of detail is chosen by** (ADR 0261): pixels a metre
+    // covers at a metre's distance in the picture this draws the world's
+    // camera into; nought for an orthographic camera.
+    [[nodiscard]] virtual core::f32 lodPixelsPerUnit(const RenderWorld& world) const noexcept
+    {
+        (void)world;
+        return 0.0f;
+    }
 
     // The quality family this renderer honours (ADR 0044). Applying
     // one may rebuild targets, which is why it is a call rather than a field

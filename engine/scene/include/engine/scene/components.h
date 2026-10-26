@@ -141,6 +141,10 @@ struct MeshPartComponent
     // approximates rather than with the rigid body that uses it.
     i32 collisionFidelity = 0;
 
+    // `MeshPart.LevelOfDetail` (ADR 0261): `Enum.LevelOfDetailMode`'s value, 0
+    // `Automatic`, 1 `Finest`.
+    i32 levelOfDetail = 0;
+
     // What the mesh measures at `Size == meshSize`, so that `Size` means the
     // same thing on a `MeshPart` as it does on a `Part`: the renderer and the
     // physics hull both scale by `size / meshSize`.

@@ -5449,6 +5449,11 @@
           "Type": "Enum.CollisionFidelity"
         },
         {
+          "Name": "LevelOfDetail",
+          "Type": "Enum.LevelOfDetailMode",
+          "Default": "Enum.LevelOfDetailMode.Automatic"
+        },
+        {
           "Name": "MeshContent",
           "Type": "Content"
         },
@@ -17580,6 +17585,19 @@
         {
           "Name": "Z",
           "Value": 39
+        }
+      ]
+    },
+    {
+      "Name": "LevelOfDetailMode",
+      "Items": [
+        {
+          "Name": "Automatic",
+          "Value": 0
+        },
+        {
+          "Name": "Finest",
+          "Value": 1
         }
       ]
     },

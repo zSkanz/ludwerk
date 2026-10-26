@@ -6328,7 +6328,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .inert = false,
             .hostFact = true,
             .transient = true,
-            .doc = "A multiplier on the distance at which objects are drawn, from 0.25 to 4. This setting is saved and reported but has no effect yet.",
+            .doc = "A multiplier on the distance at which objects are drawn, from 0.25 to 4. A part or a mesh is drawn while it is at least two pixels across on the screen, divided by this: at 2 things are drawn twice as far, at 0.5 half as far. The ground, water and lights are drawn at their own distances.",
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceViewDistance,
             .set = native::setGraphicsServiceViewDistance,
@@ -13394,6 +13394,26 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     occluderModeDesc.doc = "Whether a part hides what is behind it from the renderer, set by `BasePart.Occluder`.";
     occluderModeDesc.items = occluderModeItems;
     enums.registerEnum(occluderModeDesc);
+
+    // --- LevelOfDetailMode ---
+    static std::array<EnumItemDesc, 2> levelOfDetailModeItems;
+    levelOfDetailModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .doc = "The level its distance and size call for, changed without a pop where the quality allows.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Finest"),
+            .value = 1,
+            .doc = "Always its finest level, however far: for a mesh whose silhouette a game reads, such as a sign or a landmark.",
+        },
+    }};
+    EnumDescriptor levelOfDetailModeDesc;
+    levelOfDetailModeDesc.name = atoms.intern("LevelOfDetailMode");
+    levelOfDetailModeDesc.doc = "Which levels of detail a `MeshPart` is drawn at, set by `MeshPart.LevelOfDetail`.";
+    levelOfDetailModeDesc.items = levelOfDetailModeItems;
+    enums.registerEnum(levelOfDetailModeDesc);
 }
 
 } // namespace engine::scene::generated

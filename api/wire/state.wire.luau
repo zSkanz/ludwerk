@@ -388,6 +388,15 @@ local MeshPartFields: { Schema.Field } = {
             .. "hero is on the hero on every machine. The reference travels, when the piece is made and when "
             .. "it is changed; each machine makes the follower's pose from its own copy of the leader's.",
     },
+    {
+        Name = "LevelOfDetail",
+        Id = 5,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "meshParts",
+        Doc = "Which levels of detail it is drawn at (protocol 68, ADR 0261). A look: the picture is drawn "
+            .. "on the replica, and a landmark the authority kept at its finest was coarse on every client.",
+    },
 }
 
 --- **Retired**: a part has no colour or transparency of its own since ADR 0090;

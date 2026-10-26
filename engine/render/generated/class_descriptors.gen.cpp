@@ -55,7 +55,7 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
     const scene::ClassId pVInstanceClass = classes.findId(atoms.intern("PVInstance"));
 
     // --- MeshPart ---
-    static std::array<scene::PropertyDesc, 4> meshPartProperties;
+    static std::array<scene::PropertyDesc, 5> meshPartProperties;
     meshPartProperties = {{
         scene::PropertyDesc{
             .name = atoms.intern("MeshContent"),
@@ -80,6 +80,19 @@ void registerClasses(scene::ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
             .get = native::getMeshPartCollisionFidelity,
             .set = native::setMeshPartCollisionFidelity,
+        },
+        scene::PropertyDesc{
+            .name = atoms.intern("LevelOfDetail"),
+            .type = scene::ValueType::EnumItem,
+            .enumName = atoms.intern("LevelOfDetailMode"),
+            .threadSafety = scene::ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Which of the mesh's levels of detail it is drawn at. `Automatic` draws the level its distance calls for, changing between levels without a visible pop where the quality allows; `Finest` always draws its finest level. Every mesh imported by the engine has levels made from it, coarser for the distance; a mesh drawn at its finest costs its full triangles wherever it is.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getMeshPartLevelOfDetail,
+            .set = native::setMeshPartLevelOfDetail,
         },
         scene::PropertyDesc{
             .name = atoms.intern("MeshSize"),

@@ -11,6 +11,13 @@ here.
 
 ### Added
 
+- A mesh changes its level of detail without a pop: its level holds within
+  a band, and where the quality allows a change fades over a quarter of a
+  second through an ordered dither. `GraphicsService.ViewDistance` now does
+  what it says: what is smaller than two pixels on the screen, divided by
+  it, is not drawn. `MeshPart.LevelOfDetail` (`Enum.LevelOfDetailMode`:
+  `Automatic`, `Finest`) keeps a mesh at its finest. The wire is at
+  protocol 68.
 - A streamed world lets go of what it has left behind: a mesh no resident
   cell names, and nothing else in the world has named for ten seconds, is
   freed from the GPU with what it carried. `GraphicsService.TextureStreamingBudget`

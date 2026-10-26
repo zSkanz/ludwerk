@@ -445,6 +445,16 @@ struct DrawItem
     // never moves on its own -- the ground, the blocks, the water -- whose
     // motion is the camera's.
     u64 motionKey = 0;
+    // **The level it is drawn at, decided for the frame** (ADR 0261,
+    // `LodTransitions`): every pass reads this one. `NoLod` where nothing
+    // decided, and each pass then chooses by distance as before.
+    static constexpr core::u8 NoLod = 0xFF;
+    core::u8 lodFixed = NoLod;
+    // Nought, or a crossfade's share, encoded as `encodeLodFade` says and
+    // read in the place of the opacity.
+    f32 lodFade = 0.0f;
+    // `MeshPart.LevelOfDetail = Finest`: always its finest level.
+    bool finestLod = false;
 };
 
 // **What casts into the sun's map**: what is drawn solid. A see-through
@@ -1602,6 +1612,12 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
              f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
              RenderWorld& out, const ViewOverride* view = nullptr, std::span<const core::InstanceId> outlined = {},
              const TextureLibrary* textures = nullptr, std::span<const TerrainNodeDraw> terrainNodes = {});
+
+// Pixels a metre covers at a metre's distance in a picture `height` pixels
+// tall, which a level of detail is chosen by; nought -- always the finest --
+// under an orthographic camera, where how big a thing looks does not depend
+// on how far it is.
+[[nodiscard]] f32 lodPixelsPerUnitOf(const RenderCamera& camera, u32 height) noexcept;
 
 // **The level a draw is drawn at** (`GraphicsService.LODBias`,
 // `MaximumLODLevel`, `SkinnedLODFloor`): the mesh's level for its distance,

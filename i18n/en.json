@@ -193,6 +193,7 @@
   "engine.frame.info.secondary_motion": "Secondary motion: {chains} chains of {joints} joints stepped.",
   "engine.frame.info.cloth": "Cloth: {cloths} cloths of {vertices} vertices stepped, {milliseconds} ms the last frame.",
   "engine.frame.info.texture_budget": "Textures: {mib} MiB of the game's own, against a budget of {budget} MiB; {smaller} kept smaller, the farthest from the camera.",
+  "engine.frame.info.levels_of_detail": "Levels of detail: {changes} changes of level, and {small} things a frame too small on the screen to draw.",
   "engine.frame.info.let_go": "Let go of {count} meshes and what they carried, which no streamed cell named any more: {mib} MiB of GPU memory.",
   "engine.frame.info.memory": "Memory: the process uses {process} MiB of this machine's {machine}. In GPU memory: {textures} MiB in {texture_count} textures and {buffers} MiB in {buffer_count} buffers. Scripts: {scripts} MiB.",
   "engine.frame.info.occlusion": "Occlusion: {rays} rays a frame, {mean} ms a frame, worst {worst} ms; {muffled} sounds muffled.",

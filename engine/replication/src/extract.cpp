@@ -992,6 +992,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setI32(out, mesh->collisionFidelity);
             return true;
         }
+        if (field.name == "LevelOfDetail") {
+            setI32(out, mesh->levelOfDetail);
+            return true;
+        }
         if (field.name == "MeshSize") {
             setVec3(out, mesh->meshSize);
             return true;
@@ -2364,6 +2368,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "CollisionFidelity") {
             mesh->collisionFidelity = asI32(value);
+            return true;
+        }
+        if (field.name == "LevelOfDetail") {
+            mesh->levelOfDetail = asI32(value);
             return true;
         }
         if (field.name == "MeshSize") {

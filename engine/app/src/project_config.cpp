@@ -632,6 +632,8 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.skinnedLodFloor = static_cast<u32>(value(GraphicsSetting::SkinnedLODFloor));
     settings.skinnedLodNear = static_cast<f32>(value(GraphicsSetting::SkinnedLODNearDistance));
     settings.occlusionCulling = value(GraphicsSetting::OcclusionCulling) != 0.0;
+    settings.viewDistance = static_cast<f32>(value(GraphicsSetting::ViewDistance));
+    settings.lodCrossfade = !handheld && model.preset() > static_cast<int>(render::QualityLevel::Low);
     settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
     // **The filter's taps are the shadow quality's** (ADR 0172): one past the
     // level, zero for off -- so a player who turns shadows down alone gets the

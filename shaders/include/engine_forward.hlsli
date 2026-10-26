@@ -1057,6 +1057,22 @@ float4 shadeForward(Interpolants input)
     // see-through with `BasePart.Transparency`. Honouring only one leaves a case
     // that renders wrong, and the alpha is what `extract` sorted the draw by, so
     // the two have to agree on this product.
+    // **A level of detail fading in or out** (ADR 0261, `encodeLodFade`):
+    // an opaque draw's opacity is one, and two and above is a share of an
+    // ordered dither -- [2, 3) the lower values, the level coming in; [4, 5)
+    // the upper, the level going out. The two levels of one mesh keep each
+    // other's holes, so every pixel is drawn once and opaque.
+    if (input.InstanceAlpha >= 1.5f) {
+        const bool incoming = input.InstanceAlpha < 3.5f;
+        const float keep = saturate(input.InstanceAlpha - (incoming ? 2.0f : 4.0f));
+        const uint2 cell = uint2(input.Position.xy) & 3u;
+        const float pattern[16] = {0.0f,  8.0f, 2.0f,  10.0f, 12.0f, 4.0f,  14.0f, 6.0f,
+                                   3.0f, 11.0f, 1.0f,  9.0f,  15.0f, 7.0f,  13.0f, 5.0f};
+        const float threshold = (pattern[cell.x + cell.y * 4u] + 0.5f) / 16.0f;
+        if (incoming ? threshold >= keep : threshold < 1.0f - keep)
+            discard;
+        input.InstanceAlpha = 1.0f;
+    }
     baseColor.a *= input.InstanceAlpha;
 
     // The cutoff doubles as the alpha mode: the renderer writes 0 for Opaque and

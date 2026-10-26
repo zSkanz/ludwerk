@@ -689,6 +689,7 @@ Leaf Partitioner::readLeaf(std::string_view node)
     if (isMesh) {
         if (const MeshPartComponent* mesh = m_scratch.world().meshParts().find(id); mesh != nullptr) {
             leaf.meshContent = std::string(m_scratch.world().atoms().text(mesh->meshContent));
+            leaf.record.levelOfDetail = static_cast<core::u8>(mesh->levelOfDetail);
             leaf.record.collisionFidelity = static_cast<core::u8>(mesh->collisionFidelity);
         }
     }

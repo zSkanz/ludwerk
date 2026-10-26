@@ -20,7 +20,7 @@ using core::u8;
 // Bumped by hand in the commit that changes the wire, and never derived from
 // the engine version: a release that changes nothing about the protocol must
 // not refuse a peer, and a wire change inside one release must.
-inline constexpr u32 ProtocolVersion = 67;
+inline constexpr u32 ProtocolVersion = 68;
 
 // How a field's bytes are laid down. Every one is little-endian and fixed-width
 // with no nesting -- a wire format whose parser can recurse has a stack-depth
@@ -162,6 +162,7 @@ inline constexpr FieldDesc MeshPartFields[] = {
     {"CollisionFidelity", 2, Encoding::I32, Source::Component, "meshParts"},
     {"MeshSize", 3, Encoding::Vector3, Source::Component, "meshParts"},
     {"PoseFrom", 4, Encoding::InstanceRef, Source::Component, "meshParts"},
+    {"LevelOfDetail", 5, Encoding::I32, Source::Component, "meshParts"},
 };
 
 inline constexpr FieldDesc CharacterBodyFields[] = {
