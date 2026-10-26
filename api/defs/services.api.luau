@@ -1916,6 +1916,17 @@ local Classes: { Schema.Class } = {
                 Doc = "The display the window is on, as an index into the list that `GetMonitors` returns.",
             },
             {
+                Name = "OcclusionCulling",
+                Type = "boolean",
+                Default = "true",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "Whether what is wholly hidden behind something nearer, such as the houses behind a wall, is "
+                    .. "left out of the picture. It costs a little time on the processor each frame, and turns itself "
+                    .. "off for a while where it hides less than it costs, as in a game seen from above.",
+            },
+            {
                 Name = "Adapter",
                 Type = "number",
                 Default = "0",

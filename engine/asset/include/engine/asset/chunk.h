@@ -152,6 +152,9 @@ struct ChunkInstance
     bool castShadow = true;
     // `BasePart.ReceivesDecals`, stored the same way.
     bool receivesDecals = true;
+    // `BasePart.Occluder` (ADR 0262): `Enum.OccluderMode`'s value. A chunk
+    // baked before it existed reads 0, `Automatic`.
+    u8 occluder = 0;
 
     core::CFrameD cframe;
     core::Vec3 size{1.0f, 1.0f, 1.0f};

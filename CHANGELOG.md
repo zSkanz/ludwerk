@@ -11,6 +11,13 @@ here.
 
 ### Added
 
+- Occlusion culling: what a wall, a hill or a wall of blocks hides is not
+  drawn. A small depth buffer of the biggest occluders is drawn in software
+  each frame on the job system, never hiding anything that is seen, and the
+  culler rests when it saves less than it costs. `BasePart.Occluder`
+  (`Enum.OccluderMode`: `Automatic`, `Never`, `Always`) says which parts hide
+  what is behind them; `GraphicsService.OcclusionCulling` and
+  `--[no-]occlusion-culling` turn it off. The wire is at protocol 67.
 - Text in every script: Arabic, Persian and Hebrew run right to left and
   join, the Indic scripts reorder and stack their signs, Thai and Lao break
   between words, and text that mixes directions is put in the order it is

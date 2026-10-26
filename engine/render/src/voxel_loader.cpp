@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 
+#include "engine/asset/terrain.h"
 #include "engine/core/log.h"
 
 namespace engine::render {
@@ -95,6 +97,188 @@ bool VoxelLoader::inFlight(asset::VoxelChunkKey key) const noexcept
         }
     }
     return false;
+}
+
+void VoxelLoader::appendOccluders(const scene::World& world, RenderWorld& out)
+{
+    constexpr i32 Edge = static_cast<i32>(asset::VoxelChunkEdge);
+    constexpr i32 Reach = OccluderReachBlocks;
+    const scene::VoxelComponent* voxels = nullptr;
+    world.voxels().forEach([&voxels](core::InstanceId, const scene::VoxelComponent& found) {
+        if (voxels == nullptr)
+            voxels = &found;
+    });
+    if (voxels == nullptr || voxels->grid.chunkCount() == 0)
+        return;
+    const asset::VoxelGrid& grid = voxels->grid;
+    const double size = static_cast<double>(voxels->blockSize);
+    const core::DVec3 camera = out.camera.origin;
+    // The window, in whole chunks round the block under the camera.
+    const i32 lowX = asset::floorDiv(static_cast<i32>(std::floor(camera.x / size)) - Reach, Edge);
+    const i32 lowZ = asset::floorDiv(static_cast<i32>(std::floor(camera.z / size)) - Reach, Edge);
+    constexpr i32 Chunks = 2 * Reach / Edge + 1;
+
+    // Made from: where it is, the blocks, and which chunks are not drawn as
+    // they are.
+    u64 made = 0xA0761D6478BD642Full;
+    const auto mix = [&](u64 value) { made = (made ^ value) * 0x100000001B3ull; };
+    mix(static_cast<u64>(static_cast<u32>(lowX)));
+    mix(static_cast<u64>(static_cast<u32>(lowZ)));
+    mix(voxels->revision);
+    mix(m_looksDigest);
+    mix(std::bit_cast<u32>(voxels->blockSize));
+    mix(m_hasFocus ? std::bit_cast<u64>(m_viewDistance) : 0u);
+    const auto mixKey = [&](asset::VoxelChunkKey key) {
+        mix((static_cast<u64>(static_cast<u32>(key.x)) << 32) ^ (static_cast<u64>(static_cast<u32>(key.y)) << 16) ^
+            static_cast<u64>(static_cast<u32>(key.z)));
+    };
+    for (const asset::VoxelChunkKey key : m_dirty)
+        mixKey(key);
+    for (const Batch& batch : m_batches) {
+        for (const std::unique_ptr<Build>& build : batch.builds)
+            mixKey(build->key);
+    }
+
+    if (made != m_occluderMade) {
+        m_occluderMade = made;
+        m_occluderBoxes.clear();
+        const double chunkMetres = static_cast<double>(Edge) * size;
+        const auto drawnAsItIs = [&](asset::VoxelChunkKey key) {
+            if (std::binary_search(m_dirty.begin(), m_dirty.end(), key) || inFlight(key))
+                return false;
+            if (!m_hasFocus)
+                return true;
+            // In range, by the measure `sync` keeps chunks by.
+            const auto axis = [&](i32 index, double focus) {
+                const double low = static_cast<double>(index) * chunkMetres;
+                return std::max({low - focus, 0.0, focus - (low + chunkMetres)});
+            };
+            const auto from = [&](const core::DVec3& viewer) {
+                const double dx = axis(key.x, viewer.x);
+                const double dy = axis(key.y, viewer.y);
+                const double dz = axis(key.z, viewer.z);
+                return std::sqrt(dx * dx + dy * dy + dz * dz);
+            };
+            double distance = from(m_focus);
+            for (const core::DVec3& other : m_otherFoci)
+                distance = std::min(distance, from(other));
+            return distance <= m_viewDistance;
+        };
+        // Which blocks hide what is behind them: opaque, and not a fluid.
+        const auto opaque = [&](asset::BlockId block) {
+            if (block == asset::AirBlock)
+                return false;
+            const u32 type = asset::blockTypeOf(block);
+            if (type == 0 || type > voxels->types.size())
+                return true;
+            const scene::VoxelBlockType& look = voxels->types[type - 1];
+            return look.opacity == 0 && look.fluidReach == 0;
+        };
+
+        // The window's chunks that are drawn as they are, and how high they
+        // reach.
+        std::vector<const asset::VoxelGrid::Entry*> inside;
+        i32 lowY = std::numeric_limits<i32>::max();
+        i32 highY = std::numeric_limits<i32>::min();
+        for (const asset::VoxelGrid::Entry& entry : grid.chunks()) {
+            const asset::VoxelChunkKey key = entry.first;
+            if (key.x < lowX || key.z < lowZ || key.x >= lowX + Chunks || key.z >= lowZ + Chunks ||
+                entry.second == nullptr || entry.second->solid == 0 || !drawnAsItIs(key))
+                continue;
+            inside.push_back(&entry);
+            lowY = std::min(lowY, key.y);
+            highY = std::max(highY, key.y);
+        }
+        if (!inside.empty() && highY - lowY < MostOccluderChunksHigh) {
+            // Every opaque block of them, a byte each.
+            const i32 width = Chunks * Edge;
+            const i32 height = (highY - lowY + 1) * Edge;
+            std::vector<core::u8> solid(
+                static_cast<usize>(width) * static_cast<usize>(width) * static_cast<usize>(height), 0);
+            const auto cell = [&](i32 x, i32 y, i32 z) {
+                return (static_cast<usize>(y) * static_cast<usize>(width) + static_cast<usize>(z)) *
+                           static_cast<usize>(width) +
+                       static_cast<usize>(x);
+            };
+            for (const asset::VoxelGrid::Entry* entry : inside) {
+                const i32 baseX = (entry->first.x - lowX) * Edge;
+                const i32 baseY = (entry->first.y - lowY) * Edge;
+                const i32 baseZ = (entry->first.z - lowZ) * Edge;
+                for (u32 y = 0; y < asset::VoxelChunkEdge; ++y) {
+                    for (u32 z = 0; z < asset::VoxelChunkEdge; ++z) {
+                        for (u32 x = 0; x < asset::VoxelChunkEdge; ++x) {
+                            if (opaque(entry->second->blocks[asset::voxelIndex(x, y, z)]))
+                                solid[cell(baseX + static_cast<i32>(x), baseY + static_cast<i32>(y),
+                                           baseZ + static_cast<i32>(z))] = 1;
+                        }
+                    }
+                }
+            }
+            // **Greedy boxes**: from each solid block not yet in a box, as far
+            // as it goes along x, then along z while every row is solid, then
+            // up while every layer is. A wall is one box, and a hill a few.
+            const auto free = [&](i32 x, i32 y, i32 z) { return solid[cell(x, y, z)] == 1; };
+            for (i32 y = 0; y < height; ++y) {
+                for (i32 z = 0; z < width; ++z) {
+                    for (i32 x = 0; x < width; ++x) {
+                        if (!free(x, y, z))
+                            continue;
+                        i32 x1 = x + 1;
+                        while (x1 < width && free(x1, y, z))
+                            ++x1;
+                        i32 z1 = z + 1;
+                        const auto rowFree = [&](i32 atY, i32 atZ) {
+                            for (i32 at = x; at < x1; ++at) {
+                                if (!free(at, atY, atZ))
+                                    return false;
+                            }
+                            return true;
+                        };
+                        while (z1 < width && rowFree(y, z1))
+                            ++z1;
+                        i32 y1 = y + 1;
+                        const auto layerFree = [&](i32 atY) {
+                            for (i32 at = z; at < z1; ++at) {
+                                if (!rowFree(atY, at))
+                                    return false;
+                            }
+                            return true;
+                        };
+                        while (y1 < height && layerFree(y1))
+                            ++y1;
+                        for (i32 by = y; by < y1; ++by) {
+                            for (i32 bz = z; bz < z1; ++bz) {
+                                for (i32 bx = x; bx < x1; ++bx)
+                                    solid[cell(bx, by, bz)] = 2;
+                            }
+                        }
+                        // A box too small to hide much is left to the draws.
+                        if ((x1 - x) * (y1 - y) * (z1 - z) < SmallestOccluderBlocks)
+                            continue;
+                        const auto metres = [&](i32 block, i32 chunk) {
+                            return (static_cast<double>(chunk) * Edge + block) * size;
+                        };
+                        m_occluderBoxes.push_back(
+                            BlockBox{core::DVec3{metres(x, lowX), metres(y, lowY), metres(z, lowZ)},
+                                     core::DVec3{metres(x1, lowX), metres(y1, lowY), metres(z1, lowZ)}});
+                    }
+                }
+            }
+        }
+    }
+    // Each frame, only placed: the camera-relative unit cube of each box.
+    for (const BlockBox& box : m_occluderBoxes) {
+        const core::DVec3 middle{(box.low.x + box.high.x) * 0.5 - camera.x, (box.low.y + box.high.y) * 0.5 - camera.y,
+                                 (box.low.z + box.high.z) * 0.5 - camera.z};
+        const core::Vec3 extent{static_cast<core::f32>(box.high.x - box.low.x),
+                                static_cast<core::f32>(box.high.y - box.low.y),
+                                static_cast<core::f32>(box.high.z - box.low.z)};
+        const core::Vec3 centre{static_cast<core::f32>(middle.x), static_cast<core::f32>(middle.y),
+                                static_cast<core::f32>(middle.z)};
+        out.occluderBoxes.push_back(OccluderBox{.box = core::translation(centre) * core::scaling(extent),
+                                                .centre = centre,
+                                                .radius = 0.5f * core::length(extent)});
+    }
 }
 
 core::usize VoxelLoader::pendingCount() const noexcept

@@ -2883,6 +2883,32 @@ if(ENG_BUILD_TESTS)
         SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
         TIMEOUT 300)
 
+    # **What a wall hides is not drawn, and nothing it hides is seen** (ADR
+    # 0262): a street of houses and a turning camera, every fourth frame the
+    # same picture with the occlusion culler and without it.
+    add_test(NAME occlusion_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/occlusion
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/occlusion
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_occlusion_gate.cmake)
+    set_tests_properties(occlusion_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+    # The same of the ground: a ridge of terrain and a wall of blocks, and a
+    # camera turning and rising over their lines.
+    add_test(NAME occlusion_ground_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DIMGCMP=$<TARGET_FILE:imgcmp>
+            -DSCRIPT=${CMAKE_SOURCE_DIR}/tests/screenshots/occlusion_ground
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/occlusion_ground
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_occlusion_gate.cmake)
+    set_tests_properties(occlusion_ground_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 300)
+
     # **A surface shader first worn in play costs that frame nothing** (ADR
     # 0257): its pipelines are made off the frame, cold. See the driver.
     add_test(NAME surface_first_use
@@ -3401,7 +3427,7 @@ if(ENG_BUILD_TESTS)
         terrain_tiling terrain_far terrain_far_plane terrain_paint_edge terrain_material_channels terrain_glow
         terrain_far_flight foliage_card_shadows terrain_rules_agree block_faces_colours chunk_grid_differential
         editor_seam replica_seam descriptor_heap_overflow triangle_sample crash_gate device_loss_survived
-        decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running editor_shots_bakelight lean_path_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
+        decal_blend_gate decal_receives_gate thin_wall_gate mesh_room_gate furnace_gate baked_room_gate relight_gate open_field_gate split_screen_gate overlay_shots_game editor_shots_timeline editor_shots_timeline-popups editor_shots_properties editor_shots_character editor_shots_profiler editor_shots_profiler-capture editor_shots_graph-surface editor_shots_graph-animation editor_shots_graph-running editor_shots_bakelight lean_path_gate occlusion_gate occlusion_ground_gate foliage_decal_gate particles_gpu_gate cast_shadow_gate window_hold_gate anti_aliasing_2d
         temporal_upscale_gate frame_generation_gate motion_whole_gate morph_landing shape_keys_example texture_quality_gate scene_release_gate
         screen_light_gate shadow_edge_gate shadow_reach_gate probe_read_gate ceiling_joint_gate ceiling_joint_bare_gate
         cloth_shadow_flicker_gate vehicle_gate breaking_wall_gate cloth_gate)

@@ -123,6 +123,20 @@ private:
     return world.characterBodies().find(id) != nullptr ? Capsule : part.shape;
 }
 
+// `Enum.OccluderMode`'s values (ADR 0262).
+constexpr core::i32 OccluderNever = 1;
+constexpr core::i32 OccluderAlways = 2;
+
+// **The box a draw fills, as an occluder**: the unit cube carried onto its
+// local bounds, then by its transform. A block's bounds are the unit cube, so
+// its box is its own transform.
+[[nodiscard]] OccluderBox occluderOf(const Mat4& transform, const AABB& local, const AABB& world) noexcept
+{
+    return OccluderBox{.box = transform * core::translation(core::center(local)) * core::scaling(core::size(local)),
+                       .centre = core::center(world),
+                       .radius = 0.5f * core::length(core::size(world))};
+}
+
 [[nodiscard]] Vec3 primitiveScale(core::i32 shape, Vec3 size) noexcept
 {
     switch (shape) {
@@ -1403,6 +1417,15 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
         // whole mesh rather than once per section: `Material` is a property of
         // the PART, and every section of it gets the same answer.
         const PartLook look = lookOf(world, id, *part, materials, frameMaterials, lastFrameMaterial);
+        // **A mesh hides what is behind it only when its author says it is
+        // solid** (`Occluder = Always`, ADR 0262), as the box it fills: the
+        // engine cannot tell a solid mesh from a hollow one. Never one that
+        // moves under a pose or a cloth, whose shape leaves its box, and never
+        // one seen through.
+        if (visible && part->occluder == OccluderAlways && !part->showsRoom && cloth == nullptr &&
+            !meshPart.poseFrom.valid() && (animation == nullptr || !animation->animates(id)) &&
+            look.transparency <= 0.0f && part->fade <= 0.0f)
+            out.occluderBoxes.push_back(occluderOf(transform, drawnBounds, worldBounds));
         // The same for every section of it, and asked once.
         const bool outlinedHere = isOutlined(id);
         const core::u8 highlightHere = highlightOf(id);
@@ -2047,6 +2070,13 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
 
         ++out.candidateDraws;
         const bool visible = core::intersects(out.camera.frustum, worldBounds);
+        // **A box hides what is behind it** (ADR 0262): an opaque `Block`, as
+        // itself -- the unit cube its draw is made of, at its size -- and any
+        // other shape its author marked `Always`, as its box. Not a window
+        // onto a room, and not one this machine has thinned.
+        if (visible && opacity >= 1.0f && !part.showsRoom && part.occluder != OccluderNever &&
+            (shape == 0 || part.occluder == OccluderAlways))
+            out.occluderBoxes.push_back(occluderOf(transform, entry->bounds, worldBounds));
         if (!visible) {
             ++out.culledDraws;
             const Vec3 toCentre = core::center(worldBounds);

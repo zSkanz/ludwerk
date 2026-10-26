@@ -318,6 +318,10 @@ struct GraphicsSettings
     // levels coarse up close would look broken where a creature in a crowd
     // does not.
     u32 skinnedLodFloor = 0;
+    // **What a wall hides is not drawn** (ADR 0262,
+    // `GraphicsService.OcclusionCulling`): on at every level; it rests by
+    // itself where it saves less than it costs.
+    bool occlusionCulling = true;
     f32 skinnedLodNear = 5.0f;
 
     // **The lean path for a window** (the mobile lean path): a tile GPU's

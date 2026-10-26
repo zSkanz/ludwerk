@@ -146,6 +146,7 @@ inline constexpr EnumId IrradianceModeEnumId = 105;
 inline constexpr EnumId ScreenSplitEnumId = 106;
 inline constexpr EnumId SequenceControlEnumId = 107;
 inline constexpr EnumId NetworkFailureEnumId = 108;
+inline constexpr EnumId OccluderModeEnumId = 109;
 
 } // namespace generated
 
@@ -232,6 +233,8 @@ Value getBasePartBakedLight(const World& world, core::InstanceId id);
 bool setBasePartBakedLight(World& world, core::InstanceId id, const Value& value);
 Value getBasePartLightmapScale(const World& world, core::InstanceId id);
 bool setBasePartLightmapScale(World& world, core::InstanceId id, const Value& value);
+Value getBasePartOccluder(const World& world, core::InstanceId id);
+bool setBasePartOccluder(World& world, core::InstanceId id, const Value& value);
 Value getBasePartAnchored(const World& world, core::InstanceId id);
 bool setBasePartAnchored(World& world, core::InstanceId id, const Value& value);
 Value getBasePartCanCollide(const World& world, core::InstanceId id);
@@ -1086,6 +1089,8 @@ Value getGraphicsServiceResolution(const World& world, core::InstanceId id);
 bool setGraphicsServiceResolution(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceMonitor(const World& world, core::InstanceId id);
 bool setGraphicsServiceMonitor(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceOcclusionCulling(const World& world, core::InstanceId id);
+bool setGraphicsServiceOcclusionCulling(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceAdapter(const World& world, core::InstanceId id);
 bool setGraphicsServiceAdapter(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceVSync(const World& world, core::InstanceId id);

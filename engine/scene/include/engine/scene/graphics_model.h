@@ -63,6 +63,7 @@ namespace engine::scene {
     X(MaximumLODLevel, Whole, 0.0, 8.0, 0.0, true, true)                                                               \
     X(SkinnedLODFloor, Whole, 0.0, 8.0, 0.0, true, true)                                                               \
     X(SkinnedLODNearDistance, Number, 0.0, 1000.0, 5.0, true, true)                                                    \
+    X(OcclusionCulling, Flag, 0.0, 1.0, 1.0, false, true)                                                              \
     X(ParticleBudget, Whole, 0.0, 1048576.0, 65536.0, true, false)                                                     \
     X(SoftParticles, Flag, 0.0, 1.0, 1.0, true, false)                                                                 \
     X(SkinWeights, Whole, 1.0, 4.0, 4.0, true, false)                                                                  \

@@ -79,6 +79,8 @@ struct GraphicsOverrides
     // `--vsync`, `--no-vsync`, `--max-frame-rate=N`, `--background-frame-rate=N`,
     // `--unfocused-frame-rate=N` (ADR 0147), over `[display]`.
     std::optional<bool> vsync;
+    // `--no-occlusion-culling`, `--occlusion-culling` (ADR 0262).
+    std::optional<bool> occlusionCulling;
     std::optional<core::u32> maxFrameRate;
     std::optional<core::u32> backgroundFrameRate;
     std::optional<core::u32> unfocusedFrameRate;

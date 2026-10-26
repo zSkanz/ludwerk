@@ -937,6 +937,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
             setBool(out, part->bakedLight);
             return true;
         }
+        if (field.name == "Occluder") {
+            setI32(out, part->occluder);
+            return true;
+        }
         if (field.name == "ReceivesDecals") {
             setBool(out, part->receivesDecals);
             return true;
@@ -2401,6 +2405,10 @@ void setRotation(FieldValue& out, const core::Mat3& rotation) noexcept
         }
         if (field.name == "BakedLight") {
             part->bakedLight = asBool(value);
+            return true;
+        }
+        if (field.name == "Occluder") {
+            part->occluder = asI32(value);
             return true;
         }
         if (field.name == "ReceivesDecals") {

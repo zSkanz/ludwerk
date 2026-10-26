@@ -1351,6 +1351,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.bloom = arg == "--bloom";
             continue;
         }
+        if (arg == "--occlusion-culling" || arg == "--no-occlusion-culling") {
+            graphics.occlusionCulling = arg == "--occlusion-culling";
+            continue;
+        }
         if (arg == "--lean" || arg == "--no-lean") {
             graphics.leanPath = arg == "--lean";
             continue;

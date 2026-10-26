@@ -304,6 +304,34 @@ struct ClothDraw
     core::u32 vertexCount = 0;
 };
 
+// **A box that hides what is wholly behind it** (ADR 0262): the unit cube's
+// transform into the camera's space, and the sphere round it.
+struct OccluderBox
+{
+    Mat4 box;
+    Vec3 centre;
+    f32 radius = 0.0f;
+};
+
+// **The ground as an occluder** (ADR 0262): a grid of tiles, each a pair of
+// triangles between its corners' heights, in camera-relative space. A corner
+// is never higher than what is solid all the way down under every tile
+// beside it, so a triangle is inside the ground, and what it hides the
+// ground drawn over it hides.
+struct OccluderGrid
+{
+    // Corner (0, 0); corner (i, j) is `tile` metres times i along x and j
+    // along z from it, at `origin.y` plus its height.
+    Vec3 origin;
+    f32 tile = 1.0f;
+    core::u32 columns = 0;
+    core::u32 rows = 0;
+    // (columns + 1) by (rows + 1) corner heights, a row of x at a time.
+    std::vector<f32> heights;
+    // columns by rows: whether the tile is solid ground to draw.
+    std::vector<core::u8> solid;
+};
+
 // One draw: a mesh section with a transform and a material.
 //
 // `sortKey` is computed here and never in a backend. That is the roadmap's third
@@ -1011,6 +1039,12 @@ struct RenderWorld
     // each their own (`familyOf`).
     std::vector<u32> materialFamilies;
     std::vector<DrawItem> draws;
+    // **What hides what is behind it** (ADR 0262): a solid box each, in the
+    // camera's space, for the occlusion culler -- an opaque `Block` part, as
+    // itself. Its own draws are among `draws` too.
+    std::vector<OccluderBox> occluderBoxes;
+    // The ground's grids: a terrain's, a block world's.
+    std::vector<OccluderGrid> occluderGrids;
 
     // **Scratch for `extract`'s sort, not part of the snapshot.** Kept here so
     // its capacity survives from one frame to the next, as every vector above
@@ -1153,6 +1187,8 @@ struct RenderWorld
         materials.clear();
         materialFamilies.clear();
         draws.clear();
+        occluderBoxes.clear();
+        occluderGrids.clear();
         bones.clear();
         morphs.clear();
         cloths.clear();

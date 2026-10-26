@@ -491,7 +491,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(moduleScriptDesc);
 
     // --- BasePart ---
-    static std::array<PropertyDesc, 34> basePartProperties;
+    static std::array<PropertyDesc, 35> basePartProperties;
     basePartProperties = {{
         PropertyDesc{
             .name = atoms.intern("CFrame"),
@@ -687,6 +687,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.number_above_zero"),
             .get = native::getBasePartLightmapScale,
             .set = native::setBasePartLightmapScale,
+        },
+        PropertyDesc{
+            .name = atoms.intern("Occluder"),
+            .type = ValueType::EnumItem,
+            .enumName = atoms.intern("OccluderMode"),
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .doc = "Whether this part hides what is behind it from the renderer, so that what it hides is not drawn (`GraphicsService.OcclusionCulling`). `Automatic` lets an opaque block hide; `Never` stops this part from hiding anything; `Always` makes its box hide, whatever its shape or mesh.\012\012Set `Always` on a large solid mesh, such as a building, a cliff or a hill: the engine cannot tell a solid mesh from a hollow one, and treats what is inside its box as hidden. An animated mesh never hides anything. What is hidden is decided again every frame, so a part that moves hides only what is behind it where it is drawn.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.expected_enum_item"),
+            .get = native::getBasePartOccluder,
+            .set = native::setBasePartOccluder,
         },
         PropertyDesc{
             .name = atoms.intern("Anchored"),
@@ -6041,7 +6054,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 50> graphicsServiceProperties;
+    static std::array<PropertyDesc, 51> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -6612,6 +6625,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceMonitor,
             .set = native::setGraphicsServiceMonitor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("OcclusionCulling"),
+            .type = ValueType::Bool,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "Whether what is wholly hidden behind something nearer, such as the houses behind a wall, is left out of the picture. It costs a little time on the processor each frame, and turns itself off for a while where it hides less than it costs, as in a game seen from above.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceOcclusionCulling,
+            .set = native::setGraphicsServiceOcclusionCulling,
         },
         PropertyDesc{
             .name = atoms.intern("Adapter"),
@@ -13343,6 +13369,31 @@ void registerEnums(EnumRegistry& enums, core::AtomTable& atoms)
     networkFailureDesc.doc = "Why a join failed, a host could not start or a match ended, passed by `JoinFailed`, `HostFailed` and `Disconnected` beside the reason's text. Compare against these to decide what to do, and show the text, or your own words for each value, to the player.";
     networkFailureDesc.items = networkFailureItems;
     enums.registerEnum(networkFailureDesc);
+
+    // --- OccluderMode ---
+    static std::array<EnumItemDesc, 3> occluderModeItems;
+    occluderModeItems = {{
+        EnumItemDesc{
+            .name = atoms.intern("Automatic"),
+            .value = 0,
+            .doc = "The engine decides: an opaque `Part` whose `Shape` is `Block` hides what is behind it, and anything else does not.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Never"),
+            .value = 1,
+            .doc = "It never hides anything, even when it is an opaque block. Use it for a block that moves often, or one with a hole a player looks through.",
+        },
+        EnumItemDesc{
+            .name = atoms.intern("Always"),
+            .value = 2,
+            .doc = "Its box hides what is behind it, whatever its shape: a `MeshPart` hides as the box its mesh fills. Use it on a mesh that is solid, such as a building or a rock. Anything inside the box is treated as hidden by it.",
+        },
+    }};
+    EnumDescriptor occluderModeDesc;
+    occluderModeDesc.name = atoms.intern("OccluderMode");
+    occluderModeDesc.doc = "Whether a part hides what is behind it from the renderer, set by `BasePart.Occluder`.";
+    occluderModeDesc.items = occluderModeItems;
+    enums.registerEnum(occluderModeDesc);
 }
 
 } // namespace engine::scene::generated

@@ -1406,6 +1406,43 @@ TEST_CASE("BasePart.CastShadow: a part asked to cast none is drawn as it was, an
     CHECK(render::castsShadow(render::DrawItem{}));
 }
 
+TEST_CASE("BasePart.Occluder: an opaque block hides, Never takes it away, Always gives it to any shape")
+{
+    Fixture fixture;
+    fixture.registerRenderClasses();
+    const core::InstanceId workspace = fixture.world.create(fixture.workspaceClass);
+    (void)fixture.cameraLookingDownNegativeZ(workspace);
+    render::MeshLibrary meshes;
+    registerBlock(fixture, meshes);
+    render::MeshLibrary::Entry ball;
+    ball.mesh = render::MeshHandle{0, 2};
+    ball.bounds = core::AABB::fromCenterSize(core::Vec3{}, core::Vec3{1.0f, 1.0f, 1.0f});
+    ball.sectionCount = 1;
+    meshes.set(fixture.atoms.intern(render::primitiveContent(1)), ball);
+
+    const core::InstanceId wall = blockAt(fixture, workspace, -3.0);
+    const core::InstanceId window = blockAt(fixture, workspace, 0.0);
+    const core::InstanceId rock = blockAt(fixture, workspace, 3.0);
+    const core::InstanceId pebble = blockAt(fixture, workspace, 6.0);
+    // `Automatic` until a game says otherwise.
+    CHECK(fixture.world.parts().find(wall)->occluder == 0);
+    fixture.world.parts().find(window)->occluder = 1;
+    fixture.world.parts().find(rock)->shape = 1;
+    fixture.world.parts().find(rock)->occluder = 2;
+    fixture.world.parts().find(pebble)->shape = 1;
+
+    render::RenderWorld snapshot;
+    render::extract(fixture.world, workspace, core::InstanceId{}, meshes, 1.0f, 0.0f, nullptr, 0.0f, nullptr, snapshot);
+
+    // All four drawn; the block and the ball marked `Always` hide, as the
+    // unit boxes they are drawn from.
+    REQUIRE(snapshot.draws.size() == 4);
+    REQUIRE(snapshot.occluderBoxes.size() == 2);
+    CHECK(nearF(snapshot.occluderBoxes[0].centre.x + snapshot.occluderBoxes[1].centre.x, 0.0f));
+    for (const render::OccluderBox& box : snapshot.occluderBoxes)
+        CHECK(nearF(std::fabs(box.centre.x), 3.0f));
+}
+
 TEST_CASE("a plain part faded past a half is still drawn -- its block has no alpha cutoff")
 {
     // Six panes of glass at 0.25 to 0.9: two blended, one was stripes and

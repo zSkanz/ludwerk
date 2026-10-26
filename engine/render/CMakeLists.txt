@@ -21,6 +21,7 @@ engine_add_module(render
         src/shader_library.cpp
         src/debug_renderer.cpp
         src/render_world.cpp
+        src/occlusion.cpp
         src/mesh_cache.cpp
         src/lighting.cpp
         src/look.cpp
@@ -97,6 +98,7 @@ engine_add_module_tests(render
         tests/shader_library_tests.cpp
         tests/render_world_tests.cpp
         tests/mesh_cache_tests.cpp
+        tests/occlusion_tests.cpp
         tests/lighting_tests.cpp
         tests/look_tests.cpp
         tests/skybox_tests.cpp

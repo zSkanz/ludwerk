@@ -674,6 +674,7 @@ Leaf Partitioner::readLeaf(std::string_view node)
         leaf.record.shape = static_cast<core::u8>(part->shape);
         leaf.record.castShadow = part->castShadow;
         leaf.record.receivesDecals = part->receivesDecals;
+        leaf.record.occluder = static_cast<core::u8>(part->occluder);
         leaf.box = boxOf(part->cframe, part->size);
     }
     if (const RigidBodyComponent* body = m_scratch.world().rigidBodies().find(id); body != nullptr) {

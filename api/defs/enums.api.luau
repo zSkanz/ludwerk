@@ -2884,6 +2884,32 @@ local Definition: Schema.Definition = {
                 },
             } :: { Schema.EnumItem },
         },
+        {
+            Name = "OccluderMode",
+            Records = { "ADR 0262" },
+            Doc = "Whether a part hides what is behind it from the renderer, set by `BasePart.Occluder`.",
+            Items = {
+                {
+                    Name = "Automatic",
+                    Value = 0,
+                    Doc = "The engine decides: an opaque `Part` whose `Shape` is `Block` hides what is behind "
+                        .. "it, and anything else does not.",
+                },
+                {
+                    Name = "Never",
+                    Value = 1,
+                    Doc = "It never hides anything, even when it is an opaque block. Use it for a block that "
+                        .. "moves often, or one with a hole a player looks through.",
+                },
+                {
+                    Name = "Always",
+                    Value = 2,
+                    Doc = "Its box hides what is behind it, whatever its shape: a `MeshPart` hides as the box "
+                        .. "its mesh fills. Use it on a mesh that is solid, such as a building or a rock. Anything "
+                        .. "inside the box is treated as hidden by it.",
+                },
+            } :: { Schema.EnumItem },
+        },
     },
 }
 

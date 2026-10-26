@@ -420,6 +420,8 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         say(layer, GraphicsSetting::RenderResolutionCap, static_cast<f64>(*overrides.renderCap));
     if (overrides.vsync)
         say(layer, GraphicsSetting::VSync, *overrides.vsync ? 1.0 : 0.0);
+    if (overrides.occlusionCulling)
+        say(layer, GraphicsSetting::OcclusionCulling, *overrides.occlusionCulling ? 1.0 : 0.0);
     if (overrides.maxFrameRate)
         say(layer, GraphicsSetting::MaxFrameRate, static_cast<f64>(*overrides.maxFrameRate));
     if (overrides.backgroundFrameRate)
@@ -621,6 +623,7 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.maximumLodLevel = static_cast<u32>(value(GraphicsSetting::MaximumLODLevel));
     settings.skinnedLodFloor = static_cast<u32>(value(GraphicsSetting::SkinnedLODFloor));
     settings.skinnedLodNear = static_cast<f32>(value(GraphicsSetting::SkinnedLODNearDistance));
+    settings.occlusionCulling = value(GraphicsSetting::OcclusionCulling) != 0.0;
     settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
     // **The filter's taps are the shadow quality's** (ADR 0172): one past the
     // level, zero for off -- so a player who turns shadows down alone gets the

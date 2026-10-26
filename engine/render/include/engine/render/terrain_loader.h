@@ -185,6 +185,24 @@ public:
     void appendRenderTerrains(const scene::World& world, core::InstanceId root, RenderWorld& out,
                               const TextureLibrary* textures = nullptr) const;
 
+    // **The ground round the camera, as an occluder** (ADR 0262): for each
+    // terrain under `root` whose ground is drawn, a grid of
+    // `OccluderTiles` by `OccluderTiles` tiles of `OccluderTileVoxels` voxels
+    // round `out.camera`, appended to `out.occluderGrids`. A tile's top is
+    // where its voxels stop being whole ground going up from the bottom of
+    // its column of chunks, less how far the level drawn there may stray from
+    // the ground (`Node::error`, its own or its parent's, which it slides
+    // toward); a tile no drawn node covers is not solid. Made from the ground
+    // as last put up, which is what is drawn, and kept until that, the nodes
+    // drawn or the tile the camera is over change.
+    void appendOccluders(const scene::World& world, core::InstanceId root, RenderWorld& out);
+    // Sixteen voxels a tile, thirty-two tiles across: half a kilometre at the
+    // default voxel, and a thousand triangles at most to draw. Eight voxels a
+    // tile over the same ground was four times the triangles, most of them
+    // smaller than a pixel by the horizon, for ridges seen a little sharper.
+    static constexpr core::i32 OccluderTileVoxels = 16;
+    static constexpr core::u32 OccluderTiles = 32;
+
     // **Where the viewer is**, which decides every level. Set once a frame from
     // the camera the last frame was drawn through. With no focus nothing is
     // drawn: a headless run with no camera has nobody to draw for.
@@ -444,6 +462,23 @@ private:
         bool pending = false;
     };
     std::vector<EditStamp> m_editStamps;
+
+    // **The ground's occluders** (`appendOccluders`): each terrain's grid as
+    // last made, in its own field's metres, and what it was made from.
+    struct Occluder
+    {
+        const scene::World* world = nullptr;
+        core::InstanceId terrain;
+        core::u64 made = 0;
+        // Corner (0, 0) of the grid, in the field's own metres.
+        core::DVec3 corner;
+        OccluderGrid grid;
+    };
+    std::vector<Occluder> m_occluders;
+    // Per chunk, by its digest: for each voxel column, where its first whole
+    // voxel is (32: none) and how many whole voxels follow from there.
+    using SolidRuns = std::array<core::u8, 2 * asset::ChunkRows>;
+    std::map<core::u64, SolidRuns> m_solidRuns;
     std::array<std::pair<double, core::u32>, 64> m_editSamples{};
     core::u64 m_editCount = 0;
 };

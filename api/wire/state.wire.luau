@@ -215,6 +215,16 @@ local BasePartFields: { Schema.Field } = {
             .. "mask holds.",
     },
     {
+        Name = "Occluder",
+        Id = 33,
+        Encoding = "I32",
+        Source = "Component",
+        Component = "parts",
+        Doc = "Whether the part hides what is behind it from the renderer (protocol 67, ADR 0262). A look: "
+            .. "the picture is drawn on the replica, and a wall the authority marked `Never` hid on every "
+            .. "client what was seen through its window.",
+    },
+    {
         Name = "CollisionGroup",
         Id = 18,
         Encoding = "NameAtom",

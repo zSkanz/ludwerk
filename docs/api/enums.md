@@ -668,6 +668,16 @@ The network role of this process, reported by `NetworkService.Topology`.
 | `Dedicated` | 2 | The authority of a match with no player of its own: a server with no window. |
 | `Replica` | 3 | A client connected to another machine's authority. It shows the world it is sent. |
 
+## Enum.OccluderMode
+
+Whether a part hides what is behind it from the renderer, set by `BasePart.Occluder`.
+
+| Item | Value | Description |
+|---|---|---|
+| `Automatic` | 0 | The engine decides: an opaque `Part` whose `Shape` is `Block` hides what is behind it, and anything else does not. |
+| `Never` | 1 | It never hides anything, even when it is an opaque block. Use it for a block that moves often, or one with a hole a player looks through. |
+| `Always` | 2 | Its box hides what is behind it, whatever its shape: a `MeshPart` hides as the box its mesh fills. Use it on a mesh that is solid, such as a building or a rock. Anything inside the box is treated as hidden by it. |
+
 ## Enum.OrientationAlignmentMode
 
 The target an `AlignOrientation` turns toward.

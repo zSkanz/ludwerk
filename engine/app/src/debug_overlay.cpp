@@ -640,6 +640,18 @@ void drawStats(const Frame& frame, const RenderCounters& counters)
         statRow(core::tr(ENG_TR("engine.editor.stats.objects")), "%u", counters.visibleObjects);
         statRow(core::tr(ENG_TR("engine.editor.stats.lod_draws")), "%u", counters.lodDraws);
         statRow(core::tr(ENG_TR("engine.editor.stats.triangles")), "%s", formatCount(counters.triangles).c_str());
+        if (counters.occlusionTested) {
+            statRow(core::tr(ENG_TR("engine.editor.stats.occlusion_culling")), "%s",
+                    core::tr(ENG_TR("engine.editor.stats.value.occlusion_culling"),
+                             {{"hidden", static_cast<core::i64>(counters.occlusionHidden)},
+                              {"candidates", static_cast<core::i64>(counters.occlusionCandidates)},
+                              {"ms", fixed(counters.occlusionMs, 2)}})
+                        .c_str());
+        }
+        else if (counters.occlusionResting) {
+            statRow(core::tr(ENG_TR("engine.editor.stats.occlusion_culling")), "%s",
+                    core::tr(ENG_TR("engine.editor.stats.value.occlusion_culling_resting")));
+        }
         endSectionGrid();
     }
 

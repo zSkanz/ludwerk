@@ -712,6 +712,11 @@
           "Type": "MaterialParameters"
         },
         {
+          "Name": "Occluder",
+          "Type": "Enum.OccluderMode",
+          "Default": "Enum.OccluderMode.Automatic"
+        },
+        {
           "Name": "Orientation",
           "Type": "vector"
         },
@@ -3157,6 +3162,12 @@
           "Name": "MotionBlur",
           "Type": "boolean",
           "Default": "false",
+          "Transient": true
+        },
+        {
+          "Name": "OcclusionCulling",
+          "Type": "boolean",
+          "Default": "true",
           "Transient": true
         },
         {
@@ -17760,6 +17771,23 @@
         {
           "Name": "Solo",
           "Value": 0
+        }
+      ]
+    },
+    {
+      "Name": "OccluderMode",
+      "Items": [
+        {
+          "Name": "Always",
+          "Value": 2
+        },
+        {
+          "Name": "Automatic",
+          "Value": 0
+        },
+        {
+          "Name": "Never",
+          "Value": 1
         }
       ]
     },

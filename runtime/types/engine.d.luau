@@ -354,6 +354,9 @@ end
 declare extern type EnumNetworkFailure extends EnumItem with
 end
 
+declare extern type EnumOccluderMode extends EnumItem with
+end
+
 declare extern type Vector3 with
     --- The X component. The component names are lowercase because they are fields of Luau's native
     --- vector type. `v.X` also reads the component at run time, but only the lowercase name is
@@ -1289,6 +1292,14 @@ declare extern type BasePart extends PVInstance with
     --- gives it twice as many texels each way, for a surface seen up close such as a table a hand rests
     --- on; 0.5 half as many, for one seen only from afar. Only a part with `BakedLight` on reads it.
     LightmapScale: number
+    --- Whether this part hides what is behind it from the renderer, so that what it hides is not drawn
+    --- (`GraphicsService.OcclusionCulling`). `Automatic` lets an opaque block hide; `Never` stops this
+    --- part from hiding anything; `Always` makes its box hide, whatever its shape or mesh. Set `Always`
+    --- on a large solid mesh, such as a building, a cliff or a hill: the engine cannot tell a solid
+    --- mesh from a hollow one, and treats what is inside its box as hidden. An animated mesh never
+    --- hides anything. What is hidden is decided again every frame, so a part that moves hides only
+    --- what is behind it where it is drawn.
+    Occluder: EnumOccluderMode
     --- Whether this part is fixed in place. An anchored part is not moved by gravity, forces or
     --- collisions, but other parts still collide with it. Setting it keeps the part's position and
     --- orientation.
@@ -5423,6 +5434,10 @@ declare extern type GraphicsService extends Instance with
     Resolution: Vector2
     --- The display the window is on, as an index into the list that `GetMonitors` returns.
     Monitor: number
+    --- Whether what is wholly hidden behind something nearer, such as the houses behind a wall, is left
+    --- out of the picture. It costs a little time on the processor each frame, and turns itself off for
+    --- a while where it hides less than it costs, as in a game seen from above.
+    OcclusionCulling: boolean
     --- The graphics card the game draws on: 0 for the system's choice, or a position in the list that
     --- `GetAdapters` returns, from 1. A change takes effect the next time the game starts; save it with
     --- `SaveAsync`. A saved card that is no longer there is ignored, and the system chooses.
@@ -8158,6 +8173,12 @@ declare Enum: {
         NoMatch: EnumNetworkFailure,
         CannotStart: EnumNetworkFailure,
         GetEnumItems: (self: any) -> { EnumNetworkFailure },
+    },
+    OccluderMode: {
+        Automatic: EnumOccluderMode,
+        Never: EnumOccluderMode,
+        Always: EnumOccluderMode,
+        GetEnumItems: (self: any) -> { EnumOccluderMode },
     },
 }
 

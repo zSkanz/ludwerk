@@ -83,6 +83,21 @@ public:
 
     void destroy(rhi::IDevice& device, MeshCache& cache, MeshLibrary& library);
 
+    // **The blocks round the camera, as occluders** (ADR 0262): the opaque
+    // blocks within `OccluderReachBlocks` of the camera across, merged into
+    // the fewest boxes greedily -- along x, then z, then up -- and appended to
+    // `out.occluderBoxes`, where the biggest on screen are drawn. Only chunks
+    // drawn as they are now count: in range of the viewer, and neither waiting
+    // to be meshed nor at a worker -- a hole just filled is not drawn filled
+    // yet. Kept until the blocks, what is drawn of them or the chunk under the
+    // camera change.
+    void appendOccluders(const scene::World& world, RenderWorld& out);
+    static constexpr core::i32 OccluderReachBlocks = 64;
+    static constexpr core::i32 SmallestOccluderBlocks = 8;
+    // A window more chunks high than this is not merged: its blocks would be
+    // tens of megabytes to walk.
+    static constexpr core::i32 MostOccluderChunksHigh = 16;
+
     [[nodiscard]] core::usize residentCount() const noexcept { return m_resident.size(); }
     [[nodiscard]] core::u32 lastRebuilds() const noexcept { return m_lastRebuilds; }
     // Chunks asked for and not yet swapped in, and chunks known to need a look
@@ -159,6 +174,15 @@ private:
     // What every mesh was last made with: a change to either re-meshes all.
     core::u64 m_looksDigest = 0;
     float m_blockSize = 0.0f;
+    // **The blocks' occluders** as last made, in the world's metres, and what
+    // they were made from.
+    struct BlockBox
+    {
+        core::DVec3 low;
+        core::DVec3 high;
+    };
+    core::u64 m_occluderMade = 0;
+    std::vector<BlockBox> m_occluderBoxes;
 };
 
 } // namespace engine::render

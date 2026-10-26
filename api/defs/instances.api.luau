@@ -713,6 +713,23 @@ local Classes: { Schema.Class } = {
                     .. "`BakedLight` on reads it.",
             },
             {
+                Name = "Occluder",
+                Type = "Enum.OccluderMode",
+                Default = "Enum.OccluderMode.Automatic",
+                Records = { "ADR 0262" },
+                -- What the picture leaves out, never what the world does: it
+                -- moves nothing a world's trace records.
+                Presentation = true,
+                Doc = "Whether this part hides what is behind it from the renderer, so that what it hides is "
+                    .. "not drawn (`GraphicsService.OcclusionCulling`). `Automatic` lets an opaque block hide; "
+                    .. "`Never` stops this part from hiding anything; `Always` makes its box hide, whatever its "
+                    .. "shape or mesh.\n\n"
+                    .. "Set `Always` on a large solid mesh, such as a building, a cliff or a hill: the engine "
+                    .. "cannot tell a solid mesh from a hollow one, and treats what is inside its box as hidden. "
+                    .. "An animated mesh never hides anything. What is hidden is decided again every frame, so "
+                    .. "a part that moves hides only what is behind it where it is drawn.",
+            },
+            {
                 Name = "Anchored",
                 Type = "boolean",
                 Default = "false",

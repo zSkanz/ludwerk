@@ -15,6 +15,7 @@
 #include "engine/core/log.h"
 #include "engine/core/profile.h"
 #include "engine/jobs/jobs.h"
+#include "engine/render/occlusion.h"
 
 namespace engine::render {
 namespace {
@@ -2312,6 +2313,230 @@ usize TerrainLoader::residentCount() const noexcept
             ++count;
     }
     return count;
+}
+
+void TerrainLoader::appendOccluders(const scene::World& world, core::InstanceId root, RenderWorld& out)
+{
+    constexpr i32 ChunkVoxels = static_cast<i32>(asset::ChunkEdge);
+    constexpr i32 TilesPerChunk = ChunkVoxels / OccluderTileVoxels;
+    static_assert(TilesPerChunk * OccluderTileVoxels == ChunkVoxels, "a chunk is whole tiles");
+    constexpr i32 Span = static_cast<i32>(OccluderTiles);
+    // **Where each column of a chunk is first whole ground, and for how many
+    // voxels up from there**, read by rows: a row of one value is a test, not
+    // 32. Two bytes a column, the first 32 where it has none. Kept by digest,
+    // so a chunk two snapshots share is read once.
+    const auto runsOf = [&](const asset::TerrainChunk& chunk) -> const SolidRuns& {
+        const u64 digest = chunk.digest();
+        if (const auto known = m_solidRuns.find(digest); known != m_solidRuns.end())
+            return known->second;
+        if (m_solidRuns.size() > 8192)
+            m_solidRuns.clear();
+        SolidRuns runs{};
+        if (chunk.uniform()) {
+            const bool whole = chunk.value().occupancy == asset::FullOccupancy;
+            for (usize column = 0; column < asset::ChunkRows; ++column) {
+                runs[column * 2] = whole ? 0 : static_cast<u8>(ChunkVoxels);
+                runs[column * 2 + 1] = whole ? static_cast<u8>(ChunkVoxels) : 0;
+            }
+        }
+        else {
+            for (usize column = 0; column < asset::ChunkRows; ++column)
+                runs[column * 2] = static_cast<u8>(ChunkVoxels);
+            // A summary's voxels are not its own: none of it is counted.
+            if (!chunk.summarized()) {
+                std::array<core::u16, asset::ChunkEdge> row{};
+                // Per column: 0 not begun, 1 in its first run, 2 past it.
+                std::array<u8, asset::ChunkRows> state{};
+                for (u32 z = 0; z < asset::ChunkEdge; ++z) {
+                    for (u32 y = 0; y < asset::ChunkEdge; ++y) {
+                        chunk.readRow(y, z, row);
+                        for (u32 x = 0; x < asset::ChunkEdge; ++x) {
+                            const usize column = z * asset::ChunkEdge + x;
+                            const bool whole = asset::unpackVoxel(row[x]).occupancy == asset::FullOccupancy;
+                            if (state[column] == 0 && whole) {
+                                state[column] = 1;
+                                runs[column * 2] = static_cast<u8>(y);
+                                runs[column * 2 + 1] = 1;
+                            }
+                            else if (state[column] == 1) {
+                                if (whole)
+                                    ++runs[column * 2 + 1];
+                                else
+                                    state[column] = 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return m_solidRuns.emplace(digest, runs).first->second;
+    };
+
+    world.terrains().forEach([&](core::InstanceId id, const scene::TerrainComponent& terrain) {
+        if (!inWorld(world, id, root))
+            return;
+        // The ground as last put up: what is drawn.
+        const auto shown = std::find_if(m_shown.begin(), m_shown.end(), [&](const Shown& entry) {
+            return entry.world == &world && entry.terrain == id && entry.field != nullptr;
+        });
+        if (shown == m_shown.end() || shown->field->empty())
+            return;
+        const asset::TerrainField& field = *shown->field;
+        const f64 voxel = static_cast<f64>(field.settings().voxelSize);
+        const f64 tileMetres = voxel * OccluderTileVoxels;
+        const core::DVec3 camera = out.camera.origin;
+        const i32 firstX = static_cast<i32>(std::floor((camera.x - terrain.origin.x) / tileMetres)) - Span / 2;
+        const i32 firstZ = static_cast<i32>(std::floor((camera.z - terrain.origin.z) / tileMetres)) - Span / 2;
+
+        // What the grid is made from: where it is, the ground, and the nodes
+        // drawn over it.
+        u64 made = 0xA0761D6478BD642Full;
+        const auto mix = [&](u64 value) { made = (made ^ value) * 0x100000001B3ull; };
+        mix(static_cast<u64>(static_cast<u32>(firstX)));
+        mix(static_cast<u64>(static_cast<u32>(firstZ)));
+        mix(shown->revision);
+        mix(reinterpret_cast<std::uintptr_t>(shown->field.get()));
+        for (const Drawn& drawn : m_drawn) {
+            if (drawn.world == &world && drawn.draw.terrain == id)
+                mix((static_cast<u64>(drawn.key.level) << 48) ^
+                    (static_cast<u64>(static_cast<u32>(drawn.key.x)) << 24) ^
+                    static_cast<u64>(static_cast<u32>(drawn.key.z)));
+        }
+        auto kept = std::find_if(m_occluders.begin(), m_occluders.end(),
+                                 [&](const Occluder& entry) { return entry.world == &world && entry.terrain == id; });
+        if (kept == m_occluders.end())
+            kept = m_occluders.insert(m_occluders.end(),
+                                      Occluder{.world = &world, .terrain = id, .made = 0, .corner = {}, .grid = {}});
+
+        if (kept->made != made || kept->grid.columns == 0) {
+            kept->made = made;
+            // **How far the drawn ground may stray**, per chunk column of the
+            // window and one past it: the node drawn there, or none -- and
+            // ground nobody drew hides nothing.
+            constexpr i32 Columns = Span / TilesPerChunk + 2;
+            const i32 firstColumnX = asset::floorDiv(firstX, TilesPerChunk);
+            const i32 firstColumnZ = asset::floorDiv(firstZ, TilesPerChunk);
+            std::array<f64, static_cast<usize>(Columns * Columns)> stray{};
+            stray.fill(-1.0);
+            for (const Drawn& drawn : m_drawn) {
+                if (drawn.world != &world || drawn.draw.terrain != id)
+                    continue;
+                const Node* node = find(&world, id, drawn.key);
+                if (node == nullptr)
+                    continue;
+                f64 error = node->error;
+                if (drawn.key.level < TerrainTopLevel) {
+                    const TerrainNodeKey parent{drawn.key.level + 1, asset::floorDiv(drawn.key.x, 2),
+                                                asset::floorDiv(drawn.key.z, 2)};
+                    if (const Node* over = find(&world, id, parent); over != nullptr)
+                        error = std::max(error, over->error);
+                }
+                const i32 size = 1 << drawn.key.level;
+                for (i32 cz = std::max(drawn.key.z * size, firstColumnZ);
+                     cz < std::min((drawn.key.z + 1) * size, firstColumnZ + Columns); ++cz) {
+                    for (i32 cx = std::max(drawn.key.x * size, firstColumnX);
+                         cx < std::min((drawn.key.x + 1) * size, firstColumnX + Columns); ++cx)
+                        stray[static_cast<usize>((cz - firstColumnZ) * Columns + (cx - firstColumnX))] = error;
+                }
+            }
+
+            // **Each voxel column's first stretch of whole ground**, from the
+            // first whole voxel up through the chunks over it while they carry
+            // on: its first and last voxel, or none.
+            constexpr i32 NoGround = std::numeric_limits<i32>::min();
+            std::vector<std::pair<i32, i32>> stretch(static_cast<usize>(Columns * Columns) * asset::ChunkRows,
+                                                     {NoGround, NoGround});
+            for (i32 cz = 0; cz < Columns; ++cz) {
+                for (i32 cx = 0; cx < Columns; ++cx) {
+                    if (stray[static_cast<usize>(cz * Columns + cx)] < 0.0)
+                        continue;
+                    const std::span<const asset::TerrainField::Entry> column =
+                        field.column(firstColumnX + cx, firstColumnZ + cz);
+                    std::pair<i32, i32>* found = &stretch[static_cast<usize>(cz * Columns + cx) * asset::ChunkRows];
+                    // Per voxel column: still looking, in its stretch, or done.
+                    std::array<u8, asset::ChunkRows> state{};
+                    i32 expected = NoGround;
+                    for (const asset::TerrainField::Entry& entry : column) {
+                        if (entry.second == nullptr)
+                            break;
+                        // A gap between chunks ends every stretch in it.
+                        const bool follows = entry.first.y == expected;
+                        const SolidRuns& runs = runsOf(*entry.second);
+                        const i32 base = entry.first.y * ChunkVoxels;
+                        for (usize at = 0; at < asset::ChunkRows; ++at) {
+                            const i32 low = runs[at * 2];
+                            const i32 run = runs[at * 2 + 1];
+                            if (state[at] == 1 && (!follows || low != 0))
+                                state[at] = 2;
+                            if (state[at] == 2)
+                                continue;
+                            if (state[at] == 0) {
+                                if (run == 0)
+                                    continue;
+                                found[at] = {base + low, base + low + run - 1};
+                                state[at] = low + run == ChunkVoxels ? 1 : 2;
+                                continue;
+                            }
+                            found[at].second = base + run - 1;
+                            if (run < ChunkVoxels)
+                                state[at] = 2;
+                        }
+                        expected = entry.first.y + 1;
+                    }
+                }
+            }
+
+            std::vector<GroundTile> tiles(static_cast<usize>(Span + 1) * (Span + 1));
+            for (i32 j = 0; j <= Span; ++j) {
+                for (i32 i = 0; i <= Span; ++i) {
+                    const i32 tx = firstX + i;
+                    const i32 tz = firstZ + j;
+                    const i32 cx = asset::floorDiv(tx, TilesPerChunk) - firstColumnX;
+                    const i32 cz = asset::floorDiv(tz, TilesPerChunk) - firstColumnZ;
+                    const f64 margin = stray[static_cast<usize>(cz * Columns + cx)];
+                    if (margin < 0.0)
+                        continue;
+                    const std::pair<i32, i32>* columns =
+                        &stretch[static_cast<usize>(cz * Columns + cx) * asset::ChunkRows];
+                    const i32 x0 = asset::floorMod(tx, TilesPerChunk) * OccluderTileVoxels;
+                    const i32 z0 = asset::floorMod(tz, TilesPerChunk) * OccluderTileVoxels;
+                    i32 bottom = NoGround;
+                    i32 top = std::numeric_limits<i32>::max();
+                    for (i32 z = z0; z < z0 + OccluderTileVoxels && top != NoGround; ++z) {
+                        for (i32 x = x0; x < x0 + OccluderTileVoxels; ++x) {
+                            const std::pair<i32, i32>& at = columns[static_cast<usize>(z * ChunkVoxels + x)];
+                            if (at.first == NoGround) {
+                                top = NoGround;
+                                break;
+                            }
+                            bottom = std::max(bottom, at.first);
+                            top = std::min(top, at.second);
+                        }
+                    }
+                    if (top == NoGround || top < bottom)
+                        continue;
+                    GroundTile& tile = tiles[static_cast<usize>(j * (Span + 1) + i)];
+                    tile.top = static_cast<f32>(field.voxelCenter(top) - margin);
+                    tile.bottom = static_cast<f32>(field.voxelCenter(bottom));
+                    tile.solid = tile.top > tile.bottom;
+                }
+            }
+            makeGroundGrid(tiles, OccluderTiles, OccluderTiles, kept->grid);
+            kept->grid.tile = static_cast<f32>(tileMetres);
+            // Corners sit at the middle of each tile's first voxel column.
+            kept->corner = core::DVec3{field.voxelCenter(firstX * OccluderTileVoxels), 0.0,
+                                       field.voxelCenter(firstZ * OccluderTileVoxels)};
+        }
+        if (std::find(kept->grid.solid.begin(), kept->grid.solid.end(), u8{1}) == kept->grid.solid.end())
+            return;
+        OccluderGrid& grid = out.occluderGrids.emplace_back(kept->grid);
+        grid.origin = core::Vec3{static_cast<f32>(terrain.origin.x + kept->corner.x - camera.x),
+                                 static_cast<f32>(terrain.origin.y - camera.y),
+                                 static_cast<f32>(terrain.origin.z + kept->corner.z - camera.z)};
+    });
+    std::erase_if(m_occluders, [&](const Occluder& entry) {
+        return entry.world == &world && world.terrains().find(entry.terrain) == nullptr;
+    });
 }
 
 bool TerrainLoader::nodeResident(core::InstanceId terrain, TerrainNodeKey key) const noexcept

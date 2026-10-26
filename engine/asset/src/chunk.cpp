@@ -38,6 +38,10 @@ constexpr u32 FlagCanQuery = 1u << 2;
 constexpr u32 FlagNoShadow = 1u << 3;
 // Set for a part no decal paints: a record from before the bit is painted.
 constexpr u32 FlagNoDecals = 1u << 4;
+// `BasePart.Occluder`'s value in two bits: a record from before them is
+// `Automatic`.
+constexpr u32 OccluderShift = 5;
+constexpr u32 OccluderMask = 3u << OccluderShift;
 
 void writeU32(std::vector<std::byte>& out, u32 value)
 {
@@ -198,7 +202,8 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
         writeU32(out, instance.collisionFidelity);
         writeU32(out, (instance.anchored ? FlagAnchored : 0u) | (instance.canCollide ? FlagCanCollide : 0u) |
                           (instance.canQuery ? FlagCanQuery : 0u) | (instance.castShadow ? 0u : FlagNoShadow) |
-                          (instance.receivesDecals ? 0u : FlagNoDecals));
+                          (instance.receivesDecals ? 0u : FlagNoDecals) |
+                          ((static_cast<u32>(instance.occluder) << OccluderShift) & OccluderMask));
         writeU32(out, instance.name);
         writeU32(out, instance.meshContent);
         writeU32(out, instance.collisionGroup);
@@ -309,6 +314,7 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         instance.canQuery = (flags & FlagCanQuery) != 0;
         instance.castShadow = (flags & FlagNoShadow) == 0;
         instance.receivesDecals = (flags & FlagNoDecals) == 0;
+        instance.occluder = static_cast<u8>((flags & OccluderMask) >> OccluderShift);
         instance.name = reader.u32v();
         instance.meshContent = reader.u32v();
         instance.collisionGroup = reader.u32v();

@@ -134,6 +134,7 @@
 #include "engine/render/foliage.h"
 #include "engine/render/lighting.h"
 #include "engine/render/mesh_loader.h"
+#include "engine/render/occlusion.h"
 #include "engine/render/particles.h"
 #include "engine/render/render_world.h"
 #include "engine/render/renderer.h"
@@ -3992,6 +3993,18 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     };
 
     render::RenderWorld snapshot;
+    // **What a wall hides** (ADR 0262): the culler, what it did this frame, and
+    // what the renderer spent recording a draw last frame -- what a hidden one
+    // saves, against what the culler costs.
+    render::OcclusionCuller occlusionCuller;
+    render::OcclusionStats occlusionFrame;
+    core::f64 perDrawMs = 0.0;
+    // Summed over a frame report's window.
+    core::u64 occlusionHidden = 0;
+    core::u64 occlusionCandidates = 0;
+    core::f64 occlusionMs = 0.0;
+    core::u32 occlusionFrames = 0;
+    core::u32 occlusionRestingFrames = 0;
     snapshot.maxHighlights = options.maxHighlights;
 
     auto headlessStepNs = static_cast<u64>(std::ceil(scheduler.timing().fixedDt * kNanosPerSecond));
@@ -4368,6 +4381,27 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     const std::array<I18nArg, 1> split{I18nArg{"kinds", kinds}};
                     core::log(LogLevel::Info, ENG_TR("engine.frame.info.draws_by_kind"), split);
                 }
+                // **What the occlusion culler hid** (ADR 0262), over the same
+                // window: or that it rested, for how many of its frames. After
+                // the split, which belongs to the report's line.
+                if (occlusionFrames > 0) {
+                    const std::array<I18nArg, 4> hid{
+                        I18nArg{"hidden", static_cast<core::i64>(occlusionHidden / occlusionFrames)},
+                        I18nArg{"candidates", static_cast<core::i64>(occlusionCandidates / occlusionFrames)},
+                        I18nArg{"ms", std::round(occlusionMs / occlusionFrames * 1000.0) / 1000.0},
+                        I18nArg{"resting", static_cast<core::i64>(occlusionRestingFrames)}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.occlusion_culling"), hid);
+                }
+                else if (occlusionRestingFrames > 0) {
+                    const std::array<I18nArg, 1> rested{
+                        I18nArg{"frames", static_cast<core::i64>(occlusionRestingFrames)}};
+                    core::log(LogLevel::Info, ENG_TR("engine.frame.info.occlusion_culling_resting"), rested);
+                }
+                occlusionHidden = 0;
+                occlusionCandidates = 0;
+                occlusionMs = 0.0;
+                occlusionFrames = 0;
+                occlusionRestingFrames = 0;
                 // **And whose character the server put somewhere else**, where
                 // this machine predicts more than one (ADR 0208): two people
                 // at one screen, and "it is laggy for player two only" is a
@@ -9392,6 +9426,29 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 terrainLoader.appendRenderTerrains(authored(),
                                                    stageOf() != nullptr ? stageOf()->workspace() : host->workspace(),
                                                    snapshot, &textureLibrary);
+                // **What a wall hides is left out** (ADR 0262), before anything
+                // is drawn from the snapshot.
+                occlusionFrame = render::OcclusionStats{};
+                if (renderer != nullptr && renderer->settings().occlusionCulling) {
+                    ENG_PROFILE_SCOPE("render.occlusion");
+                    // The ground hides too: the terrains' grids, and the
+                    // blocks' boxes when the loader keeps the world drawn.
+                    terrainLoader.appendOccluders(
+                        authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot);
+                    if (&authored() == &host->world())
+                        voxelLoader.appendOccluders(authored(), snapshot);
+                    occlusionFrame =
+                        occlusionCuller.cull(snapshot, perDrawMs, static_cast<core::f64>(platform::nowNs()) / 1.0e9);
+                }
+                if (occlusionFrame.tested) {
+                    occlusionHidden += occlusionFrame.hidden;
+                    occlusionCandidates += occlusionFrame.candidates;
+                    occlusionMs += occlusionFrame.ms;
+                    ++occlusionFrames;
+                }
+                else if (occlusionFrame.resting) {
+                    ++occlusionRestingFrames;
+                }
                 ENG_PROFILE_NEXT(drawing, "draw.effects");
                 // **Particles, on the render clock**: advanced by this frame's
                 // own length -- which a headless run fixes at one tick, so a golden
@@ -10576,7 +10633,14 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     const bool mirroring = headsetView.has_value() && headsetBegun && headsetFrame.draw && !splitDrawn;
                     if (!mirroring) {
                         render::jitterCamera(snapshot.camera, renderer->cameraJitter(snapshot, mainTarget));
+                        const core::u64 recordStart = platform::nowNs();
                         renderer->render(*device, *cmd, mainTarget, snapshot, meshCache);
+                        // What a thing the camera sees cost to record, for what
+                        // a hidden one saves: per object, as the culler counts
+                        // them, not per call -- one call draws a run of many.
+                        if (frameVisibleObjects > 0)
+                            perDrawMs = static_cast<core::f64>(platform::nowNs() - recordStart) / 1.0e6 /
+                                        static_cast<core::f64>(frameVisibleObjects);
                     }
 
                     // **Each eye** (ADR 0244): the head's view moved to the eye
@@ -11215,6 +11279,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         .terrainEditFrames = terrainLoader.editLatency().lastFrames,
                         .terrainEditWorstMs = terrainLoader.editLatency().worstMs,
                         .terrainEditWorstFrames = terrainLoader.editLatency().worstFrames,
+                        .occlusionTested = occlusionFrame.tested,
+                        .occlusionResting = occlusionFrame.resting,
+                        .occlusionHidden = occlusionFrame.hidden,
+                        .occlusionCandidates = occlusionFrame.candidates,
+                        .occlusionMs = occlusionFrame.ms,
                         .thermal = thermalNow,
                         .thermalPercent = static_cast<core::u32>(std::lround(thermal.factor() * 100.0f)),
                     });

@@ -116,6 +116,9 @@ struct PartComponent
     f32 replicationPriority = 1.0f;
     // `BasePart.Dormancy` (ADR 0234): `Enum.Dormancy`'s value, 0 `Auto`.
     i32 dormancy = 0;
+    // `BasePart.Occluder` (ADR 0262): `Enum.OccluderMode`'s value, 0
+    // `Automatic`.
+    i32 occluder = 0;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and

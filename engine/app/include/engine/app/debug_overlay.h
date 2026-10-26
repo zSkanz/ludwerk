@@ -123,6 +123,12 @@ struct RenderCounters
     core::u32 terrainEditFrames = 0;
     double terrainEditWorstMs = 0.0;
     core::u32 terrainEditWorstFrames = 0;
+    // **What the occlusion culler did this frame** (ADR 0262).
+    bool occlusionTested = false;
+    bool occlusionResting = false;
+    core::u32 occlusionHidden = 0;
+    core::u32 occlusionCandidates = 0;
+    double occlusionMs = 0.0;
     // **How hot the device is, and the render scale's step for it**
     // (`ThermalGovernor`): shown where the system says, or a step was taken.
     platform::ThermalStatus thermal = platform::ThermalStatus::Unknown;

@@ -1602,6 +1602,23 @@ bool setBasePartDormancy(World& world, core::InstanceId id, const Value& value)
     return true;
 }
 
+Value getBasePartOccluder(const World& world, core::InstanceId id)
+{
+    const PartComponent* part = readPart(world, id);
+    return part == nullptr ? Value{} : Value{EnumValue{generated::OccluderModeEnumId, part->occluder}};
+}
+
+bool setBasePartOccluder(World& world, core::InstanceId id, const Value& value)
+{
+    const auto* item = std::get_if<EnumValue>(&value);
+    PartComponent* part = writePart(world, id);
+    if (item == nullptr || part == nullptr || item->enumId != generated::OccluderModeEnumId ||
+        world.enums().findValue(item->enumId, item->value) == nullptr)
+        return false;
+    part->occluder = item->value;
+    return true;
+}
+
 Value getBasePartDormant(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);
@@ -3408,6 +3425,16 @@ Value getGraphicsServiceSkinnedLODNearDistance(const World& world, core::Instanc
 bool setGraphicsServiceSkinnedLODNearDistance(World& world, core::InstanceId, const Value& value)
 {
     return writeGraphicsNumber(world, GraphicsSetting::SkinnedLODNearDistance, value);
+}
+
+Value getGraphicsServiceOcclusionCulling(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::OcclusionCulling) != 0.0};
+}
+
+bool setGraphicsServiceOcclusionCulling(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsFlag(world, GraphicsSetting::OcclusionCulling, value);
 }
 
 Value getGraphicsServiceAdapter(const World& world, core::InstanceId)
