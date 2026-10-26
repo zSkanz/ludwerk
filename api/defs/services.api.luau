@@ -1916,6 +1916,18 @@ local Classes: { Schema.Class } = {
                 Doc = "The display the window is on, as an index into the list that `GetMonitors` returns.",
             },
             {
+                Name = "Adapter",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The graphics card the game draws on: 0 for the system's choice, or a position in the list "
+                    .. "that `GetAdapters` returns, from 1. A change takes effect the next time the game starts; "
+                    .. "save it with `SaveAsync`. A saved card that is no longer there is ignored, and the system "
+                    .. "chooses.",
+            },
+            {
                 Name = "VSync",
                 Type = "boolean",
                 Default = "true",
@@ -2044,6 +2056,14 @@ local Classes: { Schema.Class } = {
                 Parameters = {},
                 Returns = { "{ { Name: string, Size: Vector2, RefreshRate: number } }" },
                 Doc = "Returns the displays, in the order that `Monitor` indexes them.",
+            },
+            {
+                Name = "GetAdapters",
+                Parameters = {},
+                Returns = { "{ { Name: string, Memory: number } }" },
+                Doc = "Returns the graphics cards, in the order that `Adapter` counts them: by name. `Memory` is "
+                    .. "the card's own memory in bytes, and 0 for a card that shares the system's. Returns an "
+                    .. "empty list where the system does not list its cards: on every platform but Windows.",
             },
             {
                 Name = "GetRefreshRate",

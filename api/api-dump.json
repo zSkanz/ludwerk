@@ -3016,6 +3016,12 @@
       "Tags": ["NotCreatable", "Service"],
       "Properties": [
         {
+          "Name": "Adapter",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
           "Name": "AmbientOcclusion",
           "Type": "boolean",
           "Default": "true",
@@ -3320,6 +3326,11 @@
             }
           ],
           "Returns": []
+        },
+        {
+          "Name": "GetAdapters",
+          "Parameters": [],
+          "Returns": ["{ { Name: string, Memory: number } }"]
         },
         {
           "Name": "GetGroupLevel",

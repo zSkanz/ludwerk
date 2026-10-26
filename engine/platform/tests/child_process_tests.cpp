@@ -1,6 +1,7 @@
 // A child's output read as it comes (`ProcessOptions::onOutput`): the parent
 // is told the moment the child writes, not at its next look -- what lets a
 // manager answer a world at once.
+#include <algorithm>
 #include <chrono>
 #include <doctest/doctest.h>
 #include <memory>
@@ -65,4 +66,19 @@ TEST_CASE("a child still running is ended with its reader, and nothing waits on 
         CHECK(child->running());
     }
     CHECK(secondsSince(started) < 10.0);
+}
+
+TEST_CASE("the graphics cards are listed by name, once each, and only real ones")
+{
+    // The order `GraphicsService.Adapter` counts in: a player's saved place in
+    // it must name the same card at the next start, whatever the system's
+    // preference put first.
+    const std::vector<engine::platform::GraphicsCard> cards = engine::platform::graphicsCards();
+    CHECK(std::is_sorted(cards.begin(), cards.end(), [](const auto& a, const auto& b) { return a.name < b.name; }));
+    CHECK(std::adjacent_find(cards.begin(), cards.end(),
+                             [](const auto& a, const auto& b) { return a.name == b.name; }) == cards.end());
+    for (const engine::platform::GraphicsCard& card : cards) {
+        CHECK_FALSE(card.name.empty());
+        CHECK(card.name.find("Microsoft Basic Render") == std::string::npos);
+    }
 }

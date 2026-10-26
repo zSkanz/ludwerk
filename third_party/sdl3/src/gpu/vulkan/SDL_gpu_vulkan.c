@@ -1188,6 +1188,8 @@ struct VulkanRenderer
 
     bool debugMode;
     bool preferLowPower;
+    // The adapter asked for by name, or empty (Ludwerk patch).
+    char adapterName[256];
     bool requireHardwareAcceleration;
     SDL_PropertiesID props;
     Uint32 allowedFramesInFlight;
@@ -12782,6 +12784,9 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
         suitableIndex = -1;
         suitableQueueFamilyIndex = 0;
         highestRank = 0;
+        // The first suitable device named like the one asked for, whatever
+        // its rank (Ludwerk patch).
+        bool named = false;
         for (i = 0; i < physicalDeviceCount; i += 1) {
             Uint32 queueFamilyIndex;
             Uint64 deviceRank;
@@ -12793,6 +12798,22 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
                     &physicalDeviceExtensions[i],
                     &queueFamilyIndex)) {
                 // Device does not meet the minimum requirements, skip it entirely
+                continue;
+            }
+
+            if (renderer->adapterName[0] != '\0') {
+                VkPhysicalDeviceProperties described;
+                renderer->vkGetPhysicalDeviceProperties(physicalDevices[i], &described);
+                if (SDL_strcasestr(described.deviceName, renderer->adapterName) != NULL) {
+                    if (!named) {
+                        named = true;
+                        suitableIndex = i;
+                        suitableQueueFamilyIndex = queueFamilyIndex;
+                    }
+                    continue;
+                }
+            }
+            if (named) {
                 continue;
             }
 
@@ -12810,6 +12831,10 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
                 suitableQueueFamilyIndex = queueFamilyIndex;
                 highestRank = deviceRank;
             }
+        }
+
+        if (renderer->adapterName[0] != '\0' && !named) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "No Vulkan device is named like \"%s\"; using the default one", renderer->adapterName);
         }
 
         if (suitableIndex != -1) {
@@ -13317,6 +13342,7 @@ static bool VULKAN_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
         renderer->debugMode = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
 
         renderer->preferLowPower = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN, false);
+        SDL_strlcpy(renderer->adapterName, SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, ""), sizeof(renderer->adapterName));
 
         renderer->minimumVkVersion = VK_API_VERSION_1_0;
 #ifdef HAVE_GPU_OPENXR
@@ -13696,6 +13722,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
 
     renderer->debugMode = debugMode;
     renderer->preferLowPower = preferLowPower;
+    SDL_strlcpy(renderer->adapterName, SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, ""), sizeof(renderer->adapterName));
     renderer->allowedFramesInFlight = 2;
     renderer->minimumVkVersion = VK_API_VERSION_1_0;
 

@@ -4,6 +4,7 @@
 #include <SDL3/SDL_process.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_stdinc.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <mutex>
@@ -12,6 +13,7 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <d3d12.h>
 #include <dxgi1_6.h>
 #include <windows.h>
 #else
@@ -155,6 +157,81 @@ std::string strongestGraphicsCard()
     return name;
 #else
     return {};
+#endif
+}
+
+std::vector<GraphicsCard> graphicsCards()
+{
+    std::vector<GraphicsCard> cards;
+#if defined(_WIN32)
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) || factory == nullptr)
+        return cards;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; ++index) {
+        DXGI_ADAPTER_DESC1 described{};
+        if (SUCCEEDED(adapter->GetDesc1(&described)) && (described.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+            char utf8[512];
+            const int written = WideCharToMultiByte(CP_UTF8, 0, described.Description, -1, utf8,
+                                                    static_cast<int>(sizeof(utf8)), nullptr, nullptr);
+            if (written > 1)
+                cards.push_back({std::string(utf8, static_cast<std::size_t>(written - 1)),
+                                 static_cast<unsigned long long>(described.DedicatedVideoMemory)});
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    // By name; and one card a system lists twice -- once per output, on some
+    // drivers -- is one card.
+    std::sort(cards.begin(), cards.end(), [](const GraphicsCard& a, const GraphicsCard& b) { return a.name < b.name; });
+    cards.erase(std::unique(cards.begin(), cards.end(),
+                            [](const GraphicsCard& a, const GraphicsCard& b) { return a.name == b.name; }),
+                cards.end());
+#endif
+    return cards;
+}
+
+std::optional<bool> graphicsCardSharesMemory(std::string_view name)
+{
+#if defined(_WIN32)
+    // Loaded, not linked: nothing else in this library draws.
+    static const HMODULE d3d12 = LoadLibraryW(L"d3d12.dll");
+    if (d3d12 == nullptr || name.empty())
+        return std::nullopt;
+    using Create = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+    const auto create = reinterpret_cast<Create>(reinterpret_cast<void*>(GetProcAddress(d3d12, "D3D12CreateDevice")));
+    if (create == nullptr)
+        return std::nullopt;
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) || factory == nullptr)
+        return std::nullopt;
+    std::optional<bool> shares;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT index = 0; !shares.has_value() && factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND;
+         ++index) {
+        DXGI_ADAPTER_DESC1 described{};
+        char utf8[512];
+        const bool named = SUCCEEDED(adapter->GetDesc1(&described)) &&
+                           WideCharToMultiByte(CP_UTF8, 0, described.Description, -1, utf8,
+                                               static_cast<int>(sizeof(utf8)), nullptr, nullptr) > 1 &&
+                           std::string_view{utf8} == name;
+        ID3D12Device* device = nullptr;
+        if (named &&
+            SUCCEEDED(
+                create(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), reinterpret_cast<void**>(&device))) &&
+            device != nullptr) {
+            D3D12_FEATURE_DATA_ARCHITECTURE architecture{};
+            if (SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &architecture, sizeof(architecture))))
+                shares = architecture.UMA != FALSE;
+            device->Release();
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return shares;
+#else
+    (void)name;
+    return std::nullopt;
 #endif
 }
 

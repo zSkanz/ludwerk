@@ -7,6 +7,7 @@
 // when a PLAYER contradicts the file, which is the case the layering exists for.
 
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <doctest/doctest.h>
 #include <filesystem>
@@ -20,6 +21,7 @@
 #include "engine/platform/event.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
+#include "engine/platform/process.h"
 
 using namespace engine;
 
@@ -371,6 +373,32 @@ TEST_CASE("a project names FSR 2 and a scale down to a third, and a flag names i
     flags.upscaling = render::UpscalingMode::Fsr2;
     const ProjectDir plain("[project]\nname = \"Plain\"\n[graphics]\nupscaling = \"fsr1\"\n");
     CHECK(app::loadProjectConfig(plain.path, flags).graphics.upscaling == render::UpscalingMode::Fsr2);
+}
+
+TEST_CASE("a project names a graphics card by its place in the list or by its name")
+{
+    CHECK(app::projectKeyOf(scene::GraphicsSetting::Adapter) == "display.adapter");
+    const ProjectDir placed("[project]\nname = \"Placed\"\n[display]\nadapter = 1\n");
+    const app::ProjectConfig made = app::loadProjectConfig(placed.path, {});
+    CHECK(made.graphicsModel.effective(scene::GraphicsSetting::Adapter) == 1.0);
+    CHECK(made.graphicsModel.source(scene::GraphicsSetting::Adapter) == scene::GraphicsSource::Project);
+    // Nothing said is the system's choice.
+    CHECK(
+        app::loadProjectConfig(std::filesystem::path{}, {}).graphicsModel.effective(scene::GraphicsSetting::Adapter) ==
+        0.0);
+    // A name no card here has says nothing, and the system chooses.
+    const ProjectDir unknown("[project]\nname = \"Unknown\"\n[display]\nadapter = \"No Such Card 9000\"\n");
+    CHECK_FALSE(app::loadProjectConfig(unknown.path, {}).graphicsModel.project.says(scene::GraphicsSetting::Adapter));
+    // A card's name, in any case, is its place in the list, from one.
+    const std::vector<platform::GraphicsCard> cards = platform::graphicsCards();
+    if (!cards.empty()) {
+        std::string upper = cards.back().name;
+        for (char& c : upper)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        const ProjectDir named("[project]\nname = \"Named\"\n[display]\nadapter = \"" + upper + "\"\n");
+        CHECK(app::loadProjectConfig(named.path, {}).graphicsModel.effective(scene::GraphicsSetting::Adapter) ==
+              static_cast<double>(cards.size()));
+    }
 }
 
 TEST_CASE("a project turns frame generation on, a flag says otherwise, and no level does either (ADR 0165)")

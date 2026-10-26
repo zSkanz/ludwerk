@@ -2267,6 +2267,10 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDevice(
  *   properties and validations, defaults to true.
  * - `SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN`: enable to prefer
  *   energy efficiency over maximum GPU performance, defaults to false.
+ * - `SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING`: the adapter to create
+ *   the device on, by its name or a part of it, compared ignoring case. When
+ *   no adapter of the chosen driver has it, the device is made on the one the
+ *   driver would have chosen. (Direct3D 12 and Vulkan; Ludwerk patch.)
  * - `SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN`: enable to automatically log
  *   useful debug information on device creation, defaults to true.
  * - `SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING`: the name of the GPU driver to
@@ -2380,6 +2384,7 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDeviceWithProperties(
 
 #define SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN                            "SDL.gpu.device.create.debugmode"
 #define SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN                       "SDL.gpu.device.create.preferlowpower"
+#define SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING                          "SDL.gpu.device.create.adapter_name"
 #define SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN                              "SDL.gpu.device.create.verbose"
 #define SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING                                  "SDL.gpu.device.create.name"
 #define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN                "SDL.gpu.device.create.feature.clip_distance"

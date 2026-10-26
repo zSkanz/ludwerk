@@ -351,7 +351,11 @@ MyGame.exe --gpu=direct3d12
 ```
 
 A name the machine cannot make a device through is not an error: the log
-says so and the game starts on the system's own choice. When a driver refuses
+says so and the game starts on the system's own choice.
+
+On a machine with two cards, a player can be asked to try the other one the
+same way -- `MyGame.exe --gpu-adapter=Intel`, `--gpu-adapter=NVIDIA` -- and
+a game's settings can offer the choice (`GraphicsService.Adapter`). When a driver refuses
 one of the game's pipelines, the log names it and gives the driver's reason
 -- that line, with the card and the API from the top of the log, is what to
 send with a report.

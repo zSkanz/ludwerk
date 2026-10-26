@@ -68,6 +68,27 @@ struct ProcessOptions
 // where the system has no such answer (anything but Windows).
 [[nodiscard]] std::string strongestGraphicsCard();
 
+// One graphics card: its name, and the memory it has of its own in bytes
+// (nought for one that shares the system's).
+struct GraphicsCard
+{
+    std::string name;
+    unsigned long long memoryBytes = 0;
+};
+
+// **The graphics cards the system has** -- hardware ones; a software
+// rasteriser is not one -- in the order of their names, which no preference
+// and no driver changes: an index into it a player saved names the same card
+// at the next start (`GraphicsService.Adapter`). Empty where the system will
+// not list them (anything but Windows).
+[[nodiscard]] std::vector<GraphicsCard> graphicsCards();
+
+// **Whether the card with this name shares the system's memory** -- an
+// integrated GPU, which Direct3D 12 calls UMA -- asked of a device made on it
+// for the question and released. None where the system will not say, or has
+// no card by that name.
+[[nodiscard]] std::optional<bool> graphicsCardSharesMemory(std::string_view name);
+
 // Whether the environment already names a graphics driver for the platform
 // library (`SDL_GPU_DRIVER`): somebody's choice, which the engine's own
 // default does not override.

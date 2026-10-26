@@ -95,7 +95,7 @@ export type Screen = {
     Close: (self: Screen) -> (),
 }
 
-type Kind = "Preset" | "Toggle" | "Choice" | "Steps" | "Resolution" | "Monitor" | "Language"
+type Kind = "Preset" | "Toggle" | "Choice" | "Steps" | "Resolution" | "Monitor" | "Adapter" | "Language"
 
 type Row = {
     Setting: string,
@@ -272,6 +272,14 @@ local Rows: { Row } = {
         Held = true,
         Desktop = true,
     },
+    -- Drawn on from the next start: written at once, and saved with the rest.
+    {
+        Setting = "Adapter",
+        Page = "Display",
+        Caption = "engine.graphics.setting.adapter",
+        Kind = "Adapter",
+        Desktop = true,
+    },
     toggle("VSync", "engine.graphics.setting.vsync", "Display", true),
     toggle("FrameGeneration", "engine.graphics.setting.frame_generation", "Display"),
     {
@@ -397,6 +405,7 @@ function Settings.open(options: Options?): Screen
 
     local handheld = isHandheld()
     local monitors = GraphicsService:GetMonitors()
+    local adapters = GraphicsService:GetAdapters()
 
     -- What the window settings will be at Apply, by setting.
     local held: { [string]: any } = {}
@@ -658,6 +667,12 @@ function Settings.open(options: Options?): Screen
                 "engine.settings.value.resolution",
                 { width = tostring(value.X), height = tostring(value.Y) }
             )
+        elseif row.Kind == "Adapter" then
+            local adapter = adapters[value]
+            if adapter == nil then
+                return translate("engine.settings.value.adapter_system")
+            end
+            return adapter.Name
         end
         local monitor = monitors[value + 1]
         return translate(
@@ -792,6 +807,14 @@ function Settings.open(options: Options?): Screen
             end
             write(row, size)
             return true
+        elseif row.Kind == "Adapter" then
+            -- Nought, the system's choice, and then each card.
+            local adapter = value + toward
+            if adapter < 0 or adapter > #adapters then
+                return false
+            end
+            write(row, adapter)
+            return true
         end
         local monitor = value + toward
         if monitor < 0 or monitor >= #monitors then
@@ -834,6 +857,8 @@ function Settings.open(options: Options?): Screen
             and not (row.Desktop and handheld)
             -- One display is no choice of display.
             and not (row.Kind == "Monitor" and #monitors < 2)
+            -- Nor one graphics card a choice of card.
+            and not (row.Kind == "Adapter" and #adapters < 2)
             -- And one language is no choice of language: a game in one, or
             -- with no voice but its own, shows no row for it.
             and not (row.Setting == "Locale" and #LocalizationService:GetLocales() < 2)

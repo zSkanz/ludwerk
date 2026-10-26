@@ -81,6 +81,7 @@ namespace engine::scene {
     X(ResolutionWidth, Whole, 0.0, 16384.0, 0.0, false, true)                                                          \
     X(ResolutionHeight, Whole, 0.0, 16384.0, 0.0, false, true)                                                         \
     X(Monitor, Whole, 0.0, 15.0, 0.0, false, true)                                                                     \
+    X(Adapter, Whole, 0.0, 16.0, 0.0, false, true)                                                                     \
     X(VSync, Flag, 0.0, 1.0, 1.0, false, true)                                                                         \
     X(MaxFrameRate, Whole, 0.0, 1000.0, 0.0, false, true)                                                              \
     X(BackgroundFrameRate, Whole, 0.0, 1000.0, 10.0, false, true)                                                      \

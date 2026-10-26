@@ -3410,6 +3410,16 @@ bool setGraphicsServiceSkinnedLODNearDistance(World& world, core::InstanceId, co
     return writeGraphicsNumber(world, GraphicsSetting::SkinnedLODNearDistance, value);
 }
 
+Value getGraphicsServiceAdapter(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::Adapter)};
+}
+
+bool setGraphicsServiceAdapter(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::Adapter, value);
+}
+
 Value getGraphicsServiceVSync(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::VSync) != 0.0};

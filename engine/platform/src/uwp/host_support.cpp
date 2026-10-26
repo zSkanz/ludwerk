@@ -49,6 +49,14 @@ std::string strongestGraphicsCard()
 {
     return {};
 }
+std::vector<GraphicsCard> graphicsCards()
+{
+    return {};
+}
+std::optional<bool> graphicsCardSharesMemory(std::string_view)
+{
+    return std::nullopt;
+}
 bool graphicsDriverNamed() noexcept
 {
     return false;

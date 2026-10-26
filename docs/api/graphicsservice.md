@@ -19,6 +19,7 @@ listed on the page of the class that declares them.
 
 | Name | Type | Default | Access | Description |
 |---|---|---|---|---|
+| `Adapter` | `number` | `0` | read/write | The graphics card the game draws on: 0 for the system's choice, or a position in the list that `GetAdapters` returns, from 1. A change takes effect the next time the game starts; save it with `SaveAsync`. A saved card that is no longer there is ignored, and the system chooses. |
 | `AmbientOcclusion` | `boolean` | `true` | read/write | Whether creases and corners are darkened, where little ambient light reaches. |
 | `AnimationDetail` | `number` | `1` | read/write | A multiplier, from 0.25 to 8, on how often small skinned meshes are posed.<br><br>At 1, a character is posed every tick while it is at least 12% of the picture's height, every second tick down to 6%, every fourth down to 3%, and every eighth below that. At 2 the thresholds are 6%, 3% and 1.5%, and at 4 they are halved again. Raise it for a game whose camera is far from a crowd, since a crowd posed every fourth tick moves in visible steps. Higher values cost more. |
 | `AnisotropicFiltering` | `number` | `8` | read/write | How sharp textures stay when seen at a shallow angle, from 1 to 16. This setting is saved and reported but has no effect yet. |
@@ -74,6 +75,10 @@ listed on the page of the class that declares them.
 ### `ApplyPreset(level: Enum.GraphicsQuality)`
 
 Sets every quality setting to the value that `level` gives it, replacing whatever a script, the player or the project set. `Auto` selects the level that was measured for this machine. `Custom` raises an error. The display settings, such as the window, `VSync` and the frame rate limits, are not part of a level and are not changed.
+
+### `GetAdapters(): { { Name: string, Memory: number } }`
+
+Returns the graphics cards, in the order that `Adapter` counts them: by name. `Memory` is the card's own memory in bytes, and 0 for a card that shares the system's. Returns an empty list where the system does not list its cards: on every platform but Windows.
 
 ### `GetGroupLevel(group: Enum.GraphicsGroup): Enum.GraphicsLevel?`
 

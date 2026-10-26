@@ -551,6 +551,9 @@ struct EngineOptions
     // `--gpu=<name>`: which graphics API to draw through (`vulkan`,
     // `direct3d12`, `metal`). Empty takes `rhi::defaultDriver()`.
     std::string gpuDriver;
+    // `--gpu-adapter=<name>`: which card to draw on, by its name or a part of
+    // it (`rhi::DeviceDesc::adapter`), over `GraphicsService.Adapter`.
+    std::string gpuAdapter;
     // **`[debug] astc = false`, `--no-astc`**: textures as RGBA on a GPU that
     // samples ASTC (ADR 0180) -- to tell a fault of that path from another.
     bool astcTextures = true;

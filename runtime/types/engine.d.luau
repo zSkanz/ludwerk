@@ -5423,6 +5423,10 @@ declare extern type GraphicsService extends Instance with
     Resolution: Vector2
     --- The display the window is on, as an index into the list that `GetMonitors` returns.
     Monitor: number
+    --- The graphics card the game draws on: 0 for the system's choice, or a position in the list that
+    --- `GetAdapters` returns, from 1. A change takes effect the next time the game starts; save it with
+    --- `SaveAsync`. A saved card that is no longer there is ignored, and the system chooses.
+    Adapter: number
     --- Whether each frame waits for the display's refresh. On by default, and always on for a handheld
     --- device.
     VSync: boolean
@@ -5475,6 +5479,10 @@ declare extern type GraphicsService extends Instance with
     function GetSupportedResolutions(self): { Vector2 }
     --- Returns the displays, in the order that `Monitor` indexes them.
     function GetMonitors(self): { { Name: string, Size: Vector2, RefreshRate: number } }
+    --- Returns the graphics cards, in the order that `Adapter` counts them: by name. `Memory` is the
+    --- card's own memory in bytes, and 0 for a card that shares the system's. Returns an empty list
+    --- where the system does not list its cards: on every platform but Windows.
+    function GetAdapters(self): { { Name: string, Memory: number } }
     --- Returns the refresh rate of the display the window is on, in hertz, or 0 if it is unknown.
     function GetRefreshRate(self): number
     --- Saves the player's settings to `settings.json` in the player's own folder: the previously saved

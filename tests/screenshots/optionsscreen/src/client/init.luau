@@ -69,8 +69,8 @@ camera.Parent = workspace
 workspace.CurrentCamera = camera
 
 local screen = settings.open({
-    -- One display or three, the picture is the same.
-    Hide = { "Monitor" },
+    -- One display or three, one graphics card or two, the picture is the same.
+    Hide = { "Monitor", "Adapter" },
     Theme = {
         Backdrop = Color3.fromRGB(10, 10, 10),
         BackdropTransparency = 0,

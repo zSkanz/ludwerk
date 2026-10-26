@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <span>
@@ -13,6 +14,7 @@
 #include "engine/core/toml_edit.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
+#include "engine/platform/process.h"
 #include "engine/scene/localization.h"
 
 namespace engine::app {
@@ -509,6 +511,24 @@ void seedCommandLine(scene::GraphicsModel& model, const GraphicsOverrides& overr
         if (const std::optional<bool> value = document.boolean(key))
             return *value ? 1.0 : 0.0;
         return std::nullopt;
+    }
+    // A card by its name, or a part of it, as well as by its place in the
+    // list: a project made on one machine names the card, not a number.
+    if (setting == GraphicsSetting::Adapter) {
+        if (const std::optional<std::string_view> named = document.string(key)) {
+            const std::vector<platform::GraphicsCard> cards = platform::graphicsCards();
+            const auto lower = [](std::string_view text) {
+                std::string out(text);
+                for (char& c : out)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return out;
+            };
+            for (usize index = 0; index < cards.size(); ++index) {
+                if (!named->empty() && lower(cards[index].name).find(lower(*named)) != std::string::npos)
+                    return static_cast<f64>(index + 1);
+            }
+            return std::nullopt;
+        }
     }
     const std::optional<f64> value = document.number(key);
     if (!value.has_value() || !std::isfinite(*value))

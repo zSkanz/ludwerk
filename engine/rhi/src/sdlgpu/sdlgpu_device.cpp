@@ -3226,10 +3226,20 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     sdlgpu::XrDeviceAsk xrAskMade;
     sdlgpu::XrDeviceAsk* xrAsk = nullptr;
 #endif
+    // The card named, or the one the system gives this program -- which
+    // Direct3D 12 takes of itself and Vulkan, told nothing, does not.
+    const std::string adapter = !desc.adapter.empty() ? desc.adapter : platform::strongestGraphicsCard();
     const auto create = [&](bool depthClamp, const std::string& driver) {
         const SDL_PropertiesID props = SDL_CreateProperties();
         if (!driver.empty())
             SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, driver.c_str());
+        // A headset's runtime names its own adapter, and it is the one drawn on.
+        bool namesAdapter = !adapter.empty();
+#if ENG_SDLGPU_XR
+        namesAdapter = namesAdapter && xrAsk == nullptr;
+#endif
+        if (namesAdapter)
+            SDL_SetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, adapter.c_str());
         if ((requested & SDL_GPU_SHADERFORMAT_SPIRV) != 0)
             SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
         if ((requested & SDL_GPU_SHADERFORMAT_DXIL) != 0)
@@ -3305,7 +3315,7 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
 #if ENG_SDLGPU_XR
     forHeadset = xrAsk != nullptr;
 #endif
-    if (device != nullptr && !driver.empty() && desc.driverIfSameCard && !forHeadset) {
+    if (device != nullptr && !driver.empty() && desc.driverIfSameCard && !forHeadset && desc.adapter.empty()) {
         // A default that would cost the machine its stronger card is not
         // taken: the library's own choice instead, which is on it.
         const std::string strongest = platform::strongestGraphicsCard();
@@ -3337,6 +3347,23 @@ DeviceResult createSdlGpuDevice(const DeviceDesc& desc, core::EngineError* outEr
     }
     if (!depthClamp)
         core::log(core::LogLevel::Info, ENG_TR("rhi.info.no_depth_clamp"));
+    // **A card asked for by name and not found** is said, with the one drawn
+    // on: the library's own warning goes nowhere a player's log is.
+    if (!desc.adapter.empty() && !forHeadset) {
+        const char* made =
+            SDL_GetStringProperty(SDL_GetGPUDeviceProperties(device), SDL_PROP_GPU_DEVICE_NAME_STRING, nullptr);
+        const std::string_view card = made != nullptr ? std::string_view{made} : std::string_view{};
+        const auto lower = [](std::string_view text) {
+            std::string out(text);
+            for (char& c : out)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return out;
+        };
+        if (lower(card).find(lower(desc.adapter)) == std::string::npos) {
+            const core::I18nArg args[] = {{"adapter", std::string_view{desc.adapter}}, {"card", card}};
+            core::log(core::LogLevel::Warn, ENG_TR("rhi.warn.adapter_not_found"), args);
+        }
+    }
 
     auto made =
         std::make_unique<SdlGpuDevice>(device, fromSdlShaderFormats(SDL_GetGPUShaderFormats(device)), depthClamp);

@@ -52,6 +52,13 @@ struct DeviceDesc
     // moved onto its weaker one for a default's sake, and draw at a fraction
     // of the rate with nothing wrong in the picture to say why.
     bool driverIfSameCard = false;
+    // **Which card to draw on** (SDL patch 0013): the first hardware adapter
+    // whose name has this in it -- `NVIDIA`, `UHD Graphics 770` -- whatever
+    // the API. Empty is the system's choice: on Windows the card it gives
+    // this program, by the player's own graphics settings, through Direct3D 12
+    // and Vulkan alike -- where Vulkan had always taken the discrete card. A
+    // name no adapter has is said in the log, and the system chooses.
+    std::string adapter = {};
     // **A headset, when there is one** (ADR 0244): the device is made on the
     // adapter its runtime asks for, and `IDevice::headset` answers it.
     XrRequest xr = {};

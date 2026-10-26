@@ -86,6 +86,17 @@ neither goes below 60.
 and `GetRefreshRate()` its rate. A handheld's window is its display and its
 sync is always on, whatever these say.
 
+**The graphics card.** `Adapter` is 0 for the system's choice, or a place in
+the list `GetAdapters()` returns -- `{ Name, Memory }` for each card, by name,
+from 1. A machine with an integrated card and a discrete one draws on the
+card Windows gives the game, through Direct3D 12 and Vulkan alike; a player
+who wants the other picks it here, and it is drawn on from the next start, so
+a menu saves it with `SaveAsync` and says so. A saved card that is gone is
+ignored. The project file names one by its name or a part of it --
+`[display] adapter = "NVIDIA"` -- and the command line with
+`--gpu-adapter=NAME`. Only Windows lists its cards; elsewhere the list is
+empty and the system chooses.
+
 **`VSync` off presents each frame at once**, and a frame that lands in the
 middle of a refresh tears there, as in every engine. Where the backend cannot
 tear, the newest frame is shown on each refresh instead. The log names the
@@ -210,6 +221,8 @@ its own menu has the same two services to write it with.
   resolution and its monitor -- **are held until Apply**: a window that changed
   mode at every step through a list would be a window nobody could read the
   list on.
+- **The graphics card** has a row on a machine with two or more, and says
+  that it is drawn on from the next start; Apply keeps it.
 - **Apply** writes what is held and keeps everything (`SaveAsync`). **Revert**
   goes back to what was last kept (`LoadAsync`), and so does leaving without
   applying. **Defaults** is `ResetToDefaults`, kept only by Apply.

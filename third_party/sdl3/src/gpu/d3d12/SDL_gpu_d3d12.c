@@ -9832,12 +9832,37 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
     } else
 #endif /* HAVE_GPU_OPENXR */
     {
+        // The adapter asked for by name, when one has it (Ludwerk patch).
+        const char *adapterName = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, NULL);
+        bool named = false;
+        if (adapterName != NULL && adapterName[0] != '\0') {
+            IDXGIAdapter1 *candidate = NULL;
+            for (UINT index = 0; !named && SUCCEEDED(IDXGIFactory4_EnumAdapters1(renderer->factory, index, &candidate)); index += 1) {
+                DXGI_ADAPTER_DESC1 described;
+                if (SUCCEEDED(IDXGIAdapter1_GetDesc1(candidate, &described)) &&
+                    (described.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+                    char *utf8 = WIN_StringToUTF8W(described.Description);
+                    named = utf8 != NULL && SDL_strcasestr(utf8, adapterName) != NULL;
+                    SDL_free(utf8);
+                }
+                if (named) {
+                    renderer->adapter = candidate;
+                } else {
+                    IDXGIAdapter1_Release(candidate);
+                }
+            }
+            if (!named) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "No D3D12 adapter is named like \"%s\"; using the default one", adapterName);
+            }
+        }
         // Select the appropriate device for rendering
-        res = IDXGIFactory4_QueryInterface(
+        res = named ? S_OK : IDXGIFactory4_QueryInterface(
             renderer->factory,
             D3D_GUID(D3D_IID_IDXGIFactory6),
             (void **)&factory6);
-        if (SUCCEEDED(res)) {
+        if (named) {
+            // Chosen above.
+        } else if (SUCCEEDED(res)) {
             res = IDXGIFactory6_EnumAdapterByGpuPreference(
                 factory6,
                 0,

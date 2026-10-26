@@ -368,7 +368,7 @@ engine-host [script.luau | project-dir]
   [--headless --frames=N --exit] [--width=N --height=N]
   [--bake-irradiance]
   [--scene=PATH [--scene-data=JSON]]
-  [--screenshot=FILE] [--frame-stats] [--rhi=NAME] [--gpu=NAME]
+  [--screenshot=FILE] [--frame-stats] [--rhi=NAME] [--gpu=NAME] [--gpu-adapter=NAME]
   [--quality=low|medium|high|ultra --render-scale=F
    --shadow-resolution=N --shadow-cascades=N --shadow-distance=F
    --light-budget=N --[no-]bloom --[no-]ambient-occlusion
@@ -412,6 +412,11 @@ encrypted](manual:guides/multiplayer#a-match-is-encrypted)).
 device can be made through warns and falls back. It is what
 [a player with a wrong picture](manual:guides/shipping)
 is asked to try.
+
+`--gpu-adapter=NAME` names the graphics card the run draws on, by its name or
+a part of it -- `NVIDIA`, `UHD Graphics` -- through whichever API it draws
+through, over the player's `GraphicsService.Adapter`. A name no card has
+warns, and the system chooses.
 
 **Four test instruments**, for a picture that proves something:
 

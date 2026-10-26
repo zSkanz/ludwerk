@@ -630,9 +630,10 @@ TEST_CASE("the boot-time method cross-check reports both directions")
     // `PartyService`'s nine (ADR 0240); 411: `MatchmakingService`'s thirteen
     // (ADR 0243); 412: `XRService:MarkCut` (ADR 0252); 414: `NakamaService`'s two (ADR 0242); 416:
     // its queue's two; 418: `RunService:BindToWorldStep` and its unbinding
-    // (ADR 0254); 422: `VoiceChatService`'s four (ADR 0256).
-    CHECK(coverage.declared == 422);
-    CHECK(coverage.bound == 422);
+    // (ADR 0254); 422: `VoiceChatService`'s four (ADR 0256); 423:
+    // `GraphicsService:GetAdapters`.
+    CHECK(coverage.declared == 423);
+    CHECK(coverage.bound == 423);
     CHECK(coverage.declaredWithoutBinding == 0);
 }
 

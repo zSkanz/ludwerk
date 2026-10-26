@@ -805,6 +805,12 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             options.gpuDriver = std::string(arg.substr(6));
             continue;
         }
+        if (arg.starts_with("--gpu-adapter=")) {
+            // Which card: a machine with two, measured on the one it is not
+            // given.
+            options.gpuAdapter = std::string(arg.substr(14));
+            continue;
+        }
         if (arg == "--gpu-least") {
             options.gpuLeast = true;
             continue;

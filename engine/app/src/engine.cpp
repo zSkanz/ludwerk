@@ -122,6 +122,7 @@
 #include "engine/platform/event.h"
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
+#include "engine/platform/process.h"
 #include "engine/platform/stop_signal.h"
 #include "engine/platform/window.h"
 #include "engine/render/debug_draw.h"
@@ -205,6 +206,20 @@ struct GpuDriverChoice
         return {.name = "vulkan", .byDefault = true};
     }
     return {};
+}
+
+// **Which card a run draws on** (`rhi::DeviceDesc::adapter`): the name
+// `--gpu-adapter=` gave, or the card `GraphicsService.Adapter` counts to, or
+// none -- the system's choice.
+[[maybe_unused]] [[nodiscard]] std::string adapterFor(const EngineOptions& options, const scene::GraphicsModel& model)
+{
+    if (!options.gpuAdapter.empty())
+        return options.gpuAdapter;
+    const auto chosen = static_cast<usize>(model.effective(scene::GraphicsSetting::Adapter));
+    if (chosen == 0)
+        return {};
+    const std::vector<platform::GraphicsCard> cards = platform::graphicsCards();
+    return chosen <= cards.size() ? cards[chosen - 1].name : std::string{};
 }
 
 // What the script editor's checker needs to follow a require by path: the
@@ -1428,6 +1443,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 saved.clear(scene::GraphicsSetting::Monitor);
                 refused.emplace_back("Monitor");
             }
+            // Nor is a card taken out of the machine.
+            if (saved.says(scene::GraphicsSetting::Adapter) &&
+                static_cast<usize>(saved.at(scene::GraphicsSetting::Adapter)) > platform::graphicsCards().size()) {
+                saved.clear(scene::GraphicsSetting::Adapter);
+                refused.emplace_back("Adapter");
+            }
             graphicsHost.player = saved;
         }
         for (const std::string& name : refused) {
@@ -1673,6 +1694,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                                                    .leastFeatures = options.gpuLeast,
                                                    .driver = gpuDriver.name,
                                                    .driverIfSameCard = gpuDriver.byDefault,
+                                                   .adapter = adapterFor(options, graphicsHost),
                                                    .xr = {.enabled = options.xr && !options.headless,
                                                           .application = options.xrApplication,
                                                           .applicationVersion = 0,
@@ -1690,6 +1712,23 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         return core::makeError(ENG_TR("engine.err.xr_required"));
     // Asked as this scope is left, by whichever `return` leaves it.
     const DeviceWatch deviceWatch{device.get(), &deviceAtTheEnd};
+    // **A computer that draws on a card sharing its memory starts at Low**:
+    // an integrated GPU at High drew a horde at ten frames a second, the
+    // first thing a player on a laptop saw. Only where nobody named a level --
+    // the command line, the project, the player's saved choice -- and said
+    // once; the player can still choose another.
+    if (!Handheld && !options.headless &&
+        graphicsHost.source(scene::GraphicsSetting::QualityLevel) == scene::GraphicsSource::Engine &&
+        graphicsHost.defaultLevel > scene::kQualityLow) {
+        const std::string card(device->adapterName());
+        if (platform::graphicsCardSharesMemory(card).value_or(false)) {
+            graphicsHost.defaultLevel = scene::kQualityLow;
+            graphicsHost.autoLevel = scene::kQualityLow;
+            liveGraphics = graphicsSettingsOf(graphicsHost, Handheld, &options.graphics);
+            const std::array<I18nArg, 1> cardArgs{I18nArg{"card", std::string_view{card}}};
+            core::log(LogLevel::Info, ENG_TR("engine.info.shared_memory_card_low"), cardArgs);
+        }
+    }
     // **What the GPU samples, said before the first texture is read** (ADR
     // 0180): a phone's takes ASTC where a desktop's takes BC7, and a texture
     // sent to one as neither is four times the memory.

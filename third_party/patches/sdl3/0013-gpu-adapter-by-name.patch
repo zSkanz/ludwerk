@@ -1,0 +1,153 @@
+Ludwerk: a GPU device made on the adapter asked for by its name.
+
+SDL chooses the adapter itself: Direct3D 12 the one DXGI ranks first for
+performance or for low power, Vulkan the suitable device of the best type.
+A machine with an integrated GPU and a discrete one could not be told which
+to draw on, and the two drivers chose differently -- Direct3D 12 followed
+Windows' per-app GPU preference and Vulkan always took the discrete card.
+SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING names the adapter, or a part
+of its name, compared ignoring case; Direct3D 12 takes the first hardware
+adapter DXGI lists with it, Vulkan the first suitable device with it,
+whatever its rank. When none has it, the device is made where it would have
+been, and a warning says so.
+
+diff --git a/include/SDL3/SDL_gpu.h b/include/SDL3/SDL_gpu.h
+index c971fd4..5bfef7a 100644
+--- a/include/SDL3/SDL_gpu.h
++++ b/include/SDL3/SDL_gpu.h
+@@ -2267,6 +2267,10 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDevice(
+  *   properties and validations, defaults to true.
+  * - `SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN`: enable to prefer
+  *   energy efficiency over maximum GPU performance, defaults to false.
++ * - `SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING`: the adapter to create
++ *   the device on, by its name or a part of it, compared ignoring case. When
++ *   no adapter of the chosen driver has it, the device is made on the one the
++ *   driver would have chosen. (Direct3D 12 and Vulkan; Ludwerk patch.)
+  * - `SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN`: enable to automatically log
+  *   useful debug information on device creation, defaults to true.
+  * - `SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING`: the name of the GPU driver to
+@@ -2380,6 +2384,7 @@ extern SDL_DECLSPEC SDL_GPUDevice * SDLCALL SDL_CreateGPUDeviceWithProperties(
+ 
+ #define SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN                            "SDL.gpu.device.create.debugmode"
+ #define SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN                       "SDL.gpu.device.create.preferlowpower"
++#define SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING                          "SDL.gpu.device.create.adapter_name"
+ #define SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN                              "SDL.gpu.device.create.verbose"
+ #define SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING                                  "SDL.gpu.device.create.name"
+ #define SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN                "SDL.gpu.device.create.feature.clip_distance"
+diff --git a/src/gpu/d3d12/SDL_gpu_d3d12.c b/src/gpu/d3d12/SDL_gpu_d3d12.c
+index 736f7b6..776fed2 100644
+--- a/src/gpu/d3d12/SDL_gpu_d3d12.c
++++ b/src/gpu/d3d12/SDL_gpu_d3d12.c
+@@ -9832,12 +9832,37 @@ static SDL_GPUDevice *D3D12_CreateDevice(bool debugMode, bool preferLowPower, SD
+     } else
+ #endif /* HAVE_GPU_OPENXR */
+     {
++        // The adapter asked for by name, when one has it (Ludwerk patch).
++        const char *adapterName = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, NULL);
++        bool named = false;
++        if (adapterName != NULL && adapterName[0] != '\0') {
++            IDXGIAdapter1 *candidate = NULL;
++            for (UINT index = 0; !named && SUCCEEDED(IDXGIFactory4_EnumAdapters1(renderer->factory, index, &candidate)); index += 1) {
++                DXGI_ADAPTER_DESC1 described;
++                if (SUCCEEDED(IDXGIAdapter1_GetDesc1(candidate, &described)) &&
++                    (described.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
++                    char *utf8 = WIN_StringToUTF8W(described.Description);
++                    named = utf8 != NULL && SDL_strcasestr(utf8, adapterName) != NULL;
++                    SDL_free(utf8);
++                }
++                if (named) {
++                    renderer->adapter = candidate;
++                } else {
++                    IDXGIAdapter1_Release(candidate);
++                }
++            }
++            if (!named) {
++                SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "No D3D12 adapter is named like \"%s\"; using the default one", adapterName);
++            }
++        }
+         // Select the appropriate device for rendering
+-        res = IDXGIFactory4_QueryInterface(
++        res = named ? S_OK : IDXGIFactory4_QueryInterface(
+             renderer->factory,
+             D3D_GUID(D3D_IID_IDXGIFactory6),
+             (void **)&factory6);
+-        if (SUCCEEDED(res)) {
++        if (named) {
++            // Chosen above.
++        } else if (SUCCEEDED(res)) {
+             res = IDXGIFactory6_EnumAdapterByGpuPreference(
+                 factory6,
+                 0,
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index 0df5cfa..e7afce2 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -1188,6 +1188,8 @@ struct VulkanRenderer
+ 
+     bool debugMode;
+     bool preferLowPower;
++    // The adapter asked for by name, or empty (Ludwerk patch).
++    char adapterName[256];
+     bool requireHardwareAcceleration;
+     SDL_PropertiesID props;
+     Uint32 allowedFramesInFlight;
+@@ -12782,6 +12784,9 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
+         suitableIndex = -1;
+         suitableQueueFamilyIndex = 0;
+         highestRank = 0;
++        // The first suitable device named like the one asked for, whatever
++        // its rank (Ludwerk patch).
++        bool named = false;
+         for (i = 0; i < physicalDeviceCount; i += 1) {
+             Uint32 queueFamilyIndex;
+             Uint64 deviceRank;
+@@ -12796,6 +12801,22 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
+                 continue;
+             }
+ 
++            if (renderer->adapterName[0] != '\0') {
++                VkPhysicalDeviceProperties described;
++                renderer->vkGetPhysicalDeviceProperties(physicalDevices[i], &described);
++                if (SDL_strcasestr(described.deviceName, renderer->adapterName) != NULL) {
++                    if (!named) {
++                        named = true;
++                        suitableIndex = i;
++                        suitableQueueFamilyIndex = queueFamilyIndex;
++                    }
++                    continue;
++                }
++            }
++            if (named) {
++                continue;
++            }
++
+             deviceRank = highestRank;
+             if (VULKAN_INTERNAL_GetDeviceRank(
+                     renderer,
+@@ -12812,6 +12833,10 @@ static Uint8 VULKAN_INTERNAL_DeterminePhysicalDevice(VulkanRenderer *renderer, V
+             }
+         }
+ 
++        if (renderer->adapterName[0] != '\0' && !named) {
++            SDL_LogWarn(SDL_LOG_CATEGORY_GPU, "No Vulkan device is named like \"%s\"; using the default one", renderer->adapterName);
++        }
++
+         if (suitableIndex != -1) {
+             renderer->supports = physicalDeviceExtensions[suitableIndex];
+             renderer->physicalDevice = physicalDevices[suitableIndex];
+@@ -13317,6 +13342,7 @@ static bool VULKAN_PrepareDriver(SDL_VideoDevice *_this, SDL_PropertiesID props)
+         renderer->debugMode = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
+ 
+         renderer->preferLowPower = SDL_GetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_PREFERLOWPOWER_BOOLEAN, false);
++        SDL_strlcpy(renderer->adapterName, SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, ""), sizeof(renderer->adapterName));
+ 
+         renderer->minimumVkVersion = VK_API_VERSION_1_0;
+ #ifdef HAVE_GPU_OPENXR
+@@ -13696,6 +13722,7 @@ static SDL_GPUDevice *VULKAN_CreateDevice(bool debugMode, bool preferLowPower, S
+ 
+     renderer->debugMode = debugMode;
+     renderer->preferLowPower = preferLowPower;
++    SDL_strlcpy(renderer->adapterName, SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_CREATE_ADAPTER_NAME_STRING, ""), sizeof(renderer->adapterName));
+     renderer->allowedFramesInFlight = 2;
+     renderer->minimumVkVersion = VK_API_VERSION_1_0;
+ 

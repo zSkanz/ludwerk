@@ -6041,7 +6041,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 49> graphicsServiceProperties;
+    static std::array<PropertyDesc, 50> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -6614,6 +6614,19 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setGraphicsServiceMonitor,
         },
         PropertyDesc{
+            .name = atoms.intern("Adapter"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The graphics card the game draws on: 0 for the system's choice, or a position in the list that `GetAdapters` returns, from 1. A change takes effect the next time the game starts; save it with `SaveAsync`. A saved card that is no longer there is ignored, and the system chooses.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceAdapter,
+            .set = native::setGraphicsServiceAdapter,
+        },
+        PropertyDesc{
             .name = atoms.intern("VSync"),
             .type = ValueType::Bool,
             .threadSafety = ThreadSafety::Unsafe,
@@ -6692,7 +6705,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .set = native::setGraphicsServiceBrightness,
         },
     }};
-    static std::array<MethodDesc, 11> graphicsServiceMethods;
+    static std::array<MethodDesc, 12> graphicsServiceMethods;
     graphicsServiceMethods = {{
         MethodDesc{
             .name = atoms.intern("ApplyPreset"),
@@ -6741,6 +6754,12 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .yields = false,
             .threadSafety = ThreadSafety::Unsafe,
             .doc = "Returns the displays, in the order that `Monitor` indexes them.",
+        },
+        MethodDesc{
+            .name = atoms.intern("GetAdapters"),
+            .yields = false,
+            .threadSafety = ThreadSafety::Unsafe,
+            .doc = "Returns the graphics cards, in the order that `Adapter` counts them: by name. `Memory` is the card's own memory in bytes, and 0 for a card that shares the system's. Returns an empty list where the system does not list its cards: on every platform but Windows.",
         },
         MethodDesc{
             .name = atoms.intern("GetRefreshRate"),

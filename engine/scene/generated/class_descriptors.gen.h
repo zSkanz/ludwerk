@@ -1086,6 +1086,8 @@ Value getGraphicsServiceResolution(const World& world, core::InstanceId id);
 bool setGraphicsServiceResolution(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceMonitor(const World& world, core::InstanceId id);
 bool setGraphicsServiceMonitor(World& world, core::InstanceId id, const Value& value);
+Value getGraphicsServiceAdapter(const World& world, core::InstanceId id);
+bool setGraphicsServiceAdapter(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceVSync(const World& world, core::InstanceId id);
 bool setGraphicsServiceVSync(World& world, core::InstanceId id, const Value& value);
 Value getGraphicsServiceMaxFrameRate(const World& world, core::InstanceId id);

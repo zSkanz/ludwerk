@@ -24,6 +24,7 @@
 #include "engine/net/local_address.h"
 #include "engine/platform/event.h"
 #include "engine/platform/platform.h"
+#include "engine/platform/process.h"
 #include "engine/platform/window.h"
 #include "engine/scene/dormancy.h"
 #include "engine/scene/phases.h"
@@ -3361,6 +3362,22 @@ int graphicsServiceGetMonitors(lua_State* L)
     return 1;
 }
 
+int graphicsServiceGetAdapters(lua_State* L)
+{
+    (void)checkInstance(L, 1);
+    const std::vector<platform::GraphicsCard> cards = platform::graphicsCards();
+    lua_createtable(L, static_cast<int>(cards.size()), 0);
+    for (usize index = 0; index < cards.size(); ++index) {
+        lua_createtable(L, 0, 2);
+        lua_pushlstring(L, cards[index].name.data(), cards[index].name.size());
+        lua_setfield(L, -2, "Name");
+        lua_pushnumber(L, static_cast<double>(cards[index].memoryBytes));
+        lua_setfield(L, -2, "Memory");
+        lua_rawseti(L, -2, static_cast<int>(index) + 1);
+    }
+    return 1;
+}
+
 int graphicsServiceGetRefreshRate(lua_State* L)
 {
     (void)checkInstance(L, 1);
@@ -4242,6 +4259,7 @@ constexpr InstanceMethodBinding ServiceMethods[] = {
     {"GraphicsService", "SetGroupLevel", graphicsServiceSetGroupLevel},
     {"GraphicsService", "GetSupportedResolutions", graphicsServiceGetSupportedResolutions},
     {"GraphicsService", "GetMonitors", graphicsServiceGetMonitors},
+    {"GraphicsService", "GetAdapters", graphicsServiceGetAdapters},
     {"GraphicsService", "GetRefreshRate", graphicsServiceGetRefreshRate},
     {"GraphicsService", "SaveAsync", graphicsServiceSaveAsync},
     {"GraphicsService", "LoadAsync", graphicsServiceLoadAsync},
