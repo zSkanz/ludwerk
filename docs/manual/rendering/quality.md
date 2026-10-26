@@ -556,9 +556,11 @@ Medium) where nothing drawn after it needs the frame's light, and no bloom,
 sun rays, depth of field or screen-space shading. Each of those passes leaves
 a phone GPU's tile memory and comes back, in battery and heat. Where the
 frame has decals, particles, sprites or a surface shader that reads the
-scene, the samples are left out and FXAA smooths the edges. On by default on
-a phone at Low and Medium, off elsewhere; `--lean` draws a computer's window
-that way to try it.
+scene, the samples are left out and FXAA smooths the edges. Ambient
+occlusion on the lean path comes from the eight things nearest the camera,
+each shading what lies around it as a sphere would, in the same pass; a phone
+has it on at Low and Medium. On by default on a phone at Low and Medium, off
+elsewhere; `--lean` draws a computer's window that way to try it.
 
 `pipeline_threads` is how many threads make those pipelines: one on a
 computer with four hardware threads or fewer and two above unless you say,

@@ -10,7 +10,10 @@
 #     the tonemap folded into the forward pass;
 #   - the two pictures are the same picture: within `ENG_LEAN_TOLERANCE` of
 #     each other but for `ENG_LEAN_PIXELS` pixels, the edges the samples smooth
-#     and the bloom the lean path leaves out.
+#     and the bloom the lean path leaves out;
+#   - and asked for ambient occlusion, as a phone's Low and Medium are, the
+#     lean path draws it from the balls' spheres in the forward pass: no
+#     occlusion pass, and the floor under the balls darker than without.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DIMGCMP=<imgcmp> -DSCRIPT=<project> -DOUTPUT=<dir> -P run_lean_path.cmake
@@ -57,6 +60,7 @@ if(skipped)
     return()
 endif()
 draw(lean --lean)
+draw(shaded --lean --ambient-occlusion)
 
 if(NOT lean_passes MATCHES "forward/forward-samples")
     message(FATAL_ERROR "lean path: the forward pass did not draw with samples: ${lean_passes}")
@@ -67,6 +71,20 @@ foreach(left depth-prepass bloom/bloom-down smaa/ tonemap)
         message(FATAL_ERROR "lean path: `${left}` was drawn on the lean path: ${lean_passes}")
     endif()
 endforeach()
+# (`occlusion-off` is the pass's own word that it drew nothing.)
+string(REPLACE "occlusion/occlusion-off" "" shaded_drawn "${shaded_passes}")
+string(FIND "${shaded_drawn}" "occlusion" at)
+if(NOT at EQUAL -1)
+    message(FATAL_ERROR "lean path: a screen occlusion pass was drawn on the lean path: ${shaded_passes}")
+endif()
+execute_process(
+    COMMAND "${IMGCMP}" "${OUTPUT}/shaded.png" "${OUTPUT}/lean.png" --tolerance 2 --max-different-pixels 50
+    RESULT_VARIABLE shaded_same
+    OUTPUT_QUIET
+    ERROR_QUIET)
+if(shaded_same EQUAL 0)
+    message(FATAL_ERROR "lean path: asked for ambient occlusion, the lean picture is not shaded where the balls rest")
+endif()
 # And the full path still has them, so the test says something.
 if(NOT full_passes MATCHES "tonemap" OR NOT full_passes MATCHES "bloom/bloom-down")
     message(FATAL_ERROR "lean path: the full path did not draw what it draws: ${full_passes}")
@@ -82,4 +100,5 @@ if(NOT compared EQUAL 0)
     message("${said}")
     message(FATAL_ERROR "lean path: the lean picture is not the full one (see ${OUTPUT}/difference.png)")
 endif()
-message("lean path: one pass with samples, the tonemap folded in; the picture the full path's -- ${said}")
+message("lean path: one pass with samples, the tonemap folded in, the occlusion from spheres; "
+        "the picture the full path's -- ${said}")

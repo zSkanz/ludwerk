@@ -239,6 +239,10 @@ GraphicsSettings handheldSettings(GraphicsSettings settings) noexcept
     if (settings.quality == QualityLevel::Low || settings.quality == QualityLevel::Medium) {
         settings.leanPath = true;
         settings.leanSamples = settings.quality == QualityLevel::Low ? 2u : 4u;
+        // The occlusion that path draws is the nearest things' spheres, in
+        // the forward pass, and costs no pass of its own: on, where a
+        // desktop's Low and Medium have none.
+        settings.ambientOcclusion = true;
     }
     else if (settings.antiAliasing == AntiAliasingMode::Taa)
         settings.antiAliasing = AntiAliasingMode::Smaa;

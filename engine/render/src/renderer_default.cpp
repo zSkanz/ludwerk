@@ -10222,6 +10222,11 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
     // tile and comes back, in bandwidth and heat. The anti-aliasing is the
     // forward pass's samples where the frame allows them (below).
     const bool leanWindow = !world.headsetEye && settings_.leanPath;
+    // **What stands in for the screen's occlusion** (the mobile lean path):
+    // the spheres a headset's eye is shaded by, where the level asked for
+    // occlusion -- a pass that reads the depth back is what a tile cannot
+    // afford.
+    const bool leanNearby = leanWindow && settings_.ambientOcclusion;
     if (leanWindow) {
         settings_.bloom = false;
         settings_.sunRays = false;
@@ -11586,14 +11591,19 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
         // things rest on, and things far off shade nothing anyone sees.
         frame.occluderParams[0] = 0.0f;
         frame.occluderParams[1] = 0.0f;
-        if (world.headsetEye && (settings_.measuredSkip & MeasureSkip::Nearby) == 0u) {
+        if ((world.headsetEye || leanNearby) && (settings_.measuredSkip & MeasureSkip::Nearby) == 0u) {
+            // A hand's reach in an eye; in a lean window, what a game's
+            // camera looks at -- a crate, a creature -- out to thirty metres.
+            const f32 fewest = world.headsetEye ? 0.02f : 0.1f;
+            const f32 most = world.headsetEye ? 0.6f : 2.0f;
+            const f32 reachSq = world.headsetEye ? 16.0f : 900.0f;
             occluderPicks_.clear();
             for (const DrawItem& draw : world.draws) {
                 if (draw.transparent || !draw.castShadow || draw.terrain || draw.voxelBlock ||
-                    draw.boundsRadius < 0.02f || draw.boundsRadius > 0.6f)
+                    draw.boundsRadius < fewest || draw.boundsRadius > most)
                     continue;
                 const f32 distanceSq = core::dot(draw.boundsCenter, draw.boundsCenter);
-                if (distanceSq > 16.0f)
+                if (distanceSq > reachSq)
                     continue;
                 f32 smallest = draw.boundsRadius;
                 for (int column = 0; column < 3; ++column) {
