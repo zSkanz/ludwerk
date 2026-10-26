@@ -1550,8 +1550,7 @@ bool Editor::canParentInto(const scene::World& world, core::InstanceId id, core:
             return false;
         // **A `Player` is the engine's, made for whoever is taking part**, and
         // a scene never writes one or anything inside it -- so putting
-        // something there was losing it at the next save (the audit of
-        // 2026-09-28). The same rule `scene_file.cpp`'s `engineMade` follows.
+        // something there was losing it at the next save. The same rule `scene_file.cpp`'s `engineMade` follows.
         if (isClass(world, walk, "Player"))
             return false;
         if (walk == root) {

@@ -498,8 +498,8 @@ void applyAppearance()
 //
 // The rule this panel started with -- "nothing here is sampled or estimated" --
 // is right for the three static facts below and was wrong for the one value
-// that changes every frame. Printed raw at 60 Hz it cannot be read at all: the
-// human reported it twice, and could only read the panel by pausing a frame.
+// that changes every frame. Printed raw at 60 Hz it cannot be read at all: it
+// was reported twice, and the panel could only be read by pausing a frame.
 //
 // A held mean is also MORE honest about what the engine costs than a number
 // that trembles, because windowed frames present through the swapchain and the

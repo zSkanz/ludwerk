@@ -97,7 +97,7 @@ table records what each feature costs. "Looks better" is not a gate result.
   is the largest single visual win for the least work. Rejected as a stopping
   point rather than as an ordering — IBL first is likely the right build order,
   but shipping it alone leaves the light count and the shadows exactly where the
-  human said they were.
+  person who set them said they were.
 
 ## Consequences
 

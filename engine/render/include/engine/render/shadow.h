@@ -256,8 +256,8 @@ inline constexpr f32 kShadowCascadeBlend = 0.12f;
 // to the bit -- 0.2f times a power of two is exact.
 [[nodiscard]] f32 shadowPenumbra(f32 softness) noexcept;
 
-// **How far the terrain is pushed from the light** (`terrain_shadow.hlsl`,
-// the terrain audit). The ground has no far side to store, so
+// **How far the terrain is pushed from the light** (`terrain_shadow.hlsl`).
+// The ground has no far side to store, so
 // its lit side is pushed past what a receiver's filter reads: by a constant
 // and by the fragment's own depth slope times the filter's reach, up to the
 // slope at which the light meets the ground at a tenth.

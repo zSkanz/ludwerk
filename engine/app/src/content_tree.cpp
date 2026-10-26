@@ -662,8 +662,8 @@ bool ContentTree::remove(const ContentEntry& entry)
         return false;
 
     std::error_code ec;
-    // **Moved to the project's trash, never deleted** (the audit of
-    // 2026-09-28): `.engine/trash/<when>/content/<path>`, the whole folder
+    // **Moved to the project's trash, never deleted**:
+    // `.engine/trash/<when>/content/<path>`, the whole folder
     // with it -- a stamp a closed scene still names, or a terrain's cells, is
     // one move back rather than gone.
     const std::filesystem::path from = absolute(entry);

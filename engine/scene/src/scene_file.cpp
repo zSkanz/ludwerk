@@ -230,8 +230,8 @@ thread_local bool t_mountedInFull = false;
 // Whether a service's contents are a scene's to carry (see `FirstServices`).
 // **The origin a scene's tree gives what it holds** (ADR 0138 §6): the scene's
 // path and the tree -- `scene:scenes/arena.scene.json#Workspace` -- so an
-// instance of one scene that outlives it is never taken for another's (the
-// script-sides audit). The path is the world's current scene, which a load
+// instance of one scene that outlives it is never taken for another's. The
+// path is the world's current scene, which a load
 // sets before it reads.
 [[nodiscard]] core::NameAtom sceneOrigin(World& world, std::string_view tree)
 {

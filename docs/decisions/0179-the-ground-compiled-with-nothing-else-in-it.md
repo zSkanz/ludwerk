@@ -74,8 +74,7 @@ tile-based GPU.
 ## Amended 2026-10-05: the phone's numbers, and the default
 
 Measured the same day on the phone this was written for (Adreno 830, the
-display at sixty, two scenes of a horde game; the tables are the
-coordinator's):
+display at sixty, two scenes of a horde game):
 
 | | lean | fast |
 |---|---|---|

@@ -8,8 +8,8 @@
 # **No Clay.** ADR 0011 chose it as the layout solver and ADR 0040 records why v1
 # does not call it: a `UDim2` placement is two multiplies and an add rather than
 # a constraint, and Clay cannot express an unclamped scale or a fractional anchor
-# point. It stays vendored and pinned -- removing a dependency is a human
-# decision (R5) -- and nothing here includes it.
+# point. It stays vendored and pinned -- removing a dependency is the
+# maintainers' decision (R5) -- and nothing here includes it.
 
 engine_add_module(ui
     LAYER 5

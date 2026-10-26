@@ -83,8 +83,8 @@ describe("Instance construction", function()
         end)
 
         it("makes a Script like any other instance", function()
-            -- **This asserted the opposite until the editor's content work**, and the reversal is the
-            -- human's: a script's source is a PROPERTY now, so a script is an
+            -- **This asserted the opposite until the editor's content work**, and the reversal is
+            -- deliberate: a script's source is a PROPERTY now, so a script is an
             -- ordinary instance -- created like any other, put wherever you
             -- want it, and saved inside whatever holds it. The old rule came
             -- from a script being a FILE, which it no longer is.

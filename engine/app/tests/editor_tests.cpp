@@ -2376,8 +2376,8 @@ TEST_CASE("a drag on an arm stays on that arm, in world space and in the part's 
         CHECK(static_cast<double>(across) == doctest::Approx(0.0).epsilon(0.001));
     }
 
-    // **The part's own axes, on a part that is turned.** This is the one the
-    // human hit: the arm points diagonally through world space, and snapping
+    // **The part's own axes, on a part that is turned.** This is the one a
+    // user hit: the arm points diagonally through world space, and snapping
     // each WORLD component of the delta independently takes the motion off the
     // arm entirely.
     {

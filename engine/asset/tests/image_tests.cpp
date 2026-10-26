@@ -17,8 +17,7 @@ using engine::core::u32;
 namespace {
 
 // The catalog has to be loaded or every error message below is a bare key, and
-// a test asserting on message text would then assert on nothing. The kernel's Finding
-// 11 and the tooling loop's are both this.
+// a test asserting on message text would then assert on nothing.
 struct CatalogFixture
 {
     CatalogFixture()

@@ -1,5 +1,4 @@
-// Terrain into the sun's cascades and the local shadow atlas (ADR 0082, the
-// terrain audit).
+// Terrain into the sun's cascades and the local shadow atlas (ADR 0082).
 //
 // **The ground has no far side to store**, so it cannot do what every other
 // mesh does -- cull its front faces and leave a lit surface nothing to shadow

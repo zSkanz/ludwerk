@@ -797,8 +797,7 @@ void disconnectRun(lua_State* L, const void* run)
 
 bool resumeScheduled(lua_State* L, lua_State* co, int argCount)
 {
-    // **A stopped run is not resumed from a wait either** (the script-sides
-    // audit): `WaitForChild`, an answer, a request, a save, a preload. The
+    // **A stopped run is not resumed from a wait either**: `WaitForChild`, an answer, a request, a save, a preload. The
     // thread is dropped, as a timer's or a signal's is.
     if (suppressionFor(L, scriptOfThread(co), runEnvOfThread(co)) != SuppressReason::None)
         return true;

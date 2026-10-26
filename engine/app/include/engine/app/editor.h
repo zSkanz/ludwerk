@@ -2691,8 +2691,7 @@ public:
     // The file the Terrain panel imports from, as the picker last answered.
     [[nodiscard]] const std::filesystem::path& heightmapSource() const noexcept { return m_heightmapSource; }
     void setHeightmapSource(std::filesystem::path source);
-    // **How an exported heightmap goes back** (the terrain audit's editor
-    // list): the export writes black at the world's floor and white at its
+    // **How an exported heightmap goes back**: the export writes black at the world's floor and white at its
     // ceiling, and the import's fields stood at 0 and 64 m, so the round trip
     // gave other ground by default. An export leaves its size and heights
     // beside the image (`<name>.heightmap.json`), and a source chosen with one

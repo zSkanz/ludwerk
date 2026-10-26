@@ -913,8 +913,7 @@ bool startScript(lua_State* L, core::InstanceId instance)
         if (modules.runs.size() <= instance.index)
             modules.runs.resize(static_cast<usize>(instance.index) + 1);
         ModuleRegistry::Run& run = modules.runs[instance.index];
-        // **The slot's previous run is ended, not overwritten** (the
-        // script-sides audit): a slot reused by another script -- a scene
+        // **The slot's previous run is ended, not overwritten**: a slot reused by another script -- a scene
         // change reuses the old scene's -- overwrote the reference and kept
         // every table it had ever held.
         if (run.envRef != -1)
