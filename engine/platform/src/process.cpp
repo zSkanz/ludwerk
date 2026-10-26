@@ -170,7 +170,11 @@ std::vector<GraphicsCard> graphicsCards()
     IDXGIAdapter1* adapter = nullptr;
     for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; ++index) {
         DXGI_ADAPTER_DESC1 described{};
-        if (SUCCEEDED(adapter->GetDesc1(&described)) && (described.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+        // The software rasteriser is not a card, flagged or not: a machine
+        // with no GPU -- a virtual one -- lists Microsoft's Basic Render
+        // Driver without the flag, by its vendor and device alone.
+        if (SUCCEEDED(adapter->GetDesc1(&described)) && (described.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
+            !(described.VendorId == 0x1414 && described.DeviceId == 0x8C)) {
             char utf8[512];
             const int written = WideCharToMultiByte(CP_UTF8, 0, described.Description, -1, utf8,
                                                     static_cast<int>(sizeof(utf8)), nullptr, nullptr);
