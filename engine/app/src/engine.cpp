@@ -4007,6 +4007,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     render::LodTransitions lodTransitions;
     // What it did over the report's window: changes of level, draws left out
     // for their size (a frame's, summed), and frames.
+    // The fade's clock in a headless run told to fade: a sixtieth of a second
+    // a frame.
+    core::u64 lodClockFrames = 0;
     core::u64 lodChanges = 0;
     core::u64 lodTooSmall = 0;
     core::u64 lodFrames = 0;
@@ -9519,10 +9522,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 // taken on, not of how far a fade on the wall clock had got.
                 if (renderer != nullptr) {
                     ENG_PROFILE_SCOPE("render.lod");
+                    const bool fadeAlways = renderer->settings().lodFadeAlways;
+                    const core::f64 lodNow = options.headless ? static_cast<core::f64>(lodClockFrames++) / 60.0
+                                                              : static_cast<core::f64>(platform::nowNs()) / 1.0e9;
                     const render::LodTransitionStats lod = lodTransitions.apply(
                         snapshot, meshCache, renderer->lodPixelsPerUnit(snapshot), renderer->settings(),
-                        renderer->settings().lodCrossfade && !options.headless,
-                        static_cast<core::f64>(platform::nowNs()) / 1.0e9);
+                        fadeAlways || (renderer->settings().lodCrossfade && !options.headless), lodNow);
                     lodChanges += lod.changed;
                     lodTooSmall += lod.tooSmall;
                     ++lodFrames;

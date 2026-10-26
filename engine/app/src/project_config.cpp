@@ -238,6 +238,8 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.instancing = *overrides.instancing;
     if (overrides.occlusionAlwaysTest)
         settings.occlusionAlwaysTest = *overrides.occlusionAlwaysTest;
+    if (overrides.lodFadeAlways)
+        settings.lodFadeAlways = *overrides.lodFadeAlways;
     if (overrides.debugView) {
         settings.debugView = *overrides.debugView;
         // The sky and the ground must stay two colours to the last pixel: a
@@ -655,6 +657,7 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         settings.terrainSurface = instruments->terrainSurface;
         settings.leanFoveation = instruments->leanFoveation;
         settings.occlusionAlwaysTest = instruments->occlusionAlwaysTest;
+        settings.lodFadeAlways = instruments->lodFadeAlways;
         // And its word on the lean path, at whatever level is drawn now.
         if (instruments->leanPathAsked >= 0) {
             settings.leanPath = instruments->leanPathAsked != 0;

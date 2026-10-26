@@ -378,7 +378,8 @@ engine-host [script.luau | project-dir]
    --[no-]anti-aliasing --anti-aliasing=MODE --upscaling=MODE
    --sharpness=F --[no-]frame-generation --[no-]auto-exposure]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
-   --no-instancing --[no-]occlusion-culling --occlusion-culling-always]
+   --no-instancing --[no-]occlusion-culling --occlusion-culling-always
+   --lod-fade=always]
   [--pace=HZ]
   [--profile-capture=FILE [--profile-lines]] [--gpu-pass-times]
   [--host | --serve | --join=ADDRESS[:PORT] | --join=CODE | --join=relay://HOST:PORT/CODE]
@@ -457,6 +458,10 @@ warns, and the system chooses.
   pixel for pixel, and the cost it is weighed against.
   `--occlusion-culling-always` tests every frame instead, never resting where
   it saves less than it costs: what a comparison of the two needs.
+- `--lod-fade=always` fades every change of a mesh's level of detail, at any
+  quality and in a headless run, where a frame counts as a sixtieth of a
+  second: with `--screenshot-every=1` the fifteen frames of a change are
+  fifteen pictures, the same on every run.
 
 **`--frame-stats`** prints, after the run, the frames' median and tail, and
 then where the time went, scope by scope: the simulation's phases, the

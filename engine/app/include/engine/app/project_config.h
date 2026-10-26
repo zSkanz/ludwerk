@@ -91,6 +91,8 @@ struct GraphicsOverrides
     std::optional<bool> instancing;
     // `--occlusion-culling-always`, a test instrument.
     std::optional<bool> occlusionAlwaysTest;
+    // `--lod-fade=always`, a test instrument.
+    std::optional<bool> lodFadeAlways;
 };
 
 struct ProjectConfig

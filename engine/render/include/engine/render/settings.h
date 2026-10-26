@@ -314,6 +314,11 @@ struct GraphicsSettings
     // a phone, where drawing both levels for a moment is what it cannot spare.
     f32 viewDistance = 1.0f;
     bool lodCrossfade = true;
+    // **A test instrument**: `--lod-fade=always` fades every change of level,
+    // whatever the quality and in a headless run too, on a clock of a
+    // sixtieth of a second a frame there -- so a run of pictures shows a
+    // change frame by frame, the same on every run.
+    bool lodFadeAlways = false;
     // The finest level a mesh is drawn at (`GraphicsService.MaximumLODLevel`):
     // nought is its finest; one leaves its finest out, where it has others.
     u32 maximumLodLevel = 0;
