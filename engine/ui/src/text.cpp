@@ -2250,10 +2250,220 @@ struct RichLine
     return advance + (style.bold ? boldOffsetOf(style.size) : 0.0f);
 }
 
+// --- Rich text that needs shaping (ADR 0260) ----------------------------------
+//
+// The styled characters a markup parses into, laid out as plain text that
+// needs shaping is: a paragraph resolved by the bidirectional algorithm, cut
+// into runs of one direction, script, face and style -- a change of colour or
+// size mid-word cuts the run there -- and each shaped at its style's size.
+
+void appendUtf8(std::string& out, u32 c)
+{
+    if (c < 0x80) {
+        out.push_back(static_cast<char>(c));
+    }
+    else if (c < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (c >> 6)));
+        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    }
+    else if (c < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (c >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    }
+    else {
+        out.push_back(static_cast<char>(0xF0 | (c >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    }
+}
+
+[[nodiscard]] bool richNeedsShaping(const RichText& text) noexcept
+{
+    return std::any_of(text.glyphs.begin(), text.glyphs.end(),
+                       [](const RichGlyph& glyph) { return complexCodepoint(glyph.codepoint); });
+}
+
+// One drawn piece of a shaped rich line, in the order it is drawn: a glyph,
+// the style and the first character of the cluster it stands for, and its
+// advance and the face's offsets, in pixels.
+struct RichUnit
+{
+    u32 glyph = 0;
+    u32 codepoint = 0;
+    u32 style = 0;
+    usize character = 0;
+    f32 advance = 0.0f;
+    f32 dx = 0.0f;
+    f32 dy = 0.0f;
+    core::u8 slot = 0;
+    bool missing = false;
+};
+
+// The characters [`begin`, `end`) of `text` -- one paragraph or one line,
+// with no line break in it -- as UTF-8, and the character each byte is of.
+struct RichSpan
+{
+    std::string utf8;
+    std::vector<usize> owner;
+};
+
+[[nodiscard]] RichSpan richSpan(const RichText& text, usize begin, usize end)
+{
+    RichSpan span;
+    for (usize index = begin; index < end; ++index) {
+        appendUtf8(span.utf8, text.glyphs[index].codepoint);
+        span.owner.resize(span.utf8.size(), index);
+    }
+    return span;
+}
+
+[[nodiscard]] std::vector<RichUnit> shapeRich(const RichText& text, const RichSpan& span, FaceChain& chain)
+{
+    std::vector<RichUnit> out;
+    if (span.utf8.empty())
+        return out;
+    const Paragraph paragraph(span.utf8);
+    const std::string_view bytes = span.utf8;
+    hb_buffer_t* buffer = shapingBuffer();
+    SBLineRef line = SBParagraphCreateLine(paragraph.resolved(), 0, bytes.size());
+    const SBUInteger runCount = line != nullptr ? SBLineGetRunCount(line) : 0;
+    const SBRun* runs = line != nullptr ? SBLineGetRunsPtr(line) : nullptr;
+    for (SBUInteger runIndex = 0; runIndex < runCount; ++runIndex) {
+        const SBRun& run = runs[runIndex];
+        const bool rightToLeft = (run.level & 1u) != 0;
+        struct Item
+        {
+            usize begin = 0;
+            usize end = 0;
+            usize slot = 0;
+            SBScript script = SBScriptZYYY;
+            u32 style = 0;
+        };
+        std::vector<Item> items;
+        for (usize at = run.offset; at < run.offset + run.length;) {
+            const Decoded decoded = decodeUtf8(bytes, at);
+            const SBScript script = paragraph.scriptAt(at);
+            const u32 style = text.glyphs[span.owner[at]].style;
+            usize slot = slotFor(chain, decoded.codepoint);
+            const bool follows =
+                !items.empty() &&
+                (slot == chain.faces.size() || zeroWidth(decoded.codepoint) ||
+                 SBGeneralCategoryIsMark(SBCodepointGetGeneralCategory(static_cast<SBCodepoint>(decoded.codepoint))));
+            if (follows)
+                slot = items.back().slot;
+            else if (slot == chain.faces.size())
+                slot = 0;
+            if (items.empty() || items.back().slot != slot || items.back().script != script ||
+                items.back().style != style)
+                items.push_back(Item{at, at, slot, script, style});
+            items.back().end = at + decoded.length;
+            at += decoded.length;
+        }
+        if (rightToLeft)
+            std::reverse(items.begin(), items.end());
+
+        for (const Item& item : items) {
+            const RichStyle& style = text.styles[item.style];
+            Face& face = *chain.faces[item.slot];
+            const f32 madeAt = rasterSizeFor(style.size);
+            const f32 toPixels = stbtt_ScaleForPixelHeight(&face.info, madeAt) * scaleFor(chain.primary(), style.size);
+            hb_buffer_clear_contents(buffer);
+            hb_buffer_add_utf8(buffer, bytes.data(), static_cast<int>(bytes.size()), static_cast<unsigned>(item.begin),
+                               static_cast<int>(item.end - item.begin));
+            hb_buffer_set_direction(buffer, rightToLeft ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+            hb_buffer_set_script(buffer, hb_script_from_iso15924_tag(SBScriptGetUnicodeTag(item.script)));
+            hb_buffer_guess_segment_properties(buffer);
+            hb_shape(shaperOf(face), buffer, nullptr, 0);
+            unsigned count = 0;
+            const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &count);
+            const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, nullptr);
+            const bool tracked = chain.tracking != 0.0f && !joiningScript(item.script);
+            for (unsigned at = 0; at < count; ++at) {
+                RichUnit unit;
+                unit.glyph = infos[at].codepoint;
+                unit.style = item.style;
+                unit.slot = static_cast<core::u8>(item.slot);
+                const usize cluster = infos[at].cluster;
+                unit.character = span.owner[cluster];
+                unit.codepoint = decodeUtf8(bytes, cluster).codepoint;
+                unit.dx = static_cast<f32>(positions[at].x_offset) * toPixels;
+                unit.dy = static_cast<f32>(positions[at].y_offset) * toPixels;
+                unit.advance = static_cast<f32>(positions[at].x_advance) * toPixels;
+                const bool lastOfCluster = at + 1 == count || infos[at + 1].cluster != infos[at].cluster;
+                if (unit.glyph == 0 && !zeroWidth(unit.codepoint)) {
+                    unit.missing = true;
+                    unit.advance = advanceOf(chain, style, unit.codepoint);
+                }
+                else if (lastOfCluster) {
+                    if (tracked)
+                        unit.advance +=
+                            trackingOf(chain, style.size, unit.codepoint) * scaleFor(chain.primary(), style.size);
+                    if (style.bold)
+                        unit.advance += boldOffsetOf(style.size);
+                }
+                out.push_back(unit);
+            }
+        }
+    }
+    if (line != nullptr)
+        SBLineRelease(line);
+    return out;
+}
+
+// **What a rich text's lines are broken by, when it needs shaping**: each
+// character's share of the advance -- the whole cluster's on its first
+// character, nothing on the rest, which a line never starts at -- and where a
+// word of Thai or Lao begins.
+struct RichMeasure
+{
+    std::vector<f32> advance;
+    std::vector<bool> clusterStart;
+    std::vector<bool> wordStart;
+};
+
+[[nodiscard]] RichMeasure measureRich(const RichText& text, FaceChain& chain)
+{
+    RichMeasure measure;
+    const usize count = text.glyphs.size();
+    measure.advance.assign(count + 1, 0.0f);
+    measure.clusterStart.assign(count + 1, false);
+    measure.wordStart.assign(count + 1, false);
+    for (usize begin = 0; begin < count;) {
+        usize end = begin;
+        while (end < count && text.glyphs[end].codepoint != '\n')
+            ++end;
+        const RichSpan span = richSpan(text, begin, end);
+        for (const RichUnit& unit : shapeRich(text, span, chain)) {
+            measure.advance[unit.character] += unit.advance;
+            measure.clusterStart[unit.character] = true;
+        }
+        std::vector<usize> words;
+        detail::dictionaryBreaks(span.utf8, words);
+        for (const usize at : words)
+            measure.wordStart[span.owner[at]] = true;
+        // The line break is a character of its own.
+        measure.clusterStart[end] = true;
+        begin = end + 1;
+    }
+    return measure;
+}
+
 // On `breakLines`' rules, over styled glyphs rather than bytes.
 void breakRichLines(const RichText& text, FaceChain& chain, f32 maxWidth, std::vector<RichLine>& out)
 {
     out.clear();
+    // Text that needs shaping is measured by its clusters, and a line ends
+    // only where one starts (ADR 0260).
+    const bool shaped = chain.primary().ready && richNeedsShaping(text);
+    const RichMeasure measure = shaped ? measureRich(text, chain) : RichMeasure{};
+    const auto breakable = [&](usize at, u32 before, u32 after) {
+        if (!shaped)
+            return breaksBetween(before, after);
+        return measure.clusterStart[at] &&
+               (breaksBetween(before, after) || (measure.wordStart[at] && before != ' ' && after != ' '));
+    };
     constexpr usize None = static_cast<usize>(-1);
     usize lineBegin = 0;
     // As in `breakLines`: where this line may end, where the next then
@@ -2311,9 +2521,11 @@ void breakRichLines(const RichText& text, FaceChain& chain, f32 maxWidth, std::v
             continue;
         }
         const u32 previous = index > lineBegin ? text.glyphs[index - 1].codepoint : 0u;
-        const f32 advance = advanceOf(chain, text.styles[glyph.style], glyph.codepoint);
-        if (maxWidth > 0.0f && width + advance > wrapRoomOf(maxWidth) && index > lineBegin) {
-            if (breaksBetween(previous, glyph.codepoint)) {
+        const f32 advance =
+            shaped ? measure.advance[index] : advanceOf(chain, text.styles[glyph.style], glyph.codepoint);
+        if (maxWidth > 0.0f && width + advance > wrapRoomOf(maxWidth) && index > lineBegin &&
+            (!shaped || measure.clusterStart[index])) {
+            if (breakable(index, previous, glyph.codepoint)) {
                 finish(index, width, index);
                 continue;
             }
@@ -2330,7 +2542,7 @@ void breakRichLines(const RichText& text, FaceChain& chain, f32 maxWidth, std::v
             breakNext = index + 1;
             widthAtBreak = width;
         }
-        else if (index > lineBegin && breaksBetween(previous, glyph.codepoint)) {
+        else if (index > lineBegin && breakable(index, previous, glyph.codepoint)) {
             breakEnd = index;
             breakNext = index;
             widthAtBreak = width;
@@ -2699,6 +2911,14 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
     const RichText text = parseRichText(markup, base);
     std::vector<RichLine> lines;
     breakRichLines(text, chain, maxWidth, lines);
+    // Text that needs shaping is drawn a line at a time in the order it is
+    // read (ADR 0260).
+    const bool shaped = face.ready && richNeedsShaping(text);
+    std::vector<std::vector<RichUnit>> shapedLines;
+    if (shaped) {
+        for (const RichLine& line : lines)
+            shapedLines.push_back(shapeRich(text, richSpan(text, line.begin, line.end), chain));
+    }
 
     f32 totalHeight = 0.0f;
     for (const RichLine& line : lines)
@@ -2734,6 +2954,64 @@ void buildRichTextGeometry(std::string_view markup, std::string_view font, f32 p
             else if (horizontalAlignment == 2)
                 x += boxWidth - line.width;
             const f32 baseline = y + line.ascent;
+
+            if (shaped) {
+                f32 pen = x;
+                for (const RichUnit& unit : shapedLines[static_cast<usize>(&line - lines.data())]) {
+                    const RichStyle& style = text.styles[unit.style];
+                    const f32 scale = scaleFor(face, style.size);
+                    const f32 top = baseline - ascentOf(face, style.size);
+                    const bool outlined = style.stroke.thickness > 0.0f && style.stroke.alpha > 0.0f;
+                    if (outlinePass && !outlined) {
+                        pen += unit.advance;
+                        continue;
+                    }
+                    const GlyphStroke wanted =
+                        outlinePass ? glyphStrokeOf(style.stroke, style.size, style.alpha <= 0.0f) : GlyphStroke{};
+                    const usize slot = unit.missing
+                                           ? glyphIndex(chain, style.size, unit.codepoint, wanted)
+                                           : shapedGlyphIndex(chain, unit.slot, style.size, unit.glyph, wanted);
+                    const GlyphEntry entry = store().entries[slot];
+                    const int strokes = style.bold ? 2 : 1;
+                    for (int stroke = 0; stroke < strokes; ++stroke) {
+                        const f32 offset = stroke == 0 ? 0.0f : boldOffsetOf(style.size);
+                        for (u32 quad = 0; quad < entry.quadCount; ++quad) {
+                            const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
+                            DrawQuad drawn;
+                            drawn.min =
+                                Vec2{pen + unit.dx + offset + shape.minX * scale, top - unit.dy + shape.minY * scale};
+                            drawn.max =
+                                Vec2{pen + unit.dx + offset + shape.maxX * scale, top - unit.dy + shape.maxY * scale};
+                            drawn.color = style.color;
+                            drawn.alpha = style.alpha;
+                            drawn.texture = entry.textured ? 1u + entry.page : 0u;
+                            drawn.uvMin = Vec2{shape.u0, shape.v0};
+                            drawn.uvMax = Vec2{shape.u1, shape.v1};
+                            drawn.scissor = scissor;
+                            if (style.italic) {
+                                drawn.slant = ItalicSlant;
+                                const f32 lift = baseline - drawn.max.y;
+                                drawn.min.x += lift * ItalicSlant;
+                                drawn.max.x += lift * ItalicSlant;
+                            }
+                            if (outlinePass)
+                                paintOutline(drawn, style.stroke);
+                            out.push_back(drawn);
+                        }
+                    }
+                    if (!outlinePass) {
+                        const f32 thickness = std::max(1.0f, std::round(style.size / 14.0f));
+                        if (style.underline)
+                            rule(pen, pen + unit.advance, baseline + thickness, thickness, style);
+                        if (style.strike)
+                            rule(pen, pen + unit.advance, baseline - ascentOf(face, style.size) * 0.32f, thickness,
+                                 style);
+                    }
+                    pen += unit.advance;
+                }
+                y += line.height;
+                continue;
+            }
 
             f32 pen = x;
             for (usize index = line.begin; index < line.end; ++index) {

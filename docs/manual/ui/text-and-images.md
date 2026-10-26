@@ -107,8 +107,10 @@ font_fallbacks = [
 Text of Latin, Greek, Cyrillic, Chinese, Japanese and Korean is laid out a
 character at a time, exactly as before: only text with a character of the
 scripts above is shaped, so the labels of a game that has none cost nothing
-more. `LetterSpacing` is not added inside Arabic or the other scripts whose
-letters join. `TextXAlignment.Left` is the left edge in either direction.
+more. `RichText` is shaped the same way, and a change of color or size inside
+a word keeps its letters joined. `LetterSpacing` is not added inside Arabic or
+the other scripts whose letters join. `TextXAlignment.Left` is the left edge in
+either direction.
 
 ### Letter spacing
 
@@ -297,10 +299,8 @@ font files, and a `TextInput` always shows its text plain.
 
 ## What is not here
 
-Rich text is not shaped yet: a `RichText` label lays its text out a character
-at a time, so Arabic in one does not join, and a line of it does not run from
-the right. Khmer and Burmese break only where they have spaces. The same
-classes draw in the world
+Khmer and Burmese break only where they have spaces. The same classes draw in
+the world
 under a `SurfaceGui` or a `BillboardGui`: see [UI in the world](manual:ui/world-space).
 
 ## Where to look next

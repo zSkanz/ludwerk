@@ -8,9 +8,9 @@
   `vendor.luau` and never edited in place; built lean, through the engine's
   own font loading; the size each adds measured on every shipping platform
   before it ships.
-- Built: labels and text fields shape, order and break text of every script
-  above, with HarfBuzz 15.0.0 and SheenBidi 3.0.0, and Thai and Lao break by
-  ICU 79.1's word lists. Rich text is not shaped yet.
+- Built: labels, rich text and text fields shape, order and break text of
+  every script above, with HarfBuzz 15.0.0 and SheenBidi 3.0.0, and Thai and
+  Lao break by ICU 79.1's word lists.
 - Date: 2026-10-21
 - Builds on: ADR 0011 (stb_truetype for the UI's text), ADR 0259 (the faces
   a character falls back on, and where a CJK line may end)
@@ -156,6 +156,9 @@ needed for this.
   lines and its caret are the same to the bit.
 - **The glyph store** keys a shaped glyph by its index in its face, above
   every codepoint, and by the chain and which face of it drew the glyph.
+- **Rich text** is cut into runs where its style changes too, each shaped at
+  its own size. The face is shaped across the change, so a word's letters
+  stay joined when one of them is another color.
 - **The caret.** A text field's caret, a press and a selection follow each
   character where it is drawn. The arrow keys move on screen in a line with
   right-to-left text in it. Backspace after a letter with a mark takes the
@@ -166,9 +169,6 @@ needed for this.
 ## Not decided here
 
 - **The web's cost**, measured when there is a web build.
-- **Rich text.** Its markup is parsed into styled characters, and shaping it
-  means shaping across a change of style. That is the next piece of this
-  work.
 - **Khmer and Burmese word lists**, ICU's too, when a game asks for them.
 - **The right-to-left alignment property's name and values**, decided with
   the API when the work reaches it.

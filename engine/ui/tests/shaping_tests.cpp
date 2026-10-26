@@ -226,3 +226,24 @@ TEST_CASE("ADR 0260: Latin, Greek, Cyrillic and CJK are not shaped, and Arabic, 
     CHECK(arabic.front().begin == 2);
     CHECK(arabic.front().rightToLeft);
 }
+
+TEST_CASE("ADR 0260: rich text is shaped too, each run in its own style")
+{
+    FaceGuard guard;
+    // a in red, then b, overridden to run right to left: b drawn first, and
+    // the red a on its right.
+    std::vector<DrawQuad> quads;
+    engine::ui::buildRichTextGeometry("\xE2\x80\xAE<font color=\"#ff0000\">a</font>b\xE2\x80\xAC", Font, 32.0f, 0.0f,
+                                      Rect{Vec2{0.0f, 0.0f}, Vec2{1000.0f, 200.0f}}, 0, 0,
+                                      engine::core::Color3{1.0f, 1.0f, 1.0f}, 1.0f, 0, quads);
+    REQUIRE(quads.size() == 2);
+    const DrawQuad& red = quads[0].color.g < 0.5f ? quads[0] : quads[1];
+    const DrawQuad& white = quads[0].color.g < 0.5f ? quads[1] : quads[0];
+    CHECK(red.color.r > 0.9f);
+    CHECK(red.min.x > white.min.x);
+
+    // A letter and its combining mark measure as the face's own accented one.
+    const f32 combined = engine::ui::measureRichText("<b>e\xCC\x81</b>", Font, 32.0f, 0.0f).size.x;
+    const f32 precomposed = engine::ui::measureRichText("<b>\xC3\xA9</b>", Font, 32.0f, 0.0f).size.x;
+    CHECK(combined == doctest::Approx(static_cast<double>(precomposed)).epsilon(0.01));
+}
