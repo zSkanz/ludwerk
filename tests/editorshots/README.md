@@ -75,10 +75,13 @@ all): `wait`, `move`, `click`, `rclick`, `dbl`, `drag`, `wheel`, `key`,
 **`wait` counts frames, and a frame is not a length of time.** A quick
 machine draws a thousand in the second a slow one draws thirty, so a picture
 that waited a count for something that takes time is a picture of how fast
-the machine is. Two steps wait for the thing itself: `idle`, until the
-editor has finished what it began (a shader being compiled); and `sleep
-<milliseconds>`, for a game that follows the clock (a character that has to
-have landed). To have a moment of a running game exactly, pause it and press
+the machine is. Two steps wait for the thing itself: `idle [frames]`, until
+the editor has finished what it began (a shader being compiled, a bake of
+light until its file is written), for at most 4000 frames or the number
+given; and `sleep <milliseconds>`, for a game that follows the clock (a
+character that has to have landed). A bake waited for by `sleep` was a
+picture of how fast the runner was: twenty seconds were enough on a desk and
+not under a sanitizer on a slow runner. To have a moment of a running game exactly, pause it and press
 the transport's step: a step is a tick.
 
 What has proved sturdy:

@@ -3925,8 +3925,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         if (!options.editorDrive.empty() && editorDrive.load(options.editorDrive)) {
             overlay->setDrive(&editorDrive);
 #if ENG_DEBUG_UI
-            // What a script's `idle` waits on: a shader being compiled.
-            editorDrive.setBusy([&surfaceCompiler] { return surfaceCompiler != nullptr && surfaceCompiler->busy(); });
+            // What a script's `idle` waits on: a shader being compiled, and a
+            // bake of the light of what stands still until its file is
+            // written. A fixed wait for the bake was too short on a slow runner.
+            editorDrive.setBusy([&surfaceCompiler, &lightingBakeAsked] {
+                return (surfaceCompiler != nullptr && surfaceCompiler->busy()) || lightingBakeAsked;
+            });
 #endif
         }
         // Re-pointed on every reload, unlike streaming: the mixer belongs to the

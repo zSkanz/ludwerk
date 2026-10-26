@@ -275,11 +275,14 @@ bool EditorDrive::feed()
         // A few frames first, for what was just asked to have been begun;
         // then for as long as it is going on. Slept through, a little a
         // frame: a quick machine would otherwise spend its frames waiting,
-        // and a run has only so many.
+        // and a run has only so many. `idle N` waits at most N frames: a bake
+        // takes a share of its work a frame, and a slow machine needs more of
+        // them than a shader does.
         constexpr int kSettle = 4;
         constexpr int kMost = 4000;
+        const int most = step.words.empty() ? kMost : static_cast<int>(number(step.words, 0));
         const bool busy = busy_ && busy_();
-        if (phase_ < kSettle || (busy && phase_ < kMost)) {
+        if (phase_ < kSettle || (busy && phase_ < most)) {
             if (busy)
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             ++phase_;

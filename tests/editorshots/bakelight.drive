@@ -18,7 +18,8 @@ wheel -40
 wait 8
 click 1279 860
 move 760 340
-sleep 20000
+# Until the bake's file is written, however slow the machine.
+idle 60000
 wait 10
 shot baked
 quit
