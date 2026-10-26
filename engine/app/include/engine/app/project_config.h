@@ -89,6 +89,8 @@ struct GraphicsOverrides
     // `--debug-view=NAME`: a test instrument.
     std::optional<render::DebugView> debugView;
     std::optional<bool> instancing;
+    // `--occlusion-culling-always`, a test instrument.
+    std::optional<bool> occlusionAlwaysTest;
 };
 
 struct ProjectConfig

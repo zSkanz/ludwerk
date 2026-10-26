@@ -10,6 +10,9 @@
 #     hidden wrongly, or one appearing a frame late as the camera turns, is a
 #     difference;
 #   - the culler hid something, so the test says something.
+# The culler is told to test every frame (`--occlusion-culling-always`): left
+# to itself it rests where it hides nothing -- the camera turned away from the
+# houses -- and would be held against nothing there.
 #
 # Invoked as:
 #   cmake -DHOST=<engine-host> -DIMGCMP=<imgcmp> -DSCRIPT=<project> -DOUTPUT=<dir> -P run_occlusion_gate.cmake
@@ -29,7 +32,7 @@ file(COPY "${SCRIPT}/" DESTINATION "${OUTPUT}/game"
 function(draw name)
     execute_process(
         COMMAND "${HOST}" "${OUTPUT}/game" --headless --frames=120 --exit --width=640 --height=360 --frame-report=1
-                "--screenshot=${OUTPUT}/${name}/shot.png" --screenshot-every=4 ${ARGN}
+                "--screenshot=${OUTPUT}/${name}/shot.png" --screenshot-every=4 --occlusion-culling-always ${ARGN}
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)

@@ -378,7 +378,7 @@ engine-host [script.luau | project-dir]
    --[no-]anti-aliasing --anti-aliasing=MODE --upscaling=MODE
    --sharpness=F --[no-]frame-generation --[no-]auto-exposure]
   [--screenshot-every=N --debug-view=VIEW --terrain-detail=full|distance
-   --no-instancing --[no-]occlusion-culling]
+   --no-instancing --[no-]occlusion-culling --occlusion-culling-always]
   [--pace=HZ]
   [--profile-capture=FILE [--profile-lines]] [--gpu-pass-times]
   [--host | --serve | --join=ADDRESS[:PORT] | --join=CODE | --join=relay://HOST:PORT/CODE]
@@ -455,6 +455,8 @@ warns, and the system chooses.
 - `--no-occlusion-culling` draws what walls, hills and blocks hide as well
   (`GraphicsService.OcclusionCulling`): the picture the culler's has to match
   pixel for pixel, and the cost it is weighed against.
+  `--occlusion-culling-always` tests every frame instead, never resting where
+  it saves less than it costs: what a comparison of the two needs.
 
 **`--frame-stats`** prints, after the run, the frames' median and tail, and
 then where the time went, scope by scope: the simulation's phases, the

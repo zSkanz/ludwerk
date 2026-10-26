@@ -76,15 +76,19 @@ Two families of occlusion culling are what an engine of this class has:
    now count: a hole just filled is not yet drawn filled. Both are kept
    until the ground, what is drawn of it or the tile under the camera
    changes.
-4. **It pays for itself or rests.** It measures what it saves: the draws it
-   left out, at what a draw cost to record last frame, against its own time.
-   When it saves less than it costs for thirty frames in a row -- a top-down
-   game, where almost nothing is behind anything -- it rests, and tests again
-   when the camera has moved four metres, turned 25 degrees, or after three
-   seconds. A rest that follows one which found nothing is twice as long and
-   needs twice the move, up to sixteen times: a camera following a hero
-   across a field woke it every second to find nothing again. A frame that
-   rests costs nothing, and a frame that wins resets the doubling.
+4. **It pays for itself or rests.** It measures what it saves against its
+   own time: the draws it left out at what a draw cost to record last frame
+   -- or, whatever that says, a tenth of what was in view hidden, which is
+   GPU time the record time does not count: a street of houses drawn in a
+   few instanced calls saves little recording and five sixths of its
+   triangles. Losing ten frames in a row, it rests, and tries one frame a
+   second to see whether it would pay again; that frame wakes it if it does.
+   **Not woken by the view moving**: a camera following a hero across a game
+   seen from above moves every frame, and woke an earlier version of this to
+   find nothing, a quarter of a millisecond a frame. With fewer than 64 draws
+   in view it does not test at all: hiding all of them would not pay for the
+   occluders. `--occlusion-culling-always` tests every frame, for a picture
+   gate.
 5. **Seen.** The frame report and F3's Stats say what it hid, from how many,
    in how long, or that it rests and why. `GraphicsService.OcclusionCulling`
    turns it off for a game; `--no-occlusion-culling` for a run.
@@ -123,7 +127,10 @@ Two families of occlusion culling are what an engine of this class has:
     that is.
   - The ground scene: 21 of 111 hidden, 0.25 ms.
   - `examples/10-open-world`: 24 of 2,252 hidden when it tests, at 0.62 ms;
-    it saves less than it costs and rests most of the time, as it should.
-  - `examples/14-voxels`: nothing hidden at 0.34 ms; it rests.
-  - A horde game seen from above: nothing hidden, and it rests about nine
-    frames in ten, at 0.11 ms a frame it is awake.
+    it saves less than it costs and rests all but one frame a second.
+  - `examples/14-voxels`, `13-terrain` and `06-scene`: nothing hidden, or too
+    few draws to try; they rest.
+  - The self-check's own test: a frame of 200 things in view and none
+    hidden rests within ten frames and tries one frame a second after; nine
+    things are never tested; a street hiding 150 of 170 never rests; and a
+    rest ends the second after the street comes into view.

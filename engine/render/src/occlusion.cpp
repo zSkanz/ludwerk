@@ -16,6 +16,7 @@ using core::f64;
 using core::i64;
 using core::Mat4;
 using core::u32;
+using core::u64;
 using core::usize;
 using core::Vec3;
 
@@ -598,22 +599,25 @@ OcclusionStats OcclusionCuller::cull(RenderWorld& world, f64 perDrawMs, f64 nowS
     if (!perspective(camera.projection) || (world.occluderBoxes.empty() && world.occluderGrids.empty()))
         return stats;
 
-    // **Resting**: tried again when the view has moved enough to matter, or
-    // after a while.
-    const Vec3 forward = core::normalize(Vec3{-camera.view.m[0][2], -camera.view.m[1][2], -camera.view.m[2][2]});
-    if (resting_) {
-        const core::DVec3 moved = camera.origin - restOrigin_;
-        const f64 distance = std::sqrt(moved.x * moved.x + moved.y * moved.y + moved.z * moved.z);
-        const f32 turned = std::acos(std::clamp(core::dot(forward, restForward_), -1.0f, 1.0f)) * 57.29578f;
-        const f64 longer = static_cast<f64>(1u << (restRounds_ > 0 ? restRounds_ - 1 : 0));
-        if (distance < static_cast<f64>(MoveToWake) * longer &&
-            turned < std::min(TurnToWake * static_cast<f32>(longer), 90.0f) &&
-            nowSeconds - restSince_ < RestSeconds * longer) {
-            stats.resting = true;
-            return stats;
-        }
+    // **Too little to save**: a handful of draws in view never pays for the
+    // occluders drawn to hide them.
+    u32 inView = 0;
+    for (const DrawItem& draw : world.draws) {
+        if (draw.inCameraFrustum && draw.boundsRadius > 0.0f && ++inView >= FewestDraws)
+            break;
+    }
+    if (inView < FewestDraws && !alwaysTest_) {
+        stats.resting = true;
+        return stats;
+    }
+
+    // **Resting**: one frame a second is tried, and wakes it if it pays.
+    if (alwaysTest_)
         resting_ = false;
-        losingFrames_ = 0;
+    const bool probing = resting_;
+    if (resting_ && nowSeconds - lastProbe_ < ProbeSeconds) {
+        stats.resting = true;
+        return stats;
     }
 
     const auto started = std::chrono::steady_clock::now();
@@ -682,22 +686,27 @@ OcclusionStats OcclusionCuller::cull(RenderWorld& world, f64 perDrawMs, f64 nowS
 
     stats.tested = true;
     stats.ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - started).count();
-    // **Does it pay?** What it hid, at what a draw cost the renderer, against
-    // its own time; losing for a second, it rests.
+    // **Does it pay?** What it hid, at what a draw cost to record, against its
+    // own time -- or a tenth of what was in view hidden: the time a hidden
+    // draw saves the GPU, which the record time does not count. A street of
+    // houses drawn in a few instanced calls saves little recording and five
+    // sixths of its triangles. Losing `FramesBeforeRest` frames in a row, it
+    // rests; a frame tried while resting that pays wakes it.
     const f64 drawMs = perDrawMs > 0.0 ? perDrawMs : 0.003;
-    if (static_cast<f64>(stats.hidden) * drawMs < stats.ms) {
-        ++losingFrames_;
+    const bool pays = static_cast<f64>(stats.hidden) * drawMs >= stats.ms ||
+                      static_cast<u64>(stats.hidden) * HiddenShareToPay >= stats.candidates;
+    if (probing) {
+        lastProbe_ = nowSeconds;
+        if (pays) {
+            resting_ = false;
+            losingFrames_ = 0;
+        }
+        return stats;
     }
-    else {
-        losingFrames_ = 0;
-        restRounds_ = 0;
-    }
-    if (losingFrames_ >= FramesBeforeRest) {
-        restRounds_ = std::min(restRounds_ + 1, LongestRestRounds + 1);
+    losingFrames_ = pays ? 0 : losingFrames_ + 1;
+    if (losingFrames_ >= FramesBeforeRest && !alwaysTest_) {
         resting_ = true;
-        restSince_ = nowSeconds;
-        restForward_ = forward;
-        restOrigin_ = camera.origin;
+        lastProbe_ = nowSeconds;
     }
     return stats;
 }

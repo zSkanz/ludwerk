@@ -1116,6 +1116,10 @@ int parseOptions(std::span<const std::string_view> args, engine::app::EngineOpti
             graphics.instancing = false;
             continue;
         }
+        if (arg == "--occlusion-culling-always") {
+            graphics.occlusionAlwaysTest = true;
+            continue;
+        }
         if (arg.starts_with("--debug-view=")) {
             const std::string_view value = arg.substr(arg.find('=') + 1);
             const std::optional<engine::render::DebugView> view = engine::render::parseDebugView(value);

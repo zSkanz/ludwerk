@@ -278,3 +278,84 @@ TEST_CASE("the ground's grid: what drawing one costs")
     MESSAGE("one grid of 32 by 32 tiles: " << ms << " ms");
     CHECK(ms > 0.0);
 }
+
+namespace {
+
+// A frame for the culler's self-check: the camera looking down -Z, one wall
+// ten metres off, and `behind` small things wholly behind it and `inFront`
+// in plain view.
+[[nodiscard]] engine::render::RenderWorld frameWith(engine::core::u32 behind, engine::core::u32 inFront)
+{
+    engine::render::RenderWorld world;
+    world.camera.projection = lookingDownZ();
+    world.camera.unjitteredViewProjection = world.camera.projection;
+    world.camera.viewProjection = world.camera.projection;
+    world.camera.nearPlane = NearPlane;
+    world.occluderBoxes.push_back(
+        {.box = box({0.0f, 0.0f, -10.0f}, {10.0f, 10.0f, 1.0f}), .centre = {0.0f, 0.0f, -10.0f}, .radius = 7.1f});
+    for (engine::core::u32 at = 0; at < behind + inFront; ++at) {
+        engine::render::DrawItem draw;
+        const f32 across = static_cast<f32>(at % 10) - 4.5f;
+        draw.boundsCenter = at < behind ? Vec3{across, 0.0f, -30.0f} : Vec3{across * 0.4f, -1.0f, -4.0f};
+        draw.boundsRadius = 0.3f;
+        draw.inCameraFrustum = true;
+        world.draws.push_back(draw);
+    }
+    return world;
+}
+
+} // namespace
+
+TEST_CASE("the culler rests within a second where it hides nothing, and stays awake where it does")
+{
+    SUBCASE("a game seen from above: 200 things in view, none behind anything")
+    {
+        OcclusionCuller culler;
+        engine::core::u32 resting = 0;
+        bool restingAtEnd = false;
+        for (int frame = 0; frame < 60; ++frame) {
+            engine::render::RenderWorld world = frameWith(0, 200);
+            const engine::render::OcclusionStats stats = culler.cull(world, 0.001, static_cast<double>(frame) / 60.0);
+            resting += stats.resting ? 1u : 0u;
+            restingAtEnd = stats.resting;
+        }
+        // Ten frames to decide, then a frame a second at most.
+        CHECK(resting >= 49);
+        CHECK(restingAtEnd);
+    }
+    SUBCASE("a scene of a few things: never tested")
+    {
+        OcclusionCuller culler;
+        engine::render::RenderWorld world = frameWith(0, 9);
+        const engine::render::OcclusionStats stats = culler.cull(world, 0.001, 0.0);
+        CHECK(stats.resting);
+        CHECK_FALSE(stats.tested);
+    }
+    SUBCASE("a street: most of what is in view is behind the wall")
+    {
+        OcclusionCuller culler;
+        for (int frame = 0; frame < 60; ++frame) {
+            engine::render::RenderWorld world = frameWith(150, 20);
+            const engine::render::OcclusionStats stats = culler.cull(world, 0.0001, static_cast<double>(frame) / 60.0);
+            CHECK_FALSE(stats.resting);
+            CHECK(stats.hidden == 150);
+        }
+    }
+    SUBCASE("a rest ends when a frame tried a second later pays")
+    {
+        OcclusionCuller culler;
+        int frame = 0;
+        for (; frame < 30; ++frame) {
+            engine::render::RenderWorld world = frameWith(0, 200);
+            (void)culler.cull(world, 0.001, static_cast<double>(frame) / 60.0);
+        }
+        // The street comes into view: tried within a second, and awake.
+        bool woke = false;
+        for (; frame < 100 && !woke; ++frame) {
+            engine::render::RenderWorld world = frameWith(150, 20);
+            woke = !culler.cull(world, 0.001, static_cast<double>(frame) / 60.0).resting;
+        }
+        CHECK(woke);
+        CHECK(frame <= 30 + 61);
+    }
+}

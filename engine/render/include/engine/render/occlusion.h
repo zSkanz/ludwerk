@@ -16,8 +16,10 @@
 // A false hide is a missing thing; a missed hide is only a draw.
 //
 // It pays for itself or rests: what it hid, at what a draw costs, against its
-// own time; when it saves less than it costs for a second it stops testing
-// until the view has moved, and a frame that rests costs nothing.
+// own time. Losing for a sixth of a second, it stops testing, and tries one
+// frame a second to see whether it would pay again; a frame that rests costs
+// nothing. With fewer draws in view than it could ever pay for, it does not
+// test at all.
 
 #include <array>
 #include <limits>
@@ -57,7 +59,8 @@ struct OcclusionStats
 {
     // It tested this frame (false: off, or resting).
     bool tested = false;
-    // Resting: it saved less than it cost, and waits for the view to move.
+    // Resting: it saved less than it cost, or there is too little to save,
+    // and it waits for a frame that would pay.
     bool resting = false;
     core::u32 occluders = 0;
     core::u32 candidates = 0;
@@ -76,18 +79,20 @@ public:
     // An occluder smaller than this on screen, in the buffer's pixels across,
     // hides too little to draw.
     static constexpr core::f32 SmallestOccluderPixels = 6.0f;
-    // Frames in a row saving less than it costs before it rests, and how long
-    // it rests unless the view moves (seconds), and how far it must move or
-    // turn (metres, degrees) to be tried again sooner. **Each rest that
-    // follows one that found nothing is twice as long and needs twice the
-    // move**, up to `LongestRestRounds` doublings: a camera following a hero
-    // across a game seen from above moves four metres every second, and woke
-    // it to find nothing again.
-    static constexpr core::u32 FramesBeforeRest = 30;
-    static constexpr core::f64 RestSeconds = 3.0;
-    static constexpr core::f32 MoveToWake = 4.0f;
-    static constexpr core::f32 TurnToWake = 25.0f;
-    static constexpr core::u32 LongestRestRounds = 4;
+    // Frames in a row saving less than it costs before it rests, and how
+    // often a resting culler tests one frame to see whether it would pay
+    // (seconds). **Not woken by the view moving**: a camera following a hero
+    // across a game seen from above moves every frame, and woke it to find
+    // nothing again -- a quarter of a millisecond a frame, every frame, for
+    // nothing. One frame a second is the most a rest costs.
+    static constexpr core::u32 FramesBeforeRest = 10;
+    static constexpr core::f64 ProbeSeconds = 1.0;
+    // Fewer draws in view than this, and it does not test: hiding every one
+    // of them would not pay for drawing the occluders.
+    static constexpr core::u32 FewestDraws = 64;
+    // Hiding one in this many of the draws in view pays, whatever the record
+    // time says: what it saves is the GPU's.
+    static constexpr core::u64 HiddenShareToPay = 10;
     // How the work is split across the job system: rows of the buffer a
     // band, and draws a run of sphere tests.
     static constexpr core::usize RowsPerBand = 16;
@@ -97,6 +102,9 @@ public:
     // `inCameraFrustum` on what is hidden. `perDrawMs` is what a draw cost the
     // renderer last frame (0: not known), `nowSeconds` the wall clock.
     OcclusionStats cull(RenderWorld& world, core::f64 perDrawMs, core::f64 nowSeconds);
+    // **Every frame tested** (`--occlusion-culling-always`): never resting,
+    // whatever it saves. A picture gate's instrument.
+    void setAlwaysTest(bool always) noexcept { alwaysTest_ = always; }
 
     // Only the buffer and the test, for a test: draw these boxes (each a
     // camera-relative transform of the unit cube) and grids of ground, then
@@ -203,14 +211,12 @@ private:
     // Each level the farthest of four below it, for the sphere's test.
     std::vector<std::vector<core::f32>> pyramid_;
 
-    // The self-check.
+    // The self-check: frames in a row it lost, whether it rests, and when it
+    // last tried a frame while resting.
     core::u32 losingFrames_ = 0;
-    // Rests in a row that ended with nothing found: each doubles the next.
-    core::u32 restRounds_ = 0;
     bool resting_ = false;
-    core::f64 restSince_ = 0.0;
-    core::Vec3 restForward_{};
-    core::DVec3 restOrigin_{};
+    bool alwaysTest_ = false;
+    core::f64 lastProbe_ = 0.0;
 };
 
 } // namespace engine::render

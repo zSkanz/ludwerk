@@ -9437,6 +9437,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                         authored(), stageOf() != nullptr ? stageOf()->workspace() : host->workspace(), snapshot);
                     if (&authored() == &host->world())
                         voxelLoader.appendOccluders(authored(), snapshot);
+                    occlusionCuller.setAlwaysTest(renderer->settings().occlusionAlwaysTest);
                     occlusionFrame =
                         occlusionCuller.cull(snapshot, perDrawMs, static_cast<core::f64>(platform::nowNs()) / 1.0e9);
                 }

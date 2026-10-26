@@ -322,6 +322,10 @@ struct GraphicsSettings
     // `GraphicsService.OcclusionCulling`): on at every level; it rests by
     // itself where it saves less than it costs.
     bool occlusionCulling = true;
+    // **A test instrument**: `--occlusion-culling-always` tests every frame,
+    // whatever it saves and however few draws there are -- what a picture
+    // gate needs to hold every frame of the culler against the frame without.
+    bool occlusionAlwaysTest = false;
     f32 skinnedLodNear = 5.0f;
 
     // **The lean path for a window** (the mobile lean path): a tile GPU's
