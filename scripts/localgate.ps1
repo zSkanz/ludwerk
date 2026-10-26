@@ -70,7 +70,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipLinux,
-    [ValidateSet('docs', 'luau', 'format', 'windows', 'linux', 'shipping', 'asan', 'winprofiles', 'lavapipe', 'android', 'nakama', 'perf')]
+    [ValidateSet('docs', 'luau', 'format', 'windows', 'linux', 'shipping', 'asan', 'tsan', 'winprofiles', 'lavapipe', 'android', 'nakama', 'perf')]
     [string]$Only,
     # Only meaningful with -Only format: reformat in place rather than report.
     # Off by default, because a gate that edits your tree without being asked is
@@ -120,7 +120,7 @@ if ($Stages) { $Stages = @($Stages | ForEach-Object { $_ -split ',' } | Where-Ob
 # that builds in the container was started after Docker had been said to be
 # free. A list is read; a memory is trusted. `perf` is here for
 # its Linux half. `scripts/package.ps1` says the same of its Linux player.
-$ContainerStages = @('format', 'linux', 'shipping', 'perf', 'asan', 'lavapipe')
+$ContainerStages = @('format', 'linux', 'shipping', 'perf', 'asan', 'tsan', 'lavapipe')
 function Get-ContainerUse {
     # What this invocation runs: one stage, or the full run's eight.
     $will = if ($Only) { @($Only) } else { @('docs', 'luau', 'windows', 'android', 'format', 'linux', 'shipping', 'perf') }
@@ -158,11 +158,13 @@ Push-Location $repo
 $firstCheckout = (Join-Path $env:LOCALAPPDATA "$BrandName\tier2-first-checkout.txt")
 $buildVolume = Get-Tier2Volume -Base 'engine-tier2-build' -Repo $repo -FirstFile $firstCheckout
 $asanVolume = Get-Tier2Volume -Base 'engine-tier2-asan' -Repo $repo -FirstFile $firstCheckout
+$tsanVolume = Get-Tier2Volume -Base 'engine-tier2-tsan' -Repo $repo -FirstFile $firstCheckout
 # And one name a container a checkout, so two checkouts run their Docker
 # stages at the same time.
 $gateContainer = Get-Tier2Name -Base 'engine-tier2-gate' -Repo $repo -FirstFile $firstCheckout
 $perfContainer = Get-Tier2Name -Base 'engine-tier2-perf' -Repo $repo -FirstFile $firstCheckout
 $asanContainer = Get-Tier2Name -Base 'engine-tier2-asan' -Repo $repo -FirstFile $firstCheckout
+$tsanContainer = Get-Tier2Name -Base 'engine-tier2-tsan' -Repo $repo -FirstFile $firstCheckout
 $shippingContainer = Get-Tier2Name -Base 'engine-shipping-gate' -Repo $repo -FirstFile $firstCheckout
 $lavapipeContainer = Get-Tier2Name -Base 'engine-lavapipe-gate' -Repo $repo -FirstFile $firstCheckout
 $script:tier2Image = $null
@@ -784,6 +786,52 @@ Invoke-Stage 'asan' {
         -v "${asanVolume}:/build" `
         $script:tier2Image bash scripts/gates/linux-build.sh
     if ($LASTEXITCODE -ne 0) { throw "the sanitizer build or tests failed" }
+}
+
+# **ThreadSanitizer, over the tests of what runs on threads**: the job pool,
+# the core's queues, the scene's parallel steps, the network, replication,
+# the audio pump, the renderer's pipeline workers without a GPU, and the app's
+# data workers and sessions. A wait told on a stack that had already returned
+# hung macOS for weeks before a sample found it; TSan reports that kind of
+# race the first time it happens, where a hang needs it to happen badly.
+#
+# Opt-in like `asan`, for the same reason, and nightly in
+# `.github/workflows/nightly.yml`. Its own volume: a TSan tree shares nothing
+# with an ASan one or the ordinary one. What it may not report is in
+# `cmake/tsan-suppressions.txt` -- libraries outside the build, and nothing of
+# ours.
+Invoke-Stage 'tsan' {
+    if (-not $Only) {
+        Write-Host '[gate] tsan: skipped (opt-in; run scripts/localgate.ps1 -Only tsan)' -ForegroundColor DarkGray
+        $script:stageSkipped = $true
+        return
+    }
+    Use-Tier2Image
+    docker volume create $tsanVolume | Out-Null
+
+    $existing = docker ps -aq --filter "name=^${tsanContainer}$"
+    if ($existing) { docker rm -f $tsanContainer | Out-Null }
+
+    # `halt_on_error=1` so the first race is the exit code; the second stack of
+    # a lock-order report is what tells which two locks.
+    #
+    # **`seccomp=unconfined`, for this container alone.** TSan's runtime turns
+    # address randomisation off for the process it runs in, through
+    # `personality(ADDR_NO_RANDOMIZE)`, when the kernel randomises more bits of
+    # an address than its shadow memory allows -- and Docker's default seccomp
+    # profile refuses that call, so the first instrumented program the build
+    # runs (the code generator) aborted in the runtime's own check.
+    docker run --name $tsanContainer `
+        --security-opt seccomp=unconfined `
+        -e ENG_LINUX_PRESET=linux-clang-tsan `
+        -e ENG_GATE_PERF=without `
+        -e "ENG_GATE_TESTS=^(core|jobs|scene|net|replication|audio|render|app)$" `
+        -e "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=/repo/cmake/tsan-suppressions.txt" `
+        -e TSAN_SYMBOLIZER_PATH=/usr/lib/llvm-18/bin/llvm-symbolizer `
+        -v "${repo}:/repo" `
+        -v "${tsanVolume}:/build" `
+        $script:tier2Image bash scripts/gates/linux-build.sh
+    if ($LASTEXITCODE -ne 0) { throw "the ThreadSanitizer build or tests failed" }
 }
 
 # The one profile no other stage builds, and therefore the one that spent an

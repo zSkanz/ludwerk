@@ -161,6 +161,82 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
+  # ThreadSanitizer over the tests of what runs on threads.
+  #
+  # The engine runs a job pool, the renderer's pipeline workers, the data
+  # workers, the audio pump and the network's threads, and a race among them
+  # shows as a hang or a crash once in a while, on one platform. One did: a
+  # wait told on a stack that had already returned hung the macOS job for
+  # weeks before a sample found it. TSan reports that kind of race the first
+  # time the two threads touch the same memory, whether or not it goes wrong.
+  #
+  # The test sets of the modules that use threads -- core, jobs, scene, net,
+  # replication, audio, render without a GPU device's own tests, and app --
+  # and the conformance run and hot-reload gate `linux-build.sh` runs after
+  # them. Suppressions are libraries outside the build alone
+  # (`cmake/tsan-suppressions.txt`); a race of ours is a defect. A failure is
+  # this job red.
+  # ---------------------------------------------------------------------------
+  tsan:
+    name: TSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set out-of-tree build root (R14)
+        shell: bash
+        run: echo "ENG_BUILD_ROOT=${RUNNER_TEMP}/engine-build" >> "$GITHUB_ENV"
+
+      - name: Install build and SDL video dependencies
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libclang-rt-18-dev llvm-18 \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libthai-dev libfribidi-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            mesa-vulkan-drivers xvfb
+
+      - name: Install the Luau toolchain (rokit)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/rokit.zip             "https://github.com/rojo-rbx/rokit/releases/download/v${ROKIT_VERSION}/rokit-${ROKIT_VERSION}-linux-x86_64.zip"
+          unzip -q /tmp/rokit.zip -d /tmp/rokit
+          /tmp/rokit/rokit self-install
+          echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+          "$HOME/.rokit/bin/rokit" authenticate github --token "$GH_TOKEN"
+          "$HOME/.rokit/bin/rokit" install --no-trust-check
+
+      # TSan's shadow memory fits under fewer randomised address bits than the
+      # runner's kernel uses; with more, its runtime cannot place its memory
+      # and every instrumented program -- the build's own code generator
+      # first -- dies before `main`. The runner is thrown away after the job.
+      - name: Fewer randomised address bits, for TSan's shadow memory
+        shell: bash
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Build and test under ThreadSanitizer
+        timeout-minutes: 130
+        shell: bash
+        env:
+          ENG_LINUX_PRESET: linux-clang-tsan
+          ENG_GATE_PERF: without
+          ENG_GATE_TESTS: "^(core|jobs|scene|net|replication|audio|render|app)$"
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/cmake/tsan-suppressions.txt
+          TSAN_SYMBOLIZER_PATH: /usr/lib/llvm-18/bin/llvm-symbolizer
+        run: bash scripts/gates/linux-build.sh
+
+  # ---------------------------------------------------------------------------
   # The real-image golden suite, on Mesa's software rasterizer.
   #
   # **`docs/architecture.md` §9 promises this job by

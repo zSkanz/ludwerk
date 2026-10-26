@@ -47,6 +47,7 @@
     { "name": "linux-clang-player", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",       "ENG_PROFILE": "player", "ENG_ENABLE_REPLICATION": "ON" } },
     { "name": "linux-clang-editor", "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release",       "ENG_PROFILE": "editor", "ENG_ENABLE_REPLICATION": "ON" } },
     { "name": "linux-clang-asan",  "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_SANITIZE": "address,undefined", "ENG_ENABLE_REPLICATION": "ON" } },
+    { "name": "linux-clang-tsan",  "inherits": "linux-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_SANITIZE": "thread", "ENG_ENABLE_REPLICATION": "ON" } },
     { "name": "macos-clang-dev",   "inherits": "macos-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "ENG_PROFILE": "dev", "ENG_ENABLE_REPLICATION": "ON" } }
   ],
   "buildPresets": [
@@ -61,6 +62,7 @@
     { "name": "linux-clang-player", "configurePreset": "linux-clang-player" },
     { "name": "linux-clang-editor", "configurePreset": "linux-clang-editor" },
     { "name": "linux-clang-asan",  "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan",  "configurePreset": "linux-clang-tsan" },
     { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev" }
   ],
   "testPresets": [
@@ -71,6 +73,7 @@
     { "name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": { "outputOnFailure": true } },
     { "name": "linux-clang-dev",   "configurePreset": "linux-clang-dev",   "output": { "outputOnFailure": true } },
     { "name": "linux-clang-asan",  "configurePreset": "linux-clang-asan",  "output": { "outputOnFailure": true } },
+    { "name": "linux-clang-tsan",  "configurePreset": "linux-clang-tsan",  "output": { "outputOnFailure": true } },
     { "name": "macos-clang-dev",   "configurePreset": "macos-clang-dev",   "output": { "outputOnFailure": true },
       "execution": { "resourceSpecFile": "${sourceDir}/tests/ctest-resources.json" } }
   ]

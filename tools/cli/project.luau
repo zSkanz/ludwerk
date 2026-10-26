@@ -115,14 +115,16 @@ local PlayerPresets = { "win-msvc-player", "linux-clang-player" }
 --- What somebody working in this repository is iterating on, which is what they
 --- mean when they type a command that runs the engine.
 ---
---- **`linux-clang-asan` is here and it is LAST**, which are two separate
---- decisions. It is here because it is a `dev` profile with the sanitizers
---- turned on, and without it `ludwerk test` could not find the engine at all --
---- the sanitizer gate ran the whole ctest suite green and then failed with no
---- output, because the CLI it calls next did not know that build existed. It is
---- last because an instrumented binary is two to three times slower, and
---- somebody who has both should get the one they are iterating in.
-local DevPresets = { "win-msvc-dev", "linux-clang-dev", "macos-clang-dev", "win-msvc-debug", "linux-clang-asan" }
+--- **The sanitizer builds are here, and they are LAST**, which are two
+--- separate decisions. They are here because each is a `dev` profile with a
+--- sanitizer turned on, and without one `ludwerk test` could not find the
+--- engine at all -- the AddressSanitizer gate ran the whole ctest suite green
+--- and then failed with no output, because the CLI it calls next did not know
+--- that build existed, and the ThreadSanitizer one did the same on its first
+--- run. They are last because an instrumented binary is two to three times
+--- slower, and somebody who has both should get the one they are iterating in.
+local DevPresets =
+    { "win-msvc-dev", "linux-clang-dev", "macos-clang-dev", "win-msvc-debug", "linux-clang-asan", "linux-clang-tsan" }
 
 --- The profile the packaged editor is built from (ADR 0054). After `dev`,
 --- because an `editor` build is an artifact somebody produced an hour ago and a

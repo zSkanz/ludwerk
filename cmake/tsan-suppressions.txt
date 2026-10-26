@@ -1,0 +1,48 @@
+# What ThreadSanitizer is told not to report, and it is only code this
+# repository does not own.
+#
+# `linux-clang-tsan` instruments everything it compiles, `third_party/`
+# included, so a race in a vendored library is reported like one of ours --
+# and should be, the first time: a report is read before it is suppressed,
+# and a race that is real in a library we ship is a defect we ship.
+#
+# **What belongs here** is code outside the build: a system library TSan did
+# not compile -- Mesa's software Vulkan driver, which the tests that draw run
+# on in the container, and the X server's client library -- whose threads
+# hand memory to ours with synchronisation TSan cannot see. Each entry names
+# what it is and why, and an entry for `engine/` is never added: a race there
+# is a defect, numbered and fixed.
+#
+# Read by `TSAN_OPTIONS=suppressions=...` in `scripts/localgate.ps1 -Only tsan`
+# and in `.github/workflows/nightly.yml`.
+
+# **By the kind of report and the module, never `called_from_lib`.** The
+# Vulkan loader and SDL open these libraries at run time and close them again,
+# and TSan stops the process when a library a `called_from_lib` entry names is
+# closed -- which every test that made a device and let it go did.
+
+# Mesa's software Vulkan driver (lavapipe) and its gallium core: their worker
+# threads rasterise into memory the engine maps, synchronised by fences TSan
+# does not model.
+race:libvulkan_lvp.so
+race:libgallium
+race:libLLVM
+
+# The X client library: SDL's video start-up and its Vulkan presentation check
+# both enter it, and it takes its own two internal locks in either order on
+# one thread. Uninstrumented, and none of ours.
+deadlock:libxcb.so
+
+# Jolt, vendored: with its asserts on, `JPH::Mutex` records which thread holds
+# it in a plain field, written after the lock is taken and read by the assert
+# in `try_lock` before it is -- a check of Jolt's own, only in a build with
+# asserts, that never decides anything. The lock itself is a `std::mutex`.
+race:JPH::Mutex::try_lock
+race:JPH::Mutex::lock
+
+# SDL, vendored: its asynchronous-IO pool detaches its workers, and a worker
+# reads the TLS key while it cleans up after telling the pool it is gone, so
+# `SDL_Quit` deleting the key races it. Real, in SDL, at shutdown; to be sent
+# upstream, and dropped when a pinned SDL orders the two.
+race:SDL_SYS_QuitTLSData
+race:SDL_SYS_GetTLSData
