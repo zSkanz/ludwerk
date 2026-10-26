@@ -3245,9 +3245,10 @@ int methodTerrainReadVoxels(lua_State* L)
     if (region.count() <= MaxVoxelRegion)
         groundFirst(L, *terrain, low, high);
     if (region.count() > MaxVoxelRegion) {
-        const core::I18nArg args[] = {{"count", static_cast<core::i64>(std::min<core::usize>(
-                                                    region.count(), std::numeric_limits<core::i64>::max()))},
-                                      {"limit", static_cast<core::i64>(MaxVoxelRegion)}};
+        const core::I18nArg args[] = {
+            {"count", static_cast<core::i64>(std::min<core::u64>(
+                          region.count(), static_cast<core::u64>(std::numeric_limits<core::i64>::max())))},
+            {"limit", static_cast<core::i64>(MaxVoxelRegion)}};
         raise(L, ENG_TR("scene.err.terrain_region_too_large"), args);
     }
     const auto count = static_cast<int>(region.count());
@@ -3314,10 +3315,11 @@ int methodTerrainWriteVoxels(lua_State* L)
     const auto materialCount = static_cast<core::usize>(lua_objlen(L, 4));
     const auto occupancyCount = static_cast<core::usize>(lua_objlen(L, 5));
     if (region.count() > MaxVoxelRegion || materialCount != region.count() || occupancyCount != region.count()) {
-        const core::I18nArg args[] = {{"count", static_cast<core::i64>(std::min<core::usize>(
-                                                    region.count(), std::numeric_limits<core::i64>::max()))},
-                                      {"materials", static_cast<core::i64>(materialCount)},
-                                      {"occupancies", static_cast<core::i64>(occupancyCount)}};
+        const core::I18nArg args[] = {
+            {"count", static_cast<core::i64>(std::min<core::u64>(
+                          region.count(), static_cast<core::u64>(std::numeric_limits<core::i64>::max())))},
+            {"materials", static_cast<core::i64>(materialCount)},
+            {"occupancies", static_cast<core::i64>(occupancyCount)}};
         raise(L, ENG_TR("scene.err.terrain_voxels_shape"), args);
     }
     // Every occupancy a number before any voxel is written: a refusal half

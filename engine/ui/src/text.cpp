@@ -48,6 +48,7 @@
 // What changed was what fills an entry.
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -724,8 +725,8 @@ constexpr u32 AtlasSize = 1024;
         if (entry.paged && entry.page == oldest)
             continue;
         const u32 first = static_cast<u32>(quads.size());
-        quads.insert(quads.end(), cache.quads.begin() + entry.firstQuad,
-                     cache.quads.begin() + entry.firstQuad + entry.quadCount);
+        quads.insert(quads.end(), cache.quads.begin() + static_cast<std::ptrdiff_t>(entry.firstQuad),
+                     cache.quads.begin() + static_cast<std::ptrdiff_t>(entry.firstQuad + entry.quadCount));
         entry.firstQuad = first;
         kept.push_back(entry);
     }

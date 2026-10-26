@@ -3,6 +3,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -3152,11 +3153,12 @@ void DefaultRenderer::prepareIndirect(rhi::IDevice& device, rhi::ICmdList& cmd, 
     const auto volumeOf = [](const RenderReflectionProbe& probe) {
         return probe.halfSize.x * probe.halfSize.y * probe.halfSize.z;
     };
-    std::stable_sort(probes.begin(), probes.begin() + probeCount, [&](const Chosen& a, const Chosen& b) {
-        if (a.probe->priority != b.probe->priority)
-            return a.probe->priority > b.probe->priority;
-        return volumeOf(*a.probe) < volumeOf(*b.probe);
-    });
+    std::stable_sort(probes.begin(), probes.begin() + static_cast<std::ptrdiff_t>(probeCount),
+                     [&](const Chosen& a, const Chosen& b) {
+                         if (a.probe->priority != b.probe->priority)
+                             return a.probe->priority > b.probe->priority;
+                         return volumeOf(*a.probe) < volumeOf(*b.probe);
+                     });
     for (u32 index = 0; index < probeCount; ++index) {
         const RenderReflectionProbe& probe = *probes[index].probe;
         f32(*rows)[4] = &probeRows_[index * 6];

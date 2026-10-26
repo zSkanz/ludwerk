@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <map>
 #include <meshoptimizer.h>
@@ -1170,8 +1171,8 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
                     return malformed();
                 }
             }
-            lod.submeshes.assign(allSubmeshes.begin() + firstSubmesh,
-                                 allSubmeshes.begin() + firstSubmesh + submeshCount);
+            lod.submeshes.assign(allSubmeshes.begin() + static_cast<std::ptrdiff_t>(firstSubmesh),
+                                 allSubmeshes.begin() + static_cast<std::ptrdiff_t>(firstSubmesh + submeshCount));
             out.lods.push_back(std::move(lod));
         }
     }
@@ -1354,7 +1355,8 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             if (firstChannel > allChannels.size() || channelCount > allChannels.size() - firstChannel) {
                 return malformed();
             }
-            clip.channels.assign(allChannels.begin() + firstChannel, allChannels.begin() + firstChannel + channelCount);
+            clip.channels.assign(allChannels.begin() + static_cast<std::ptrdiff_t>(firstChannel),
+                                 allChannels.begin() + static_cast<std::ptrdiff_t>(firstChannel + channelCount));
             out.clips.push_back(std::move(clip));
         }
     }
@@ -1441,7 +1443,8 @@ std::optional<core::EngineError> decodeMesh(std::span<const std::byte> bytes, Co
             if (!clipsReader.ok() || first > allWeights.size() || count > allWeights.size() - first) {
                 return malformed();
             }
-            clip.weights.assign(allWeights.begin() + first, allWeights.begin() + first + count);
+            clip.weights.assign(allWeights.begin() + static_cast<std::ptrdiff_t>(first),
+                                allWeights.begin() + static_cast<std::ptrdiff_t>(first + count));
         }
     }
 

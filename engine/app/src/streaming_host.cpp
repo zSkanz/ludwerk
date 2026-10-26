@@ -197,7 +197,7 @@ void StreamingHost::beginRead(asset::ChunkId id, const asset::ChunkIndexEntry& e
     // an in-flight slot as it did.
     const auto path = m_chunkPaths.find(id);
     if (path == m_chunkPaths.end()) {
-        m_failedStarts.push_back(id);
+        m_unstarted.push_back(id);
         return;
     }
 
@@ -212,7 +212,7 @@ void StreamingHost::beginRead(asset::ChunkId id, const asset::ChunkIndexEntry& e
                                           m_manager.foci().empty() ? core::DVec3{} : m_manager.foci().front().position),
                     minRadius));
     if (!request.valid()) {
-        m_failedStarts.push_back(id);
+        m_unstarted.push_back(id);
         return;
     }
     m_reads.emplace_back(request, Pending{id});
@@ -393,10 +393,20 @@ void StreamingHost::pump(f64 budgetMilliseconds)
     asset::StreamingBudget budget;
     budget.milliseconds = budgetMilliseconds;
     m_manager.tick(budget);
-    for (const asset::ChunkId id : m_failedStarts) {
-        m_manager.onChunkFailed(id);
+    // **A read that could not start is read here, synchronously**: with no
+    // IO service (a platform without threads for it) or its pool full, the
+    // contract `readFileAsync` states is that the caller reads the file
+    // itself. Marking the cell failed instead lost it for good -- `Failed`
+    // is never retried -- and a world on the web had no ground at all.
+    for (const asset::ChunkId id : m_unstarted) {
+        std::vector<std::byte> bytes;
+        const auto path = m_chunkPaths.find(id);
+        if (path != m_chunkPaths.end() && platform::readFile(path->second, bytes))
+            m_manager.onChunkLoaded(id, bytes);
+        else
+            m_manager.onChunkFailed(id);
     }
-    m_failedStarts.clear();
+    m_unstarted.clear();
 
     // The origin follows the PRIMARY focus -- the first one -- rather than an
     // average of them. An average between two characters walking apart is a

@@ -316,8 +316,9 @@ private:
     std::map<asset::ChunkId, asset::TerrainCell> m_terrainCells;
     std::map<asset::ChunkId, asset::VoxelCell> m_voxelCells;
     std::vector<std::pair<platform::IoRequest, asset::ChunkId>> m_reads;
-    // Loads the manager started whose read could not, reported after its tick.
-    std::vector<asset::ChunkId> m_failedStarts;
+    // Loads the manager started whose asynchronous read could not, read
+    // synchronously after its tick.
+    std::vector<asset::ChunkId> m_unstarted;
     scene::World* m_world = nullptr;
     core::InstanceId m_workspace;
     bool m_active = false;

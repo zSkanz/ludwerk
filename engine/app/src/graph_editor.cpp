@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 #include "engine/platform/file.h"
@@ -518,9 +519,9 @@ void removeState(AnimationGraph& graph, usize layer, u32 state)
     if (layer >= graph.layers.size() || state >= graph.layers[layer].states.size())
         return;
     AllClips all = takeAll(graph);
-    all[layer].erase(all[layer].begin() + state);
+    all[layer].erase(all[layer].begin() + static_cast<std::ptrdiff_t>(state));
     GraphLayer& held = graph.layers[layer];
-    held.states.erase(held.states.begin() + state);
+    held.states.erase(held.states.begin() + static_cast<std::ptrdiff_t>(state));
     // Every arrow that left it or entered it goes with it; the others name
     // their states by where they are, and those above it moved down one.
     const i32 gone = static_cast<i32>(state);
@@ -574,7 +575,7 @@ void removeParameter(AnimationGraph& graph, u32 parameter)
 {
     if (parameter >= graph.parameters.size())
         return;
-    graph.parameters.erase(graph.parameters.begin() + parameter);
+    graph.parameters.erase(graph.parameters.begin() + static_cast<std::ptrdiff_t>(parameter));
     const i32 gone = static_cast<i32>(parameter);
     const auto shift = [gone](i32& index) {
         if (index > gone)

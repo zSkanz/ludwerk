@@ -160,6 +160,21 @@ TEST_CASE("the ground streams in around the camera, and the simulation waits for
     CHECK(streamed.grid().get(290, 1, 1) == asset::AirBlock);
 }
 
+// With no IO service -- the web without threads, or a pool full -- no read
+// starts asynchronously, and each cell is read on the frame's thread instead.
+// Marked failed, it was lost for good: a failed cell is never asked for again.
+TEST_CASE("with no IO service the ground still streams in, read on the frame's thread")
+{
+    REQUIRE_FALSE(platform::isIoInitialized());
+    StreamedWorld streamed;
+    REQUIRE(streamed.pumpUntil([&] { return streamed.streamer.primed(); }));
+    CHECK(streamed.holds(0, 0));
+    // Past the ring the simulation waits for and inside the load radius: only
+    // the ordinary reads bring it.
+    CHECK(streamed.pumpUntil([&] { return streamed.holds(2, 0); }));
+    CHECK(streamed.grid().get(2, 1, 1) == 1);
+}
+
 TEST_CASE("ground left behind is dropped, and ground somebody changed is kept")
 {
     IoScope io;

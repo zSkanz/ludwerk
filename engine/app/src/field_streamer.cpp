@@ -709,7 +709,7 @@ void FieldStreamer::installCallbacks()
         // the manager would mark the cell loading as this returns and it would
         // wait for a read that never began.
         if (!request.valid())
-            m_failedStarts.push_back(id);
+            m_unstarted.push_back(id);
         else
             m_reads.emplace_back(request, id);
         return true;
@@ -1453,9 +1453,17 @@ void FieldStreamer::pump(f64 budgetMilliseconds, bool held)
         // first load a matter of seconds for nothing but queueing.
         budget.maxInFlight = 32;
         m_manager.tick(budget);
-        for (const asset::ChunkId id : m_failedStarts)
-            m_manager.onChunkFailed(id);
-        m_failedStarts.clear();
+        // A read that could not start is read here, synchronously, as the
+        // parts' streamer does and for its reason.
+        for (const asset::ChunkId id : m_unstarted) {
+            std::vector<std::byte> bytes;
+            const auto path = m_paths.find(id);
+            if (path != m_paths.end() && platform::readFile(path->second, bytes))
+                m_manager.onChunkLoaded(id, bytes);
+            else
+                m_manager.onChunkFailed(id);
+        }
+        m_unstarted.clear();
 
         // **The ring the world is waiting for, read here and now** (ADR
         // 0150): the reads above are asked of a service that answers a few a

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 namespace engine::render {
@@ -23,7 +24,7 @@ u32 orderInstanceRun(std::span<const ShadowCasterBounds> bounds, std::span<const
     }
     // By distance, and by place in the run where two are as far: the order is
     // the same wherever it is worked out.
-    std::sort(order.begin() + visible, order.end(), [&](u32 a, u32 b) {
+    std::sort(order.begin() + static_cast<std::ptrdiff_t>(visible), order.end(), [&](u32 a, u32 b) {
         const f32 da = core::dot(bounds[a].centre, bounds[a].centre);
         const f32 db = core::dot(bounds[b].centre, bounds[b].centre);
         return da != db ? da < db : a < b;

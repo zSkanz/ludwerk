@@ -4,6 +4,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <iterator>
@@ -225,7 +226,8 @@ public:
     void text(std::string_view value)
     {
         u16v(static_cast<u16>(std::min<usize>(value.size(), 0xFFFF)));
-        bytes.insert(bytes.end(), value.begin(), value.begin() + std::min<usize>(value.size(), 0xFFFF));
+        bytes.insert(bytes.end(), value.begin(),
+                     value.begin() + static_cast<std::ptrdiff_t>(std::min<usize>(value.size(), 0xFFFF)));
     }
 };
 

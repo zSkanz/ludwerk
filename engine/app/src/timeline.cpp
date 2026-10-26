@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <span>
 #include <utility>
 
@@ -262,9 +263,9 @@ void Timeline::removeTrack(u32 track)
 {
     if (track >= m_sequence.tracks.size())
         return;
-    m_sequence.tracks.erase(m_sequence.tracks.begin() + track);
-    m_recording.erase(m_recording.begin() + track);
-    m_shown.erase(m_shown.begin() + track);
+    m_sequence.tracks.erase(m_sequence.tracks.begin() + static_cast<std::ptrdiff_t>(track));
+    m_recording.erase(m_recording.begin() + static_cast<std::ptrdiff_t>(track));
+    m_shown.erase(m_shown.begin() + static_cast<std::ptrdiff_t>(track));
     touched();
 }
 
@@ -300,7 +301,7 @@ u32 Timeline::place(std::vector<SequenceKey>& keys, SequenceKey key)
     u32 at = 0;
     while (at < keys.size() && keys[at].time <= key.time)
         ++at;
-    keys.insert(keys.begin() + at, std::move(key));
+    keys.insert(keys.begin() + static_cast<std::ptrdiff_t>(at), std::move(key));
     return at;
 }
 
@@ -419,12 +420,12 @@ u32 Timeline::moveKey(u32 track, u32 key, f32 seconds)
         return key;
     std::vector<SequenceKey>& keys = m_sequence.tracks[track].keys;
     SequenceKey moved = std::move(keys[key]);
-    keys.erase(keys.begin() + key);
+    keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(key));
     moved.time = std::max(0.0f, seconds);
     u32 at = 0;
     while (at < keys.size() && keys[at].time <= moved.time)
         ++at;
-    keys.insert(keys.begin() + at, std::move(moved));
+    keys.insert(keys.begin() + static_cast<std::ptrdiff_t>(at), std::move(moved));
     touched();
     return at;
 }
@@ -433,7 +434,7 @@ void Timeline::removeKey(u32 track, u32 key)
 {
     if (track >= m_sequence.tracks.size() || key >= m_sequence.tracks[track].keys.size())
         return;
-    m_sequence.tracks[track].keys.erase(m_sequence.tracks[track].keys.begin() + key);
+    m_sequence.tracks[track].keys.erase(m_sequence.tracks[track].keys.begin() + static_cast<std::ptrdiff_t>(key));
     touched();
 }
 

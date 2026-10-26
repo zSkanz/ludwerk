@@ -176,8 +176,9 @@ private:
     // Which chunk an outstanding read belongs to. The IO service answers with
     // its own handle and nothing else, and a chunk id does not fit in a
     // callback that was declared before chunks existed.
-    // Chunks whose read could not start, reported after the manager's tick.
-    std::vector<asset::ChunkId> m_failedStarts;
+    // Chunks whose asynchronous read could not start, read synchronously
+    // after the manager's tick.
+    std::vector<asset::ChunkId> m_unstarted;
 
     struct Pending
     {

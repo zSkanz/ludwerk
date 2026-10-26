@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 namespace engine::app {
@@ -104,8 +105,9 @@ void TriangleTree::split(u32 node, std::vector<u32>& order, const std::vector<Tr
     if (!(axisOf(spread, axis) > 0.0f))
         return;
     const u32 middle = count / 2;
-    std::nth_element(order.begin() + first, order.begin() + first + middle, order.begin() + first + count,
-                     [&](u32 a, u32 b) {
+    std::nth_element(order.begin() + static_cast<std::ptrdiff_t>(first),
+                     order.begin() + static_cast<std::ptrdiff_t>(first + middle),
+                     order.begin() + static_cast<std::ptrdiff_t>(first + count), [&](u32 a, u32 b) {
                          const f32 left = axisOf(centres[a], axis);
                          const f32 right = axisOf(centres[b], axis);
                          // By their number where they are level: the tree is
@@ -265,8 +267,9 @@ void BoxTree::split(u32 node, u32 depth)
     if (!(axisOf(spread, axis) > 0.0f))
         return;
     const u32 middle = count / 2;
-    std::nth_element(m_order.begin() + first, m_order.begin() + first + middle, m_order.begin() + first + count,
-                     [&](u32 a, u32 b) {
+    std::nth_element(m_order.begin() + static_cast<std::ptrdiff_t>(first),
+                     m_order.begin() + static_cast<std::ptrdiff_t>(first + middle),
+                     m_order.begin() + static_cast<std::ptrdiff_t>(first + count), [&](u32 a, u32 b) {
                          const f32 left = axisOf(lows[a], axis) + axisOf(highs[a], axis);
                          const f32 right = axisOf(lows[b], axis) + axisOf(highs[b], axis);
                          return left < right || (left == right && a < b);
