@@ -64,6 +64,15 @@ if(NOT EXISTS "${_engine_brand_file}")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_engine_brand_file}")
 file(STRINGS "${_engine_brand_file}" _engine_brand_lines)
+# Its readers -- this one and `tools/cli/brand.luau` -- read a line at a time,
+# so an array written over several lines, which TOML allows, would be read as
+# nothing. Refused here, where every build first meets the file, rather than
+# misread in silence.
+foreach(_engine_brand_line IN LISTS _engine_brand_lines)
+    if(_engine_brand_line MATCHES "^[a-z_]+[ \t]*=[ \t]*\\[" AND NOT _engine_brand_line MATCHES "\\]")
+        message(FATAL_ERROR "branding/brand.toml: write each array on one line (${_engine_brand_line})")
+    endif()
+endforeach()
 foreach(_engine_brand_key IN ITEMS name short tagline domain previous)
     set(_engine_brand_value "")
     foreach(_engine_brand_line IN LISTS _engine_brand_lines)

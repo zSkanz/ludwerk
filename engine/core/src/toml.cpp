@@ -71,6 +71,42 @@ constexpr std::string_view kSpaces = " \t";
     return line;
 }
 
+// How many `[` are still open at the end of `text`, counting only those
+// outside strings: an array goes on onto the next line while this is above
+// zero (TOML 1.0 allows an array over several lines).
+[[nodiscard]] int openBrackets(std::string_view text)
+{
+    int open = 0;
+    bool inBasic = false;
+    bool inLiteral = false;
+    for (usize index = 0; index < text.size(); ++index) {
+        const char c = text[index];
+        if (inBasic) {
+            if (c == '\\')
+                ++index;
+            else if (c == '"')
+                inBasic = false;
+        }
+        else if (inLiteral) {
+            if (c == '\'')
+                inLiteral = false;
+        }
+        else if (c == '"') {
+            inBasic = true;
+        }
+        else if (c == '\'') {
+            inLiteral = true;
+        }
+        else if (c == '[') {
+            ++open;
+        }
+        else if (c == ']') {
+            --open;
+        }
+    }
+    return open;
+}
+
 struct ScalarValue
 {
     enum class Kind : u8
@@ -331,20 +367,45 @@ TomlDocument::ParseResult TomlDocument::parse(std::string_view text, std::string
         Entry entry;
         entry.key = key;
 
+        // **An array over several lines** (TOML 1.0): the lines that follow
+        // are its until its brackets close, each with its comment taken off,
+        // so a font a line with a note beside each -- and a comma after the
+        // last -- reads as it would on one line. A file that ends first is an
+        // error at the line the array opened on.
+        const usize valueLine = lineNumber;
+        std::string joined;
+        if (rest.front() == '[' && openBrackets(rest) > 0) {
+            joined = rest;
+            while (openBrackets(joined) > 0) {
+                if (cursor > text.size())
+                    return fail(valueLine, "an array opened on this line is never closed");
+                const usize next = text.find('\n', cursor);
+                std::string_view more =
+                    text.substr(cursor, next == std::string_view::npos ? std::string_view::npos : next - cursor);
+                cursor = next == std::string_view::npos ? text.size() + 1 : next + 1;
+                ++lineNumber;
+                if (!more.empty() && more.back() == '\r')
+                    more.remove_suffix(1);
+                joined += ' ';
+                joined += trim(stripComment(more));
+            }
+            rest = joined;
+        }
+
         if (rest.front() == '[') {
             rest = trim(rest.substr(1));
             bool sawNumber = false;
             bool sawString = false;
             while (true) {
                 if (rest.empty())
-                    return fail(lineNumber, "an array is not closed on its own line");
+                    return fail(valueLine, "an array is not closed");
                 if (rest.front() == ']') {
                     rest = trim(rest.substr(1));
                     break;
                 }
                 const Parsed parsed = parseScalar(rest);
                 if (!parsed.ok)
-                    return fail(lineNumber, parsed.error);
+                    return fail(valueLine, parsed.error);
                 switch (parsed.value.kind) {
                 case ScalarValue::Kind::Number:
                     entry.numbers.push_back(parsed.value.number);
@@ -355,16 +416,18 @@ TomlDocument::ParseResult TomlDocument::parse(std::string_view text, std::string
                     sawString = true;
                     break;
                 case ScalarValue::Kind::Boolean:
-                    return fail(lineNumber, "an array of booleans has no reader here");
+                    return fail(valueLine, "an array of booleans has no reader here");
                 }
                 rest = trim(parsed.rest);
                 if (!rest.empty() && rest.front() == ',')
                     rest = trim(rest.substr(1));
                 else if (rest.empty() || rest.front() != ']')
-                    return fail(lineNumber, "expected , or ] in an array");
+                    return fail(valueLine, "expected , or ] in an array");
             }
+            if (!rest.empty())
+                return fail(valueLine, "trailing text after an array");
             if (sawNumber && sawString)
-                return fail(lineNumber, "a mixed array has no reader here");
+                return fail(valueLine, "a mixed array has no reader here");
             entry.kind = sawString ? Kind::StringArray : Kind::NumberArray;
         }
         else {

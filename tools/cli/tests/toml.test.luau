@@ -104,6 +104,28 @@ some = [1, 2, 3,]
         assert.eq(#result.table.some, 3)
     end)
 
+    suite:case("an array over several lines reads as on one line, and as the engine reads it", function()
+        local result = toml.parse([[
+[ui]
+font_fallbacks = [
+    "fonts/NotoSansJP.ttf",   # Japanese
+    "fonts/NotoSansKR.ttf",   # Korean, and a ] in a comment
+    'fonts/[bracketed].ttf',
+]
+scale = 1.5
+]])
+        assert.that(result.ok, result.diagnostic)
+        assert.eq(#result.table.ui.font_fallbacks, 3)
+        assert.eq(result.table.ui.font_fallbacks[1], "fonts/NotoSansJP.ttf")
+        assert.eq(result.table.ui.font_fallbacks[3], "fonts/[bracketed].ttf")
+        assert.eq(result.table.ui.scale, 1.5)
+
+        -- Never closed: an error at the line it opened on.
+        local open = toml.parse("[ui]\nfont_fallbacks = [\n  'a.ttf',\n")
+        assert.that(not open.ok, "an array never closed was read")
+        assert.eq(open.line, 2)
+    end)
+
     suite:case("a file an editor on Windows marked as UTF-8 reads as the same file", function()
         -- Notepad and `Set-Content -Encoding utf8` put a byte-order mark first,
         -- and the first line then was "expected key = value".

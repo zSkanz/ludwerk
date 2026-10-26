@@ -242,6 +242,20 @@ test.suite("check", function(suite)
         fs.removeDirectory(root, { recursive = true })
     end)
 
+    suite:case("a project file that does not read fails the check, naming its line", function()
+        -- The engine will not run it, so a check that passed it would
+        -- be the last to say so.
+        local root = scratch("toml")
+        fs.createDirectory(`{root}/src/client`, { makeParents = true })
+        fs.writeStringToFile(`{root}/src/client/Main.luau`, "--!strict\nprint('hello')\n")
+        fs.writeStringToFile(
+            `{root}/project.toml`,
+            '[project]\nname = "Broken"\n\n[ui]\nfont_fallbacks = [\n  "a.ttf",\n'
+        )
+        assert.eq(check.run({ path = root, definitions = {}, ignore = {} }), 1)
+        fs.removeDirectory(root, { recursive = true })
+    end)
+
     suite:case("definitions load under the engine's own name", function()
         -- Unnamed, the analyser announced them under another
         -- platform's.

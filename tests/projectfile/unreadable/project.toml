@@ -1,0 +1,10 @@
+# A project file that does not read: an array opened on line 9 and
+# never closed. The host refuses to run it, naming the line, rather than
+# running the game on the engine's defaults.
+
+[project]
+name = "Unreadable"
+
+[ui]
+font_fallbacks = [
+    "fonts/NotoSansJP.ttf",

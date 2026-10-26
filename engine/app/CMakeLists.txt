@@ -1035,6 +1035,17 @@ if(ENG_BUILD_TESTS)
         COMMAND engine_host --headless --frames=1 --exit --rhi=null "--scene-data={level: 3")
     set_tests_properties(host_scene_data_must_be_json PROPERTIES WILL_FAIL TRUE TIMEOUT 60)
 
+    # **A project file that does not read is not run on defaults**: the
+    # host refuses it, and says which file and line stopped it.
+    add_test(NAME host_refuses_an_unreadable_project_file
+        COMMAND engine_host --headless --frames=1 --exit --rhi=null ${CMAKE_SOURCE_DIR}/tests/projectfile/unreadable)
+    set_tests_properties(host_refuses_an_unreadable_project_file PROPERTIES WILL_FAIL TRUE TIMEOUT 60)
+    add_test(NAME host_names_the_unreadable_line
+        COMMAND engine_host --headless --frames=1 --exit --rhi=null ${CMAKE_SOURCE_DIR}/tests/projectfile/unreadable)
+    set_tests_properties(host_names_the_unreadable_line PROPERTIES
+        PASS_REGULAR_EXPRESSION "project.toml:9: an array opened on this line is never closed"
+        FAIL_REGULAR_EXPRESSION "the game ran on the engine's defaults" TIMEOUT 60)
+
     # **A host with no script used to refuse and now opens the project browser**
     # (ADR 0055), so what this asserts moved rather than disappeared: a path that
     # is not there is still a refusal, which is the case somebody reaches by

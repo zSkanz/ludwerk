@@ -11,7 +11,8 @@
 
 	Supported: comments, bare and quoted keys, `[table]` and `[nested.table]`
 	headers, strings (basic and literal), integers, floats, booleans, and
-	single-line arrays of those. Not supported, and each an explicit error
+	arrays of those, on one line or over several with comments and a trailing
+	comma inside them. Not supported, and each an explicit error
 	rather than a silent misread: multi-line strings, inline tables, arrays of
 	tables, dates, and anything else. A config format that quietly ignores what
 	it does not understand is how a `[dev] port` ends up not applying.
@@ -68,6 +69,40 @@ local function stripComment(line: string): string
         index += 1
     end
     return line
+end
+
+--- How many `[` are still open at the end of `text`, counting only those
+--- outside strings: an array goes on onto the next line while this is above
+--- zero (TOML 1.0 allows an array over several lines).
+local function openBrackets(text: string): number
+    local open = 0
+    local inBasic = false
+    local inLiteral = false
+    local index = 1
+    while index <= #text do
+        local c = string.sub(text, index, index)
+        if inBasic then
+            if c == "\\" then
+                index += 1
+            elseif c == '"' then
+                inBasic = false
+            end
+        elseif inLiteral then
+            if c == "'" then
+                inLiteral = false
+            end
+        elseif c == '"' then
+            inBasic = true
+        elseif c == "'" then
+            inLiteral = true
+        elseif c == "[" then
+            open += 1
+        elseif c == "]" then
+            open -= 1
+        end
+        index += 1
+    end
+    return open
 end
 
 type Parsed = { value: any, rest: string, error: string? }
@@ -249,8 +284,15 @@ local function parse(text: string): Result
         text = string.sub(text, #Utf8Mark + 1)
     end
 
+    local lines: { string } = {}
     for rawLine in string.gmatch(text .. "\n", "([^\n]*)\n") do
-        lineNumber += 1
+        table.insert(lines, rawLine)
+    end
+    local at = 0
+    while at < #lines do
+        at += 1
+        lineNumber = at
+        local rawLine = lines[at]
         -- A CRLF file is a TOML file (the spec allows both), and it is what a
         -- line appended on Windows makes: without this the `\r` was "trailing
         -- text after the value" on every such line.
@@ -296,16 +338,37 @@ local function parse(text: string): Result
             return { ok = false, table = root, diagnostic = tr("cli.toml.err.malformed_key"), line = lineNumber }
         end
 
-        local parsed = parseValue(string.sub(line, equals + 1))
+        -- **An array over several lines** (TOML 1.0): the lines that follow
+        -- are its until its brackets close, each with its comment taken off,
+        -- as the engine's reader takes them. A file that ends first is an
+        -- error at the line the array opened on.
+        local valueText = string.sub(line, equals + 1)
+        local valueLine = lineNumber
+        if string.sub(trim(valueText), 1, 1) == "[" then
+            while openBrackets(valueText) > 0 do
+                if at >= #lines then
+                    return {
+                        ok = false,
+                        table = root,
+                        diagnostic = tr("cli.toml.err.unclosed_array"),
+                        line = valueLine,
+                    }
+                end
+                at += 1
+                valueText ..= " " .. trim(stripComment((string.gsub(lines[at], "\r$", ""))))
+            end
+        end
+
+        local parsed = parseValue(valueText)
         if parsed.error ~= nil then
-            return { ok = false, table = root, diagnostic = parsed.error :: string, line = lineNumber }
+            return { ok = false, table = root, diagnostic = parsed.error :: string, line = valueLine }
         end
         if trim(parsed.rest) ~= "" then
             return {
                 ok = false,
                 table = root,
                 diagnostic = tr("cli.toml.err.trailing_text", { text = trim(parsed.rest) }),
-                line = lineNumber,
+                line = valueLine,
             }
         end
 

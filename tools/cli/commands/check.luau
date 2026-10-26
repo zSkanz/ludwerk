@@ -494,6 +494,16 @@ local function run(options: Options): number
     end
     print(tr("cli.check.running", { count = #files }))
 
+    -- **The project file first**: one that does not read is a game
+    -- the engine will not run, whatever its scripts say.
+    if fs.exists(projectlib.joined(options.path, "project.toml")) then
+        local project = projectlib.load(options.path)
+        if project.diagnostic ~= nil then
+            print(project.diagnostic)
+            return 1
+        end
+    end
+
     -- **This installation's own analyser, or the one on PATH** (ADR 0152): a
     -- project made a minute ago on a machine with nothing else on it has to
     -- pass its first check.

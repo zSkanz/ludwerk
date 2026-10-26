@@ -188,3 +188,46 @@ TEST_CASE("a byte-order mark at the start is skipped, as the JSON reader skips o
     // A file that is only the mark is an empty file.
     CHECK(document.parse("\xEF\xBB\xBF", "empty.toml").ok);
 }
+
+TEST_CASE("an array over several lines, with comments and a trailing comma, reads as on one line")
+{
+    const TomlDocument document = parsed(R"([ui]
+font_fallbacks = [
+    "fonts/NotoSansJP.ttf",   # Japanese
+    "fonts/NotoSansKR.ttf",   # Korean, and a ] in a comment
+    'fonts/[bracketed].ttf',
+]
+scale = 1.5
+
+[window]
+size = [
+  1280,
+  720
+]
+)");
+    const auto fonts = document.strings("ui.font_fallbacks");
+    REQUIRE(fonts.size() == 3);
+    CHECK(fonts[0] == "fonts/NotoSansJP.ttf");
+    CHECK(fonts[1] == "fonts/NotoSansKR.ttf");
+    CHECK(fonts[2] == "fonts/[bracketed].ttf");
+    // What follows the array is read too: nothing after it was swallowed.
+    CHECK(document.number("ui.scale") == 1.5);
+    const auto size = document.numbers("window.size");
+    REQUIRE(size.size() == 2);
+    CHECK(size[0] == 1280.0);
+    CHECK(size[1] == 720.0);
+}
+
+TEST_CASE("an array never closed is an error at the line it opened on")
+{
+    TomlDocument document;
+    const TomlDocument::ParseResult result = document.parse(
+        "[project]\nname = \"a\"\n\n[ui]\nfont_fallbacks = [\n  \"a.ttf\",\n  \"b.ttf\",\n", "project.toml");
+    CHECK_FALSE(result.ok);
+    CHECK(result.line == 5);
+    CHECK(result.diagnostic.starts_with("project.toml:5:"));
+
+    // And text after an array's bracket is refused, on one line or several.
+    CHECK_FALSE(document.parse("a = [1, 2] 3\n", "test.toml").ok);
+    CHECK_FALSE(document.parse("a = [\n1,\n2\n] 3\n", "test.toml").ok);
+}

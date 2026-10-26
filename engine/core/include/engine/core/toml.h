@@ -10,7 +10,8 @@
 // file that `ludwerk dev` accepts and the shipped player rejects is worse than
 // either being stricter. Supported: comments, bare and quoted keys, `[table]`
 // and `[nested.table]` headers, basic and literal strings, integers, floats,
-// booleans, and single-line arrays of those. Everything else -- multi-line
+// booleans, and arrays of those, on one line or over several with comments
+// and a trailing comma inside them. Everything else -- multi-line
 // strings, inline tables, dates -- is an explicit error and never a silent
 // misread, for the reason the Luau reader gives: a config format that quietly
 // ignores what it does not understand is how a setting ends up not applying.

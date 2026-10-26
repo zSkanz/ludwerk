@@ -2067,11 +2067,20 @@ static int hostMain(int argc, char** argv)
         }
 
         if (!configDiagnostic.empty()) {
-            // Named and survivable, like a content pack that will not open: a
-            // malformed project file leaves the engine's own defaults standing
-            // rather than refusing to start, and says which line stopped it.
+            // **A project file that does not read is never run on defaults in
+            // silence**: every setting it holds -- the window, the
+            // fonts, the network, the scene -- would quietly be the engine's,
+            // and a warning line nobody reads was all that said so. The
+            // editor still opens, so the file can be fixed from it, and says
+            // so as an error; anything else stops, naming the file and line.
             const std::array<I18nArg, 1> configArgs{I18nArg{"reason", configDiagnostic}};
-            engine::core::log(LogLevel::Warn, ENG_TR("app.warn.project_config"), configArgs);
+            if (options.editor) {
+                engine::core::log(LogLevel::Error, ENG_TR("app.err.project_config_editor"), configArgs);
+            }
+            else {
+                engine::core::log(LogLevel::Error, ENG_TR("app.err.project_config"), configArgs);
+                return kExitUsage;
+            }
         }
 
         // **The project's Luau flags, before the first script is compiled**

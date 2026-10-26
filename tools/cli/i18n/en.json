@@ -237,6 +237,7 @@
   "cli.toml.err.unterminated_string": "unterminated string",
   "cli.toml.err.unterminated_literal": "unterminated literal string",
   "cli.toml.err.array_separator": "expected , or ] in an array",
+  "cli.toml.err.unclosed_array": "an array opened on this line is never closed",
   "cli.toml.err.expected_a_value": "expected a value",
   "cli.toml.err.unsupported_value": "not a value this reader supports: {token}",
   "cli.toml.err.arrays_of_tables": "arrays of tables are not supported in project.toml",

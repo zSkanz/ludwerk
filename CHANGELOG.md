@@ -194,6 +194,12 @@ here.
 
 ### Fixed
 
+- `project.toml` takes an array written over several lines, with comments
+  and a trailing comma inside it, as TOML does: one font a line in
+  `[ui] font_fallbacks` had made the whole file unreadable. And a project
+  file that does not read is no longer run on the engine's defaults with a
+  warning: the game does not start, the editor opens and says so as an
+  error, and `ludwerk check` fails, each naming the file and line.
 - Plurals follow CLDR for Portugal's Portuguese, where 0 takes `other`
   (`pt` and `pt-BR` put it with `one`); for Serbian, Croatian and Bosnian,
   which have no `many`; for a whole million in French, Portuguese, Spanish,
