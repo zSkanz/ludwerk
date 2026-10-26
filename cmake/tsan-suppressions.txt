@@ -46,3 +46,9 @@ race:JPH::Mutex::lock
 # upstream, and dropped when a pinned SDL orders the two.
 race:SDL_SYS_QuitTLSData
 race:SDL_SYS_GetTLSData
+
+# D-Bus's client library: on a machine with a session bus (the CI runner, not
+# the container) SDL's start-up opens a connection and `SDL_Quit` closes it,
+# and the library takes its connection lock and its global lock in either
+# order across the two. Uninstrumented, and none of ours.
+deadlock:libdbus-1.so
