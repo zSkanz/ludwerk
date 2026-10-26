@@ -56,6 +56,8 @@ listed on the page of the class that declares them.
 | `ShadowResolution` | `number` | `2048` | read/write | The side of one shadow cascade, in texels, from 256 to 2048. It is rounded down to a power of two. |
 | `Sharpness` | `number` | `0.2` | read/write | How much the picture is sharpened, from 0 to 1. Sharpening is applied after an FSR 1 upscale, after temporal anti-aliasing, and as part of FSR 2. |
 | `SkinWeights` | `number` | `4` | read/write | The number of bones that can move one vertex, from 1 to 4. This setting is saved and reported but has no effect yet. |
+| `SkinnedLODFloor` | `number` | `0` | read/write | The finest level of detail a skinned mesh, such as a creature in a crowd, is drawn at beyond `SkinnedLODNearDistance` from the camera. A character of a player on this machine is always drawn as `MaximumLODLevel` allows. Low is 2, the other levels 0. |
+| `SkinnedLODNearDistance` | `number` | `5` | read/write | How near the camera, in meters, a skinned mesh is drawn at its finest whatever `SkinnedLODFloor` says, so that what is close up stays as it was made. 5 at every level. |
 | `SoftParticles` | `boolean` | `true` | read/write | Whether particles fade where they meet a surface. This setting is saved and reported but has no effect yet. |
 | `SunRays` | `boolean` | `true` | read/write | Whether a world's `SunRaysEffect` is drawn. When it is off, no shafts are drawn even in a scene that has the effect. |
 | `TerrainDetail` | `number` | `1` | read/write | A multiplier on the distance at which distant terrain is drawn in finer detail, relative to the quality level's own value. At 2 the detail extends twice as far, and at 0.5 half as far. |

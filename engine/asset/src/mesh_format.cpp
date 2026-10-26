@@ -10,6 +10,7 @@
 #include <string>
 
 #include "engine/core/i18n.h"
+#include "engine/core/math.h"
 #include "engine/core/text_key.h"
 
 namespace engine::asset {
@@ -419,7 +420,22 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
     // not bend. So a vertex whose weights are blended, or whose main joint is
     // not its neighbour's, is locked: a rigid stretch of one bone still
     // simplifies, a joint never loses its hinge.
+    //
+    // **Past the first level the skin is weighed instead** (`skinLocks`): a
+    // crowd's creature kept every vertex on a joint's border at every level,
+    // and its chain stopped at two. From the second level on, a vertex whose
+    // weights are blended is still locked, a border vertex is only held
+    // longer (`Priority`), and what a collapse costs counts where the vertex
+    // bends -- the joints it follows, weighted, in the bind pose -- so a
+    // forearm's vertex is not moved onto the upper arm's. Those levels are
+    // simplified from the finest, each held to `SkinnedLevelError` of the
+    // mesh's extents, so a limb stays one at every level rather than adding
+    // each level's error to the last's: at more, a leg's tip and a belfry's
+    // posts went first.
+    constexpr std::array<f32, 4> SkinnedLevelError{0.0f, 0.0f, 0.05f, 0.07f};
     std::vector<unsigned char> locks;
+    std::vector<unsigned char> skinLocks;
+    std::vector<f32> bendAt;
     if (!out.skin.empty() && out.skin.size() == out.vertices.size()) {
         const auto mainJoint = [&](u32 vertex) {
             const SkinVertex& skin = out.skin[vertex];
@@ -446,6 +462,34 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
                     locks[a] = meshopt_SimplifyVertex_Lock;
                     locks[b] = meshopt_SimplifyVertex_Lock;
                 }
+            }
+        }
+        if (!out.joints.empty()) {
+            std::vector<core::Vec3> jointAt(out.joints.size());
+            for (usize joint = 0; joint < out.joints.size(); ++joint) {
+                const core::Mat4 bind = core::inverse(out.joints[joint].inverseBind);
+                jointAt[joint] = core::Vec3{bind.m[3][0], bind.m[3][1], bind.m[3][2]};
+            }
+            skinLocks.assign(out.vertices.size(), 0);
+            bendAt.assign(out.vertices.size() * 3, 0.0f);
+            for (usize vertex = 0; vertex < out.skin.size(); ++vertex) {
+                const SkinVertex& skin = out.skin[vertex];
+                if (locks[vertex] != 0)
+                    skinLocks[vertex] = meshopt_SimplifyVertex_Priority;
+                const f32 strongest = std::max({skin.weights[0], skin.weights[1], skin.weights[2], skin.weights[3]});
+                if (strongest < 0.99f)
+                    skinLocks[vertex] = meshopt_SimplifyVertex_Lock;
+                // In the simplifier's units: the mesh's extents are one.
+                core::Vec3 bend{};
+                for (usize lane = 0; lane < 4; ++lane) {
+                    const auto joint = static_cast<usize>(std::max(skin.joints[lane], 0.0f));
+                    if (joint < jointAt.size())
+                        bend = bend + jointAt[joint] * skin.weights[lane];
+                }
+                const f32 unit = scale > 0.0f ? 1.0f / scale : 1.0f;
+                bendAt[vertex * 3 + 0] = bend.x * unit;
+                bendAt[vertex * 3 + 1] = bend.y * unit;
+                bendAt[vertex * 3 + 2] = bend.z * unit;
             }
         }
     }
@@ -494,6 +538,38 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
     const f32* const normals = &out.vertices[0].normal.x;
     constexpr std::array<f32, 3> NormalWeights{0.5f, 0.5f, 0.5f};
 
+    // What a skinned level weighs: the normal where faces are apart, as the
+    // other levels do; where the vertex bends; and what textures it, heavily.
+    // A creature drawn from a palette has a seam at nearly every other
+    // corner, and protected as the first level protects them, the chain
+    // could not go on at all; weighed, a collapse moves no colour onto its
+    // neighbour's while one that moves none is left.
+    constexpr f32 BendWeight = 1.0f;
+    constexpr usize BendLanes = 3;
+    constexpr f32 UvWeight = 64.0f;
+    constexpr usize UvLanes = 2;
+    const usize skinLanes = (facesApart ? 3 : 0) + BendLanes + UvLanes;
+    std::vector<f32> skinAttributes;
+    std::vector<f32> skinWeights;
+    if (!skinLocks.empty()) {
+        skinAttributes.reserve(out.vertices.size() * skinLanes);
+        for (usize vertex = 0; vertex < out.vertices.size(); ++vertex) {
+            if (facesApart) {
+                skinAttributes.push_back(out.vertices[vertex].normal.x);
+                skinAttributes.push_back(out.vertices[vertex].normal.y);
+                skinAttributes.push_back(out.vertices[vertex].normal.z);
+            }
+            skinAttributes.insert(skinAttributes.end(), bendAt.begin() + static_cast<std::ptrdiff_t>(vertex * 3),
+                                  bendAt.begin() + static_cast<std::ptrdiff_t>(vertex * 3 + 3));
+            skinAttributes.push_back(out.vertices[vertex].uv[0]);
+            skinAttributes.push_back(out.vertices[vertex].uv[1]);
+        }
+        if (facesApart)
+            skinWeights.assign(NormalWeights.begin(), NormalWeights.end());
+        skinWeights.insert(skinWeights.end(), BendLanes, BendWeight);
+        skinWeights.insert(skinWeights.end(), UvLanes, UvWeight);
+    }
+
     // Each level simplifies each SUBMESH separately, so a material boundary is
     // never welded across -- a tree whose leaves start being drawn with the
     // trunk's shader is the failure that buys.
@@ -503,27 +579,40 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
         next.indices.reserve(previous.indices.size());
         next.submeshes.reserve(previous.submeshes.size());
 
+        const bool skinWeighed = !skinLocks.empty() && level >= 2;
+        const MeshLod& from = skinWeighed ? out.lods.front() : previous;
         f32 worstError = 0.0f;
-        for (const Submesh& submesh : previous.submeshes) {
-            const std::span<const u32> source(previous.indices.data() + submesh.firstIndex, submesh.indexCount);
-            const usize target = static_cast<usize>(static_cast<f32>(source.size()) * options.lodStep) / 3 * 3;
+        for (usize index = 0; index < previous.submeshes.size(); ++index) {
+            const Submesh& submesh = previous.submeshes[index];
+            const usize target = static_cast<usize>(static_cast<f32>(submesh.indexCount) * options.lodStep) / 3 * 3;
+            const Submesh& origin = from.submeshes[index];
+            const std::span<const u32> source(from.indices.data() + origin.firstIndex, origin.indexCount);
 
             Submesh simplified = submesh;
             simplified.firstIndex = static_cast<u32>(next.indices.size());
 
+            const std::span<const u32> carried(previous.indices.data() + submesh.firstIndex, submesh.indexCount);
             if (target < 3) {
                 // Nothing left to remove without deleting the submesh, so it
                 // carries through at its current density rather than vanishing.
-                next.indices.insert(next.indices.end(), source.begin(), source.end());
-                simplified.indexCount = static_cast<u32>(source.size());
+                next.indices.insert(next.indices.end(), carried.begin(), carried.end());
+                simplified.indexCount = static_cast<u32>(carried.size());
                 next.submeshes.push_back(simplified);
+                if (skinWeighed)
+                    worstError = std::max(worstError, previous.error / (scale > 0.0f ? scale : 1.0f));
                 continue;
             }
 
             std::vector<u32> destination(source.size());
             f32 error = 0.0f;
             const usize produced =
-                locks.empty()
+                skinWeighed ? meshopt_simplifyWithAttributes(
+                                  destination.data(), source.data(), source.size(), positions, out.vertices.size(),
+                                  positionStride, skinAttributes.data(), skinLanes * sizeof(f32), skinWeights.data(),
+                                  skinWeights.size(), skinLocks.data(), target,
+                                  SkinnedLevelError[std::min<usize>(level, SkinnedLevelError.size() - 1)],
+                                  simplifyOptions, &error)
+                : locks.empty()
                     ? meshopt_simplify(destination.data(), source.data(), source.size(), positions, out.vertices.size(),
                                        positionStride, target, options.lodTargetError, 0, &error)
                 : facesApart
@@ -535,9 +624,15 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
                                                      out.vertices.size(), positionStride, nullptr, 0, nullptr, 0,
                                                      locks.data(), target, options.lodTargetError, 0, &error);
             destination.resize(produced);
+            if (skinWeighed && produced >= carried.size()) {
+                // Held to its error, the finest gave no fewer than the last
+                // level has: that level again, and the chain ends below.
+                destination.assign(carried.begin(), carried.end());
+                error = previous.error / (scale > 0.0f ? scale : 1.0f);
+            }
 
             next.indices.insert(next.indices.end(), destination.begin(), destination.end());
-            simplified.indexCount = static_cast<u32>(produced);
+            simplified.indexCount = static_cast<u32>(destination.size());
             next.submeshes.push_back(simplified);
             worstError = std::max(worstError, error);
         }
@@ -561,6 +656,9 @@ std::optional<core::EngineError> compileMesh(const Model& model, std::span<const
         // absolute: it scales by the instance's transform and divides by the
         // distance to get pixels.
         next.error = worstError * scale;
+        // A level drawn from the finest can be nearer it than the last was;
+        // the selector reads the levels' errors as never falling.
+        next.error = std::max(next.error, previous.error);
         out.lods.push_back(std::move(next));
     }
 

@@ -6041,7 +6041,7 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
     classes.registerClass(localizationServiceDesc);
 
     // --- GraphicsService ---
-    static std::array<PropertyDesc, 47> graphicsServiceProperties;
+    static std::array<PropertyDesc, 49> graphicsServiceProperties;
     graphicsServiceProperties = {{
         PropertyDesc{
             .name = atoms.intern("QualityLevel"),
@@ -6372,6 +6372,32 @@ void registerClasses(ClassRegistry& classes, core::AtomTable& atoms)
             .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
             .get = native::getGraphicsServiceMaximumLODLevel,
             .set = native::setGraphicsServiceMaximumLODLevel,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SkinnedLODFloor"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "The finest level of detail a skinned mesh, such as a creature in a crowd, is drawn at beyond `SkinnedLODNearDistance` from the camera. A character of a player on this machine is always drawn as `MaximumLODLevel` allows. Low is 2, the other levels 0.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSkinnedLODFloor,
+            .set = native::setGraphicsServiceSkinnedLODFloor,
+        },
+        PropertyDesc{
+            .name = atoms.intern("SkinnedLODNearDistance"),
+            .type = ValueType::Number,
+            .threadSafety = ThreadSafety::Unsafe,
+            .readOnly = false,
+            .inert = false,
+            .hostFact = true,
+            .transient = true,
+            .doc = "How near the camera, in meters, a skinned mesh is drawn at its finest whatever `SkinnedLODFloor` says, so that what is close up stays as it was made. 5 at every level.",
+            .errKeyOnInvalidSet = ENG_TR("scene.err.graphics_setting"),
+            .get = native::getGraphicsServiceSkinnedLODNearDistance,
+            .set = native::setGraphicsServiceSkinnedLODNearDistance,
         },
         PropertyDesc{
             .name = atoms.intern("ParticleBudget"),

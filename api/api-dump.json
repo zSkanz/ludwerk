@@ -3238,6 +3238,18 @@
           "Transient": true
         },
         {
+          "Name": "SkinnedLODFloor",
+          "Type": "number",
+          "Default": "0",
+          "Transient": true
+        },
+        {
+          "Name": "SkinnedLODNearDistance",
+          "Type": "number",
+          "Default": "5",
+          "Transient": true
+        },
+        {
           "Name": "SoftParticles",
           "Type": "boolean",
           "Default": "true",

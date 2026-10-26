@@ -45,6 +45,8 @@ struct PartComponent;
 
 namespace engine::render {
 
+struct GraphicsSettings;
+
 using core::AABB;
 using core::CFrameD;
 using core::Color3;
@@ -352,6 +354,10 @@ struct DrawItem
     // correct-looking image with the wrong shadows in it. The shadow pass draws
     // every item; the forward pass draws only these.
     bool inCameraFrustum = true;
+    // **A character of a player at this machine** (or a part of one): kept
+    // as fine as the level allows a static mesh, whatever a crowd's floor is
+    // (`GraphicsSettings::skinnedLodFloor`).
+    bool localCharacter = false;
     // Where this draw's joint palette starts in `RenderWorld::bones`, and how
     // many matrices it has. Zero count is the common case and means "not
     // skinned": the draw goes through the static pipeline and binds one vertex
@@ -1560,5 +1566,13 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
              f32 viewportAspect, f32 shadowRadius, const AnimationSystem* animation, const DrawPoses& poses,
              RenderWorld& out, const ViewOverride* view = nullptr, std::span<const core::InstanceId> outlined = {},
              const TextureLibrary* textures = nullptr, std::span<const TerrainNodeDraw> terrainNodes = {});
+
+// **The level a draw is drawn at** (`GraphicsService.LODBias`,
+// `MaximumLODLevel`, `SkinnedLODFloor`): the mesh's level for its distance,
+// never finer than the level allows -- and for a skinned draw beyond the near
+// distance that is not a character of this machine's players, never finer
+// than the floor. What every pass and the triangle count ask, so they agree.
+[[nodiscard]] u32 selectDrawLod(const MeshCache::Resolved& resolved, const DrawItem& draw, f32 pixelsPerUnit,
+                                const GraphicsSettings& settings) noexcept;
 
 } // namespace engine::render

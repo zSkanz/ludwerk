@@ -152,7 +152,10 @@ constexpr core::u32 kCompilerRules = 11;
 // Meshes, 1: faces that meet at a corner without sharing its vertex are
 // simplified as one surface, so a flat-shaded mesh's levels keep its twigs
 // and leaves on.
-constexpr core::u32 kMeshRules = 1;
+// Meshes, 2: a skinned mesh's levels past the first weigh where each vertex
+// bends instead of locking every joint's border, so a creature's chain goes
+// on past two levels.
+constexpr core::u32 kMeshRules = 2;
 constexpr core::u32 kTextureRules = 0;
 
 // What one source compiled to, remembered between runs.

@@ -15,11 +15,13 @@
 #include "engine/core/profile.h"
 #include "engine/render/cloth.h"
 #include "engine/render/lighting.h"
+#include "engine/render/settings.h"
 #include "engine/render/shader_types.h"
 #include "engine/render/terrain_loader.h"
 #include "engine/render/voxel_loader.h"
 #include "engine/render/water_loader.h"
 #include "engine/scene/components.h"
+#include "engine/scene/players.h"
 #include "engine/scene/water.h"
 #include "engine/scene/world.h"
 
@@ -1234,6 +1236,30 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
     };
 
     ENG_PROFILE_NEXT(stretch, "extract.meshes");
+    // **The characters of this machine's players** (`DrawItem::localCharacter`):
+    // each one's part, or the model it is the part of.
+    static thread_local std::vector<core::InstanceId> ownPlayers;
+    static thread_local std::vector<core::InstanceId> ownCharacters;
+    ownCharacters.clear();
+    scene::localPlayers(world, ownPlayers);
+    for (const core::InstanceId player : ownPlayers) {
+        const scene::PlayerComponent* who = world.players().find(player);
+        if (who == nullptr || !who->character.valid() || !world.alive(who->character))
+            continue;
+        const core::InstanceId holder = world.parentOf(who->character);
+        const bool inModel = holder.valid() && holder != root && world.models().find(holder) != nullptr;
+        ownCharacters.push_back(inModel ? holder : who->character);
+    }
+    const auto ofOwnCharacter = [&](core::InstanceId id) {
+        if (ownCharacters.empty())
+            return false;
+        for (core::InstanceId cursor = id; cursor.valid() && cursor != root; cursor = world.parentOf(cursor)) {
+            if (std::find(ownCharacters.begin(), ownCharacters.end(), cursor) != ownCharacters.end())
+                return true;
+        }
+        return false;
+    };
+
     world.meshParts().forEach([&](core::InstanceId id, const scene::MeshPartComponent& meshPart) {
         if (!membership.contains(id))
             return;
@@ -1489,6 +1515,7 @@ void extract(const scene::World& world, core::InstanceId root, core::InstanceId 
             });
             out.draws.back().motionKey = motionKey;
             out.draws.back().castShadow = part->castShadow;
+            out.draws.back().localCharacter = boneCount > 0 && ofOwnCharacter(id);
             // **A window onto the room seen through** (`BasePart.ShowsRoom`):
             // drawn solid, with no coverage -- the depth hides what is
             // behind it, and where the room is seen through, the room is
@@ -2564,6 +2591,20 @@ f32 decalReach(std::span<const RenderDecal> decals)
         }
     }
     return furthest;
+}
+
+u32 selectDrawLod(const MeshCache::Resolved& resolved, const DrawItem& draw, f32 pixelsPerUnit,
+                  const GraphicsSettings& settings) noexcept
+{
+    u32 finest = settings.maximumLodLevel;
+    // A skinned draw past the near distance, and not one of this machine's
+    // characters, starts at the floor -- where the floor is coarser.
+    if (draw.boneCount > 0 && !draw.localCharacter && settings.skinnedLodFloor > finest) {
+        const f32 nearest = std::sqrt(core::dot(draw.boundsCenter, draw.boundsCenter)) - draw.boundsRadius;
+        if (nearest > settings.skinnedLodNear)
+            finest = settings.skinnedLodFloor;
+    }
+    return selectMeshLod(resolved, draw.transform, pixelsPerUnit, settings.lodBias, finest);
 }
 
 } // namespace engine::render

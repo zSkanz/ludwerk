@@ -5354,6 +5354,13 @@ declare extern type GraphicsService extends Instance with
     --- The finest level of detail a mesh can be drawn at; 0 is the mesh's finest. At 1, a mesh that has
     --- coarser levels is never drawn at its finest. Low is 1, the other levels 0.
     MaximumLODLevel: number
+    --- The finest level of detail a skinned mesh, such as a creature in a crowd, is drawn at beyond
+    --- `SkinnedLODNearDistance` from the camera. A character of a player on this machine is always
+    --- drawn as `MaximumLODLevel` allows. Low is 2, the other levels 0.
+    SkinnedLODFloor: number
+    --- How near the camera, in meters, a skinned mesh is drawn at its finest whatever `SkinnedLODFloor`
+    --- says, so that what is close up stays as it was made. 5 at every level.
+    SkinnedLODNearDistance: number
     --- The largest number of particles alive at once. This setting is saved and reported but has no
     --- effect yet.
     ParticleBudget: number

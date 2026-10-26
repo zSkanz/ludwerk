@@ -1837,6 +1837,8 @@
   "engine.graphics.setting.anisotropic_filtering": "Anisotropic filtering",
   "engine.graphics.setting.lod_bias": "Level of detail bias",
   "engine.graphics.setting.maximum_lod_level": "Finest level of detail",
+  "engine.graphics.setting.skinned_lod_floor": "Finest level of detail for crowds",
+  "engine.graphics.setting.skinned_lod_near_distance": "Crowds at full detail within",
   "engine.graphics.setting.particle_budget": "Particles at once",
   "engine.graphics.setting.soft_particles": "Soft particles",
   "engine.graphics.setting.skin_weights": "Bones a vertex",

@@ -85,6 +85,7 @@ void applyFile(const core::TomlDocument& document, std::string_view table, Graph
     // Low and Medium unless the file says.
     if (const std::optional<bool> value = flag("lean_path")) {
         settings.leanPath = *value;
+        settings.leanPathAsked = *value ? 1 : 0;
         settings.leanSamples = settings.quality == render::QualityLevel::Low ? 2u : 4u;
     }
     if (const std::optional<bool> value = flag("ambient_occlusion"))
@@ -205,6 +206,7 @@ void applyOverrides(const GraphicsOverrides& overrides, GraphicsSettings& settin
         settings.foliageDecals = *overrides.foliageDecals;
     if (overrides.leanPath) {
         settings.leanPath = *overrides.leanPath;
+        settings.leanPathAsked = *overrides.leanPath ? 1 : 0;
         settings.leanSamples = settings.quality == render::QualityLevel::Low ? 2u : 4u;
     }
     if (overrides.reflections) {
@@ -340,6 +342,9 @@ void seedPresets(scene::GraphicsModel& model, bool handheld)
         say(layer, GraphicsSetting::AnisotropicFiltering, extras.anisotropicFiltering);
         say(layer, GraphicsSetting::LODBias, extras.lodBias);
         say(layer, GraphicsSetting::MaximumLODLevel, extras.maximumLodLevel);
+        // A crowd's skinned members from their second coarser level at Low.
+        say(layer, GraphicsSetting::SkinnedLODFloor, index == 0 ? 2.0 : 0.0);
+        say(layer, GraphicsSetting::SkinnedLODNearDistance, 5.0);
         say(layer, GraphicsSetting::ParticleBudget, extras.particleBudget);
         say(layer, GraphicsSetting::SoftParticles, extras.softParticles);
         say(layer, GraphicsSetting::SkinWeights, extras.skinWeights);
@@ -590,6 +595,8 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
     settings.terrainPixelError = static_cast<f32>(2.0 / value(GraphicsSetting::TerrainDetail));
     settings.lodBias = static_cast<f32>(value(GraphicsSetting::LODBias));
     settings.maximumLodLevel = static_cast<u32>(value(GraphicsSetting::MaximumLODLevel));
+    settings.skinnedLodFloor = static_cast<u32>(value(GraphicsSetting::SkinnedLODFloor));
+    settings.skinnedLodNear = static_cast<f32>(value(GraphicsSetting::SkinnedLODNearDistance));
     settings.renderResolutionCap = static_cast<u32>(value(GraphicsSetting::RenderResolutionCap));
     // **The filter's taps are the shadow quality's** (ADR 0172): one past the
     // level, zero for off -- so a player who turns shadows down alone gets the
@@ -609,6 +616,12 @@ render::GraphicsSettings graphicsSettingsOf(const scene::GraphicsModel& model, b
         // Not an instrument, and carried the same way: the project's word on
         // the ground's material is no setting a player has.
         settings.terrainSurface = instruments->terrainSurface;
+        // And its word on the lean path, at whatever level is drawn now.
+        if (instruments->leanPathAsked >= 0) {
+            settings.leanPath = instruments->leanPathAsked != 0;
+            settings.leanPathAsked = instruments->leanPathAsked;
+            settings.leanSamples = settings.quality == render::QualityLevel::Low ? 2u : 4u;
+        }
         settings.measuredSkip = instruments->measuredSkip;
         settings.offFramePipelines = instruments->offFramePipelines;
         settings.materialWaitMs = instruments->materialWaitMs;

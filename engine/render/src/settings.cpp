@@ -39,6 +39,7 @@ GraphicsSettings settingsFor(QualityLevel quality) noexcept
         settings.terrainPixelError = 4.0f;
         settings.lodBias = 0.5f;
         settings.maximumLodLevel = 1u;
+        settings.skinnedLodFloor = 2u;
         settings.antiAliasing = AntiAliasingMode::Fxaa;
         // The world at three quarters, brought up by FSR 1 rather than
         // filtered: the edges a reduced scale softens, kept (ADR 0158).
@@ -277,6 +278,9 @@ GraphicsSettings clampSettings(GraphicsSettings settings) noexcept
     settings.pipelineThreads = std::min(settings.pipelineThreads, 4u);
     settings.lodBias = std::isfinite(settings.lodBias) ? std::clamp(settings.lodBias, 0.25f, 4.0f) : 1.0f;
     settings.maximumLodLevel = std::min(settings.maximumLodLevel, 8u);
+    settings.skinnedLodFloor = std::min(settings.skinnedLodFloor, 8u);
+    settings.skinnedLodNear =
+        std::isfinite(settings.skinnedLodNear) ? std::clamp(settings.skinnedLodNear, 0.0f, 1000.0f) : 5.0f;
     // A cap below 360 is a picture of blocks; zero is "none".
     if (settings.renderResolutionCap != 0)
         settings.renderResolutionCap = std::clamp(settings.renderResolutionCap, 360u, 4320u);

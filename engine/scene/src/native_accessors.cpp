@@ -3390,6 +3390,26 @@ bool setGraphicsServiceMonitor(World& world, core::InstanceId, const Value& valu
     return writeGraphicsNumber(world, GraphicsSetting::Monitor, value);
 }
 
+Value getGraphicsServiceSkinnedLODFloor(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::SkinnedLODFloor)};
+}
+
+bool setGraphicsServiceSkinnedLODFloor(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::SkinnedLODFloor, value);
+}
+
+Value getGraphicsServiceSkinnedLODNearDistance(const World& world, core::InstanceId)
+{
+    return Value{graphicsValue(world, GraphicsSetting::SkinnedLODNearDistance)};
+}
+
+bool setGraphicsServiceSkinnedLODNearDistance(World& world, core::InstanceId, const Value& value)
+{
+    return writeGraphicsNumber(world, GraphicsSetting::SkinnedLODNearDistance, value);
+}
+
 Value getGraphicsServiceVSync(const World& world, core::InstanceId)
 {
     return Value{graphicsValue(world, GraphicsSetting::VSync) != 0.0};

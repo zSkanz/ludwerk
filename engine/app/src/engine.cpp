@@ -1389,9 +1389,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // for a second. What a script writes while the game runs is in the world's
     // own copy of the model, and the frame applies whatever changed.
     scene::GraphicsModel graphicsHost = options.graphicsModel;
+    const bool modelGiven = graphicsHost.presets[0].said.any();
     // A run that built its options by hand has no layers: the presets, at
     // least, are always there.
-    if (graphicsHost.presets[0].said.none())
+    if (!modelGiven)
         seedGraphicsModel(graphicsHost, GraphicsOverrides{});
     const bool graphicsDisplay = options.network.topology != replication::Topology::Dedicated;
     // Beside the saves folder -- `settings.json` next to `saves/` -- and inside
@@ -1400,7 +1401,13 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         !options.rememberPlayerSettings || options.saveDirectory.empty() ? std::filesystem::path{}
         : options.saveDirectory.filename() == "saves" ? options.saveDirectory.parent_path() / "settings.json"
                                                       : options.saveDirectory / "settings.json";
-    render::GraphicsSettings liveGraphics = options.graphics;
+    // **What the model says, from the first frame**: a setting the project's
+    // file gives that only the model knows -- `maximum_lod_level`,
+    // `terrain_detail`, `global_illumination` -- drew as the level's until
+    // something changed the model, and then as the file's. A run whose
+    // options were built by hand keeps the settings it was handed.
+    render::GraphicsSettings liveGraphics =
+        modelGiven ? graphicsSettingsOf(graphicsHost, Handheld, &options.graphics) : options.graphics;
     FramePacing livePacing = options.pacing;
     // The language the player chose last time, from the same file (ADR 0154).
     std::string savedLocale;
@@ -9892,8 +9899,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                     if (resolved == nullptr || resolved->lods.empty())
                         continue;
                     const render::GraphicsSettings& drawn = renderer != nullptr ? renderer->settings() : liveGraphics;
-                    const core::u32 level = render::selectMeshLod(*resolved, draw.transform, lodPixelsPerUnit,
-                                                                  drawn.lodBias, drawn.maximumLodLevel);
+                    const core::u32 level = render::selectDrawLod(*resolved, draw, lodPixelsPerUnit, drawn);
                     const render::MeshLodRange& range = resolved->lods[level];
                     if (draw.section >= range.sectionCount ||
                         range.firstSection + draw.section >= resolved->sections.size())

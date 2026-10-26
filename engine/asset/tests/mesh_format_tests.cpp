@@ -436,7 +436,7 @@ TEST_CASE("a skinned mesh carries its skeleton and its clips")
     }
 }
 
-TEST_CASE("a skinned mesh's levels keep every vertex where one joint gives way to another")
+TEST_CASE("a skinned mesh's first level keeps every vertex where one joint gives way to another")
 {
     // The simplifier judges error in the bind pose, where an elbow's vertices
     // lie along a straight arm and go first -- and a level without them does
@@ -476,12 +476,60 @@ TEST_CASE("a skinned mesh's levels keep every vertex where one joint gives way t
         }
     }
     REQUIRE_FALSE(seam.empty());
-    for (usize level = 1; level < compiled.lods.size(); ++level) {
+    const std::vector<u32>& indices = compiled.lods[1].indices;
+    for (const u32 vertex : seam)
+        CHECK(std::find(indices.begin(), indices.end(), vertex) != indices.end());
+    // And it is still a coarser level.
+    CHECK(indices.size() < compiled.lods[0].indices.size());
+}
+
+TEST_CASE("past its first level a skinned mesh goes on, keeps where it blends, and stays near its finest")
+{
+    // A crowd's creature locked every joint's border at every level and its
+    // chain stopped at two. Past the first, the border is weighed and only
+    // the vertices whose weights are blended are kept; each level is held to
+    // a share of the mesh's size, measured from the finest.
+    seedRealCatalog();
+    Model model = gridModel(24);
+    model.skin.resize(model.mesh.vertices.size());
+    std::vector<u32> blended;
+    for (usize i = 0; i < model.skin.size(); ++i) {
+        const f32 x = model.mesh.vertices[i].position.x;
+        SkinVertex& skin = model.skin[i];
+        if (x > 4.5f && x < 5.5f) {
+            // The band where one joint gives way to the other.
+            skin.joints[0] = 0.0f;
+            skin.joints[1] = 1.0f;
+            skin.weights[0] = 0.5f;
+            skin.weights[1] = 0.5f;
+            blended.push_back(static_cast<u32>(i));
+        }
+        else {
+            skin.joints[0] = x < 5.0f ? 0.0f : 1.0f;
+            skin.weights[0] = 1.0f;
+        }
+    }
+    REQUIRE_FALSE(blended.empty());
+    Joint root;
+    root.name = "root";
+    model.joints.push_back(root);
+    Joint other;
+    other.name = "other";
+    other.parent = 0;
+    model.joints.push_back(other);
+
+    CompiledMesh compiled;
+    REQUIRE_FALSE(compileMesh(model, slotsFor(model), {}, compiled).has_value());
+    REQUIRE(compiled.lods.size() > 2);
+    const engine::core::Vec3 extent = compiled.bounds.max - compiled.bounds.min;
+    const f32 size = std::max({extent.x, extent.y, extent.z});
+    for (usize level = 2; level < compiled.lods.size(); ++level) {
         const std::vector<u32>& indices = compiled.lods[level].indices;
-        for (const u32 vertex : seam)
+        for (const u32 vertex : blended)
             CHECK(std::find(indices.begin(), indices.end(), vertex) != indices.end());
-        // And it is still a coarser level.
-        CHECK(indices.size() < compiled.lods[0].indices.size());
+        CHECK(indices.size() < compiled.lods[level - 1].indices.size());
+        CHECK(compiled.lods[level].error <= 0.07f * size + 1.0e-6f);
+        CHECK(compiled.lods[level].error >= compiled.lods[level - 1].error);
     }
 }
 

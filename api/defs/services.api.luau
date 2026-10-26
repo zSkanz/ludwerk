@@ -1712,6 +1712,27 @@ local Classes: { Schema.Class } = {
                     .. "that has coarser levels is never drawn at its finest. Low is 1, the other levels 0.",
             },
             {
+                Name = "SkinnedLODFloor",
+                Type = "number",
+                Default = "0",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "The finest level of detail a skinned mesh, such as a creature in a crowd, is drawn at "
+                    .. "beyond `SkinnedLODNearDistance` from the camera. A character of a player on this machine is "
+                    .. "always drawn as `MaximumLODLevel` allows. Low is 2, the other levels 0.",
+            },
+            {
+                Name = "SkinnedLODNearDistance",
+                Type = "number",
+                Default = "5",
+                ErrorKey = "scene.err.graphics_setting",
+                Transient = true,
+                HostFact = true,
+                Doc = "How near the camera, in meters, a skinned mesh is drawn at its finest whatever "
+                    .. "`SkinnedLODFloor` says, so that what is close up stays as it was made. 5 at every level.",
+            },
+            {
                 Name = "ParticleBudget",
                 Type = "number",
                 Default = "65536",
