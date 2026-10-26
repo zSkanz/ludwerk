@@ -123,6 +123,72 @@ f32 lineLeft(const FieldView& view, const TextLine& line) noexcept
     return x - view.scrollX;
 }
 
+std::vector<TextCluster> lineClusters(const FieldView& view, const TextLine& line)
+{
+    return textClusters(std::string_view(view.display).substr(line.begin, line.end - line.begin), view.font, view.size);
+}
+
+f32 caretX(const std::vector<TextCluster>& clusters, usize offset) noexcept
+{
+    for (const TextCluster& cluster : clusters) {
+        if (cluster.begin == offset)
+            return cluster.rightToLeft ? cluster.right : cluster.left;
+    }
+    for (const TextCluster& cluster : clusters) {
+        if (cluster.end == offset)
+            return cluster.rightToLeft ? cluster.left : cluster.right;
+    }
+    // Past the last character, or a line with none.
+    f32 right = 0.0f;
+    for (const TextCluster& cluster : clusters)
+        right = std::fmax(right, cluster.right);
+    return offset == 0 ? 0.0f : right;
+}
+
+std::vector<std::pair<f32, f32>> selectionSpans(const std::vector<TextCluster>& clusters, usize from, usize to)
+{
+    std::vector<std::pair<f32, f32>> spans;
+    for (const TextCluster& cluster : clusters) {
+        if (cluster.begin < from || cluster.end > to)
+            continue;
+        // Left to right, so a span grows rightward or a new one starts.
+        if (!spans.empty() && cluster.left <= spans.back().second + 0.01f)
+            spans.back().second = std::fmax(spans.back().second, cluster.right);
+        else
+            spans.emplace_back(cluster.left, cluster.right);
+    }
+    return spans;
+}
+
+std::optional<u32> visualStep(const FieldView& view, u32 displayOffset, bool right)
+{
+    if (view.lines.empty())
+        return std::nullopt;
+    const TextLine& line = view.lines[lineOf(view, displayOffset)];
+    const std::vector<TextCluster> clusters = lineClusters(view, line);
+    if (std::none_of(clusters.begin(), clusters.end(), [](const TextCluster& cluster) { return cluster.rightToLeft; }))
+        return std::nullopt;
+    const usize at = std::min<usize>(displayOffset, line.end) - line.begin;
+    const f32 x = caretX(clusters, at);
+    // Every place a caret may stand on the line, by where it stands.
+    std::optional<std::pair<f32, usize>> best;
+    const auto offer = [&](usize offset) {
+        const f32 stop = caretX(clusters, offset);
+        const bool beyond = right ? stop > x + 0.01f : stop < x - 0.01f;
+        if (!beyond)
+            return;
+        if (!best.has_value() || (right ? stop < best->first : stop > best->first))
+            best = std::pair{stop, offset};
+    };
+    for (const TextCluster& cluster : clusters) {
+        offer(cluster.begin);
+        offer(cluster.end);
+    }
+    if (!best.has_value())
+        return std::nullopt;
+    return static_cast<u32>(line.begin + best->second);
+}
+
 core::Vec2 caretPoint(const FieldView& view, u32 displayOffset)
 {
     if (view.lines.empty())
@@ -132,8 +198,7 @@ core::Vec2 caretPoint(const FieldView& view, u32 displayOffset)
     // A wrapped line dropped the space it broke at: an offset on it is at the
     // line's end.
     const usize at = std::min<usize>(displayOffset, line.end);
-    const std::string_view before = std::string_view(view.display).substr(line.begin, at - line.begin);
-    return core::Vec2{lineLeft(view, line) + textWidth(before, view.font, view.size),
+    return core::Vec2{lineLeft(view, line) + caretX(lineClusters(view, line), at - line.begin),
                       view.top + static_cast<f32>(index) * view.lineHeight};
 }
 
@@ -146,18 +211,20 @@ u32 displayOffsetAt(const FieldView& view, core::Vec2 point)
     const TextLine& line = view.lines[index];
     const f32 left = lineLeft(view, line);
     // The boundary whose x is nearest: a press on the right half of a
-    // character puts the caret after it.
+    // character puts the caret after it -- after as it reads, so in a
+    // right-to-left run, on its left.
+    const std::vector<TextCluster> clusters = lineClusters(view, line);
     u32 best = static_cast<u32>(line.begin);
-    f32 bestDistance = std::fabs(point.x - left);
-    for (const auto& [text, display] : view.boundaries) {
-        (void)text;
-        if (display <= line.begin || display > line.end)
-            continue;
-        const std::string_view before = std::string_view(view.display).substr(line.begin, display - line.begin);
-        const f32 distance = std::fabs(point.x - (left + textWidth(before, view.font, view.size)));
-        if (distance < bestDistance) {
-            best = display;
-            bestDistance = distance;
+    f32 bestDistance = std::fabs(point.x - (left + caretX(clusters, 0)));
+    for (const TextCluster& cluster : clusters) {
+        for (const usize offset : {cluster.begin, cluster.end}) {
+            if (offset == 0)
+                continue;
+            const f32 distance = std::fabs(point.x - (left + caretX(clusters, offset)));
+            if (distance < bestDistance) {
+                best = static_cast<u32>(line.begin + offset);
+                bestDistance = distance;
+            }
         }
     }
     return best;

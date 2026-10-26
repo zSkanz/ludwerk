@@ -519,7 +519,7 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
     const std::string_view display = view.display;
     const auto xOf = [&](const TextLine& line, core::usize at) {
         const core::usize end = std::min<core::usize>(at, line.end);
-        return lineLeft(view, line) + textWidth(display.substr(line.begin, end - line.begin), view.font, view.size);
+        return lineLeft(view, line) + caretX(lineClusters(view, line), end - line.begin);
     };
     const auto flat = [&](Vec2 min, Vec2 max, core::Color3 color, f32 alpha) {
         DrawQuad quad;
@@ -539,15 +539,26 @@ void emitField(const scene::World& world, const Entry& entry, const scene::TextL
             const TextLine& line = view.lines[index];
             if (to <= line.begin || from > line.end)
                 continue;
-            f32 left = xOf(line, std::max<core::usize>(from, line.begin));
-            f32 right = xOf(line, std::min<core::usize>(to, line.end));
+            // The characters selected, which in text that runs both ways are
+            // not one span (ADR 0260).
+            const f32 origin = lineLeft(view, line);
+            std::vector<std::pair<f32, f32>> spans =
+                selectionSpans(lineClusters(view, line), std::max<core::usize>(from, line.begin) - line.begin,
+                               std::min<core::usize>(to, line.end) - line.begin);
             // A selected line break shows as a sliver past the line's end.
-            if (to > line.end)
-                right += view.size * 0.3f;
-            if (right <= left)
-                continue;
+            if (to > line.end) {
+                const f32 end = xOf(line, line.end) - origin;
+                if (spans.empty() || spans.back().second < end - 0.01f)
+                    spans.emplace_back(end, end);
+                spans.back().second += view.size * 0.3f;
+            }
             const f32 top = view.top + static_cast<f32>(index) * view.lineHeight;
-            flat(Vec2{left, top}, Vec2{right, top + view.lineHeight}, core::Color3{0.22f, 0.46f, 0.92f}, 0.45f);
+            for (const auto& [spanLeft, spanRight] : spans) {
+                if (spanRight <= spanLeft)
+                    continue;
+                flat(Vec2{origin + spanLeft, top}, Vec2{origin + spanRight, top + view.lineHeight},
+                     core::Color3{0.22f, 0.46f, 0.92f}, 0.45f);
+            }
         }
     }
 

@@ -8,6 +8,7 @@
 // the two sets of offsets side by side.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -67,5 +68,24 @@ struct FieldView
 // The display offset nearest a point on screen: the line it is on, then the
 // boundary nearest its x.
 [[nodiscard]] core::u32 displayOffsetAt(const FieldView& view, core::Vec2 point);
+
+// **A line's characters, and where a caret stands among them** (ADR 0260).
+// The characters of `line` as drawn, left to right, offsets in the line.
+[[nodiscard]] std::vector<TextCluster> lineClusters(const FieldView& view, const TextLine& line);
+// How far from the line's left a caret at `offset` (in the line) stands: at the
+// edge of the character that starts there where it begins to read -- its right
+// in a right-to-left run -- and at the line's end, after the last character
+// read.
+[[nodiscard]] f32 caretX(const std::vector<TextCluster>& clusters, core::usize offset) noexcept;
+// The x spans, from the line's left, that the characters in [`from`, `to`) of
+// the line cover: one for text that reads one way, and as many as the
+// directions it crosses for text that does not.
+[[nodiscard]] std::vector<std::pair<f32, f32>> selectionSpans(const std::vector<TextCluster>& clusters,
+                                                              core::usize from, core::usize to);
+// **The arrow keys in text that runs both ways**: the display offset of the
+// caret stop nearest `displayOffset` to its right (or left) on screen on its
+// line -- or nothing at the line's edge, and for a line that reads left to
+// right throughout, where screen order and text order are one.
+[[nodiscard]] std::optional<core::u32> visualStep(const FieldView& view, core::u32 displayOffset, bool right);
 
 } // namespace engine::ui

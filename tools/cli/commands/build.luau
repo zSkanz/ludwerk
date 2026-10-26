@@ -775,6 +775,7 @@ local function run(options: Options): number
         moduleExport.deploy(integrationPayloads, output)
         composeGame(projectlib.joined(output, "game"))
         game.pruneModules(projectlib.joined(output, "content"), projectlib.joined(output, "game"))
+        game.pruneWordLists(projectlib.joined(output, "content"), projectlib.joined(output, "game"))
         -- Beside the executable, where a player looks.
         sayMissingNotices(
             game.copyNotices(projectlib.installRoot(), content, projectlib.joined(output, "licenses"), engineContent)

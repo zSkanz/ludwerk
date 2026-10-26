@@ -58,6 +58,24 @@ local function listed(folder: string): { string }
 end
 
 test.suite("export", function(suite)
+    suite:case("a game carries the word lists of the scripts it writes in, and no others", function()
+        local folder = scratch("wordlists")
+        local content = `{folder}/content`
+        write(`{content}/text/thaidict.txt`, "thai words")
+        write(`{content}/text/laodict.txt`, "lao words")
+        -- A game whose catalog has Thai: the Thai list stays, the Lao goes.
+        write(`{folder}/game/i18n/th.json`, '{ "hello": "\u{0E2A}\u{0E27}\u{0E31}\u{0E2A}\u{0E14}\u{0E35}" }')
+        write(`{folder}/game/src/client/init.luau`, "print('hi')")
+        local removed = game.pruneWordLists(content, `{folder}/game`)
+        assert.eq(table.concat(removed, ","), "laodict.txt")
+        assert.that(fs.exists(`{content}/text/thaidict.txt`), "the Thai list was taken from a game with Thai")
+        -- And one with neither has neither.
+        fs.remove(`{folder}/game/i18n/th.json`)
+        removed = game.pruneWordLists(content, `{folder}/game`)
+        assert.eq(table.concat(removed, ","), "thaidict.txt")
+        fs.removeDirectory(folder, { recursive = true })
+    end)
+
     -- A package that had no brand file signed with one key and the
     -- repository's CLI with another, and an APK from one would not install
     -- over the other's. What a debug build is signed with, and where the

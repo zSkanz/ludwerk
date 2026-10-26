@@ -67,7 +67,9 @@
 #include "engine/platform/file.h"
 #include "engine/platform/platform.h"
 #include "engine/ui/glyph_outline.h"
+#include "engine/ui/text_edit.h"
 #include "engine/ui/ui.h"
+#include "word_break.h"
 
 // The one translation unit that defines them. Both are
 // implementation-in-header, so these includes ARE the definitions -- which is
@@ -80,6 +82,11 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_easy_font.h>
 #include <stb_truetype.h>
+
+// The shaper and the bidirectional algorithm (ADR 0260), for the text the
+// codepoint-at-a-time layout cannot draw.
+#include <SheenBidi/SheenBidi.h>
+#include <hb.h>
 
 namespace engine::ui {
 namespace {
@@ -348,6 +355,14 @@ struct Face
     // would key its glyphs separately from the default face it is drawing with,
     // and rasterise the same face twice.
     bool fallsBack = false;
+    // **The face as the shaper reads it** (ADR 0260), made the first time a
+    // text that needs shaping is drawn in it: over the same bytes, which it
+    // never copies, at one unit to the font unit.
+    struct ShaperRelease
+    {
+        void operator()(hb_font_t* font) const noexcept { hb_font_destroy(font); }
+    };
+    std::unique_ptr<hb_font_t, ShaperRelease> shaper;
 };
 
 // **A face and the faces it falls back on, in order** (ADR 0259): the
@@ -736,14 +751,16 @@ constexpr u32 AtlasSize = 1024;
 // below the top of the line in pixels at this size: the label's own face's
 // ascent, whichever face of its chain draws the glyph, so every glyph of a
 // line is placed from one top.
-[[nodiscard]] bool rasteriseGlyph(Face& face, f32 top, f32 pixelSize, u32 codepoint, GlyphEntry& entry,
-                                  GlyphStore& cache, GlyphStroke stroke = {})
+//
+// By the face's own glyph index: what a shaped run names (ADR 0260), and what
+// a codepoint is found as first (`rasteriseGlyph`).
+[[nodiscard]] bool rasteriseGlyphIndex(Face& face, f32 top, f32 pixelSize, int glyph, GlyphEntry& entry,
+                                       GlyphStore& cache, GlyphStroke stroke = {})
 {
     // A scope of its own: a glyph is rasterised once, the first time a size
     // of it is shown, and a report should say how many a slow frame made.
     ENG_PROFILE_SCOPE("ui.glyphs");
     const f32 scale = stbtt_ScaleForPixelHeight(&face.info, pixelSize);
-    const int glyph = stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint));
     if (glyph == 0) {
         return false;
     }
@@ -871,6 +888,13 @@ constexpr u32 AtlasSize = 1024;
         .v1 = static_cast<f32>(originY + height) / static_cast<f32>(AtlasSize),
     });
     return true;
+}
+
+[[nodiscard]] bool rasteriseGlyph(Face& face, f32 top, f32 pixelSize, u32 codepoint, GlyphEntry& entry,
+                                  GlyphStore& cache, GlyphStroke stroke = {})
+{
+    return rasteriseGlyphIndex(face, top, pixelSize, stbtt_FindGlyphIndex(&face.info, static_cast<int>(codepoint)),
+                               entry, cache, stroke);
 }
 
 // Appends the quads for one printable ASCII codepoint, in face units.
@@ -1127,8 +1151,14 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
 // the cache, so a measurement and a draw can never disagree about how wide a
 // character is. `faces`, given, gains a bit for each face of the chain the run
 // was drawn with.
+[[nodiscard]] bool needsShaping(std::string_view text) noexcept;
+[[nodiscard]] f32 shapedWidth(std::string_view run, FaceChain& chain, f32 pixelSize, u32* faces);
+
 [[nodiscard]] f32 widthOf(std::string_view run, FaceChain& chain, f32 pixelSize, u32* faces = nullptr)
 {
+    // Text that needs shaping is as wide as its shaped glyphs (ADR 0260).
+    if (chain.primary().ready && needsShaping(run))
+        return shapedWidth(run, chain, pixelSize, faces);
     f32 total = 0.0f;
     usize index = 0;
     while (index < run.size()) {
@@ -1155,6 +1185,406 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
         index += decoded.length;
     }
     return faces;
+}
+
+// --- Text that joins, stacks and runs right to left (ADR 0260) --------------
+//
+// **Laid out a codepoint at a time unless that would draw it wrong.** Latin,
+// Greek, Cyrillic, Chinese, Japanese and Korean are one glyph a character at
+// its own advance, and every label of them is laid out as it always was, to
+// the bit. A text with a character of a script whose letters change shape by
+// their neighbours, stack marks or run right to left -- or a mark combined
+// with a letter, or a mark steering direction -- is laid out here instead:
+// split into paragraphs and each resolved by the bidirectional algorithm
+// (SheenBidi), into runs of one direction, one script and one face of the
+// chain, each shaped (HarfBuzz) into the face's own glyphs at its own
+// positions; broken into lines between clusters, never inside one, by the
+// rules above and, for Thai and Lao, a word list; and each line put in the
+// order it is read on screen. The glyphs are drawn by their index in the
+// face, from the same store and atlas.
+
+// What the codepoint-at-a-time layout cannot draw: the scripts whose letters
+// join, reorder or stack, the right-to-left ones, the combining marks, and the
+// joiners and marks that steer them.
+[[nodiscard]] bool complexCodepoint(u32 c) noexcept
+{
+    return (c >= 0x0300 && c <= 0x036F) || (c >= 0x0483 && c <= 0x0489) || (c >= 0x0590 && c <= 0x08FF) ||
+           (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0FFF) || (c >= 0x1000 && c <= 0x109F) ||
+           (c >= 0x1700 && c <= 0x18AF) || (c >= 0x1900 && c <= 0x1C7F) || (c >= 0x1CD0 && c <= 0x1CFF) ||
+           (c >= 0x1DC0 && c <= 0x1DFF) || (c >= 0x200C && c <= 0x200F) || (c >= 0x202A && c <= 0x202E) ||
+           (c >= 0x2066 && c <= 0x2069) || (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xA800 && c <= 0xA8FF) ||
+           (c >= 0xA900 && c <= 0xA9FF) || (c >= 0xAA00 && c <= 0xAAFF) || (c >= 0xABC0 && c <= 0xABFF) ||
+           (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE20 && c <= 0xFE2F) || (c >= 0xFE70 && c <= 0xFEFE) ||
+           (c >= 0x10800 && c <= 0x10FFF) || (c >= 0x11000 && c <= 0x11FFF) || (c >= 0x1E800 && c <= 0x1EFFF);
+}
+
+[[nodiscard]] bool needsShaping(std::string_view text) noexcept
+{
+    for (usize at = 0; at < text.size();) {
+        // Below U+0300 is ASCII, Latin-1 and the extended Latin letters, and a
+        // continuation byte starts nothing.
+        const auto lead = static_cast<unsigned char>(text[at]);
+        if (lead < 0xCC) {
+            ++at;
+            continue;
+        }
+        const Decoded decoded = decodeUtf8(text, at);
+        if (complexCodepoint(decoded.codepoint))
+            return true;
+        at += decoded.length;
+    }
+    return false;
+}
+
+// The face as HarfBuzz reads it, made on first use. Null for the built-in
+// vector face, which has nothing to shape with -- and a chain of it is never
+// shaped.
+[[nodiscard]] hb_font_t* shaperOf(Face& face)
+{
+    if (!face.ready)
+        return nullptr;
+    if (face.shaper == nullptr) {
+        hb_blob_t* blob =
+            hb_blob_create(reinterpret_cast<const char*>(face.data.data()), static_cast<unsigned>(face.data.size()),
+                           HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+        // The collection's first face, as `initFace` takes.
+        hb_face_t* read = hb_face_create(blob, 0);
+        hb_blob_destroy(blob);
+        hb_font_t* font = hb_font_create(read);
+        const auto units = static_cast<int>(hb_face_get_upem(read));
+        hb_face_destroy(read);
+        hb_font_set_scale(font, units, units);
+        face.shaper.reset(font);
+    }
+    return face.shaper.get();
+}
+
+// The key a glyph of a shaped run is stored under: the chain and which of its
+// faces, since a glyph index means nothing outside its face, and the index
+// above every Unicode scalar, so it can never collide with a codepoint's.
+constexpr u32 GlyphIndexBase = 0x110000u;
+
+[[nodiscard]] u32 slotHash(const FaceChain& chain, usize slot) noexcept
+{
+    return (chain.hash ^ (static_cast<u32>(slot) + 1u) * 0x9E3779B1u) * 16777619u;
+}
+
+// `glyphIndex` for a glyph a shaped run names by its index in the face of
+// slot `slot`: filled from that face, placed from the label's own face's top.
+[[nodiscard]] usize shapedGlyphIndex(FaceChain& chain, usize slot, f32 pixelSize, u32 glyph, GlyphStroke stroke = {})
+{
+    GlyphStore& cache = store();
+    Face& face = chain.primary();
+    const f32 madeAt = rasterSizeFor(pixelSize);
+    GlyphStroke made = stroke;
+    if (stroke.quarters > 0) {
+        const f32 grown = static_cast<f32>(stroke.quarters) * madeAt / std::fmax(pixelSize, 1.0f);
+        made.quarters = static_cast<u32>(std::fmin(std::fmax(grown + 0.5f, 1.0f), static_cast<f32>(MaxStrokeQuarters)));
+    }
+    const u64 key = glyphKey(slotHash(chain, slot), madeAt, GlyphIndexBase + (glyph & 0xFFFFu), made);
+    const auto position = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
+                                           [](const GlyphEntry& entry, u64 value) { return entry.key < value; });
+    if (position != cache.entries.end() && position->key == key) {
+        ++cache.stats.hits;
+        if (position->paged)
+            cache.pages[position->page].shownAt = cache.frame;
+        return static_cast<usize>(std::distance(cache.entries.begin(), position));
+    }
+    if (cache.entries.size() >= MaxGlyphEntries) {
+        clearStore(cache);
+        return shapedGlyphIndex(chain, slot, pixelSize, glyph, stroke);
+    }
+
+    GlyphEntry entry;
+    entry.key = key;
+    Face& drawing = *chain.faces[std::min(slot, chain.faces.size() - 1)];
+    const f32 top = static_cast<f32>(face.ascent) * stbtt_ScaleForPixelHeight(&face.info, madeAt);
+    if (rasteriseGlyphIndex(drawing, top, madeAt, static_cast<int>(glyph), entry, cache, made)) {
+        entry.face = static_cast<core::u8>(slot);
+    }
+    else if (cache.pages.size() >= kGlyphPages && !cache.entries.empty()) {
+        clearStore(cache);
+        return shapedGlyphIndex(chain, slot, pixelSize, glyph, stroke);
+    }
+    else {
+        fillReplacementGlyph(entry, cache.quads);
+        entry.textured = false;
+        if (stroke.quarters > 0)
+            growQuads(entry, cache.quads, static_cast<f32>(stroke.quarters) * 0.25f / scaleFor(face, pixelSize));
+    }
+    const auto place = std::lower_bound(cache.entries.begin(), cache.entries.end(), key,
+                                        [](const GlyphEntry& held, u64 value) { return held.key < value; });
+    const auto inserted = cache.entries.insert(place, entry);
+    ++cache.stats.fills;
+    cache.stats.entries = cache.entries.size();
+    return static_cast<usize>(std::distance(cache.entries.begin(), inserted));
+}
+
+// One glyph of a shaped line, in the order it is drawn: its index in the face
+// of the chain that drew it, where its pen is from the line's left, and how
+// far the face's own positioning moves it -- in face units at the size the
+// glyph is made at, as every advance in this file is. A glyph no face of the
+// chain has keeps the character it stands for, and is drawn as the box.
+struct PlacedGlyph
+{
+    u32 glyph = 0;
+    u32 codepoint = 0;
+    f32 pen = 0.0f;
+    f32 dx = 0.0f;
+    f32 dy = 0.0f;
+    core::u8 slot = 0;
+    bool missing = false;
+};
+
+// A character of a shaped line as a caret sees it: the bytes it covers, where
+// it is drawn on the line, and which way it reads.
+struct PlacedCluster
+{
+    usize begin = 0;
+    usize end = 0;
+    f32 left = 0.0f;
+    f32 right = 0.0f;
+    bool rightToLeft = false;
+};
+
+struct ShapedLine
+{
+    // In the order they are drawn, left to right.
+    std::vector<PlacedGlyph> glyphs;
+    // Left to right too, a character each, with offsets into the paragraph.
+    std::vector<PlacedCluster> clusters;
+    f32 width = 0.0f;
+    u32 faces = 1u;
+};
+
+// **A paragraph as the bidirectional algorithm resolved it** (UAX #9), and
+// the script of each of its bytes: what its lines are ordered and its runs
+// split by. Its direction is its first strong character's, and left to right
+// when it has none.
+class Paragraph
+{
+public:
+    explicit Paragraph(std::string_view text) : m_text(text)
+    {
+        SBCodepointSequence sequence{SBStringEncodingUTF8, const_cast<char*>(text.data()), text.size()};
+        m_algorithm = SBAlgorithmCreate(&sequence);
+        m_paragraph = SBAlgorithmCreateParagraph(m_algorithm, 0, text.size(), SBLevelDefaultLTR);
+        m_scripts.assign(text.size(), SBScriptZYYY);
+        SBScriptLocatorRef locator = SBScriptLocatorCreate();
+        SBScriptLocatorLoadCodepoints(locator, &sequence);
+        while (SBScriptLocatorMoveNext(locator) != 0) {
+            const SBScriptAgent* agent = SBScriptLocatorGetAgent(locator);
+            for (SBUInteger at = agent->offset; at < agent->offset + agent->length && at < text.size(); ++at)
+                m_scripts[at] = agent->script;
+        }
+        SBScriptLocatorRelease(locator);
+    }
+    ~Paragraph()
+    {
+        if (m_paragraph != nullptr)
+            SBParagraphRelease(m_paragraph);
+        if (m_algorithm != nullptr)
+            SBAlgorithmRelease(m_algorithm);
+    }
+    Paragraph(const Paragraph&) = delete;
+    Paragraph& operator=(const Paragraph&) = delete;
+
+    [[nodiscard]] std::string_view text() const noexcept { return m_text; }
+    [[nodiscard]] SBParagraphRef resolved() const noexcept { return m_paragraph; }
+    [[nodiscard]] SBScript scriptAt(usize at) const noexcept { return m_scripts[at]; }
+
+private:
+    std::string_view m_text;
+    SBAlgorithmRef m_algorithm = nullptr;
+    SBParagraphRef m_paragraph = nullptr;
+    std::vector<SBScript> m_scripts;
+};
+
+// The face of the chain a character is drawn in: the first that has it.
+// `chain.faces.size()` when none has.
+[[nodiscard]] usize slotFor(const FaceChain& chain, u32 codepoint) noexcept
+{
+    for (usize slot = 0; slot < chain.faces.size(); ++slot) {
+        if (stbtt_FindGlyphIndex(&chain.faces[slot]->info, static_cast<int>(codepoint)) != 0)
+            return slot;
+    }
+    return chain.faces.size();
+}
+
+// The scripts whose letters join: tracked text of them would pull the joins
+// apart, so `LetterSpacing` leaves them as they are.
+[[nodiscard]] bool joiningScript(SBScript script) noexcept
+{
+    return script == SBScriptARAB || script == SBScriptSYRC || script == SBScriptNKOO || script == SBScriptMONG ||
+           script == SBScriptMAND || script == SBScriptADLM || script == SBScriptROHG;
+}
+
+// The buffer every run is shaped in: one, emptied for each, since a layout
+// is one thread's work at a time.
+[[nodiscard]] hb_buffer_t* shapingBuffer()
+{
+    static hb_buffer_t* buffer = hb_buffer_create();
+    return buffer;
+}
+
+// **One line of a paragraph, shaped and in the order it is read on screen**:
+// the bytes [`begin`, `end`) of it, split into the runs the algorithm orders,
+// each split again where the script or the face changes, and each piece shaped
+// with the whole paragraph around it -- so a letter at a line's end joins as
+// it does mid-line.
+[[nodiscard]] ShapedLine shapeLine(const Paragraph& paragraph, usize begin, usize end, FaceChain& chain, f32 pixelSize)
+{
+    ShapedLine out;
+    if (end <= begin)
+        return out;
+    const std::string_view text = paragraph.text();
+    const f32 madeAt = rasterSizeFor(pixelSize);
+    hb_buffer_t* buffer = shapingBuffer();
+
+    SBLineRef line = SBParagraphCreateLine(paragraph.resolved(), begin, end - begin);
+    const SBUInteger runCount = line != nullptr ? SBLineGetRunCount(line) : 0;
+    const SBRun* runs = line != nullptr ? SBLineGetRunsPtr(line) : nullptr;
+
+    // Each byte that starts a cluster, its extent on the line, and its
+    // direction: what the caret's characters are cut from.
+    struct Extent
+    {
+        usize start = 0;
+        f32 left = 0.0f;
+        f32 right = 0.0f;
+        bool rightToLeft = false;
+    };
+    std::vector<Extent> extents;
+
+    f32 pen = 0.0f;
+    for (SBUInteger runIndex = 0; runIndex < runCount; ++runIndex) {
+        const SBRun& run = runs[runIndex];
+        const bool rightToLeft = (run.level & 1u) != 0;
+        // The run cut where the script or the face changes, in logical order.
+        // A mark, a joiner and a character no face has go with what is before
+        // them, so a cluster is shaped in one face.
+        struct Item
+        {
+            usize begin = 0;
+            usize end = 0;
+            usize slot = 0;
+            SBScript script = SBScriptZYYY;
+        };
+        std::vector<Item> items;
+        for (usize at = run.offset; at < run.offset + run.length;) {
+            const Decoded decoded = decodeUtf8(text, at);
+            const SBScript script = paragraph.scriptAt(at);
+            usize slot = slotFor(chain, decoded.codepoint);
+            const bool follows =
+                !items.empty() &&
+                (slot == chain.faces.size() || zeroWidth(decoded.codepoint) ||
+                 SBGeneralCategoryIsMark(SBCodepointGetGeneralCategory(static_cast<SBCodepoint>(decoded.codepoint))));
+            if (follows)
+                slot = items.back().slot;
+            else if (slot == chain.faces.size())
+                slot = 0;
+            if (items.empty() || items.back().slot != slot || items.back().script != script)
+                items.push_back(Item{at, at, slot, script});
+            items.back().end = at + decoded.length;
+            at += decoded.length;
+        }
+        if (rightToLeft)
+            std::reverse(items.begin(), items.end());
+
+        for (const Item& item : items) {
+            Face& face = *chain.faces[item.slot];
+            hb_font_t* font = shaperOf(face);
+            const f32 units = stbtt_ScaleForPixelHeight(&face.info, madeAt);
+            hb_buffer_clear_contents(buffer);
+            hb_buffer_add_utf8(buffer, text.data(), static_cast<int>(text.size()), static_cast<unsigned>(item.begin),
+                               static_cast<int>(item.end - item.begin));
+            hb_buffer_set_direction(buffer, rightToLeft ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+            hb_buffer_set_script(buffer, hb_script_from_iso15924_tag(SBScriptGetUnicodeTag(item.script)));
+            hb_buffer_guess_segment_properties(buffer);
+            hb_shape(font, buffer, nullptr, 0);
+            unsigned count = 0;
+            const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &count);
+            const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, nullptr);
+            const bool tracked = chain.tracking != 0.0f && !joiningScript(item.script);
+            for (unsigned at = 0; at < count; ++at) {
+                PlacedGlyph glyph;
+                glyph.glyph = infos[at].codepoint;
+                glyph.slot = static_cast<core::u8>(item.slot);
+                glyph.pen = pen;
+                glyph.dx = static_cast<f32>(positions[at].x_offset) * units;
+                glyph.dy = static_cast<f32>(positions[at].y_offset) * units;
+                const usize cluster = infos[at].cluster;
+                f32 advance = static_cast<f32>(positions[at].x_advance) * units;
+                const u32 codepoint = decodeUtf8(text, cluster).codepoint;
+                if (glyph.glyph == 0 && !zeroWidth(codepoint)) {
+                    // No face of the chain has it: the box, at the box's width.
+                    glyph.missing = true;
+                    glyph.codepoint = codepoint;
+                    advance = store().entries[glyphIndex(chain, pixelSize, codepoint)].advance;
+                }
+                // Tracked after a cluster's last glyph, in the order it reads.
+                const bool lastOfCluster = at + 1 == count || infos[at + 1].cluster != infos[at].cluster;
+                if (tracked && lastOfCluster)
+                    advance += trackingOf(chain, pixelSize, codepoint);
+                out.faces |= 1u << item.slot;
+                out.glyphs.push_back(glyph);
+                const auto known = std::find_if(extents.begin(), extents.end(),
+                                                [&](const Extent& extent) { return extent.start == cluster; });
+                if (known == extents.end())
+                    extents.push_back(Extent{cluster, pen, pen + advance, rightToLeft});
+                else {
+                    known->left = std::fmin(known->left, pen);
+                    known->right = std::fmax(known->right, pen + advance);
+                }
+                pen += advance;
+            }
+        }
+    }
+    if (line != nullptr)
+        SBLineRelease(line);
+    out.width = pen;
+
+    // **The caret's characters**: each cluster from its start to the next
+    // one's, and one the face joined into a single glyph -- a ligature --
+    // shared out among the characters in it, in the order it reads.
+    std::sort(extents.begin(), extents.end(), [](const Extent& a, const Extent& b) { return a.start < b.start; });
+    for (usize index = 0; index < extents.size(); ++index) {
+        const Extent& extent = extents[index];
+        const usize stop = index + 1 < extents.size() ? extents[index + 1].start : end;
+        std::vector<std::pair<usize, usize>> characters;
+        for (usize at = extent.start; at < stop;) {
+            const usize next = std::min<usize>(nextCharacter(text, static_cast<u32>(at)), stop);
+            characters.emplace_back(at, next);
+            at = next;
+        }
+        const f32 share = (extent.right - extent.left) / static_cast<f32>(std::max<usize>(characters.size(), 1));
+        for (usize part = 0; part < characters.size(); ++part) {
+            const f32 from = extent.rightToLeft ? extent.right - share * static_cast<f32>(part + 1)
+                                                : extent.left + share * static_cast<f32>(part);
+            out.clusters.push_back(
+                PlacedCluster{characters[part].first, characters[part].second, from, from + share, extent.rightToLeft});
+        }
+    }
+    std::sort(out.clusters.begin(), out.clusters.end(),
+              [](const PlacedCluster& a, const PlacedCluster& b) { return a.left < b.left; });
+    return out;
+}
+
+f32 shapedWidth(std::string_view run, FaceChain& chain, f32 pixelSize, u32* faces)
+{
+    f32 widest = 0.0f;
+    for (usize begin = 0; begin <= run.size();) {
+        usize end = run.find('\n', begin);
+        if (end == std::string_view::npos)
+            end = run.size();
+        const Paragraph paragraph(run.substr(begin, end - begin));
+        const ShapedLine line = shapeLine(paragraph, 0, end - begin, chain, pixelSize);
+        widest = std::fmax(widest, line.width);
+        if (faces != nullptr)
+            *faces |= line.faces;
+        begin = end + 1;
+    }
+    return widest;
 }
 
 // --- Where a line may end ----------------------------------------------------
@@ -1229,13 +1659,121 @@ void growQuads(GlyphEntry& entry, std::vector<GlyphQuad>& quads, f32 amount)
 
 // One measured line: how wide it is, which bytes it covers, and a bit for each
 // face of the chain its characters were drawn with.
+// A line of text that needs shaping carries its glyphs, already in the order
+// they are drawn.
 struct Line
 {
     usize begin = 0;
     usize end = 0;
     f32 width = 0.0f;
     u32 faces = 1u;
+    std::shared_ptr<const ShapedLine> shaped;
 };
+
+// **A paragraph that needs shaping, broken into lines** at `maxWidth` by the
+// rules `breakLines` follows -- a space, a place between two ideographs -- and
+// between two words of Thai or Lao, but only ever between two clusters: a
+// letter and its marks, or the letters a face joined into one glyph, are never
+// parted. Measured whole and in logical order; each line then shaped again by
+// itself, in display order.
+void breakShapedParagraph(std::string_view text, usize offset, FaceChain& chain, f32 pixelSize, f32 scale, f32 maxWidth,
+                          std::vector<Line>& out)
+{
+    const Paragraph paragraph(text);
+    const auto lineOf = [&](usize begin, usize end) {
+        auto shaped = std::make_shared<ShapedLine>(shapeLine(paragraph, begin, end, chain, pixelSize));
+        Line line;
+        line.begin = offset + begin;
+        line.end = offset + end;
+        line.width = shaped->width * scale;
+        line.faces = shaped->faces | 1u;
+        line.shaped = std::move(shaped);
+        return line;
+    };
+    if (maxWidth <= 0.0f || text.empty()) {
+        out.push_back(lineOf(0, text.size()));
+        return;
+    }
+
+    // Each cluster's advance at the byte it starts at, from the paragraph
+    // laid out as one line.
+    std::vector<f32> advanceAt(text.size() + 1, 0.0f);
+    std::vector<bool> clusterAt(text.size() + 1, false);
+    {
+        const ShapedLine whole = shapeLine(paragraph, 0, text.size(), chain, pixelSize);
+        for (const PlacedCluster& cluster : whole.clusters) {
+            advanceAt[cluster.begin] += cluster.right - cluster.left;
+            clusterAt[cluster.begin] = true;
+        }
+    }
+    std::vector<bool> wordAt(text.size() + 1, false);
+    {
+        std::vector<usize> words;
+        detail::dictionaryBreaks(text, words);
+        for (const usize at : words)
+            wordAt[at] = true;
+    }
+    const auto breakable = [&](usize at, u32 before, u32 after) {
+        return clusterAt[at] && (breaksBetween(before, after) || (wordAt[at] && before != ' ' && after != ' '));
+    };
+
+    usize lineBegin = 0;
+    usize breakEnd = std::string_view::npos;
+    usize breakNext = std::string_view::npos;
+    u32 previous = 0;
+    f32 running = 0.0f;
+    const auto flush = [&](usize end, usize nextBegin) {
+        out.push_back(lineOf(lineBegin, end));
+        lineBegin = nextBegin;
+        breakEnd = std::string_view::npos;
+        breakNext = std::string_view::npos;
+        previous = 0;
+        running = 0.0f;
+    };
+    usize index = 0;
+    while (index < text.size()) {
+        const Decoded decoded = decodeUtf8(text, index);
+        const u32 codepoint = decoded.codepoint;
+        if (codepoint == ' ') {
+            breakEnd = index;
+            breakNext = index + 1;
+        }
+        const f32 advance = advanceAt[index];
+        if (clusterAt[index] && index > lineBegin && (running + advance) * scale > wrapRoomOf(maxWidth)) {
+            if (breakable(index, previous, codepoint)) {
+                flush(index, index);
+                continue;
+            }
+            if (breakEnd != std::string_view::npos && breakEnd > lineBegin) {
+                flush(breakEnd, breakNext);
+                index = lineBegin;
+                continue;
+            }
+            flush(index, index);
+            continue;
+        }
+        if (index > lineBegin && breakable(index, previous, codepoint)) {
+            breakEnd = index;
+            breakNext = index;
+        }
+        running += advance;
+        previous = codepoint;
+        index += decoded.length;
+    }
+    flush(text.size(), text.size());
+}
+
+void breakShapedLines(std::string_view text, FaceChain& chain, f32 pixelSize, f32 scale, f32 maxWidth,
+                      std::vector<Line>& out)
+{
+    for (usize begin = 0; begin <= text.size();) {
+        usize end = text.find('\n', begin);
+        if (end == std::string_view::npos)
+            end = text.size();
+        breakShapedParagraph(text.substr(begin, end - begin), begin, chain, pixelSize, scale, maxWidth, out);
+        begin = end + 1;
+    }
+}
 
 // Breaks `text` into lines at `maxWidth`: at the last place the rules above
 // allow, and mid-word only where a line has none -- a word wider than the box.
@@ -1244,8 +1782,12 @@ struct Line
 void breakLines(std::string_view text, FaceChain& chain, f32 pixelSize, f32 scale, f32 maxWidth, std::vector<Line>& out)
 {
     out.clear();
+    if (chain.primary().ready && needsShaping(text)) {
+        breakShapedLines(text, chain, pixelSize, scale, maxWidth, out);
+        return;
+    }
     if (text.empty()) {
-        out.push_back(Line{0, 0, 0.0f});
+        out.push_back(Line{});
         return;
     }
 
@@ -1862,6 +2404,39 @@ f32 textAscent(std::string_view font, f32 pixelSize, std::string_view text)
     return lineMetricsOf(chain, pixelSize, facesOf(text, chain, pixelSize)).ascent;
 }
 
+std::vector<TextCluster> textClusters(std::string_view line, std::string_view font, f32 pixelSize)
+{
+    FaceChain& chain = chainFor(font);
+    const f32 scale = scaleFor(chain.primary(), pixelSize);
+    std::vector<TextCluster> out;
+    if (chain.primary().ready && needsShaping(line)) {
+        const usize end = std::min(line.find('\n'), line.size());
+        const Paragraph paragraph(line.substr(0, end));
+        const ShapedLine shaped = shapeLine(paragraph, 0, end, chain, pixelSize);
+        out.reserve(shaped.clusters.size());
+        for (const PlacedCluster& cluster : shaped.clusters)
+            out.push_back(TextCluster{cluster.begin, cluster.end, cluster.left * scale, cluster.right * scale,
+                                      cluster.rightToLeft});
+        return out;
+    }
+    // A character at a time, left to right, its edges the sums `textWidth`
+    // takes of what is before it -- the same advances in the same order.
+    f32 running = 0.0f;
+    for (usize at = 0; at < line.size() && line[at] != '\n';) {
+        const usize next = std::min<usize>(nextCharacter(line, static_cast<u32>(at)), line.size());
+        const f32 left = running;
+        for (usize index = at; index < next;) {
+            const Decoded decoded = decodeUtf8(line, index);
+            running += store().entries[glyphIndex(chain, pixelSize, decoded.codepoint)].advance +
+                       trackingOf(chain, pixelSize, decoded.codepoint);
+            index += decoded.length;
+        }
+        out.push_back(TextCluster{at, next, left * scale, running * scale, false});
+        at = next;
+    }
+    return out;
+}
+
 std::string ellipsizedText(std::string_view text, std::string_view font, f32 pixelSize, f32 maxWidth, Vec2 box)
 {
     FaceChain& chain = chainFor(font);
@@ -2017,6 +2592,37 @@ void buildTextGeometry(std::string_view text, std::string_view font, f32 pixelSi
                 x += (boxWidth - line.width) * 0.5f;
             else if (horizontalAlignment == 2)
                 x += boxWidth - line.width;
+
+            if (line.shaped != nullptr) {
+                // Shaped (ADR 0260): each glyph where the shaper put it, by
+                // its index in the face that drew it.
+                for (const PlacedGlyph& placed : line.shaped->glyphs) {
+                    const GlyphStroke wanted = outline ? key : GlyphStroke{};
+                    const usize slot = placed.missing
+                                           ? glyphIndex(chain, pixelSize, placed.codepoint, wanted)
+                                           : shapedGlyphIndex(chain, placed.slot, pixelSize, placed.glyph, wanted);
+                    const GlyphEntry entry = store().entries[slot];
+                    for (u32 quad = 0; quad < entry.quadCount; ++quad) {
+                        const GlyphQuad& shape = store().quads[entry.firstQuad + quad];
+                        DrawQuad glyph;
+                        glyph.min = Vec2{x + (placed.pen + placed.dx + shape.minX) * scale,
+                                         y + lift + (shape.minY - placed.dy) * scale};
+                        glyph.max = Vec2{x + (placed.pen + placed.dx + shape.maxX) * scale,
+                                         y + lift + (shape.maxY - placed.dy) * scale};
+                        glyph.color = color;
+                        glyph.alpha = alpha;
+                        glyph.texture = entry.textured ? 1u + entry.page : 0u;
+                        glyph.uvMin = Vec2{shape.u0, shape.v0};
+                        glyph.uvMax = Vec2{shape.u1, shape.v1};
+                        glyph.scissor = scissor;
+                        if (outline)
+                            paintOutline(glyph, stroke);
+                        out.push_back(glyph);
+                    }
+                }
+                y += lineHeight;
+                continue;
+            }
 
             f32 pen = 0.0f;
             usize index = line.begin;

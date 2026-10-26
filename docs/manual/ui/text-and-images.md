@@ -82,6 +82,34 @@ the direction marks draw nothing, whichever font is asked.
 Japanese, Simplified Chinese and Traditional Chinese draw some of the same
 characters differently, so list the font made for your game's language.
 
+### Scripts that join, stack and run right to left
+
+Arabic, Persian, Hebrew, the Indic scripts (Devanagari, Bengali, Tamil and the
+rest), Thai, Lao, Khmer and Burmese are drawn as their fonts draw them. Letters
+take the form their neighbors ask for, vowel signs go where the script puts
+them, marks stack, and a line of Arabic or Hebrew runs from the right. A
+sentence that mixes directions, such as an Arabic sentence with a number or an
+English name in it, is put in the order it is read, by the Unicode
+bidirectional algorithm. A letter written with a combining accent is drawn as
+the font's accented letter.
+
+What a game needs is a font that has the script, named the way any other
+script's is: as the label's `FallbackFont`, or in `[ui] font_fallbacks`.
+
+```toml
+[ui]
+font_fallbacks = [
+    "asset://fonts/NotoSansArabic-Regular.ttf",
+    "asset://fonts/NotoSansThai-Regular.ttf",
+]
+```
+
+Text of Latin, Greek, Cyrillic, Chinese, Japanese and Korean is laid out a
+character at a time, exactly as before: only text with a character of the
+scripts above is shaped, so the labels of a game that has none cost nothing
+more. `LetterSpacing` is not added inside Arabic or the other scripts whose
+letters join. `TextXAlignment.Left` is the left edge in either direction.
+
 ### Letter spacing
 
 `LetterSpacing` adds room after each character as a fraction of the text's
@@ -111,6 +139,11 @@ the same physical size on two displays.
 `TextWrapped` breaks lines at the box's width. It breaks at spaces, and
 **mid-word only for a word wider than the box** — a word cut in half at a random
 letter is worse than one that overhangs.
+
+A letter and its marks, and the letters a font joins into one, are never split
+between two lines. Thai and Lao, which put no spaces between words, break
+between two words, found in ICU's word lists. An exported game carries the
+lists only if its own text has a letter of either script.
 
 Chinese, Japanese and Korean break between characters, by the usual rules for
 those languages. No line begins with a closing bracket, a comma, a full stop
@@ -264,9 +297,10 @@ font files, and a `TextInput` always shows its text plain.
 
 ## What is not here
 
-Complex scripts are not shaped: codepoints are laid out left to right, so
-Arabic, Devanagari and Thai do not join, and Thai does not break between its
-words. The same classes draw in the world
+Rich text is not shaped yet: a `RichText` label lays its text out a character
+at a time, so Arabic in one does not join, and a line of it does not run from
+the right. Khmer and Burmese break only where they have spaces. The same
+classes draw in the world
 under a `SurfaceGui` or a `BillboardGui`: see [UI in the world](manual:ui/world-space).
 
 ## Where to look next

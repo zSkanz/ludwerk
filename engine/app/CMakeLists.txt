@@ -316,6 +316,11 @@ engine_notice_file(cousine "imgui's copy" OFL-1.1 "https://fonts.google.com/spec
     "${CMAKE_SOURCE_DIR}/third_party/licenses/cousine.txt")
 engine_notice_carries(fonts/Inter.ttf inter)
 engine_notice_carries(fonts/Mono.ttf cousine)
+# The Thai and Lao word lists (ADR 0260), ICU's, which a line of those
+# scripts is broken by.
+engine_notice_uses(icu_dictionaries)
+engine_notice_carries(text/thaidict.txt icu_dictionaries)
+engine_notice_carries(text/laodict.txt icu_dictionaries)
 # A deferred call reads its variables when it runs, in the top directory;
 # the folder is written into the call now, while this is this directory.
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL engine_write_notices engine_host [[${CMAKE_CURRENT_BINARY_DIR}/content/licenses]])")
@@ -395,6 +400,14 @@ add_custom_command(TARGET engine_host POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/third_party/imgui/misc/fonts/Cousine-Regular.ttf"
         "$<TARGET_FILE_DIR:engine_host>/content/fonts/Mono.ttf"
+    # The words of Thai and Lao (ADR 0260), as ICU lists them: read the first
+    # time a line of either script is broken, and left out of a game that has
+    # no text in them (`tools/cli/export/game.luau`).
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:engine_host>/content/text"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/icu_dictionaries/icu4c/source/data/brkitr/dictionaries/thaidict.txt"
+        "${CMAKE_SOURCE_DIR}/third_party/icu_dictionaries/icu4c/source/data/brkitr/dictionaries/laodict.txt"
+        "$<TARGET_FILE_DIR:engine_host>/content/text"
     # The editor's icon themes. A plain recursive copy and deliberately NOT
     # through `assetc`: that path sends every image to basisu for KTX2/UASTC
     # with generated mips, which is right for a world texture and wrong for a

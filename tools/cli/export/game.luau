@@ -641,6 +641,48 @@ end
 --- as laid out in the package and `gameDir` the game composed beside it. The
 --- host gives a module left out an error that says so, should a script reach
 --- it some way no file names. Returns the modules left out, in order.
+--- **The word lists of the scripts a game writes in, and no others** (ADR
+--- 0260): Thai's and Lao's are a megabyte between them, read only to break a
+--- line of those scripts, so a game none of whose own text -- its scripts, its
+--- catalogs, its scenes -- has a letter of either carries neither. A player
+--- typing Thai into such a game's chat still sees it, broken where it has
+--- spaces.
+local WordLists = {
+    { file = "thaidict.txt", letters = "\xE0[\xB8\xB9]" },
+    { file = "laodict.txt", letters = "\xE0[\xBA\xBB]" },
+}
+
+local function pruneWordLists(content: string, gameDir: string): { string }
+    local wanted: { [string]: boolean } = {}
+    local function walk(folder: string)
+        for _, entry in fs.listDirectory(folder) do
+            local at = projectlib.joined(folder, entry.name)
+            if entry.type == "dir" then
+                walk(at)
+            elseif entry.type == "file" and readsAsSource(entry.name) then
+                local text = fs.readFileToString(at)
+                for _, list in WordLists do
+                    if not wanted[list.file] and string.find(text, list.letters) ~= nil then
+                        wanted[list.file] = true
+                    end
+                end
+            end
+        end
+    end
+    if fs.exists(gameDir) then
+        walk(gameDir)
+    end
+    local removed: { string } = {}
+    for _, list in WordLists do
+        local at = projectlib.joined(content, "text", list.file)
+        if not wanted[list.file] and fs.exists(at) then
+            fs.remove(at)
+            table.insert(removed, list.file)
+        end
+    end
+    return removed
+end
+
 local function pruneModules(content: string, gameDir: string): { string }
     local modules = projectlib.joined(content, "runtime", "engine")
     if not fs.exists(modules) or not fs.exists(gameDir) then
@@ -717,6 +759,7 @@ return {
     notForPlayers = notForPlayers,
     pruneEngine = pruneEngine,
     pruneModules = pruneModules,
+    pruneWordLists = pruneWordLists,
     requiredModules = requiredModules,
     copyNotices = copyNotices,
     NoticeFiles = NoticeFiles,

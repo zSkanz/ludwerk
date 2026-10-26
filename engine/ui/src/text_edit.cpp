@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <utility>
 
+// The Unicode character data a character's marks are found by (ADR 0260).
+#include <SheenBidi/SBCodepoint.h>
+#include <SheenBidi/SBGeneralCategory.h>
+
 namespace engine::ui {
 
 namespace {
@@ -69,6 +73,12 @@ struct Decoded
 // player types.
 [[nodiscard]] bool extends(char32_t c) noexcept
 {
+    // **Every mark, by the Unicode character data** (ADR 0260): the vowel
+    // signs of the Indic scripts, Thai's and Lao's above and below, Arabic's
+    // and Hebrew's points -- a letter of any script with what is written on
+    // it, which a hand-kept list of ranges was always one script short of.
+    if (c > 0x7F && SBGeneralCategoryIsMark(SBCodepointGetGeneralCategory(static_cast<SBCodepoint>(c))))
+        return true;
     return (c >= 0x0300 && c <= 0x036F) || (c >= 0x0483 && c <= 0x0489) || (c >= 0x0591 && c <= 0x05BD) ||
            (c >= 0x0610 && c <= 0x061A) || (c >= 0x064B && c <= 0x065F) || (c >= 0x0900 && c <= 0x0903) ||
            (c >= 0x093A && c <= 0x094F) || (c >= 0x0E31 && c <= 0x0E3A && c != 0x0E32 && c != 0x0E33) ||
@@ -81,6 +91,36 @@ struct Decoded
 [[nodiscard]] bool regionalIndicator(char32_t c) noexcept
 {
     return c >= 0x1F1E6 && c <= 0x1F1FF;
+}
+
+// The viramas: the sign that joins a consonant to the next into a conjunct,
+// which is one character as a reader sees it (UAX #29's GB9c).
+[[nodiscard]] bool virama(char32_t c) noexcept
+{
+    switch (c) {
+    case 0x094D:
+    case 0x09CD:
+    case 0x0A4D:
+    case 0x0ACD:
+    case 0x0B4D:
+    case 0x0BCD:
+    case 0x0C4D:
+    case 0x0CCD:
+    case 0x0D4D:
+    case 0x0DCA:
+    case 0x1039:
+    case 0x17D2:
+    case 0x1A60:
+        return true;
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] bool letter(char32_t c) noexcept
+{
+    const SBGeneralCategory category = SBCodepointGetGeneralCategory(static_cast<SBCodepoint>(c));
+    return category == SBGeneralCategoryLO || category == SBGeneralCategoryLU || category == SBGeneralCategoryLL;
 }
 
 // Where a word, a run of punctuation and a run of spaces each end.
@@ -162,8 +202,15 @@ u32 nextCharacter(std::string_view text, u32 at) noexcept
         if (regionalIndicator(second.point))
             next += second.size;
     }
+    char32_t last = first.point;
     while (next < size) {
         const Decoded following = decodeAt(text, next);
+        // A consonant after a virama is the conjunct's, with its own marks.
+        if (virama(last) && letter(following.point)) {
+            next += following.size;
+            last = following.point;
+            continue;
+        }
         if (following.point == 0x200D) {
             // A joiner takes the character after it too.
             next += following.size;
@@ -174,6 +221,7 @@ u32 nextCharacter(std::string_view text, u32 at) noexcept
         if (!extends(following.point))
             break;
         next += following.size;
+        last = following.point;
     }
     return next;
 }
@@ -408,6 +456,19 @@ TextEditResult deleteBackward(TextEditState& state, bool word, const TextEditRul
             return result;
         // The span to delete is the selection [anchor, caret).
         state.anchor = word ? previousWord(state.text, state.caret) : previousCharacter(state.text, state.caret);
+        // **Backspace takes a letter's last mark, not the letter** (ADR
+        // 0260), as every system keyboard does for the scripts that write
+        // marks on letters: a Thai, Hindi or Arabic player who typed the
+        // wrong vowel sign takes back the sign. An emoji, a flag and a joined
+        // sequence still go whole: their parts are not things anybody typed.
+        if (!word) {
+            const Decoded base = decodeAt(state.text, state.anchor);
+            const u32 previous = previousPoint(state.text, state.caret);
+            if (previous > state.anchor && letter(base.point) && !regionalIndicator(base.point) &&
+                std::string_view(state.text).substr(state.anchor, state.caret - state.anchor).find("\xE2\x80\x8D") ==
+                    std::string_view::npos)
+                state.anchor = previous;
+        }
     }
     beginEdit(state, word ? TextEditState::Last::Other : TextEditState::Last::Deleting);
     replaceSelection(state, {});

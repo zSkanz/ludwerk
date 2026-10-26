@@ -729,6 +729,7 @@ local function stage(options: StageOptions)
     copyEngineContent(options.engineContent, projectlib.joined(assets, "content"), options.shaders)
     options.composeGame(projectlib.joined(assets, "game"))
     game.pruneModules(projectlib.joined(assets, "content"), projectlib.joined(assets, "game"))
+    game.pruneWordLists(projectlib.joined(assets, "content"), projectlib.joined(assets, "game"))
 end
 
 --- `assets/payload.txt`: the stamp, then every file, which the host extracts

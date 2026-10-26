@@ -442,6 +442,23 @@ struct TextLine
                                               f32 maxWidth);
 // The width of a run on one line, in pixels.
 [[nodiscard]] f32 textWidth(std::string_view run, std::string_view font, f32 pixelSize);
+// **A line's characters as a caret sees them** (ADR 0260): each character --
+// a letter with its marks, a joined pair of flags -- once, by the bytes of
+// `line` it covers, where it is drawn from the line's left, and which way it
+// reads, in order from left to right. Left to right and in the order of the
+// text for text that is laid out a character at a time; in the order a
+// right-to-left run is read on screen for text that is shaped, which is where
+// a caret's left and a text's start part ways. One line: `line` holds no line
+// break, or is read to its first.
+struct TextCluster
+{
+    usize begin = 0;
+    usize end = 0;
+    f32 left = 0.0f;
+    f32 right = 0.0f;
+    bool rightToLeft = false;
+};
+[[nodiscard]] std::vector<TextCluster> textClusters(std::string_view line, std::string_view font, f32 pixelSize);
 // The height of one line, in pixels, and how far its baseline is below its
 // top: by the faces `text` is drawn with (ADR 0259), the label's own always
 // among them -- for no text, its own alone.

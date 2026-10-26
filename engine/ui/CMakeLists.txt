@@ -19,6 +19,7 @@ engine_add_module(ui
         src/text.cpp
         src/text_edit.cpp
         src/text_field.cpp
+        src/word_break.cpp
         src/draw.cpp
         src/interaction.cpp
         src/native_accessors.cpp
@@ -35,6 +36,10 @@ engine_add_module(ui
 # warnings-as-errors bar. Its implementation is compiled exactly once, in
 # src/text.cpp -- the same arrangement `asset` uses for stb_image.
 target_include_directories(engine_ui SYSTEM PRIVATE "${ENG_THIRD_PARTY_DIR}/stb")
+# Text that joins, stacks and runs right to left (ADR 0260): HarfBuzz shapes
+# it and SheenBidi orders it, both named in `src/text.cpp` and
+# `src/text_edit.cpp` alone.
+target_link_libraries(engine_ui PRIVATE harfbuzz sheenbidi)
 
 engine_add_module_tests(ui
     MODULES
@@ -50,6 +55,7 @@ engine_add_module_tests(ui
         tests/rich_text_tests.cpp
         tests/interaction_tests.cpp
         tests/text_edit_tests.cpp
+        tests/shaping_tests.cpp
 )
 
 if(ENG_BUILD_TESTS)

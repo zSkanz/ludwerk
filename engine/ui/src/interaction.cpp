@@ -1478,10 +1478,28 @@ InteractionResult updateInteraction(scene::World& world, core::InstanceId uiServ
                     field->composition.clear();
                     break;
                 }
-                case TextCommand::Kind::Move:
-                    if (!composing)
-                        move(session, static_cast<TextMove>(command.move), command.extend);
+                case TextCommand::Kind::Move: {
+                    if (composing)
+                        break;
+                    const auto how = static_cast<TextMove>(command.move);
+                    // **Left is left on screen** (ADR 0260): in a line with
+                    // text that reads right to left, the arrows step to the
+                    // caret stop beside the caret where it is drawn, as every
+                    // system's own fields do; elsewhere screen order and text
+                    // order are one, and the move is the text's.
+                    if ((how == TextMove::Left || how == TextMove::Right) &&
+                        (command.extend || !hasSelection(session))) {
+                        field->caret = session.caret;
+                        const FieldView view = fieldView(world, id);
+                        if (const std::optional<core::u32> step =
+                                visualStep(view, displayOffset(view, session.caret), how == TextMove::Right)) {
+                            setCaret(session, textOffsetOf(view, *step), command.extend);
+                            break;
+                        }
+                    }
+                    move(session, how, command.extend);
                     break;
+                }
                 case TextCommand::Kind::LineUp:
                 case TextCommand::Kind::LineDown: {
                     if (composing)

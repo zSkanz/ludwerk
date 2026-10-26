@@ -32,12 +32,12 @@ end)
 
 | Keys | What happens |
 |---|---|
-| Left, Right | One character -- as a reader sees it, so an accented letter or an emoji is one |
+| Left, Right | One character -- as a reader sees it, so an accented letter or an emoji is one. In a line with Arabic or Hebrew in it, the character to the left or right on screen |
 | Ctrl+Left, Ctrl+Right | One word, or one run of punctuation |
 | Home, End | The start or end of the line; with Ctrl, of the text |
 | Up, Down | The line above or below in a multi-line field; the ends in a single-line one |
 | Shift with any of these | Extends the selection |
-| Backspace, Delete | One character; with Ctrl, one word; over a selection, the selection |
+| Backspace, Delete | One character; with Ctrl, one word; over a selection, the selection. Backspace after a letter with a mark on it takes the mark, as a phone's keyboard does |
 | Ctrl+A | Selects everything |
 | Ctrl+C, Ctrl+X, Ctrl+V | Copy, cut and paste, through the system's clipboard |
 | Ctrl+Insert, Shift+Insert, Shift+Delete | Copy, paste and cut, the older way |
@@ -141,6 +141,12 @@ builds a character from several keys. What it is still composing is drawn at
 the caret, underlined, and becomes text only when it is committed; its list of
 candidates opens beside the caret. While it composes, Return, Escape and
 Backspace are the input method's, not the field's.
+
+Arabic, Hebrew, Thai and the Indic scripts are typed and edited as their own
+systems' fields edit them. The caret moves through characters, never inside a
+letter and its marks. A press puts it where the character is drawn. A
+selection that crosses from Arabic into English is highlighted where each part
+is drawn, which can be two pieces of one line.
 
 ## Where to look next
 

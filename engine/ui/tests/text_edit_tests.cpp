@@ -139,9 +139,18 @@ TEST_CASE("the deletes, by character and by word, and over a selection")
     (void)ui::deleteForward(state, true, rules);
     CHECK(state.text.empty());
 
+    // Backspace takes a letter's mark and leaves the letter (ADR 0260); the
+    // next takes the letter. Delete takes the character whole.
     TextEditState marks = typed("ae\xCC\x81");
     (void)ui::deleteBackward(marks, false, rules);
+    CHECK(marks.text == "ae");
+    (void)ui::deleteBackward(marks, false, rules);
     CHECK(marks.text == "a");
+    TextEditState forward = typed("ae\xCC\x81");
+    ui::move(forward, TextMove::TextStart, false);
+    ui::move(forward, TextMove::Right, false);
+    (void)ui::deleteForward(forward, false, rules);
+    CHECK(forward.text == "a");
 }
 
 TEST_CASE("a masked field gives nothing away, and a read-only one keeps its text")

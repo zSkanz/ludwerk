@@ -11,6 +11,14 @@ here.
 
 ### Added
 
+- Text in every script: Arabic, Persian and Hebrew run right to left and
+  join, the Indic scripts reorder and stack their signs, Thai and Lao break
+  between words, and text that mixes directions is put in the order it is
+  read -- in labels and in text fields, whose caret, selection and arrow keys
+  follow the characters where they are drawn. HarfBuzz 15.0.0 (MIT) shapes,
+  SheenBidi 3.0.0 (Apache-2.0) orders, and ICU 79.1's Thai and Lao word lists
+  (Unicode-3.0) break, about 0.45 MB in a player. Text in Latin, Greek,
+  Cyrillic and CJK is laid out exactly as before.
 - `VoiceChatService`: players talking to each other in a match. The server
   decides who hears whom -- everybody, a team, those near, or the pairs the
   game names -- within fifty frames and four kilobytes a second from each
