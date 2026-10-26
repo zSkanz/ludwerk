@@ -74,9 +74,9 @@ using sdlgpu::toSdl;
 // Twenty milliseconds is more than a frame's and less than any a desktop takes.
 constexpr double SlowPipelineMs = 20.0;
 
-void sayIfSlow(std::string_view name, Uint64 startedNs)
+void sayIfSlow(std::string_view name, Uint64 startedNs, Uint64 endedNs = 0)
 {
-    const double ms = static_cast<double>(SDL_GetTicksNS() - startedNs) / 1'000'000.0;
+    const double ms = static_cast<double>((endedNs != 0 ? endedNs : SDL_GetTicksNS()) - startedNs) / 1'000'000.0;
     if (ms < SlowPipelineMs)
         return;
     const core::I18nArg args[] = {{"name", name.empty() ? std::string_view{"unnamed"} : name}, {"ms", ms}};
@@ -291,6 +291,9 @@ struct OffFramePipeline
     SDL_GPUGraphicsPipeline* made = nullptr;
     std::vector<SDL_GPUGraphicsPipeline*> twins;
     std::string refused;
+    // When the job began making it, for the log's word on a slow one.
+    Uint64 startedNs = 0;
+    Uint64 madeNs = 0;
     PipelineWorkers::TicketPtr job;
 };
 
@@ -1344,6 +1347,10 @@ public:
     {
         return pipelineMade(pipeline, false);
     }
+    [[nodiscard]] bool awaitPipeline(PipelineHandle pipeline) override
+    {
+        return pipelineMade(pipeline, true).value_or(false);
+    }
     // Waiting for it when `wait` says so: a pipeline about to be destroyed.
     [[nodiscard]] std::optional<bool> pipelineMade(PipelineHandle pipeline, bool wait);
     // A finished job's pipelines into the tables -- waited for first.
@@ -1868,7 +1875,9 @@ PipelineHandle SdlGpuDevice::createGraphicsPipelineOffFrame(const GraphicsPipeli
     OffFramePipeline* running = task.get();
     SDL_GPUDevice* device = device_;
     task->job = pipelineWorkers_->submit([running, device]() noexcept {
+        running->startedNs = SDL_GetTicksNS();
         running->made = makeFromRecipe(device, running->recipe, 1, false, SDL_GPU_TEXTUREFORMAT_INVALID);
+        running->madeNs = SDL_GetTicksNS();
         if (running->made == nullptr) {
             running->refused = SDL_GetError();
             return;
@@ -1909,6 +1918,8 @@ void SdlGpuDevice::takeIn(OffFramePipeline& task)
         return;
     }
     notePipelineMade();
+    // Said here, on the device's thread, as one made on the frame is.
+    sayIfSlow(recipe.name, task.startedNs, task.madeNs);
     for (usize at = 0; at < task.variants.size() && at < task.twins.size(); ++at) {
         const PipelineVariant& variant = task.variants[at];
         const SDL_GPUTextureFormat format = task.formats[at];

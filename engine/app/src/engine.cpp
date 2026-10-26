@@ -55,6 +55,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "class_descriptors.gen.h"
@@ -2957,6 +2958,11 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         (void)streaming.load(contentMounts, options.scriptPath / ".engine" / "content.chunks.json");
     }
 
+    // **The renderer was made in the frame just drawn** -- its built-in
+    // pipelines, a second on a cold cache -- and that is the engine starting,
+    // not a frame: the next frame's clock starts after it, and no simulated
+    // time is dropped for it.
+    bool rendererJustMade = false;
     const auto ensureDebugPass = [&](rhi::TextureFormat colorFormat) {
         // Gated on "can this device take shaders", not on "will pixels come
         // out". They are different questions, and conflating them made the
@@ -2991,6 +2997,9 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             return;
         }
         renderer = render::createDefaultRenderer();
+        // The time it takes is the engine starting, not a frame the game
+        // took: the next frame's clock starts after it (`rendererJustMade`).
+        rendererJustMade = true;
         // Before `create`, because the shadow atlas is sized by the settings and
         // building it twice on the first frame would be a wasted allocation the
         // size of the whole map.
@@ -4232,7 +4241,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         const bool syntheticClock =
             frameClock.synthetic(options.headless, !options.devControlUrl.empty(), network.active());
         const u64 nowNs = syntheticClock ? scheduler.totalFrames() * headlessStepNs : platform::nowNs();
-        if (frameClock.switched())
+        // (Not on a clock of frames: a headless run's ticks are its frames',
+        // and a test counts them.)
+        const bool afterRenderer = std::exchange(rendererJustMade, false) && !syntheticClock;
+        if (frameClock.switched() || afterRenderer)
             scheduler.rebase(nowNs);
 
         // **A predicting client catches a stall up** (`stallCatchUpSeconds`):

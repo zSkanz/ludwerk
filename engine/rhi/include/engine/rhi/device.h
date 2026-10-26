@@ -382,6 +382,9 @@ public:
     // refused (false, and said). Asked on the device's own thread, which is
     // where what a job made is taken in.
     [[nodiscard]] virtual std::optional<bool> pipelineMade(PipelineHandle pipeline) { return pipeline.valid(); }
+    // **The same, waited for**: true once made, false if it was refused. What
+    // a caller that asked for several side by side waits on, once.
+    [[nodiscard]] virtual bool awaitPipeline(PipelineHandle pipeline) { return pipeline.valid(); }
 
     // **The pipelines made so far, kept on disk now** (ADR 0257): what an
     // app calls as it goes to the background or loses focus -- a phone or a

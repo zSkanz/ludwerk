@@ -2257,28 +2257,44 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .debugName = "shadow",
     });
 
-    pbrPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrVertex,
-        .fragmentShader = pbrFragment,
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr",
-    });
-    pbrPrepassedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrVertex,
-        .fragmentShader = pbrFragment,
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_prepassed",
-    });
+    // **Made side by side** (the built-in pipelines on a cold cache): the
+    // lit surfaces' family, each a driver's compile of the largest shaders
+    // there are -- a fifth of a second to most of one each, the first time
+    // after an update, made one after another inside the first frame. Asked
+    // of the pipeline threads together, and waited on together below.
+    std::vector<rhi::PipelineHandle*> madeApart;
+    const auto sideBySide = [&device, &madeApart](rhi::PipelineHandle& into, const rhi::GraphicsPipelineDesc& desc) {
+        const rhi::PipelineHandle made = device.createGraphicsPipelineOffFrame(desc, {});
+        if (made.valid())
+            madeApart.push_back(&into);
+        return made;
+    };
+    pbrPipeline_ = sideBySide(
+        pbrPipeline_,
+        {
+            .vertexShader = pbrVertex,
+            .fragmentShader = pbrFragment,
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr",
+        });
+    pbrPrepassedPipeline_ = sideBySide(
+        pbrPrepassedPipeline_,
+        {
+            .vertexShader = pbrVertex,
+            .fragmentShader = pbrFragment,
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_prepassed",
+        });
 
     // The blended pass. Depth-tested against what the opaque pass wrote, and
     // depth-write OFF -- two transparent surfaces must both contribute, so
@@ -2289,17 +2305,19 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .format = kHdrFormat,
         .blend = {.enabled = true},
     }};
-    pbrBlendPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrVertex,
-        .fragmentShader = pbrFragment,
-        .vertexBuffers = buffers,
-        .vertexAttributes = attributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrBlendTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_blend",
-    });
+    pbrBlendPipeline_ = sideBySide(
+        pbrBlendPipeline_,
+        {
+            .vertexShader = pbrVertex,
+            .fragmentShader = pbrFragment,
+            .vertexBuffers = buffers,
+            .vertexAttributes = attributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrBlendTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_blend",
+        });
 
     shadowSkinnedPipeline_ = device.createGraphicsPipeline({
         .vertexShader = shadowSkinnedVertex,
@@ -2313,40 +2331,46 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .debugName = "shadow_skinned",
     });
 
-    pbrSkinnedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrSkinnedVertex,
-        .fragmentShader = pbrSkinnedFragment,
-        .vertexBuffers = skinnedBuffers,
-        .vertexAttributes = skinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_skinned",
-    });
-    pbrSkinnedPrepassedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrSkinnedVertex,
-        .fragmentShader = pbrSkinnedFragment,
-        .vertexBuffers = skinnedBuffers,
-        .vertexAttributes = skinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_skinned_prepassed",
-    });
+    pbrSkinnedPipeline_ = sideBySide(
+        pbrSkinnedPipeline_,
+        {
+            .vertexShader = pbrSkinnedVertex,
+            .fragmentShader = pbrSkinnedFragment,
+            .vertexBuffers = skinnedBuffers,
+            .vertexAttributes = skinnedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_skinned",
+        });
+    pbrSkinnedPrepassedPipeline_ = sideBySide(
+        pbrSkinnedPrepassedPipeline_,
+        {
+            .vertexShader = pbrSkinnedVertex,
+            .fragmentShader = pbrSkinnedFragment,
+            .vertexBuffers = skinnedBuffers,
+            .vertexAttributes = skinnedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_skinned_prepassed",
+        });
 
-    pbrSkinnedBlendPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrSkinnedVertex,
-        .fragmentShader = pbrSkinnedFragment,
-        .vertexBuffers = skinnedBuffers,
-        .vertexAttributes = skinnedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrBlendTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_skinned_blend",
-    });
+    pbrSkinnedBlendPipeline_ = sideBySide(
+        pbrSkinnedBlendPipeline_,
+        {
+            .vertexShader = pbrSkinnedVertex,
+            .fragmentShader = pbrSkinnedFragment,
+            .vertexBuffers = skinnedBuffers,
+            .vertexAttributes = skinnedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrBlendTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_skinned_blend",
+        });
 
     // The DEPTH PREPASS, and it is `shadow_depth` compiled into a different
     // pipeline rather than a new shader: `GpuShadowUniforms` is already a
@@ -2487,39 +2511,45 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         .depthStencilFormat = kDepthFormat,
         .debugName = "depth_prepass_instanced",
     });
-    pbrInstancedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrInstancedVertex,
-        .fragmentShader = pbrInstancedFragment,
-        .vertexBuffers = instancedBuffers,
-        .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_instanced",
-    });
-    pbrInstancedPrepassedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrInstancedVertex,
-        .fragmentShader = pbrInstancedFragment,
-        .vertexBuffers = instancedBuffers,
-        .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_instanced_prepassed",
-    });
-    pbrInstancedBlendPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrInstancedVertex,
-        .fragmentShader = pbrInstancedFragment,
-        .vertexBuffers = instancedBuffers,
-        .vertexAttributes = instancedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrBlendTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_instanced_blend",
-    });
+    pbrInstancedPipeline_ = sideBySide(
+        pbrInstancedPipeline_,
+        {
+            .vertexShader = pbrInstancedVertex,
+            .fragmentShader = pbrInstancedFragment,
+            .vertexBuffers = instancedBuffers,
+            .vertexAttributes = instancedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_instanced",
+        });
+    pbrInstancedPrepassedPipeline_ = sideBySide(
+        pbrInstancedPrepassedPipeline_,
+        {
+            .vertexShader = pbrInstancedVertex,
+            .fragmentShader = pbrInstancedFragment,
+            .vertexBuffers = instancedBuffers,
+            .vertexAttributes = instancedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_instanced_prepassed",
+        });
+    pbrInstancedBlendPipeline_ = sideBySide(
+        pbrInstancedBlendPipeline_,
+        {
+            .vertexShader = pbrInstancedVertex,
+            .fragmentShader = pbrInstancedFragment,
+            .vertexBuffers = instancedBuffers,
+            .vertexAttributes = instancedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrBlendTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_instanced_blend",
+        });
     // **A baked run** (ADR 0253): what an instanced run reads, and after it
     // each instance's rows at slot 2 and each vertex's place in its lightmap
     // at slot 3 -- the mesh's own stream, which only these pipelines bind.
@@ -2535,28 +2565,32 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         rhi::VertexAttribute{.location = 9, .bufferSlot = 2, .format = rhi::VertexFormat::Float4, .offsetBytes = 0};
     bakedAttributes[10] =
         rhi::VertexAttribute{.location = 10, .bufferSlot = 3, .format = rhi::VertexFormat::Float2, .offsetBytes = 0};
-    pbrBakedInstancedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrBakedInstancedVertex,
-        .fragmentShader = pbrBakedInstancedFragment,
-        .vertexBuffers = bakedBuffers,
-        .vertexAttributes = bakedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_baked_instanced",
-    });
-    pbrBakedInstancedPrepassedPipeline_ = device.createGraphicsPipeline({
-        .vertexShader = pbrBakedInstancedVertex,
-        .fragmentShader = pbrBakedInstancedFragment,
-        .vertexBuffers = bakedBuffers,
-        .vertexAttributes = bakedAttributes,
-        .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
-        .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
-        .colorTargets = hdrTarget,
-        .depthStencilFormat = kDepthFormat,
-        .debugName = "pbr_baked_instanced_prepassed",
-    });
+    pbrBakedInstancedPipeline_ = sideBySide(
+        pbrBakedInstancedPipeline_,
+        {
+            .vertexShader = pbrBakedInstancedVertex,
+            .fragmentShader = pbrBakedInstancedFragment,
+            .vertexBuffers = bakedBuffers,
+            .vertexAttributes = bakedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = true, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_baked_instanced",
+        });
+    pbrBakedInstancedPrepassedPipeline_ = sideBySide(
+        pbrBakedInstancedPrepassedPipeline_,
+        {
+            .vertexShader = pbrBakedInstancedVertex,
+            .fragmentShader = pbrBakedInstancedFragment,
+            .vertexBuffers = bakedBuffers,
+            .vertexAttributes = bakedAttributes,
+            .rasterizer = {.cullMode = rhi::CullMode::Back, .depthClip = true},
+            .depthStencil = {.depthTest = true, .depthWrite = false, .depthCompare = rhi::CompareOp::LessOrEqual},
+            .colorTargets = hdrTarget,
+            .depthStencilFormat = kDepthFormat,
+            .debugName = "pbr_baked_instanced_prepassed",
+        });
 
     ssaoPipeline_ = fullscreen(ssaoVertex, ssaoFragment, occlusionTarget, "ssao");
     ssaoBlurPipeline_ = fullscreen(ssaoBlurVertex, ssaoBlurFragment, occlusionTarget, "ssao_blur");
@@ -2629,6 +2663,13 @@ std::optional<core::EngineError> DefaultRenderer::create(rhi::IDevice& device, c
         return core::makeError(ENG_TR("render.err.pipeline_create_failed"));
     }
 
+    // Every one asked for above, made: a refused one is none, as if made here.
+    for (rhi::PipelineHandle* pipeline : madeApart) {
+        if (!device.awaitPipeline(*pipeline)) {
+            device.destroy(*pipeline);
+            *pipeline = {};
+        }
+    }
     if (!shadowPipeline_.valid() || !pbrPipeline_.valid() || !pbrBlendPipeline_.valid() || !skyPipeline_.valid() ||
         !tonemapPipeline_.valid() || !shadowSkinnedPipeline_.valid() || !pbrSkinnedPipeline_.valid() ||
         !pbrSkinnedBlendPipeline_.valid() || !depthPrepassPipeline_.valid() || !depthPrepassSkinnedPipeline_.valid() ||
