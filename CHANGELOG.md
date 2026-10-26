@@ -194,6 +194,11 @@ here.
 
 ### Fixed
 
+- The code face every host and player carries, `content/fonts/Mono.ttf`
+  (Cousine, SIL OFL 1.1), is credited in `licenses/` with its copyright and
+  the licence's text; it had none. The notices end with a table of the
+  files carried and whose each is, and every font a host carries must be in
+  it.
 - `project.toml` takes an array written over several lines, with comments
   and a trailing comma inside it, as TOML does: one font a line in
   `[ui] font_fallbacks` had made the whole file unreadable. And a project

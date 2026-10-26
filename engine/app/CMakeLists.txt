@@ -304,9 +304,17 @@ endif()
 # every player carries them and `ludwerk build` puts them beside a game: the
 # projects its link graph names, found once every target exists, and those
 # whose files are content rather than code -- the shaders include SMAA's and
-# FidelityFX's sources, and the fonts are Inter and ImGui's Cousine.
+# FidelityFX's sources, and the fonts are Inter and Cousine. Cousine is a file
+# of ImGui's tree under the SIL OFL rather than ImGui's MIT, so it is credited
+# by itself, with its own copyright and the licence's text; ImGui is credited
+# where a host links it. Each font a host carries is named against its credit,
+# and `host_notices` holds every file under `content/fonts` to one.
 include(${ENG_CMAKE_DIR}/engine_notices.cmake)
-engine_notice_uses(smaa fidelityfx_fsr1 fidelityfx_fsr2 fidelityfx_sdk inter imgui)
+engine_notice_uses(smaa fidelityfx_fsr1 fidelityfx_fsr2 fidelityfx_sdk inter)
+engine_notice_file(cousine "imgui's copy" OFL-1.1 "https://fonts.google.com/specimen/Cousine"
+    "${CMAKE_SOURCE_DIR}/third_party/licenses/cousine.txt")
+engine_notice_carries(fonts/Inter.ttf inter)
+engine_notice_carries(fonts/Mono.ttf cousine)
 # A deferred call reads its variables when it runs, in the top directory;
 # the folder is written into the call now, while this is this directory.
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL engine_write_notices engine_host [[${CMAKE_CURRENT_BINARY_DIR}/content/licenses]])")
@@ -649,6 +657,7 @@ if(ENG_BUILD_TESTS)
     # with its license text, and not the tests' framework.
     add_test(NAME host_notices COMMAND ${CMAKE_COMMAND}
         "-DNOTICES=${CMAKE_CURRENT_BINARY_DIR}/content/licenses"
+        "-DCONTENT=$<TARGET_FILE_DIR:engine_host>/content"
         -P "${CMAKE_SOURCE_DIR}/tests/notices/check_notices.cmake")
 
     # Gate: --version must report the pin and the ABI constants (ADR 0031).

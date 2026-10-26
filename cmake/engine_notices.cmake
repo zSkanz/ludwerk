@@ -23,6 +23,21 @@ function(engine_notice_uses)
     set_property(GLOBAL APPEND PROPERTY ENG_NOTICE_USES ${ARGN})
 endfunction()
 
+# **A file carried as content and credited by itself**: one whose licence is
+# not the licence of the tree it was taken from. The code face, Cousine, is a
+# file of ImGui's tree under the SIL OFL, and ImGui's own row is MIT and only
+# there when ImGui is linked. `text` is the licence text the row carries.
+function(engine_notice_file project version license upstream text)
+    set_property(GLOBAL APPEND PROPERTY ENG_NOTICE_FILES "${project}|${version}|${license}|${upstream}|${text}")
+endfunction()
+
+# **Which credit covers a file a host carries** (`fonts/Mono.ttf` and
+# `cousine`): the table the notices end with, which `host_notices` holds every
+# font a host carries to.
+function(engine_notice_carries file project)
+    set_property(GLOBAL APPEND PROPERTY ENG_NOTICE_CARRIED "${file}|${project}")
+endfunction()
+
 # Every `third_party/<name>` that `text` names.
 function(_engine_notice_names text out)
     string(REGEX MATCHALL "third_party/[A-Za-z0-9_.+-]+" found "${text}")
@@ -134,8 +149,34 @@ function(engine_write_notices target out)
             list(APPEND rows "| ${name} | ${version} | ${license} | ${upstream} |")
         endforeach()
     endforeach()
+    get_property(credited GLOBAL PROPERTY ENG_NOTICE_FILES)
+    foreach(entry IN LISTS credited)
+        string(REPLACE "|" ";" fields "${entry}")
+        list(GET fields 0 name)
+        list(GET fields 1 version)
+        list(GET fields 2 license)
+        list(GET fields 3 upstream)
+        list(GET fields 4 text)
+        if(NOT EXISTS "${text}")
+            message(FATAL_ERROR "${target} carries ${name} (${license}), and its license text is not at ${text}")
+        endif()
+        file(COPY "${text}" DESTINATION "${out}/${name}")
+        list(APPEND rows "| ${name} | ${version} | ${license} | ${upstream} |")
+    endforeach()
     list(SORT rows CASE INSENSITIVE)
     list(JOIN rows "\n" table)
+
+    get_property(carried GLOBAL PROPERTY ENG_NOTICE_CARRIED)
+    set(files "")
+    foreach(entry IN LISTS carried)
+        string(REPLACE "|" ";" fields "${entry}")
+        list(GET fields 0 file)
+        list(GET fields 1 project)
+        list(APPEND files "| ${file} | ${project} |")
+    endforeach()
+    list(SORT files CASE INSENSITIVE)
+    list(JOIN files "\n" carriedTable)
+
     file(WRITE "${out}/THIRD_PARTY_NOTICES.md"
         "# Third-Party Notices\n\n"
         "The projects this program is built from, each under its own license. The texts are in the folder of\n"
@@ -143,5 +184,11 @@ function(engine_write_notices target out)
         "carries.\n\n"
         "| Project | Version | License | Upstream |\n"
         "|---|---|---|---|\n"
-        "${table}\n")
+        "${table}\n\n"
+        "## Files carried\n\n"
+        "The content beside the program that is another project's, and the project above that it is credited\n"
+        "under.\n\n"
+        "| File | Project |\n"
+        "|---|---|\n"
+        "${carriedTable}\n")
 endfunction()
