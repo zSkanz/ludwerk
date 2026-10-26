@@ -1,0 +1,156 @@
+Ludwerk: render targets whose contents are never kept, in no memory of their own.
+
+A multisampled color target resolved in its pass and a depth target
+discarded at its end are never read after the pass. On a tile-based GPU
+(every phone's, a standalone headset's) such a target can live in the
+tile alone and never be given memory -- Vulkan's transient attachments,
+backed by lazily allocated memory -- but SDL made every texture with the
+transfer usages and bound it to device-local memory.
+SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN asks for it: on Vulkan, a
+texture whose usage is only color or depth-stencil target, with one level,
+is made a transient attachment with no other usage and bound first to a
+lazily allocated memory type, and to device-local memory where there is
+none. Defragmentation recreates such a texture without copying it, which
+Vulkan would not allow and which would keep nothing. Direct3D 12 and Metal
+ignore it.
+
+diff --git a/include/SDL3/SDL_gpu.h b/include/SDL3/SDL_gpu.h
+index 5bfef7a..e7849f2 100644
+--- a/include/SDL3/SDL_gpu.h
++++ b/include/SDL3/SDL_gpu.h
+@@ -2906,6 +2906,15 @@ extern SDL_DECLSPEC SDL_GPUTexture * SDLCALL SDL_CreateGPUTexture(
+  * every render pass whose first color target it is. Its pipelines are made
+  * with SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN. */
+ #define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER          "SDL.gpu.texture.create.vulkan.density_map"
++/* A render target whose contents are never kept: a multisampled color target
++ * resolved in its pass, a depth target discarded at its end. Every render
++ * pass that uses it must store it with SDL_GPU_STOREOP_DONT_CARE or
++ * SDL_GPU_STOREOP_RESOLVE, and it is never sampled, read back or copied. On a
++ * tile-based GPU it may then never be given memory of its own (Vulkan:
++ * transient, lazily allocated). Ignored for a texture with any usage but
++ * SDL_GPU_TEXTUREUSAGE_COLOR_TARGET or SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
++ * or with more than one level. (Ludwerk patch.) */
++#define SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN                   "SDL.gpu.texture.create.transient"
+ 
+ /**
+  * Creates a buffer object to be used in graphics or compute workflows.
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+index e7afce2..0362b50 100644
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -656,6 +656,7 @@ struct VulkanTexture
+ 
+     bool markedForDestroy; // so that defrag doesn't double-free
+     bool externallyManaged; // true for XR swapchain images
++    bool transient; // its contents are never kept (Ludwerk patch)
+     SDL_AtomicInt referenceCount;
+ };
+ 
+@@ -2236,6 +2237,7 @@ static Uint8 VULKAN_INTERNAL_BindResourceMemory(
+ static Uint8 VULKAN_INTERNAL_BindMemoryForImage(
+     VulkanRenderer *renderer,
+     VkImage image,
++    bool transient,
+     VulkanMemoryUsedRegion **usedRegion)
+ {
+     Uint8 bindResult = 0;
+@@ -2246,6 +2248,45 @@ static Uint8 VULKAN_INTERNAL_BindMemoryForImage(
+     VkMemoryPropertyFlags preferredMemoryPropertyFlags;
+     VkMemoryRequirements memoryRequirements;
+ 
++    /* Ludwerk patch: a transient attachment goes first to memory that is
++     * lazily allocated -- on a tile-based GPU, memory the attachment may never
++     * be given -- and, where there is none, as any other image. Asked for
++     * outright, because the ranking below takes no type that has only some of
++     * the properties it prefers. */
++    if (transient) {
++        renderer->vkGetImageMemoryRequirements(
++            renderer->logicalDevice,
++            image,
++            &memoryRequirements);
++        memoryTypesToTry = VULKAN_INTERNAL_FindBestMemoryTypes(
++            renderer,
++            memoryRequirements.memoryTypeBits,
++            VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT,
++            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
++            0,
++            &memoryTypeCount);
++        for (i = 0; i < memoryTypeCount; i += 1) {
++            bindResult = VULKAN_INTERNAL_BindResourceMemory(
++                renderer,
++                memoryTypesToTry[i],
++                &memoryRequirements,
++                memoryRequirements.size,
++                false,
++                VK_NULL_HANDLE,
++                image,
++                usedRegion);
++            if (bindResult == 1) {
++                break;
++            }
++        }
++        SDL_free(memoryTypesToTry);
++        memoryTypesToTry = NULL;
++        memoryTypeCount = 0;
++        if (bindResult == 1) {
++            return bindResult;
++        }
++    }
++
+     /* Vulkan memory types have several memory properties.
+      *
+      * Unlike buffers, images are always optimally stored device-local,
+@@ -5999,6 +6040,17 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
+         SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, false)) {
+         vkUsageFlags |= VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT;
+     }
++    /* Ludwerk patch: a target whose contents are never kept is an attachment
++     * and nothing else -- Vulkan allows a transient image no other usage, not
++     * even the transfers every other texture is made with. */
++    texture->transient =
++        SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN, false) &&
++        (createinfo->usage & ~(SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) == 0 &&
++        createinfo->num_levels == 1;
++    if (texture->transient) {
++        vkUsageFlags &= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
++        vkUsageFlags |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
++    }
+ 
+     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+     imageCreateInfo.pNext = NULL;
+@@ -6032,6 +6084,7 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
+     bindResult = VULKAN_INTERNAL_BindMemoryForImage(
+         renderer,
+         texture->image,
++        texture->transient,
+         &texture->usedRegion);
+ 
+     if (bindResult != 1) {
+@@ -11433,6 +11486,19 @@ static bool VULKAN_INTERNAL_DefragmentMemory(
+ 
+             SDL_GPUTextureCreateInfo info = currentRegion->vulkanTexture->container->header.info;
+ 
++            /* Ludwerk patch: a transient texture keeps nothing to copy, and
++             * may not be copied: the new one is only brought to its default
++             * usage. */
++            if (newTexture->transient) {
++                VULKAN_INTERNAL_TextureTransitionToDefaultUsage(
++                    renderer,
++                    commandBuffer,
++                    VULKAN_TEXTURE_USAGE_MODE_UNINITIALIZED,
++                    newTexture);
++                VULKAN_INTERNAL_TrackTexture(commandBuffer, newTexture);
++                goto repoint_texture;
++            }
++
+             VULKAN_INTERNAL_TextureTransitionFromDefaultUsage(
+                 renderer,
+                 commandBuffer,
+@@ -11490,6 +11556,7 @@ static bool VULKAN_INTERNAL_DefragmentMemory(
+                 VULKAN_TEXTURE_USAGE_MODE_COPY_DESTINATION,
+                 newTexture);
+ 
++        repoint_texture:
+             // re-point original container to new texture
+             newTexture->container = currentRegion->vulkanTexture->container;
+             newTexture->containerIndex = currentRegion->vulkanTexture->containerIndex;

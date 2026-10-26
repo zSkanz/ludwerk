@@ -954,7 +954,7 @@ public:
         // A density map, or the target one shades (patch 0009).
         SDL_PropertiesID properties = 0;
         const TextureEntry* densityMap = desc.densityMap.valid() ? texture(desc.densityMap) : nullptr;
-        if (hasUsage(desc.usage, TextureUsage::DensityMap) || densityMap != nullptr) {
+        if (hasUsage(desc.usage, TextureUsage::DensityMap) || densityMap != nullptr || desc.transient) {
             properties = SDL_CreateProperties();
             if (hasUsage(desc.usage, TextureUsage::DensityMap))
                 SDL_SetBooleanProperty(properties, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN,
@@ -962,6 +962,10 @@ public:
             if (densityMap != nullptr)
                 SDL_SetPointerProperty(properties, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER,
                                        densityMap->texture);
+            // And no memory of its own where the GPU keeps it in the tile
+            // (patch 0014).
+            if (desc.transient)
+                SDL_SetBooleanProperty(properties, SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN, true);
         }
         const SDL_GPUTextureCreateInfo info{
             .type = desc.layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D,

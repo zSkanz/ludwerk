@@ -5810,6 +5810,7 @@ bool DefaultRenderer::ensureUiLayer(rhi::IDevice& device, u32 samples)
             .width = renderWidth_,
             .height = renderHeight_,
             .samples = samples,
+            .transient = true,
             .debugName = "world-ui-layer-samples",
         });
     uiLayerWidth_ = renderWidth_;
@@ -11416,6 +11417,9 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
                 device.destroy(*texture);
             *texture = {};
         }
+        // Resolved in the pass that draws it and never read again: on a tile,
+        // no memory of its own (patch 0014). The depth beside it is kept
+        // where the interface is drawn apart, so it has memory.
         msaaColor_ = device.createTexture({
             .format = samplesFormat,
             .usage = rhi::TextureUsage::ColorTarget,
@@ -11423,6 +11427,7 @@ void DefaultRenderer::render(rhi::IDevice& device, rhi::ICmdList& cmd, const Ren
             .height = renderHeight_,
             .samples = samples,
             .densityMap = densityMap_,
+            .transient = true,
             .debugName = "eye-samples",
         });
         msaaFormat_ = samplesFormat;

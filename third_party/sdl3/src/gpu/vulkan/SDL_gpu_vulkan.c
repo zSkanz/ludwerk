@@ -656,6 +656,7 @@ struct VulkanTexture
 
     bool markedForDestroy; // so that defrag doesn't double-free
     bool externallyManaged; // true for XR swapchain images
+    bool transient; // its contents are never kept (Ludwerk patch)
     SDL_AtomicInt referenceCount;
 };
 
@@ -2236,6 +2237,7 @@ static Uint8 VULKAN_INTERNAL_BindResourceMemory(
 static Uint8 VULKAN_INTERNAL_BindMemoryForImage(
     VulkanRenderer *renderer,
     VkImage image,
+    bool transient,
     VulkanMemoryUsedRegion **usedRegion)
 {
     Uint8 bindResult = 0;
@@ -2245,6 +2247,45 @@ static Uint8 VULKAN_INTERNAL_BindMemoryForImage(
     Uint32 i;
     VkMemoryPropertyFlags preferredMemoryPropertyFlags;
     VkMemoryRequirements memoryRequirements;
+
+    /* Ludwerk patch: a transient attachment goes first to memory that is
+     * lazily allocated -- on a tile-based GPU, memory the attachment may never
+     * be given -- and, where there is none, as any other image. Asked for
+     * outright, because the ranking below takes no type that has only some of
+     * the properties it prefers. */
+    if (transient) {
+        renderer->vkGetImageMemoryRequirements(
+            renderer->logicalDevice,
+            image,
+            &memoryRequirements);
+        memoryTypesToTry = VULKAN_INTERNAL_FindBestMemoryTypes(
+            renderer,
+            memoryRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            0,
+            &memoryTypeCount);
+        for (i = 0; i < memoryTypeCount; i += 1) {
+            bindResult = VULKAN_INTERNAL_BindResourceMemory(
+                renderer,
+                memoryTypesToTry[i],
+                &memoryRequirements,
+                memoryRequirements.size,
+                false,
+                VK_NULL_HANDLE,
+                image,
+                usedRegion);
+            if (bindResult == 1) {
+                break;
+            }
+        }
+        SDL_free(memoryTypesToTry);
+        memoryTypesToTry = NULL;
+        memoryTypeCount = 0;
+        if (bindResult == 1) {
+            return bindResult;
+        }
+    }
 
     /* Vulkan memory types have several memory properties.
      *
@@ -5999,6 +6040,17 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
         SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN, false)) {
         vkUsageFlags |= VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT;
     }
+    /* Ludwerk patch: a target whose contents are never kept is an attachment
+     * and nothing else -- Vulkan allows a transient image no other usage, not
+     * even the transfers every other texture is made with. */
+    texture->transient =
+        SDL_GetBooleanProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN, false) &&
+        (createinfo->usage & ~(SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) == 0 &&
+        createinfo->num_levels == 1;
+    if (texture->transient) {
+        vkUsageFlags &= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        vkUsageFlags |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+    }
 
     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageCreateInfo.pNext = NULL;
@@ -6032,6 +6084,7 @@ static VulkanTexture *VULKAN_INTERNAL_CreateTexture(
     bindResult = VULKAN_INTERNAL_BindMemoryForImage(
         renderer,
         texture->image,
+        texture->transient,
         &texture->usedRegion);
 
     if (bindResult != 1) {
@@ -11433,6 +11486,19 @@ static bool VULKAN_INTERNAL_DefragmentMemory(
 
             SDL_GPUTextureCreateInfo info = currentRegion->vulkanTexture->container->header.info;
 
+            /* Ludwerk patch: a transient texture keeps nothing to copy, and
+             * may not be copied: the new one is only brought to its default
+             * usage. */
+            if (newTexture->transient) {
+                VULKAN_INTERNAL_TextureTransitionToDefaultUsage(
+                    renderer,
+                    commandBuffer,
+                    VULKAN_TEXTURE_USAGE_MODE_UNINITIALIZED,
+                    newTexture);
+                VULKAN_INTERNAL_TrackTexture(commandBuffer, newTexture);
+                goto repoint_texture;
+            }
+
             VULKAN_INTERNAL_TextureTransitionFromDefaultUsage(
                 renderer,
                 commandBuffer,
@@ -11490,6 +11556,7 @@ static bool VULKAN_INTERNAL_DefragmentMemory(
                 VULKAN_TEXTURE_USAGE_MODE_COPY_DESTINATION,
                 newTexture);
 
+        repoint_texture:
             // re-point original container to new texture
             newTexture->container = currentRegion->vulkanTexture->container;
             newTexture->containerIndex = currentRegion->vulkanTexture->containerIndex;

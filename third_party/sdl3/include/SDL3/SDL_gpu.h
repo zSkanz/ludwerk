@@ -2906,6 +2906,15 @@ extern SDL_DECLSPEC SDL_GPUTexture * SDLCALL SDL_CreateGPUTexture(
  * every render pass whose first color target it is. Its pipelines are made
  * with SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_VULKAN_FRAGMENT_DENSITY_MAP_BOOLEAN. */
 #define SDL_PROP_GPU_TEXTURE_CREATE_VULKAN_DENSITY_MAP_POINTER          "SDL.gpu.texture.create.vulkan.density_map"
+/* A render target whose contents are never kept: a multisampled color target
+ * resolved in its pass, a depth target discarded at its end. Every render
+ * pass that uses it must store it with SDL_GPU_STOREOP_DONT_CARE or
+ * SDL_GPU_STOREOP_RESOLVE, and it is never sampled, read back or copied. On a
+ * tile-based GPU it may then never be given memory of its own (Vulkan:
+ * transient, lazily allocated). Ignored for a texture with any usage but
+ * SDL_GPU_TEXTUREUSAGE_COLOR_TARGET or SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+ * or with more than one level. (Ludwerk patch.) */
+#define SDL_PROP_GPU_TEXTURE_CREATE_TRANSIENT_BOOLEAN                   "SDL.gpu.texture.create.transient"
 
 /**
  * Creates a buffer object to be used in graphics or compute workflows.

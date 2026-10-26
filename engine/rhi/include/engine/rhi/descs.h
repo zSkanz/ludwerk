@@ -40,6 +40,11 @@ struct TextureDesc
     // eye looks and less towards its edges. Where the device has none, the
     // pass is drawn whole.
     TextureHandle densityMap{};
+    // **A target whose contents are never kept** (SDL patch 0014): a
+    // multisampled color target every pass resolves, never stored, sampled or
+    // copied. On a tile-based GPU it lives in the tile alone and is given no
+    // memory of its own; elsewhere it is an ordinary target.
+    bool transient = false;
     std::string_view debugName{};
 };
 
