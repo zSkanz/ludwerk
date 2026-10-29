@@ -119,6 +119,15 @@ struct PartComponent
     // `BasePart.Occluder` (ADR 0262): `Enum.OccluderMode`'s value, 0
     // `Automatic`.
     i32 occluder = 0;
+
+    // **Placed by a render phase since the last tick** (ADR 0268): the tick
+    // it was placed after, and one -- nought for never. While that is this
+    // tick, it is drawn where it was placed, as a camera written there is
+    // (ADR 0136): drawn between ticks it stood behind where its script put
+    // it, by a share of a tick that changed every frame, while the camera
+    // that followed the same point was drawn on it. Not a property: never
+    // replicated, never hashed.
+    u64 placedAfterTick = 0;
 };
 
 // `MeshPart`'s geometry. The renderer resolves the URN to a loaded mesh and

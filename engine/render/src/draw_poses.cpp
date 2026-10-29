@@ -105,7 +105,13 @@ core::CFrameD DrawPoses::part(core::InstanceId id) const
         }
         return core::CFrameD{};
     }
-    core::CFrameD drawn = interpolatedCFrame(history_, id, component->cframe, alpha_, teleportReach(component->size));
+    // **A part a render phase placed is drawn where it was placed** (ADR
+    // 0268), as a camera written there is (ADR 0136): its script already put
+    // it where this frame has it, and between ticks it would be drawn behind.
+    const bool placed = component->placedAfterTick != 0 && component->placedAfterTick == world_->engineState().tick + 1;
+    core::CFrameD drawn =
+        placed ? component->cframe
+               : interpolatedCFrame(history_, id, component->cframe, alpha_, teleportReach(component->size));
     const core::DVec3 slide = slideOf(id);
     drawn.position = drawn.position + slide;
     keep(id, Kind::Part, drawn);

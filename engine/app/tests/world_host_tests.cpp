@@ -5007,6 +5007,72 @@ TEST_CASE("GetRenderCFrame is where a part is drawn in a render phase and its CF
     CHECK_MESSAGE(log.firstError().empty(), log.firstError());
 }
 
+TEST_CASE("a part a render step places is drawn where it was placed, until a tick runs (ADR 0268)")
+{
+    // **A figure drawn on a body**: the body moved a tick at a time, the
+    // figure put each frame where the body is drawn -- and the figure was
+    // drawn between ticks again, behind where its script had put it, by a
+    // share of a tick that changed every frame, while a camera on the same
+    // point was drawn on it. A character walking past the camera shook.
+    Captured log;
+    Project project;
+    project.write("src/client/init.luau", R"(
+        local RunService = game:GetService("RunService")
+        local body = Instance.new("Part")
+        body.Name = "Body"
+        body.Anchored = true
+        body.Position = vector.create(0, 0, 0)
+        body.Parent = workspace
+        local figure = Instance.new("Part")
+        figure.Name = "Figure"
+        figure.Anchored = true
+        figure.Parent = workspace
+        RunService.Heartbeat:Connect(function()
+            body.Position += vector.create(1, 0, 0)
+        end)
+        RunService:BindToRenderStep("place", 0, function()
+            figure.CFrame = body:GetRenderCFrame()
+        end)
+    )");
+
+    app::WorldHost host;
+    REQUIRE_FALSE(host.boot(bootOptions(project.root)).has_value());
+    scene::World& world = host.world();
+    const core::InstanceId body = world.findFirstChild(host.workspace(), world.atoms().lookup("Body"));
+    const core::InstanceId figure = world.findFirstChild(host.workspace(), world.atoms().lookup("Figure"));
+    REQUIRE(body.valid());
+    REQUIRE(figure.valid());
+    render::TransformHistory history;
+    render::DrawPoses poses;
+    const auto frame = [&](core::f32 alpha) {
+        poses.begin(world, &history, alpha);
+        host.preRender(1.0 / 240.0, &poses);
+        poses.begin(world, &history, alpha);
+    };
+    for (int tick = 0; tick < 3; ++tick) {
+        history.capture(world);
+        host.tick();
+        frame(0.25f);
+    }
+    // Three frames between the same two ticks, the body drawn further on
+    // each: the figure on it every time, where it was placed.
+    for (const core::f32 alpha : {0.25f, 0.5f, 0.75f}) {
+        CAPTURE(alpha);
+        frame(alpha);
+        const double drawnBody = poses.part(body).position.x;
+        CHECK(drawnBody == doctest::Approx(2.0 + static_cast<double>(alpha)));
+        CHECK(poses.part(figure).position.x == doctest::Approx(drawnBody));
+    }
+
+    // **And no longer once a tick has run** with no render phase after it:
+    // the figure is where the tick found it, drawn as any part is.
+    history.capture(world);
+    host.tick();
+    poses.begin(world, &history, 0.5f);
+    CHECK(poses.part(figure).position.x == doctest::Approx(2.75));
+    CHECK_MESSAGE(log.firstError().empty(), log.firstError());
+}
+
 TEST_CASE(
     "the default camera turns in the frame the mouse moves and holds its subject still on screen at 240 Hz (ADR 0136)")
 {

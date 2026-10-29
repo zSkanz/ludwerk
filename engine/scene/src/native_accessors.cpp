@@ -1426,6 +1426,19 @@ bool setPVInstancePivotOffset(World& world, core::InstanceId id, const Value& va
     return true;
 }
 
+namespace {
+
+// A part placed by a render phase is drawn where it was placed until the
+// next tick (ADR 0268).
+void notePlaced(const World& world, PartComponent& part)
+{
+    const EngineState& state = world.engineState();
+    if (state.renderPhase)
+        part.placedAfterTick = state.tick + 1;
+}
+
+} // namespace
+
 Value getBasePartCFrame(const World& world, core::InstanceId id)
 {
     const PartComponent* part = readPart(world, id);
@@ -1440,6 +1453,7 @@ bool setBasePartCFrame(World& world, core::InstanceId id, const Value& value)
     if (cframe == nullptr || part == nullptr || !core::isFinite(*cframe) || !core::isWorldPosition(cframe->position))
         return false;
     part->cframe = *cframe;
+    notePlaced(world, *part);
     return true;
 }
 
@@ -1461,6 +1475,7 @@ bool setBasePartPosition(World& world, core::InstanceId id, const Value& value)
     // Widened rather than replaced: the rotation is untouched, and the f32 the
     // script supplied becomes the f64 of record.
     part->cframe.position = core::toDVec3(*position);
+    notePlaced(world, *part);
     return true;
 }
 
@@ -1486,6 +1501,7 @@ bool setBasePartOrientation(World& world, core::InstanceId id, const Value& valu
         core::fromEulerYxz(core::Vec3{static_cast<f32>(static_cast<f64>(degrees->x) * DegreesToRadians),
                                       static_cast<f32>(static_cast<f64>(degrees->y) * DegreesToRadians),
                                       static_cast<f32>(static_cast<f64>(degrees->z) * DegreesToRadians)});
+    notePlaced(world, *part);
     return true;
 }
 
