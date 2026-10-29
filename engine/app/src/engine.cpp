@@ -55,6 +55,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -112,7 +113,9 @@
 #include "engine/app/world_host.h"
 #include "engine/app/world_ui.h"
 #include "engine/asset/content.h"
+#include "engine/asset/gltf.h"
 #include "engine/asset/image.h"
+#include "engine/asset/mesh_format.h"
 #include "engine/asset/seal.h"
 #include "engine/asset/texture.h"
 #include "engine/core/build_info.h"
@@ -2168,6 +2171,12 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     // those and not the whole library. Held across frames rather than declared
     // in the loop, so the allocation happens once.
     std::vector<core::NameAtom> meshCompletions;
+    // **The meshes a machine that draws nothing has read for their collision**
+    // (`collideAsDrawn`), by content: each once per scene and per physics
+    // mirror, found again when either is new.
+    std::unordered_set<core::u32> collisionRead;
+    const scene::PhysicsSync* collisionReadFor = nullptr;
+    core::u32 collisionReadScene = 0;
     // What was last written to `.engine/editor.json`, so the write happens on a
     // change rather than every frame.
     std::string rememberedScene;
@@ -9050,6 +9059,61 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
             loadFor(host->world(), host->workspace());
             if (Editor::Stage* const openStage = stageOf(); openStage != nullptr)
                 loadFor(openStage->world(), openStage->workspace());
+
+            // **A machine that draws nothing collides as the machines that
+            // draw do.** A mesh's collision hull is its vertices, and they
+            // reached the physics mirror only from the mesh loader above, which
+            // uploads to a device -- so a dedicated server, which has none,
+            // collided every `MeshPart` as its bounding box while each player
+            // collided it as its hull. Every wall, stall and barrel stopped the
+            // two in different places, and the server put the player right
+            // thirty times a second: a figure that shuddered beside anything it
+            // touched. Here the same vertices, read from the content without a
+            // device: a compiled mesh decoded, a loose file imported -- the
+            // positions the loader would have handed over, so the hull is the
+            // same one on every machine.
+            if ((renderer == nullptr || !renderer->valid()) && host->physics() != nullptr) {
+                scene::PhysicsSync* const physics = host->physics();
+                scene::World& world = host->world();
+                const core::u32 scene = world.engineState().sceneLoads;
+                if (physics != collisionReadFor || scene != collisionReadScene) {
+                    collisionRead.clear();
+                    collisionReadFor = physics;
+                    collisionReadScene = scene;
+                }
+                // `Enum.CollisionFidelity.Box`: a box needs no vertices.
+                constexpr core::i32 kBoxFidelity = 2;
+                world.meshParts().forEach([&](core::InstanceId, const scene::MeshPartComponent& mesh) {
+                    if (!mesh.meshContent.valid() || mesh.collisionFidelity == kBoxFidelity ||
+                        !collisionRead.insert(mesh.meshContent.id).second)
+                        return;
+                    const std::string_view urn = world.atoms().text(mesh.meshContent);
+                    const asset::ResolvedContent resolved = contentMounts.resolve(urn);
+                    std::vector<core::Vec3> positions;
+                    if (resolved.source == asset::ResolvedContent::Source::Pack &&
+                        resolved.kind == asset::AssetKind::Mesh) {
+                        asset::CompiledMesh compiled;
+                        if (!asset::decodeMesh(resolved.bytes, compiled).has_value()) {
+                            positions.reserve(compiled.vertices.size());
+                            for (const asset::Vertex& vertex : compiled.vertices)
+                                positions.push_back(vertex.position);
+                        }
+                    }
+                    else if (resolved.source == asset::ResolvedContent::Source::Loose) {
+                        std::vector<std::byte> bytes;
+                        asset::Model model;
+                        if (platform::readFile(resolved.path, bytes) &&
+                            !asset::importGltf(bytes, resolved.path.parent_path(), asset::GltfImportOptions{}, model)
+                                 .has_value()) {
+                            positions.reserve(model.mesh.vertices.size());
+                            for (const asset::Vertex& vertex : model.mesh.vertices)
+                                positions.push_back(vertex.position);
+                        }
+                    }
+                    if (positions.size() >= 4)
+                        physics->setCollisionPoints(mesh.meshContent, std::move(positions));
+                });
+            }
 
             // **A scene that is left takes what it alone held with it**:
             // the meshes and textures nothing in the scene now open names, a
