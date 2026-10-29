@@ -47,7 +47,12 @@ inline constexpr char ChunkMagic[4] = {'L', 'G', 'C', 'H'};
 //
 // Four since a group says where in the authored tree it is (`ChunkGroup::anchor`).
 // Version three is still read: its groups are a name and nothing else.
-inline constexpr u32 ChunkFormatVersion = 4;
+//
+// Five since a mesh part says the size of its mesh (`ChunkInstance::meshSize`),
+// and a part whether it touches and floats. Version four is still read: every
+// mesh in it is (1, 1, 1), and every part touches and floats -- what it said.
+inline constexpr u32 ChunkFormatVersion = 5;
+inline constexpr u32 ChunkFormatVersionAnchoredGroups = 4;
 inline constexpr u32 ChunkFormatVersionNamedGroups = 3;
 inline constexpr u32 ChunkFormatVersionColumns = 2;
 
@@ -147,6 +152,11 @@ struct ChunkInstance
     bool anchored = true;
     bool canCollide = true;
     bool canQuery = true;
+    // `BasePart.CanTouch` and `BasePart.Buoyant` (version five), stored as
+    // their absence like the two below: a record from before touches and
+    // floats, which is what it came back doing.
+    bool canTouch = true;
+    bool buoyant = true;
     // `BasePart.CastShadow`. Stored as its absence, so a chunk baked before
     // the property existed reads as casting.
     bool castShadow = true;
@@ -160,6 +170,12 @@ struct ChunkInstance
 
     core::CFrameD cframe;
     core::Vec3 size{1.0f, 1.0f, 1.0f};
+    // `MeshPart.MeshSize`, for a `MeshPart`: the divisor `size` is drawn and
+    // collided over. **A record without it brought a resized mesh back at
+    // (1, 1, 1)**, and a house whose mesh measures 7 m came back seven times
+    // its size. Stored only when it is not one, so a part nobody sized costs
+    // a record nothing.
+    core::Vec3 meshSize{1.0f, 1.0f, 1.0f};
     core::Color3 color{1.0f, 1.0f, 1.0f};
     f32 transparency = 0.0f;
     f32 friction = 0.3f;

@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "../../scene/generated/class_descriptors.gen.h"
 #include "../generated/class_descriptors.gen.h"
@@ -14,6 +15,8 @@
 #include "engine/scene/class_registry.h"
 #include "engine/scene/enum_registry.h"
 #include "engine/scene/partition.h"
+#include "engine/scene/scene_file.h"
+#include "engine/scene/streaming_glue.h"
 #include "engine/scene/world.h"
 
 using namespace engine;
@@ -65,4 +68,57 @@ TEST_CASE("a part that points at something stays in the scene with what it point
     CHECK(result.scene.find("\"Body\"") != std::string::npos);
     CHECK(result.scene.find("\"Hood\"") != std::string::npos);
     CHECK(result.scene.find("\"PoseFrom\":\"Workspace.Body\"") != std::string::npos);
+}
+
+TEST_CASE("a resized mesh comes back from its cell the size it was")
+{
+    // `MeshPart.MeshSize` is the divisor `Size` is drawn and collided over, and
+    // the record had no field for it: a house whose mesh measures 7 m, sized
+    // 7 m, came back over a mesh of one and was drawn seven times its height.
+    core::AtomTable atoms;
+    scene::ClassRegistry classes;
+    scene::EnumRegistry enums;
+    scene::generated::registerEnums(enums, atoms);
+    scene::generated::registerClasses(classes, atoms);
+    render::generated::registerClasses(classes, atoms);
+    scene::World world{classes, enums, atoms, 7u};
+
+    const std::string text =
+        R"({"format":"scene","version":2,"root":{"class":"Workspace","name":"Workspace","children":[)" +
+        mesh("House", 40.0, R"(,"MeshSize":[0.5,1,0.25])") + "]}}";
+    asset::Chunk written;
+    scene::PartitionResult result;
+    const scene::PartitionSink sink = [&written](const asset::Chunk& cell) {
+        written = cell;
+        return scene::PartitionCellWritten{};
+    };
+    REQUIRE(!scene::partitionScene(world, text, {}, {}, sink, result).has_value());
+    REQUIRE(result.report.records == 1);
+
+    asset::Chunk cell;
+    REQUIRE_FALSE(asset::decodeChunk(asset::encodeChunk(written), cell).has_value());
+    REQUIRE(cell.instances.size() == 1);
+    CHECK(cell.instances[0].meshSize == core::Vec3{0.5f, 1.0f, 0.25f});
+
+    scene::World streamed{classes, enums, atoms, 9u};
+    const core::InstanceId workspace = streamed.create(classes.findId(atoms.lookup("Workspace")));
+    streamed.setName(workspace, atoms.intern("Workspace"));
+    // (The residual first: a record is born under what it was authored under.)
+    REQUIRE(!scene::readScene(streamed, result.scene).has_value());
+    scene::StreamingGlue glue(streamed, workspace);
+    (void)glue.materialize(cell.id, cell);
+    std::vector<core::InstanceId> descendants;
+    streamed.collectDescendants(workspace, descendants);
+    const scene::MeshPartComponent* house = nullptr;
+    const scene::PartComponent* part = nullptr;
+    for (const core::InstanceId id : descendants) {
+        if (streamed.atoms().text(streamed.name(id)) == "House") {
+            house = streamed.meshParts().find(id);
+            part = streamed.parts().find(id);
+        }
+    }
+    REQUIRE(house != nullptr);
+    REQUIRE(part != nullptr);
+    CHECK(house->meshSize == core::Vec3{0.5f, 1.0f, 0.25f});
+    CHECK(part->size == core::Vec3{2.0f, 2.0f, 2.0f});
 }

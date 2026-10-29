@@ -479,6 +479,23 @@ private:
     [[nodiscard]] Cell& cellFor(asset::ChunkId id);
     void finish();
 
+    // **What a part made and never touched is**, of a class a record can be.
+    // Made once, in the scratch world, so a field a record has no room for is
+    // compared with what a cell really makes rather than with a struct's
+    // defaults a class's hooks may start elsewhere.
+    struct Pristine
+    {
+        bool made = false;
+        PartComponent part;
+        RigidBodyComponent body;
+        bool phased = false;
+        bool lagCompensated = false;
+    };
+    [[nodiscard]] const Pristine& pristineOf(ClassId classId);
+    // Whether `id` is, in every field a record has no room for, a part made and
+    // never touched.
+    [[nodiscard]] bool onlyWhatARecordSays(core::InstanceId id, ClassId classId);
+
     // **The authored parent of whatever is being visited**, as the
     // number its node is marked with -- given the first time a child of it
     // leaves, so a node nothing left is not rewritten to carry one.
@@ -497,6 +514,8 @@ private:
     ClassId m_partClass = InvalidClass;
     ClassId m_meshPartClass = InvalidClass;
     ClassId m_modelClass = InvalidClass;
+    Pristine m_pristinePart;
+    Pristine m_pristineMeshPart;
 
     std::unordered_set<std::string> m_pins;
     // One entry for each node whose children are being walked, innermost last.
@@ -663,6 +682,16 @@ Leaf Partitioner::readLeaf(std::string_view node)
         return leaf;
     }
 
+    // **And everything else a part can be that a record has no field for**,
+    // for the same reason: a room shown, light baked, a fade, a priority, a
+    // dormancy, a damping, a velocity, a phase. A record is born a part made
+    // and never touched, and a value it cannot say came back as that part's --
+    // a phased part seen by every player, a lamp post that started to fade.
+    if (!onlyWhatARecordSays(id, classId)) {
+        m_scratch.drop(id);
+        return leaf;
+    }
+
     leaf.record.kind = isMesh ? asset::ChunkInstance::Kind::MeshPart : asset::ChunkInstance::Kind::Part;
     if (const PartComponent* part = m_scratch.world().parts().find(id); part != nullptr) {
         leaf.record.cframe = part->cframe;
@@ -681,6 +710,8 @@ Leaf Partitioner::readLeaf(std::string_view node)
         leaf.record.anchored = body->anchored;
         leaf.record.canCollide = body->canCollide;
         leaf.record.canQuery = body->canQuery;
+        leaf.record.canTouch = body->canTouch;
+        leaf.record.buoyant = body->buoyant;
         leaf.record.friction = body->friction;
         leaf.record.restitution = body->restitution;
         leaf.record.density = body->density;
@@ -691,6 +722,9 @@ Leaf Partitioner::readLeaf(std::string_view node)
             leaf.meshContent = std::string(m_scratch.world().atoms().text(mesh->meshContent));
             leaf.record.levelOfDetail = static_cast<core::u8>(mesh->levelOfDetail);
             leaf.record.collisionFidelity = static_cast<core::u8>(mesh->collisionFidelity);
+            // What `Size` is measured against: without it a resized mesh came
+            // back from its cell drawn at `Size` times itself.
+            leaf.record.meshSize = mesh->meshSize;
         }
     }
 
@@ -706,6 +740,48 @@ Leaf Partitioner::readLeaf(std::string_view node)
     m_scratch.drop(id);
     leaf.expressible = true;
     return leaf;
+}
+
+const Partitioner::Pristine& Partitioner::pristineOf(ClassId classId)
+{
+    Pristine& usual = classId == m_meshPartClass ? m_pristineMeshPart : m_pristinePart;
+    if (usual.made)
+        return usual;
+    World& world = m_scratch.world();
+    const core::InstanceId fresh = world.create(classId);
+    if (const PartComponent* part = world.parts().find(fresh); part != nullptr)
+        usual.part = *part;
+    if (const RigidBodyComponent* body = world.rigidBodies().find(fresh); body != nullptr)
+        usual.body = *body;
+    usual.phased = world.phases().find(fresh) != nullptr;
+    usual.lagCompensated = world.lagCompensated().find(fresh) != nullptr;
+    m_scratch.drop(fresh);
+    usual.made = true;
+    return usual;
+}
+
+bool Partitioner::onlyWhatARecordSays(core::InstanceId id, ClassId classId)
+{
+    const Pristine& usual = pristineOf(classId);
+    const World& world = m_scratch.world();
+    if (const PartComponent* part = world.parts().find(id); part != nullptr) {
+        // A clone of a material is a surface too, and `material` alone did
+        // not ask after it.
+        if (part->materialClone != 0 || part->showsRoom != usual.part.showsRoom ||
+            part->bakedLight != usual.part.bakedLight || part->lightmapScale != usual.part.lightmapScale ||
+            part->fade != usual.part.fade || part->replicationPriority != usual.part.replicationPriority ||
+            part->dormancy != usual.part.dormancy)
+            return false;
+    }
+    if (const RigidBodyComponent* body = world.rigidBodies().find(id); body != nullptr) {
+        if (body->linearDamping != usual.body.linearDamping || body->angularDamping != usual.body.angularDamping ||
+            body->rollingResistance != usual.body.rollingResistance ||
+            body->contactDetails != usual.body.contactDetails || !(body->linearVelocity == usual.body.linearVelocity) ||
+            !(body->angularVelocity == usual.body.angularVelocity))
+            return false;
+    }
+    return (world.phases().find(id) != nullptr) == usual.phased &&
+           (world.lagCompensated().find(id) != nullptr) == usual.lagCompensated;
 }
 
 // --- filing a record --------------------------------------------------------

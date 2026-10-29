@@ -141,6 +141,18 @@ children; a part carrying an attribute; a part something else names by path (a
 a script inside it; and a stamped instance whose root is not an atomic model.
 **To stream a stamp, make its root a `Model` and set it `Atomic`.**
 
+A cell carries what a part is placed and built with: its `CFrame`, `Size` and
+`Shape`, a `MeshPart`'s `MeshContent`, `MeshSize`, `CollisionFidelity` and
+`LevelOfDetail`, the default material's `Color` and `Transparency`,
+`CastShadow`, `ReceivesDecals`, `Occluder`, `Anchored`, `CanCollide`,
+`CanQuery`, `CanTouch`, `Buoyant`, `CollisionGroup`, `Friction`,
+`Restitution`, `Density`, its name and its tags. A part with anything else set
+stays in the scene: another material or a pivot offset, and any of
+`ShowsRoom`, `BakedLight`, `LightmapScale`, `Fade`, `ReplicationPriority`,
+`Dormancy`, `LinearDamping`, `AngularDamping`, `RollingResistance`,
+`ContactDetails`, a velocity, a `Phase` or `LagCompensated` that a part made
+and never touched does not have.
+
 ### Size classes
 
 A cell also has a **class**, chosen by how large the thing in it is:

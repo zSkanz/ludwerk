@@ -286,6 +286,67 @@ TEST_CASE("a part that stays in a partitioned scene keeps the material the scene
     CHECK(streamed.world.atoms().text(worn->material) == "materials/concrete.material.json");
 }
 
+TEST_CASE("a part that touches nothing and sinks comes back from its cell doing both")
+{
+    // A decoration is `CanTouch = false` far more often than not, and the
+    // record had no room to say so: it came back firing `Touched`.
+    seedRealCatalog();
+    Sandbox sandbox;
+    const std::string text =
+        sceneText(partNodeWith("Still", 10.0, 0.0, 10.0, 2.0, R"("CanTouch":false,"Buoyant":false,)", ""));
+    const Partition partitioned = partition(sandbox, text);
+    REQUIRE(partitioned.result.report.records == 1);
+    REQUIRE(partitioned.cells.size() == 1);
+    asset::Chunk cell;
+    REQUIRE_FALSE(asset::decodeChunk(asset::encodeChunk(partitioned.cells.begin()->second), cell).has_value());
+    REQUIRE(cell.instances.size() == 1);
+    CHECK_FALSE(cell.instances[0].canTouch);
+    CHECK_FALSE(cell.instances[0].buoyant);
+
+    // (The residual first: a record is born under what it was authored under.)
+    Sandbox streamed;
+    REQUIRE(!scene::readScene(streamed.world, partitioned.result.scene).has_value());
+    scene::StreamingGlue glue(streamed.world, streamed.workspace);
+    (void)glue.materialize(cell.id, cell);
+    std::vector<core::InstanceId> descendants;
+    streamed.world.collectDescendants(streamed.workspace, descendants);
+    const scene::RigidBodyComponent* body = nullptr;
+    for (const core::InstanceId id : descendants) {
+        if (streamed.world.atoms().text(streamed.world.name(id)) == "Still")
+            body = streamed.world.rigidBodies().find(id);
+    }
+    REQUIRE(body != nullptr);
+    CHECK_FALSE(body->canTouch);
+    CHECK_FALSE(body->buoyant);
+}
+
+TEST_CASE("a part with anything a record has no field for stays whole, and a plain one beside it still goes")
+{
+    // A record is born a part made and never touched, so each of these came
+    // back as that part's value: a phased part seen by every player, a lamp
+    // post that faded, a crate that forgot its damping.
+    seedRealCatalog();
+    const std::vector<std::string> unsayable = {
+        R"("ShowsRoom":true,)",         R"("BakedLight":true,)",
+        R"("LightmapScale":2,)",        R"("Fade":0.5,)",
+        R"("ReplicationPriority":3,)",  R"("Dormancy":"Never",)",
+        R"("LinearDamping":0.5,)",      R"("AngularDamping":0.5,)",
+        R"("RollingResistance":0.5,)",  R"("ContactDetails":true,)",
+        R"("LinearVelocity":[0,5,0],)", R"("AngularVelocity":[0,1,0],)",
+        R"("Phase":"Cellar",)",         R"("LagCompensated":true,)",
+    };
+    for (const std::string& property : unsayable) {
+        CAPTURE(property);
+        Sandbox sandbox;
+        const std::string text = sceneText(partNodeWith("Odd", 10.0, 0.0, 10.0, 2.0, property, "") + "," +
+                                           partNode("Plain", 40.0, 0.0, 10.0));
+        const Partition partitioned = partition(sandbox, text);
+        CHECK(partitioned.result.report.records == 1);
+        CHECK(partitioned.result.scene.find("\"Odd\"") != std::string::npos);
+        CHECK(partitioned.result.scene.find("\"Plain\"") == std::string::npos);
+    }
+}
+
 TEST_CASE("a loose part goes into the cell its position falls in")
 {
     seedRealCatalog();

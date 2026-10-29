@@ -149,12 +149,15 @@ core::f64 StreamingGlue::materialize(asset::ChunkId id, const asset::Chunk& chun
                     resident.meshes.push_back(mesh->meshContent);
                 mesh->collisionFidelity = static_cast<core::i32>(source.collisionFidelity);
                 mesh->levelOfDetail = static_cast<core::i32>(source.levelOfDetail);
+                mesh->meshSize = source.meshSize;
             }
         }
         if (RigidBodyComponent* body = m_world.rigidBodies().find(id2); body != nullptr) {
             body->anchored = source.anchored;
             body->canCollide = source.canCollide;
             body->canQuery = source.canQuery;
+            body->canTouch = source.canTouch;
+            body->buoyant = source.buoyant;
             body->friction = source.friction;
             body->restitution = source.restitution;
             body->density = source.density;

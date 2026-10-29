@@ -92,6 +92,50 @@ TEST_CASE("encoding the same chunk twice produces the same bytes")
     CHECK(encodeChunk(source) == encodeChunk(source));
 }
 
+TEST_CASE("a mesh's size, and whether a part touches and floats, survive the format, and a version-four file is one")
+{
+    // A record without the mesh's size brought a resized mesh back drawn at
+    // `Size` times itself: a house of 7 m measured, the height of a hill.
+    seedRealCatalog();
+    using engine::core::Vec3;
+
+    Chunk source = sampleChunk();
+    source.instances[1].meshSize = Vec3{7.2f, 6.97f, 6.18f};
+    source.instances[1].canTouch = false;
+    source.instances[0].buoyant = false;
+    const std::vector<std::byte> bytes = encodeChunk(source);
+    // Only the size costs bytes, and only on the mesh that has one.
+    CHECK(bytes.size() == encodeChunk(sampleChunk()).size() + 12);
+
+    Chunk decoded;
+    REQUIRE_FALSE(decodeChunk(bytes, decoded).has_value());
+    CHECK(decoded.instances[1].meshSize == source.instances[1].meshSize);
+    CHECK_FALSE(decoded.instances[1].canTouch);
+    CHECK(decoded.instances[1].buoyant);
+    CHECK(decoded.instances[0].meshSize == Vec3{1.0f, 1.0f, 1.0f});
+    CHECK(decoded.instances[0].canTouch);
+    CHECK_FALSE(decoded.instances[0].buoyant);
+
+    // A version-four file has none of the three: every mesh is one, and every
+    // part touches and floats.
+    std::vector<std::byte> four = encodeChunk(sampleChunk());
+    four[4] = std::byte{4};
+    Chunk old;
+    REQUIRE_FALSE(decodeChunk(four, old).has_value());
+    CHECK(old.instances[1].meshSize == Vec3{1.0f, 1.0f, 1.0f});
+    CHECK(old.instances[1].canTouch);
+    CHECK(old.instances[1].buoyant);
+
+    // The size's bit in a file from before it, and a size that cannot be
+    // divided by, are files this encoder did not write.
+    std::vector<std::byte> early = bytes;
+    early[4] = std::byte{4};
+    CHECK(decodeChunk(early, old).has_value());
+    Chunk flat = source;
+    flat.instances[1].meshSize = Vec3{0.0f, 1.0f, 1.0f};
+    CHECK(decodeChunk(encodeChunk(flat), old).has_value());
+}
+
 TEST_CASE("a corrupted chunk is an error and never a crash")
 {
     seedRealCatalog();

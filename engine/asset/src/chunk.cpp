@@ -45,6 +45,16 @@ constexpr u32 OccluderMask = 3u << OccluderShift;
 // Set for a mesh part drawn at its finest level: a record from before the bit
 // is `Automatic`.
 constexpr u32 FlagFinest = 1u << 7;
+// Set for a mesh part whose `MeshSize` is not one, and then its three floats
+// follow the record (version five). A record without the bit -- every `Part`,
+// every mesh nobody sized, every record from before -- is the fixed size it
+// always was.
+constexpr u32 FlagMeshSize = 1u << 8;
+// Set for a part that touches nothing, and for one that sinks (version five):
+// a record from before touches and floats.
+constexpr u32 FlagNoTouch = 1u << 9;
+constexpr u32 FlagSinks = 1u << 10;
+constexpr usize MeshSizeBytes = 12;
 
 void writeU32(std::vector<std::byte>& out, u32 value)
 {
@@ -200,6 +210,8 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
     writeU32(out, static_cast<u32>(chunk.strings.size()));
 
     for (const ChunkInstance& instance : chunk.instances) {
+        const bool sized =
+            instance.kind == ChunkInstance::Kind::MeshPart && !(instance.meshSize == core::Vec3{1.0f, 1.0f, 1.0f});
         writeU32(out, static_cast<u32>(instance.kind));
         writeU32(out, instance.shape);
         writeU32(out, instance.collisionFidelity);
@@ -207,7 +219,8 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
                           (instance.canQuery ? FlagCanQuery : 0u) | (instance.castShadow ? 0u : FlagNoShadow) |
                           (instance.receivesDecals ? 0u : FlagNoDecals) |
                           ((static_cast<u32>(instance.occluder) << OccluderShift) & OccluderMask) |
-                          (instance.levelOfDetail != 0 ? FlagFinest : 0u));
+                          (instance.levelOfDetail != 0 ? FlagFinest : 0u) | (sized ? FlagMeshSize : 0u) |
+                          (instance.canTouch ? 0u : FlagNoTouch) | (instance.buoyant ? 0u : FlagSinks));
         writeU32(out, instance.name);
         writeU32(out, instance.meshContent);
         writeU32(out, instance.collisionGroup);
@@ -230,6 +243,11 @@ std::vector<std::byte> encodeChunk(const Chunk& chunk)
         writeF32(out, instance.color.r);
         writeF32(out, instance.color.g);
         writeF32(out, instance.color.b);
+        if (sized) {
+            writeF32(out, instance.meshSize.x);
+            writeF32(out, instance.meshSize.y);
+            writeF32(out, instance.meshSize.z);
+        }
     }
 
     for (const ChunkGroup& group : chunk.groups) {
@@ -262,8 +280,8 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
 
     Reader reader(bytes, 4);
     const u32 version = reader.u32v();
-    if (version != ChunkFormatVersion && version != ChunkFormatVersionNamedGroups &&
-        version != ChunkFormatVersionColumns) {
+    if (version != ChunkFormatVersion && version != ChunkFormatVersionAnchoredGroups &&
+        version != ChunkFormatVersionNamedGroups && version != ChunkFormatVersionColumns) {
         const I18nArg args[] = {{"found", std::to_string(version)}, {"expected", std::to_string(ChunkFormatVersion)}};
         return core::makeError(ENG_TR("asset.chunk.err.version"), args);
     }
@@ -294,7 +312,8 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         return core::makeError(ENG_TR("asset.chunk.err.too_large"));
     }
     const usize remaining = bytes.size() - reader.at();
-    const bool anchoredGroups = version >= ChunkFormatVersion;
+    const bool anchoredGroups = version >= ChunkFormatVersionAnchoredGroups;
+    const bool meshSizes = version >= ChunkFormatVersion;
     const usize groupBytes = anchoredGroups ? GroupRecordBytes : NamedGroupRecordBytes;
     if (static_cast<u64>(instanceCount) * InstanceRecordBytes + static_cast<u64>(groupCount) * groupBytes +
             static_cast<u64>(tagRefCount) * TagRefBytes >
@@ -320,6 +339,8 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         instance.receivesDecals = (flags & FlagNoDecals) == 0;
         instance.occluder = static_cast<u8>((flags & OccluderMask) >> OccluderShift);
         instance.levelOfDetail = (flags & FlagFinest) != 0 ? 1 : 0;
+        instance.canTouch = (flags & FlagNoTouch) == 0;
+        instance.buoyant = (flags & FlagSinks) == 0;
         instance.name = reader.u32v();
         instance.meshContent = reader.u32v();
         instance.collisionGroup = reader.u32v();
@@ -338,6 +359,21 @@ std::optional<core::EngineError> decodeChunk(std::span<const std::byte> bytes, C
         }
         instance.size = core::Vec3{reader.f32v(), reader.f32v(), reader.f32v()};
         instance.color = core::Color3{reader.f32v(), reader.f32v(), reader.f32v()};
+        // The bit means nothing before version five, and nothing on a `Part`:
+        // either is a file this decoder did not write.
+        if ((flags & FlagMeshSize) != 0) {
+            if (!meshSizes || instance.kind != ChunkInstance::Kind::MeshPart || !reader.has(MeshSizeBytes)) {
+                return malformed();
+            }
+            instance.meshSize = core::Vec3{reader.f32v(), reader.f32v(), reader.f32v()};
+            // A divisor: zero, a negative or a NaN is a scale nothing can draw
+            // (`MeshPart.MeshSize` refuses each when it is set).
+            const core::Vec3 size = instance.meshSize;
+            if (!std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z) || size.x <= 0.0f ||
+                size.y <= 0.0f || size.z <= 0.0f) {
+                return malformed();
+            }
+        }
         if (!reader.ok()) {
             return malformed();
         }
