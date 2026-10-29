@@ -725,6 +725,10 @@ public:
         if (!m_animation)
             return;
         m_animation->clearPresented();
+        // Each pose where the frame is between its ticks (ADR 0267), as
+        // the parts are; a world drawn at its tick has no history.
+        if (poses.history() != nullptr)
+            m_animation->presentBetween(poses.alpha());
         m_limbs.update(world(), *m_animation, poses, limbs);
         frame.afterLimbs = true;
         m_springs.update(world(), *m_animation, poses, frame);

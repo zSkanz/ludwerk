@@ -6,6 +6,7 @@
 // it has no body are the host's (`engine_app_tests`).
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -619,4 +620,60 @@ TEST_CASE("ADR 0201: a hero's five pieces cost less worn than posed, and a crowd
     CHECK(posesWorn * 4.0 < posesPosed);
     (void)crowdWorn;
     (void)crowdPosed;
+}
+
+TEST_CASE("ADR 0267: a frame between two ticks draws each joint between them, and what it presents builds on that")
+{
+    Fixture fixture;
+    fixture.body();
+    // The arm raised a quarter turn over a second: it moves every tick.
+    render::SkeletonLibrary::Entry from0 = library();
+    asset::AnimationClip raise = draw();
+    raise.name = "Raise";
+    const f32 half0 = std::sqrt(0.5f);
+    raise.channels[0].values = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, half0, half0};
+    from0.clips.push_back(raise);
+    fixture.skeletons.set(fixture.clips, std::move(from0));
+    render::AnimationSystem animation{fixture.world, fixture.skeletons};
+    const scene::TrackId track = animation.createTrack(fixture.player, fixture.clips, "Raise");
+    animation.play(track, 0.0f, 1.0f, 1.0f);
+    animation.sample(1.0 / 60.0);
+    REQUIRE(animation.pose(fixture.hero) != nullptr);
+    const render::Pose before = *animation.pose(fixture.hero);
+    animation.sample(1.0 / 60.0);
+    const render::Pose* after = animation.pose(fixture.hero);
+    REQUIRE(after != nullptr);
+    const core::Vec3 from = placeOf(before.model[Hand]);
+    const core::Vec3 to = placeOf(after->model[Hand]);
+    REQUIRE(static_cast<double>(core::length(to - from)) > 1.0e-3);
+
+    // At either end, the tick there; halfway, as far from the one as the
+    // other, and on neither.
+    const auto drawnHand = [&](f32 alpha) {
+        animation.clearPresented();
+        animation.presentBetween(alpha);
+        const render::Pose* drawn = animation.drawnPose(fixture.hero);
+        REQUIRE(drawn != nullptr);
+        return placeOf(drawn->model[Hand]);
+    };
+    CHECK(static_cast<double>(core::length(drawnHand(0.0f) - from)) < 1.0e-5);
+    CHECK(static_cast<double>(core::length(drawnHand(1.0f) - to)) < 1.0e-5);
+    const core::Vec3 half = drawnHand(0.5f);
+    const double gone = static_cast<double>(core::length(half - from));
+    const double left = static_cast<double>(core::length(to - half));
+    CHECK(gone == doctest::Approx(left).epsilon(0.02));
+    CHECK(gone > 1.0e-4);
+
+    // **What a frame presents first is made on the blend**: the hips given
+    // where they are leave the arm where the blend put it, not at the tick.
+    const std::array<render::AnimationSystem::PresentedJoint, 1> hips{
+        render::AnimationSystem::PresentedJoint{Hips, after->model[Hips]}};
+    animation.present(fixture.hero, hips);
+    const render::Pose* presented = animation.drawnPose(fixture.hero);
+    REQUIRE(presented != nullptr);
+    CHECK(static_cast<double>(core::length(placeOf(presented->model[Hand]) - half)) < 1.0e-5);
+
+    // And a tick that poses nothing new draws the tick.
+    animation.clearPresented();
+    CHECK(animation.drawnPose(fixture.hero) == animation.pose(fixture.hero));
 }

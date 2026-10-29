@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "engine/asset/animation_graph.h"
@@ -364,7 +365,17 @@ public:
     {
         presented_.clear();
         presentedMeshes_.clear();
+        between_.clear();
     }
+    // **Every pose drawn `alpha` of the way from the tick before the last to
+    // the last** (ADR 0267), as `DrawPoses` draws the parts: each joint's
+    // place, turn and size from the one to the other, the rest carried down
+    // the rig. A pose is sampled once a tick; a frame between two ticks drew
+    // the last of them, and at a refresh that is not the ticks' a limb stood
+    // still a frame and leapt the next while the body it is on slid -- a
+    // character at a hundred hertz walked shuddering. The first thing a frame
+    // presents: what reaches, the chains and the cloth are made on it.
+    void presentBetween(core::f32 alpha);
     // The meshes presented this frame, in the order they first were.
     [[nodiscard]] std::span<const core::InstanceId> presentedMeshes() const noexcept { return presentedMeshes_; }
     // A joint's place in the pose `meshPart` is DRAWN with: the presented one
@@ -841,6 +852,11 @@ private:
     // storage; one a frame did not present is not live.
     std::map<core::u64, PresentedCloth> clothPresented_;
     std::vector<core::InstanceId> presentedMeshes_;
+    // Every pose as the tick before this one left it (`presentBetween`),
+    // and which of this frame's presented poses are only that blend: the
+    // first `present` of one of those builds on it rather than on the tick's.
+    std::unordered_map<core::u64, std::shared_ptr<const Pose>> before_;
+    std::unordered_set<core::u64> between_;
     // This mesh's pose to write to: the one it holds, when nothing else does;
     // a copy of it otherwise, or a new one.
     [[nodiscard]] Pose& ownPose(core::InstanceId meshPart, bool keep);

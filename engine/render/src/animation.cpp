@@ -1,6 +1,7 @@
 #include "engine/render/animation.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <iterator>
@@ -553,6 +554,10 @@ void AnimationSystem::sample(f64 fixedDt)
 {
     core::profile::Sections sections;
     ENG_PROFILE_NEXT(sections, "animation.tracks");
+    // **The poses as the last tick left them**, for a frame drawn between it
+    // and this one (`presentBetween`). Held, a pose this tick writes is
+    // written as a copy (`ownPose`), and the last tick's stays as it was.
+    before_ = poses_;
     // Every skinned mesh with at least one live track under it, collected first
     // so the pose walk is one pass per mesh rather than one per track.
     meshes_.clear();
@@ -603,6 +608,7 @@ void AnimationSystem::sample(f64 fixedDt)
                 track.time = static_cast<f64>(track.length);
         }
         poses_.clear();
+        before_.clear();
         presented_.clear();
         shared_.clear();
         sharedJoints_ = 0;
@@ -3109,7 +3115,10 @@ void AnimationSystem::present(core::InstanceId meshPart, std::span<const Present
         settle(meshPart);
 
     const auto held = presented_.find(keyOf(meshPart));
-    const bool again = over && held != presented_.end() && held->second.model.size() == jointCount;
+    // A pose drawn between ticks is the picture a frame's first presenting
+    // builds on, as one presented before it would be (ADR 0267).
+    const bool blended = between_.erase(keyOf(meshPart)) != 0;
+    const bool again = (over || blended) && held != presented_.end() && held->second.model.size() == jointCount;
     if (held == presented_.end())
         presentedMeshes_.push_back(meshPart);
     Pose& drawn = again ? held->second : presented_[keyOf(meshPart)];
@@ -3153,6 +3162,84 @@ void AnimationSystem::present(core::InstanceId meshPart, std::span<const Present
                 parent == asset::Joint::NoParent ? drawn.local[joint] : drawn.model[parent] * drawn.local[joint];
         }
         drawn.palette[joint] = drawn.model[joint] * entry->joints[joint].inverseBind;
+    }
+}
+
+namespace {
+
+// A joint's place relative to its parent, `alpha` of the way from `a` to `b`:
+// its offset and each axis's length in a line, its turn by `slerp`.
+[[nodiscard]] Mat4 blendLocal(const Mat4& a, const Mat4& b, f32 alpha) noexcept
+{
+    const auto split = [](const Mat4& from, Mat3& turn, std::array<f32, 3>& size) {
+        for (int column = 0; column < 3; ++column) {
+            const f32 length = std::sqrt(from.m[column][0] * from.m[column][0] + from.m[column][1] * from.m[column][1] +
+                                         from.m[column][2] * from.m[column][2]);
+            size[static_cast<usize>(column)] = length;
+            const f32 over = length > 1.0e-8f ? 1.0f / length : 0.0f;
+            for (int row = 0; row < 3; ++row)
+                turn.m[column][row] = from.m[column][row] * over;
+        }
+    };
+    Mat3 turnA;
+    Mat3 turnB;
+    std::array<f32, 3> sizeA{};
+    std::array<f32, 3> sizeB{};
+    split(a, turnA, sizeA);
+    split(b, turnB, sizeB);
+    const Mat3 turn = core::slerp(turnA, turnB, alpha);
+    Mat4 out;
+    for (int column = 0; column < 3; ++column) {
+        const usize axis = static_cast<usize>(column);
+        const f32 size = sizeA[axis] + (sizeB[axis] - sizeA[axis]) * alpha;
+        for (int row = 0; row < 3; ++row)
+            out.m[column][row] = turn.m[column][row] * size;
+        out.m[column][3] = 0.0f;
+    }
+    for (int row = 0; row < 3; ++row)
+        out.m[3][row] = a.m[3][row] + (b.m[3][row] - a.m[3][row]) * alpha;
+    out.m[3][3] = 1.0f;
+    return out;
+}
+
+} // namespace
+
+void AnimationSystem::presentBetween(core::f32 alpha)
+{
+    between_.clear();
+    if (before_.empty())
+        return;
+    const f32 share = std::clamp(alpha, 0.0f, 1.0f);
+    for (const auto& [key, now] : poses_) {
+        const auto was = before_.find(key);
+        // Not posed this tick -- unseen, or nothing playing -- is where it was.
+        if (now == nullptr || was == before_.end() || was->second == nullptr || was->second == now)
+            continue;
+        const Pose& from = *was->second;
+        const Pose& to = *now;
+        const usize jointCount = to.local.size();
+        if (jointCount == 0 || from.local.size() != jointCount || to.model.size() != jointCount)
+            continue;
+        const core::InstanceId meshPart{static_cast<u32>(key), static_cast<u32>(key >> 32)};
+        const SkeletonLibrary::Entry* entry = skeletonOf(meshPart);
+        if (entry == nullptr || entry->joints.size() != jointCount)
+            continue;
+        const auto [slot, fresh] = presented_.try_emplace(key);
+        if (fresh)
+            presentedMeshes_.push_back(meshPart);
+        Pose& drawn = slot->second;
+        drawn.local.resize(jointCount);
+        drawn.model.resize(jointCount);
+        drawn.palette.resize(jointCount);
+        for (usize joint = 0; joint < jointCount; ++joint) {
+            drawn.local[joint] = blendLocal(from.local[joint], to.local[joint], share);
+            const core::u32 parent = entry->joints[joint].parent;
+            drawn.model[joint] =
+                parent == asset::Joint::NoParent ? drawn.local[joint] : drawn.model[parent] * drawn.local[joint];
+            drawn.palette[joint] = drawn.model[joint] * entry->joints[joint].inverseBind;
+        }
+        drawn.stamp = to.stamp;
+        between_.insert(key);
     }
 }
 
