@@ -13,11 +13,13 @@ using engine::app::FrameLimiter;
 using engine::app::FramePacing;
 using engine::app::FrameWindowState;
 using engine::app::LoadingCurtain;
+using engine::app::ShownClock;
 using engine::app::SyncWatch;
 
 namespace {
 
 constexpr core::u64 Millisecond = 1'000'000ull;
+constexpr core::u64 Second = 1000 * Millisecond;
 
 } // namespace
 
@@ -164,6 +166,50 @@ TEST_CASE("the watch says the sync is not holding only after frames it could not
     for (int frame = 0; frame < 100; ++frame)
         watch.sample(Millisecond / 2, 0.0f);
     CHECK(watch.held());
+}
+
+TEST_CASE("a frame's time is when the display shows it, a whole number of refreshes on (ADR 0266)")
+{
+    // **As measured at a hundred hertz**: shown every 10 ms, begun 8, 8 and
+    // 12.5 ms apart round the refresh. The frames' times are 10 ms apart.
+    ShownClock clock;
+    const core::u64 period = 10 * Millisecond;
+    const std::array<core::i64, 3> jitter{-1'200'000, -3'200'000, 1'300'000};
+    core::u64 shownBefore = clock.next(Second, 100.0f, true);
+    CHECK(shownBefore == Second);
+    for (int frame = 1; frame < 600; ++frame) {
+        const core::u64 now =
+            Second + static_cast<core::u64>(frame) * period + static_cast<core::u64>(jitter[frame % 3] + 3'300'000);
+        const core::u64 shown = clock.next(now, 100.0f, true);
+        // Within 0.3 ms of a refresh -- the most is in the first frames, as
+        // the clock settles on the display's phase -- where the clock was up
+        // to 4.5 ms off it.
+        CHECK(std::llabs(static_cast<long long>(shown - shownBefore) - static_cast<long long>(period)) < 300'000);
+        shownBefore = shown;
+    }
+
+    // A frame that took two refreshes is given two.
+    const core::u64 late = clock.next(shownBefore + 2 * period + Millisecond, 100.0f, true);
+    CHECK(std::llabs(static_cast<long long>(late - shownBefore) - static_cast<long long>(2 * period)) < 200'000);
+
+    // **A display a little slower than it says** stays on the wall's clock.
+    ShownClock slow;
+    const double truly = 1.0e9 / 99.5;
+    core::u64 at = Second;
+    for (int frame = 0; frame < 6000; ++frame) {
+        at = Second + static_cast<core::u64>(truly * frame);
+        const core::u64 shown = slow.next(at, 100.0f, true);
+        CHECK(std::llabs(static_cast<long long>(shown) - static_cast<long long>(at)) < static_cast<long long>(period));
+    }
+
+    // **And otherwise the clock as it is**: no sync, no refresh known, a
+    // hitch, a clock behind the last frame.
+    ShownClock plain;
+    CHECK(plain.next(Second, 100.0f, true) == Second);
+    CHECK(plain.next(Second + 8 * Millisecond, 100.0f, false) == Second + 8 * Millisecond);
+    CHECK(plain.next(Second + 16 * Millisecond, 0.0f, true) == Second + 16 * Millisecond);
+    CHECK(plain.next(Second + 216 * Millisecond, 100.0f, true) == Second + 216 * Millisecond);
+    CHECK(plain.next(Second + 100 * Millisecond, 100.0f, true) == Second + 100 * Millisecond);
 }
 
 TEST_CASE("a window in sight without the keyboard is drawn as one in front, unless the game asks")

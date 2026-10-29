@@ -2340,6 +2340,10 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
     const bool paced = !options.headless && options.paceHz == 0 && window != nullptr;
     FrameLimiter frameLimiter;
     SyncWatch syncWatch;
+    // The time a frame is given (ADR 0266), and what it is read against: the
+    // refresh of the display the window is on, as the frame before found it.
+    ShownClock shownClock;
+    f32 shownRefresh = 0.0f;
     // **The rate a handheld holds** (ADR 0173): what the frames have been
     // fitting, the rate the frame being drawn is held to at its present (zero:
     // the display paces it, or nothing does), how long that hold was -- which
@@ -4287,15 +4291,24 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
         // (Not on a clock of frames: a headless run's ticks are its frames',
         // and a test counts them.)
         const bool afterRenderer = std::exchange(rendererJustMade, false) && !syntheticClock;
-        if (frameClock.switched() || afterRenderer)
+        if (frameClock.switched() || afterRenderer) {
             scheduler.rebase(nowNs);
+            shownClock.reset();
+        }
+        // **The frame's time is when the display shows it** (ADR 0266): with
+        // the sync holding, a whole number of refreshes after the last. Not
+        // a governed frame's, which is held to its own grid at its present
+        // (ADR 0173), nor a headset's, which keeps its own time.
+        const bool shownOnGrid = !syntheticClock && window != nullptr && livePacing.vsync && !livePacing.adaptive &&
+                                 headset == nullptr && syncWatch.held();
+        const u64 frameNs = syntheticClock ? nowNs : shownClock.next(nowNs, shownRefresh, shownOnGrid);
 
         // **A predicting client catches a stall up** (`stallCatchUpSeconds`):
         // what it drops, it no longer predicts, and the authority's answers
         // move it there at once.
         scheduler.setStallCatchUp(
             host->world().engineState().networkTopology == scene::NetworkTopology::Replica ? StallCatchUpSeconds : 0.0);
-        const Frame frame = scheduler.beginFrame(nowNs);
+        const Frame frame = scheduler.beginFrame(frameNs);
         // Simulated time dropped is a clock that moved, and a replica's
         // authority has to know it from a packet that was late.
         if (frame.clamped)
@@ -4747,6 +4760,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                 state.occluded = false;
             }
             state.refreshRate = platform::windowRefreshRate(*window);
+            shownRefresh = state.refreshRate;
             // The profiler's line is this display's frame.
             if (state.refreshRate >= 1.0f)
                 profiler.budgetMs = 1000.0f / state.refreshRate;

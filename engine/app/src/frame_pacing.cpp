@@ -248,6 +248,24 @@ void SyncWatch::sample(u64 frameNs, f32 refreshRate) noexcept
         m_fast = 0;
 }
 
+u64 ShownClock::next(u64 nowNs, f32 refreshRate, bool held) noexcept
+{
+    if (!held || !(refreshRate >= 1.0f) || m_shownNs == 0 || nowNs <= m_shownNs) {
+        m_shownNs = nowNs;
+        return nowNs;
+    }
+    const f64 period = static_cast<f64>(NanosPerSecond) / static_cast<f64>(refreshRate);
+    const f64 refreshes = std::max(1.0, std::round(static_cast<f64>(nowNs - m_shownNs) / period));
+    if (refreshes > static_cast<f64>(MostRefreshes)) {
+        m_shownNs = nowNs;
+        return nowNs;
+    }
+    const u64 shown = m_shownNs + static_cast<u64>(std::llround(refreshes * period));
+    const i64 off = static_cast<i64>(nowNs) - static_cast<i64>(shown);
+    m_shownNs = static_cast<u64>(static_cast<i64>(shown) + off / Pull);
+    return m_shownNs;
+}
+
 void LoadingCurtain::raise() noexcept
 {
     m_up = true;

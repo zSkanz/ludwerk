@@ -20,6 +20,7 @@ namespace engine::app {
 
 using core::f32;
 using core::f64;
+using core::i64;
 using core::u32;
 using core::u64;
 
@@ -257,6 +258,32 @@ public:
 private:
     static constexpr u32 FastFrames = 30;
     u32 m_fast = 0;
+};
+
+// **A frame's time is when the display shows it** (ADR 0266). With vertical
+// sync holding, a frame is shown a whole number of refreshes after the one
+// before; the loop's clock, read as each frame begins, says otherwise by the
+// wait's jitter. Measured at a hundred hertz: frames shown every 10 ms and
+// begun 8, 8 and 12.5 ms apart, so a frame on the screen for 10 ms moved the
+// world by 8 or 12.5 -- a world sliding across the view at a steady pace
+// shuddered by a quarter, which a camera following a character sideways
+// showed most. So the time a frame is given is the last one's and as many
+// refresh periods as the clock says, to the nearest; a sixteenth of what the
+// clock still says on top, so a display whose refresh is not quite what it
+// reports does not drift away from the wall's. Anything else -- no sync, no
+// refresh known, a hitch of more than eight refreshes, the clock behind it --
+// and the clock is taken as it is.
+class ShownClock
+{
+public:
+    [[nodiscard]] u64 next(u64 nowNs, f32 refreshRate, bool held) noexcept;
+    void reset() noexcept { m_shownNs = 0; }
+
+    static constexpr u64 MostRefreshes = 8;
+    static constexpr i64 Pull = 16;
+
+private:
+    u64 m_shownNs = 0;
 };
 
 // **The loading curtain** (ADR 0159): the backdrop a game's world is
