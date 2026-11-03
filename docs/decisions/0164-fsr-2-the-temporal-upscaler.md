@@ -1,6 +1,6 @@
 # 0164 — FSR 2: the world upscaled from the frames before it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0158 (anti-aliasing and upscaling, whose second delivery this
   is the first half of), ADR 0116 (compute passes), ADR 0147 (the settings),

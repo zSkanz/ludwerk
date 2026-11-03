@@ -1,6 +1,6 @@
 # 0166 — The wire carries what changed: attributes and tags as edits, a rotation in eight bytes, input said once
 
-- Status: accepted
+- Status: accepted; partly built (protocol 40)
 - Date: 2026-10-04
 - Builds on: ADR 0069 (replication), ADR 0106 (attributes replicate, whose
   "whole, not a diff" this amends), ADR 0100 (the published protocol),

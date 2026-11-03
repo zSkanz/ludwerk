@@ -1,6 +1,6 @@
 # 0167 — A host says how many play, and removes a player
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0085 and ADR 0105 (hosting and joining from a script),
   a full server saying so, ADR 0100 (the published protocol)

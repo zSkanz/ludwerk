@@ -1,6 +1,6 @@
 # 0180 — A phone's textures are ASTC
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-05
 - Builds on: ADR 0073 (compiled textures: one container, transcoded to what
   the device samples)

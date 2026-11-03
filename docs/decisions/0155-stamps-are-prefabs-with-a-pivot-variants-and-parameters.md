@@ -1,6 +1,6 @@
 # 0155 — Stamps 2.0: a copy has one pivot, a stamp nests and has variants, and a designer sets its parameters
 
-- Status: accepted -- approved on 2026-10-03
+- Status: accepted; built (pivot, variants, parameters)
 - Date: 2026-10-03
 - Amends: 0049 (a stamp is a source), 0051 (inheritance and overrides)
 

@@ -1,6 +1,6 @@
 # 0143 — Terrain chunk colliders carry a band, so their seams are inside
 
-- **Status:** accepted (2026-09-30)
+- **Status:** accepted; built (09-30)
 - **Amends:** [ADR 0066](0066-the-physics-seam-learns-two-static-shapes.md)
   and [ADR 0082](0082-terrain-is-a-grid-of-voxels.md) -- how a terrain
   chunk's collider is made, and what a moving body does with it

@@ -1,6 +1,6 @@
 # 0146 — Water bodies follow curves: rivers descend, lakes take any shape, and the editor draws them
 
-- Status: accepted
+- Status: accepted; shapes and curve built; per-point width and depth, editor tool and swimming open
 - Date: 2026-10-01
 - Amends: [0118](0118-water-is-one-wave-definition-read-by-the-renderer-and-by-physics.md)
   (its shapes, its river, and its "swimming is a follow-up").

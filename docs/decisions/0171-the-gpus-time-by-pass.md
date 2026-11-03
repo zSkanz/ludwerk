@@ -1,6 +1,6 @@
 # 0171 — The GPU's time by pass, and the keys that take things out of a frame
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: `[debug] frame_report_seconds`, ADR 0147
   (settings), the `--frame-stats` scopes

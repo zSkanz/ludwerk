@@ -1,6 +1,6 @@
 # 0157 — Scripts run in the predicted step, and intents are written by code
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-03
 - Amends: 0076 (a replica predicts its own character) and 0133 (the island
   stepped again). What they decided stands; this adds what a script does in the

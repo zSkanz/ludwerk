@@ -1,6 +1,6 @@
 # 0148 — The gate runs in lanes, its tests share the machine, and compiles come from a cache
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-01
 
 ## Context

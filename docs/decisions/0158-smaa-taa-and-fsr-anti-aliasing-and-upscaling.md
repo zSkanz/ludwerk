@@ -1,6 +1,6 @@
 # 0158 — SMAA, TAA and FSR: anti-aliasing and upscaling
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-03
 - Amends: the first renderer's choice (FXAA only, no velocity buffer). Its
   reasoning, that a velocity target with no consumer is bandwidth for nothing,

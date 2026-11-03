@@ -1,6 +1,6 @@
 # 0176 — The world is drawn behind the loading curtain before it lifts
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0159 (the loading curtain), ADR 0171
 

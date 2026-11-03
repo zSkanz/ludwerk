@@ -1,6 +1,6 @@
 # 0170 — A phone's back button is Escape, and the game's to answer
 
-- Status: accepted
+- Status: accepted; built; device check pending
 - Date: 2026-10-04
 - Builds on: Android (opened 2026-09-26), ADR 0029 (the input action system)
 

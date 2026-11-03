@@ -1,6 +1,6 @@
 # 0177 — A script writes the clipboard, and never reads it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0029 (the input system), the text input's own copy and paste
 

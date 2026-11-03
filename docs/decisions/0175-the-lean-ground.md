@@ -1,6 +1,6 @@
 # 0175 — The lean ground: a terrain's material at the levels that cannot afford all of it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0113 (a terrain's layers are materials) and its amendment
   (the repeat broken up), ADR 0140, ADR 0171 (the instrument that found it)

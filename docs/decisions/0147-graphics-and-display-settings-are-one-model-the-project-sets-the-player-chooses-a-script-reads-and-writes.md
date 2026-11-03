@@ -1,6 +1,6 @@
 # 0147 — Graphics and display settings are one model: the project sets them, the player chooses, a script reads and writes them
 
-- Status: accepted; built in stages, see the end
+- Status: accepted; partly built (10-02); undrawn settings, the matrix panel and the Auto probe are open
 - Date: 2026-10-01
 - Builds on: ADR 0044 (quality presets), [0111](0111-a-game-saves-through-saveservice-into-the-players-own-folder.md)
   (the player's own folder), [0138](0138-a-script-carries-the-side-it-runs-on.md)

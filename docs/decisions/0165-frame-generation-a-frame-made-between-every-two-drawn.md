@@ -1,6 +1,6 @@
 # 0165 — Frame generation: a frame made between every two drawn
 
-- Status: accepted
+- Status: accepted; setting and pass present, presentation unverified
 - Date: 2026-10-04
 - Builds on: ADR 0164 (FSR 2, whose item 11 left this out and said why),
   ADR 0158 (anti-aliasing and upscaling, whose second delivery this is the

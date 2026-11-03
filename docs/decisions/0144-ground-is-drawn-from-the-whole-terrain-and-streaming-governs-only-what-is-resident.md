@@ -1,6 +1,6 @@
 # 0144 — Ground is drawn from the whole terrain; streaming governs only what is resident
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-30
 - Amends: [0053](0053-the-grid-decides-when-and-the-model-decides-what.md) (a
   streamed terrain's cells), [0140](0140-a-coarse-level-of-the-terrain-is-the-fine-surface-gathered.md)

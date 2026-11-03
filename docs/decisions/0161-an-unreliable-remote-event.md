@@ -1,6 +1,6 @@
 # 0161 — An unreliable remote event: sent once, the newest wins, at most 16 KiB
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Amends: ADR 0077, whose `RemoteEvent` is the only way a script sends, and is
   reliable

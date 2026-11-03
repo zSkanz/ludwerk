@@ -1,6 +1,6 @@
 # 0174 — The forward pass writes no depth the prepass wrote
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0038 (the depth prepass), ADR 0171 (the GPU's time by pass),
   ADR 0172

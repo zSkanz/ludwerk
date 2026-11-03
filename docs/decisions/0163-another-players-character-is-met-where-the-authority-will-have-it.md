@@ -1,6 +1,6 @@
 # 0163 — Another player's character is met where the authority will have it, not where it is drawn
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0076 (prediction and interpolation), ADR 0133 (the predicted
   island), the multiplayer smoothness work (replicated parts are passable for

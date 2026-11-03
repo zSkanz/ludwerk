@@ -1,6 +1,6 @@
 # 0179 — The ground, compiled with nothing else in it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-05
 - Builds on: ADR 0175 (the lean ground), ADR 0171 (the instrument), ADR 0113
   and 0114 (what the ground is made of)

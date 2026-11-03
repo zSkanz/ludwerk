@@ -1,6 +1,6 @@
 # 0139 — A text input edits as every other text field does
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-29
 - Builds on: [0041](0041-inputservice-gains-a-raw-event-surface.md) (a focused
   field takes the keyboard), the first `TextInput` (a caret, the arrows,

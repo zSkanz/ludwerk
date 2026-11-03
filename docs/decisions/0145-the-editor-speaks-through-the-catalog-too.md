@@ -1,6 +1,6 @@
 # 0145 — The editor speaks through the catalog too
 
-- Status: accepted
+- Status: accepted; built (baseline removed 10-01)
 - Date: 2026-09-30
 - Supersedes: [0046](0046-the-editor-is-a-mode-of-the-engine-binary.md)'s
   exemption of the editor from R3, and `debug_overlay.h`'s.

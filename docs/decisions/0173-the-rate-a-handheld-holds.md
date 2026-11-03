@@ -1,6 +1,6 @@
 # 0173 — The rate a handheld holds: a cap of sixty, a rate stepped to what the frames fit, and the wait at the present
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: ADR 0147 (settings: how fast frames are made)
 

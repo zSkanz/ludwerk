@@ -1,6 +1,6 @@
 # 0178 — Reaching a host behind a NAT: a rendezvous, a punch, and a relay that reads nothing
 
-- Status: accepted
+- Status: accepted; built (relay); hole punching unverified
 - Date: 2026-10-05
 - Builds on: ADR 0120 §4 (the relay and the hole punch, decided in outline),
   ADR 0012 (the transport seam), ADR 0106 (`Join` and `Host` from a script),

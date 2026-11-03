@@ -1,6 +1,6 @@
 # 0141 — Terrain is built off the main thread, and drawn where it is built
 
-- **Status:** accepted (2026-09-30)
+- **Status:** accepted; built (09-30)
 - **Amends:** [ADR 0140](0140-a-coarse-level-of-the-terrain-is-the-fine-surface-gathered.md)
   -- when a node is rebuilt, and what is drawn meanwhile
 

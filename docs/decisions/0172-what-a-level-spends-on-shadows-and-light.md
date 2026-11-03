@@ -1,6 +1,6 @@
 # 0172 — What a level spends: the shadow filter by level, passes that draw nothing, and a handheld's bloom
 
-- Status: accepted
+- Status: accepted; taps built, pass-skipping unverified
 - Date: 2026-10-04
 - Builds on: ADR 0044 (graphics quality), ADR 0147 (settings), ADR 0158
   (anti-aliasing and upscaling), ADR 0171 (the GPU's time by pass)

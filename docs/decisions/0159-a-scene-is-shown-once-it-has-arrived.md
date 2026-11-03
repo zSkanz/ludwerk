@@ -1,6 +1,6 @@
 # 0159 — A scene is shown once it has arrived, and a script can say when that is
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-03
 - Amends: the loading curtain, which covered the first scene only
 

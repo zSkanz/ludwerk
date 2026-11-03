@@ -1,6 +1,6 @@
 # 0150 — The far ground is kept on disk as it was gathered, and a node is named by its cells
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-01
 - Amends: [0140](0140-a-coarse-level-of-the-terrain-is-the-fine-surface-gathered.md)
   (where a gathered surface is kept),
@@ -39,7 +39,7 @@ what did not scale, on the build before as on that one:
    voxel: ADR 0144 turned that down. A slab
    two metres thick is in the file as the sheet it gathers to, with a face
    each side; the material on top is the one the surface carries.
-2. **A file a node** (`asset::PyramidNode`, `.lnode`): the chunks in the
+2. **A file per node** (`asset::PyramidNode`, `.lnode`): the chunks in the
    node's footprint, each with what a coarse mesh reads of a chunk without its
    voxels -- one value or more, which faces are solid ground, its digest --
    and its surface at the node's level. A chunk gathered and found to have

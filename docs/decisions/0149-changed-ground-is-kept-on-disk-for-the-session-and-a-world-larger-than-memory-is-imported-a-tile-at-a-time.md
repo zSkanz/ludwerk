@@ -1,6 +1,6 @@
 # 0149 — Changed ground is kept on disk for the session, and a world larger than memory is imported a tile at a time
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-01
 - Amended by: [0150](0150-the-far-ground-is-kept-on-disk-as-it-was-gathered-and-a-node-is-named-by-its-cells.md)
   section 7 -- a game's cache is in the machine's temporary folder, and

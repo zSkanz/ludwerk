@@ -1,6 +1,6 @@
 # 0140 — A coarse level of the terrain is the fine surface, gathered
 
-- **Status:** accepted (2026-09-30)
+- **Status:** accepted; built (09-30)
 - **Amends:** [ADR 0082](0082-terrain-is-a-grid-of-voxels.md) -- its mip
   pyramid, its coarse meshing, its skirts and its level selection
 

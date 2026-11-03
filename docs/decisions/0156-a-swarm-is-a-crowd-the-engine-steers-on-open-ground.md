@@ -1,6 +1,6 @@
 # 0156 — A swarm is a crowd the engine steers on open ground
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-03
 - Amends: 0098 (crowds are agents the engine moves). Everything it decided
   stands; this adds a second kind of crowd beside it.

@@ -1,6 +1,6 @@
 # 0160 — Particles take a picture, frames, a turn and curves; they collide; a hundred thousand run on the GPU; decals lay over and glow
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-03, extended 2026-10-04
 - Amends: ADR 0072's `ParticleEmitter`, which drew three shapes and met nothing, and
   its `Decal`, which could only darken

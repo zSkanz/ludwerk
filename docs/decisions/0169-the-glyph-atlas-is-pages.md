@@ -1,6 +1,6 @@
 # 0169 — The glyph atlas is pages, and the one nobody has shown makes room
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: the UI's text (a glyph's rows are what is
   uploaded), a frame's text built against one atlas, another (a tree

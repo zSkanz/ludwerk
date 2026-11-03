@@ -1,6 +1,6 @@
 # 0168 — Text that does not fit its box: `TextLabel.TextOverflow`
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Builds on: the UI's text, ADR 0128 (layout), rich text
 

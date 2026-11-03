@@ -1,6 +1,6 @@
 # 0162 — A swarm replicates itself: agents as rows on every machine, sent when they would be wrong
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-04
 - Amends: ADR 0156, whose consequences said "agents are not replicated as
   agents", and its amendment of 2026-10-03, which left a match's horde to be

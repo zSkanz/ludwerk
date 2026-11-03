@@ -1,6 +1,6 @@
 # 0142 — Terrain shadows are pushed by their slope
 
-- **Status:** accepted (2026-09-30)
+- **Status:** accepted; built (09-30)
 - **Amends:** [ADR 0082](0082-terrain-is-a-grid-of-voxels.md) -- how the
   terrain is drawn into the shadow maps
 
