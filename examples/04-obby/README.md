@@ -63,10 +63,9 @@ something that is not a physical device", and it is useful on a desktop on its
 own.
 
 **The sounds are on the SimClock**, so `Ended` lands on the same tick in a replay
-as it does live. `Sound.Content` is stored and not yet read (the streaming work is the asset
-pipeline), so each plays a generated tone of its declared length — enough to hear
-that the right thing happened at the right moment, and the honest state of the
-audio path in v1.
+as it does live. This example ships no sound files, so each plays a generated tone
+of its declared length — enough to hear that the right thing happened at the right
+moment. A `Sound` with a `Content` file plays that file.
 
 **The animation is a skinned glTF welded to the character.** `AnimationPlayer`
 under the `MeshPart`, one `AnimationTrack`, loaded once and kept — and nothing

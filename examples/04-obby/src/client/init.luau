@@ -206,10 +206,10 @@ local CheckpointSpots = {
 
 -- --- Sounds ------------------------------------------------------------------
 --
--- On the SimClock, so `Ended` lands on the same tick in a replay. `Content` is
--- stored and not yet read, so each of these plays a generated tone of its
--- declared length -- which is enough to hear that the right thing happened at
--- the right moment, and is the honest state of the audio path in v1.
+-- On the SimClock, so `Ended` lands on the same tick in a replay. This example
+-- ships no sound files, so each of these plays a generated tone of its declared
+-- length -- which is enough to hear that the right thing happened at the right
+-- moment. A `Sound` with a `Content` file plays that file.
 
 local function sound(name: string, volume: number, speed: number): Sound
     local instance = Instance.new("Sound")
