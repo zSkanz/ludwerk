@@ -1,6 +1,6 @@
 # 0058 — A script runs when you press play, and not when you open the project
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-24
 - Extends: 0046 (the editor is a mode of the engine binary)
 - Relates to: 0047 (the world is data and scripts are behaviour),

@@ -1,6 +1,6 @@
 # 0012 — v1 networking = low-level primitives only (GNS + ENet behind ITransport)
 
-- Status: accepted
+- Status: accepted; built with ENet; the no-NetworkService and no-replication cuts are superseded by 0119 and 0069; GameNetworkingSockets not built
 - Date: 2026-08-19
 
 ## Context

@@ -1,6 +1,6 @@
 # 0242 — A game can use Nakama as its backend, through an optional integration
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-17
 - Builds on: ADR 0188 (optional integrations), ADR 0226 (tickets), ADR 0237
   (accounts), ADR 0238 (the data service and its backend contract), ADR 0243

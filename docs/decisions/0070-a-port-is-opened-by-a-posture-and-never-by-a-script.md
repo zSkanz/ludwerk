@@ -1,6 +1,6 @@
 # 0070 — A port is opened by a posture and never by a script
 
-- Status: accepted
+- Status: accepted; NetworkService:Host(port) exists and is refused only on a dedicated server; decision 2 not met
 - Date: 2026-08-27
 - Narrows: [ADR 0035](0035-engine-is-a-websocket-client-of-the-dev-server.md)
 

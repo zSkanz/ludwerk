@@ -1,6 +1,6 @@
 # 0243 — Players are matched into instances, and gather in lobbies
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-17
 - Builds on: ADR 0221 (instances), ADR 0222 (`TravelGroup`), ADR 0238 (the
   data service), ADR 0240 (parties)

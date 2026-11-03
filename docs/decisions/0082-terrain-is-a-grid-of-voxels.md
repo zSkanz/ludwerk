@@ -1,6 +1,6 @@
 # 0082 — Terrain is one grid of voxels, each with a material and an occupancy
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Supersedes: [0067](0067-terrain-is-one-field-with-two-encodings.md) (one
   field, two encodings) and

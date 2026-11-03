@@ -1,6 +1,6 @@
 # 0013 — Vector3 IS the native Luau vector (3-wide, f32)
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

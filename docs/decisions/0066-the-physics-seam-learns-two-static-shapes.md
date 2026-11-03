@@ -1,6 +1,6 @@
 # 0066 — The physics seam learns two static shapes
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-27
 
 ## Context

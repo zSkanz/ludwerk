@@ -1,6 +1,6 @@
 # 0083 — The simulation is deterministic across platforms (level C)
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Amends: [0025](0025-determinism-guarantee.md) (the guarantee is now level C) and
   [0074](0074-jolt-runs-cross-platform-deterministic.md) (the two items it left

@@ -1,6 +1,6 @@
 # 0085 — A player is the same player after a reconnect
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Builds on: ADR 0069 (replication reads state and diffs it), ADR 0070 (one
   binary, four postures), ADR 0076 (prediction, interpolation, interest)

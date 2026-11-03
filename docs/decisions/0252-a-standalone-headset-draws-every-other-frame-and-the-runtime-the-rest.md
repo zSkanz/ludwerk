@@ -1,6 +1,6 @@
 # 0252 — A standalone headset draws every other frame, and the runtime the rest
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-19
 - Builds on: [0244](0244-a-game-runs-in-a-headset-through-openxr.md) §5
   (depth to the runtime), [0250](0250-how-a-headsets-eyes-are-drawn-is-the-projects-to-set.md)

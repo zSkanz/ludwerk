@@ -1,6 +1,6 @@
 # 0072 — Particles are a picture, simulated on the frame
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 
 ## Context

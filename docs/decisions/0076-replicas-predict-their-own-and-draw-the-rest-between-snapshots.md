@@ -1,6 +1,6 @@
 # 0076 — Replicas predict their own character, draw the rest between snapshots, and are sent what is near
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Builds on: ADR 0069 (replication reads state and diffs it), ADR 0074 (Jolt
   cross-platform determinism)

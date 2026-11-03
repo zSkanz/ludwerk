@@ -1,6 +1,6 @@
 # 0024 — Hot reload: fast world restart is the canonical v1 model
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

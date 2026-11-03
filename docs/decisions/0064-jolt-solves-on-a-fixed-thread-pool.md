@@ -1,6 +1,6 @@
 # 0064 — Jolt solves on a fixed thread pool, and the count is part of the hash
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-27
 - Extends: [0025](0025-determinism-guarantee.md) (the determinism guarantee)
 - Answers: the physics work roadmap note — "single-threaded first; Jolt's job system wired

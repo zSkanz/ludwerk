@@ -1,6 +1,6 @@
 # 0081 — The editor holds the whole field, and the GPU holds what is near the camera
 
-- Status: accepted
+- Status: accepted; partly built; decision 1 superseded by 0082, decision 3 built by 0087
 - Date: 2026-09-23
 - Relates to: [0075](0075-terrain-and-block-worlds-stream-in-cells.md), which
   left "editing a world larger than memory" for later;

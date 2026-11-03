@@ -1,6 +1,6 @@
 # 0016 — Fixed-tick deterministic simulation with rollback-oriented foundations
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

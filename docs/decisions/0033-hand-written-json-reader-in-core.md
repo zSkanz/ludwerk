@@ -1,6 +1,6 @@
 # 0033 — A hand-written JSON reader in `core`, not a dependency
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 - Relates to: [ADR 0019](0019-i18n-day-one.md) (i18n catalogs),
   [ADR 0006](0006-hlsl-via-sdl-shadercross.md) (the shader pipeline)

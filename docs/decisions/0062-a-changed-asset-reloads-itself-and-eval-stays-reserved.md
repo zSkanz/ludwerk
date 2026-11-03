@@ -1,6 +1,6 @@
 # 0062 — A changed asset reloads itself, and `eval` stays reserved
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-27
 - Extends: [0024](0024-hot-reload-fast-world-restart.md) (hot reload is a fast world restart)
 - Relates to: [0010](0010-asset-stack.md) (the asset stack),

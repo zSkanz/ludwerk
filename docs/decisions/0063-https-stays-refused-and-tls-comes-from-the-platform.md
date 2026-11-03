@@ -1,6 +1,6 @@
 # 0063 — `https://` stays refused, and when TLS arrives it comes from the platform
 
-- Status: accepted
+- Status: accepted; https:// built on platform TLS, so 'stays refused' no longer holds
 - Date: 2026-08-27
 - Extends: [0012](0012-networking-v1-primitives-only.md) (networking is v1
   primitives only)

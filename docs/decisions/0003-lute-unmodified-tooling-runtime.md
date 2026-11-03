@@ -1,6 +1,6 @@
 # 0003 — Lute 1.0.0 as the unmodified tooling runtime
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

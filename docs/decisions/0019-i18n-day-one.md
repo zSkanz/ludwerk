@@ -1,6 +1,6 @@
 # 0019 — i18n from day one: key + catalog, English-only launch
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

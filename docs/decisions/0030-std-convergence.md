@@ -1,6 +1,6 @@
 # 0030 — Implement Lute's `@std` surface in the game runtime
 
-- Status: accepted
+- Status: accepted; partly built; stringext and tableext not yet implemented
 - Date: 2026-08-19
 
 ## Context

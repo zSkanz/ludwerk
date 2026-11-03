@@ -1,6 +1,6 @@
 # 0029 — Input Action System is the only input model
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

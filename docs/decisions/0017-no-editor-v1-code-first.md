@@ -1,6 +1,6 @@
 # 0017 — No visual editor in v1; code-first DX
 
-- Status: accepted
+- Status: accepted; built as an engine mode (0046); the no-editor v1 scope is superseded
 - Date: 2026-08-19
 
 ## Context

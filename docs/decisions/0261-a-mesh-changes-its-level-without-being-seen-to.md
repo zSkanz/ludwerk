@@ -1,6 +1,6 @@
 # 0261 — A mesh changes its level of detail without being seen to
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-26
 - Builds on: ADR 0010 (the asset stack, whose compiler makes a chain of
   levels for every mesh), ADR 0174 (the depth prepass), ADR 0182 (a run of

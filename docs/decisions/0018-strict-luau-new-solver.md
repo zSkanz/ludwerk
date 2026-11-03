@@ -1,6 +1,6 @@
 # 0018 — All Luau `--!strict` under the new type solver, CI-enforced
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

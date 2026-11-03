@@ -1,6 +1,6 @@
 # 0258 — A mesh a script names is measured by the machine that owns the part
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-20
 - Builds on: ADR 0010 (compiled content), ADR 0186 (what a client makes is
   its own)

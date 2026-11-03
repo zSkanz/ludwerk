@@ -1,6 +1,6 @@
 # 0048 — Content is the source, an instance is a link to it, and editing breaks the link
 
-- Status: accepted
+- Status: accepted; 'Script is created as a file' reversed by 0050
 - Date: 2026-08-23
 - Extends: 0047 (the world is data and scripts are behaviour)
 

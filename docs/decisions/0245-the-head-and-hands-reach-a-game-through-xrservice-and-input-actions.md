@@ -1,6 +1,6 @@
 # 0245 — The head and hands reach a game through `XRService` and its input actions
 
-- Status: accepted
+- Status: accepted; built; recorded simulated hand not built
 - Date: 2026-10-17
 - Builds on: ADR 0244 (OpenXR), the input actions and contexts
   (`InputAction`, `InputContext`, `InputBinding`), `HapticService`

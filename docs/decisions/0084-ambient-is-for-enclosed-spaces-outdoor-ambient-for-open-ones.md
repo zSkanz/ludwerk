@@ -1,6 +1,6 @@
 # 0084 — `Ambient` lights enclosed spaces, `OutdoorAmbient` open ones
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Amends: [0038](0038-visual-fidelity-is-a-v1-target.md) (the environment and
   the ambient it lights by), and the terrain's openness term from

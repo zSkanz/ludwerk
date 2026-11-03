@@ -1,6 +1,6 @@
 # 0049 — A Stamp is a source, an instance carries its mark, and editing it breaks the mark
 
-- Status: accepted
+- Status: accepted; built; break-on-edit reversed by 0051
 - Date: 2026-08-23
 - Implements: 0048 (content is the source, an instance is a link to it)
 - Extends: 0047 (the world is data and scripts are behaviour)

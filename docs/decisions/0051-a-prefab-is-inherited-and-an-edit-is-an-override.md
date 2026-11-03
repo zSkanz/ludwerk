@@ -1,6 +1,6 @@
 # 0051 — A prefab is inherited, an edit is an override, and a copy is the other thing
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-23
 - Reverses: 0049's break-on-edit rule
 - Extends: 0048, 0049 (stamps)

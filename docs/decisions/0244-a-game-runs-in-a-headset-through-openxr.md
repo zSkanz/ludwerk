@@ -1,6 +1,6 @@
 # 0244 — A game runs in a headset through OpenXR, on SDL's GPU
 
-- Status: accepted
+- Status: accepted; partly built: OpenXR session and swapchains built, multiview not built
 - Date: 2026-10-17
 - Builds on: ADR 0005 (the engine's RHI over SDL's GPU API), ADR 0037 (the
   RHI interface is frozen -- amended here, §7), ADR 0038 (visual fidelity)

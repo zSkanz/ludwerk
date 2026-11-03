@@ -1,6 +1,6 @@
 # 0023 — Backend selection at build time; explicit factory, no plugin ABI
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

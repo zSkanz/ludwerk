@@ -1,6 +1,6 @@
 # 0057 — A script is an instance, and the editor edits one thing
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-24
 - Extends: 0046, 0050, 0056
 - Completes: 0050

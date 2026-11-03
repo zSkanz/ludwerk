@@ -1,6 +1,6 @@
 # 0055 — The launcher is the engine with no project open
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-24
 - Extends: 0046, 0054
 

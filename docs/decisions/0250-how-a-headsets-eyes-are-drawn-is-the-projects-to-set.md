@@ -1,6 +1,6 @@
 # 0250 — How a headset's eyes are drawn is the project's to set
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-18
 - Builds on: ADR 0244 (the headset's frame), ADR 0248 (a VR game ships to
   the Quest)

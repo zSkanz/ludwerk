@@ -1,6 +1,6 @@
 # 0022 — Recast/Detour integration deferred post-v1 (seam only)
 
-- Status: accepted
+- Status: accepted; built; the no-NavigationService cut is superseded by 0089 and 0098
 - Date: 2026-08-19
 
 ## Context

@@ -1,6 +1,6 @@
 # 0014 — f64 world coordinates + per-region floating origin
 
-- Status: accepted
+- Status: accepted; partly built; origin rebase lives in StreamingHost, not World
 - Date: 2026-08-19
 
 ## Context

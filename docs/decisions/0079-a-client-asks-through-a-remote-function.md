@@ -1,6 +1,6 @@
 # 0079 — A client asks through a `RemoteFunction`, and the server never waits on a client
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Builds on: ADR 0077 (game messages through a `RemoteEvent`)
 

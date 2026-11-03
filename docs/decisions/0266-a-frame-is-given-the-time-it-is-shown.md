@@ -1,6 +1,6 @@
 # 0266 — A frame is given the time it is shown: whole refreshes while the sync holds
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-29
 - Builds on: ADR 0147 (how fast frames are made), ADR 0173 (the rate a
   handheld holds)

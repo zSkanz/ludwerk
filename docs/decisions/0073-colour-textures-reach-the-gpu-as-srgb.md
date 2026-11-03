@@ -1,6 +1,6 @@
 # 0073 — Colour textures reach the GPU as sRGB, compiled or loose
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 
 ## Context

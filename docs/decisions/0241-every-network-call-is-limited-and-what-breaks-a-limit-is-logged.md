@@ -1,6 +1,6 @@
 # 0241 — Every network call is limited, and what breaks a limit is logged
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-17
 - Builds on: ADR 0077 (`RemoteEvent`), ADR 0099 (an owner within reach),
   ADR 0219 (the administrator's console), ADR 0224 (encryption), ADR 0226

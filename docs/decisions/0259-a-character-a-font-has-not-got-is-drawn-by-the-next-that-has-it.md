@@ -1,6 +1,6 @@
 # 0259 — A character a font has not got is drawn by the next that has it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-21
 - Builds on: ADR 0011 (stb_truetype for the UI's text), ADR 0110 (text
   strokes), ADR 0168 (an ellipsis where text does not fit), ADR 0169 (the

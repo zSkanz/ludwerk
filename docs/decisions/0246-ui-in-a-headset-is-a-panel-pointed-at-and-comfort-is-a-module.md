@@ -1,6 +1,6 @@
 # 0246 — UI in a headset is a panel pointed at, and comfort is a module
 
-- Status: accepted
+- Status: accepted; partly built; NavigationService landing and SaveService settings not built
 - Date: 2026-10-17
 - Builds on: ADR 0244 (OpenXR), ADR 0245 (`XRService`), `SurfaceGui` and
   `ScreenGui`

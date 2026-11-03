@@ -1,6 +1,6 @@
 # 0035 — The engine is a WebSocket client of the dev server; only the dev server listens
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-20
 - Supersedes: nothing. Its own first draft (stdio to the engine) was refuted
   before any code was written — see "What this ADR nearly said".

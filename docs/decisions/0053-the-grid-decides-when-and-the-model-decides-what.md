@@ -1,6 +1,6 @@
 # 0053 — The grid decides *when*, the model decides *what*, and partitioning is the tool's job
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-23
 - Extends: 0047 (the world is data and scripts are behaviour)
 - Relates to: 0048 (content is the source), 0049 (a stamp is a source),

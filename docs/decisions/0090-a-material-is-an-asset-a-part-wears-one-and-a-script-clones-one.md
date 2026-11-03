@@ -1,6 +1,6 @@
 # 0090 — A material is an asset, a part wears one, and a script clones one
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Supersedes: [0060](0060-a-material-is-an-instance-and-a-stamp-is-how-one-is-shared.md)
   (a material is an instance, and a stamp is how one is shared). Its last

@@ -1,6 +1,6 @@
 # 0248 — A VR game ships to the Quest, plays online, and is tested without a headset
 
-- Status: accepted
+- Status: accepted; partly built; foveation default, head and hands in a match, Play in headset not built
 - Date: 2026-10-17
 - Builds on: ADRs 0244-0247 (XR), the Android export (an APK and an App
   Bundle), ADR 0208 (every local player's character is predicted)

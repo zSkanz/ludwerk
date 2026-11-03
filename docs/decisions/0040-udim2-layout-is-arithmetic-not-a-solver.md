@@ -1,6 +1,6 @@
 # 0040 — UDim2 layout is arithmetic, not a constraint problem; v1 does not call Clay
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-20
 - Amends: ADR 0011 (its Clay clause only; the ImGui and stb_truetype clauses stand)
 

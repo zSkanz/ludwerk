@@ -1,6 +1,6 @@
 # 0247 — The room around the player is seen through, and known
 
-- Status: accepted
+- Status: accepted; partly built; room mesh and anchor sharing not built
 - Date: 2026-10-17
 - Builds on: ADR 0244 (OpenXR), ADR 0245 (`XRService`, the play space),
   ADR 0238 (the data service, for anchors shared online)

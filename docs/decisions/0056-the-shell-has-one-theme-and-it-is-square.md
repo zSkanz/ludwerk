@@ -1,6 +1,6 @@
 # 0056 — The shell has one theme, it is data, and it is square
 
-- Status: accepted
+- Status: accepted; built; square-corner requirement amended 2026-09-23
 - Date: 2026-08-24
 - Extends: 0011, 0046, 0055
 

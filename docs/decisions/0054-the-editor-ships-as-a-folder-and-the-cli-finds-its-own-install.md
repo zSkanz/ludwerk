@@ -1,6 +1,6 @@
 # 0054 — The editor ships as a folder, and the CLI finds its own installation
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-24
 - Extends: 0045, 0046
 

@@ -1,6 +1,6 @@
 # 0028 — Instance facade over a hand-rolled deterministic ECS
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

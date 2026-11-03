@@ -1,6 +1,6 @@
 # 0267 — A pose is drawn between its ticks, as a part is
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-29
 - Builds on: ADR 0198 (the pose a frame is drawn with), ADR 0266 (a frame is
   given the time it is shown)

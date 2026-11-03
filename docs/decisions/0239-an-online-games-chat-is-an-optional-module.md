@@ -1,6 +1,6 @@
 # 0239 — An online game's chat is an optional module, `@engine/chat`
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-17
 - Supersedes: ADR 0132's withdrawal, for the scope below
 - Builds on: ADR 0077 (`RemoteEvent`), ADR 0223 (`CrossWorldService`),

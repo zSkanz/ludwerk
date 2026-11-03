@@ -1,6 +1,6 @@
 # 0080 — `ReplicatedStorage` and `ServerStorage` hold what is not the world
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Builds on: ADR 0047 (the scene is the authored world), ADR 0069
   (replication), ADR 0076 (interest), ADR 0077 (remote events)

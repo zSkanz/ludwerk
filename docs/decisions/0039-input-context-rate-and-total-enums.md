@@ -1,6 +1,6 @@
 # 0039 — An InputContext declares its dispatch rate, and the IAS's enums are total
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-20
 
 ## Context

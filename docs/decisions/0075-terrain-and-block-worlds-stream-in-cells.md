@@ -1,6 +1,6 @@
 # 0075 — Terrain and block worlds stream from disk in cells of their own
 
-- Status: accepted
+- Status: accepted; built; cell cutting amended by 0082
 - Date: 2026-09-23
 - Builds on: ADR 0053 (a scene meets the streaming grid at a partition),
   ADR 0067 (one field, two encodings), ADR 0071 (the ground is drawn from a

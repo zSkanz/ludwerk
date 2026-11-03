@@ -1,6 +1,6 @@
 # 0050 — A script is an ordinary instance, and its source is a property
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-23
 - Reverses: 0048's "a `Script` is created as a FILE"
 - Supersedes part of 0047 (scripts are mounted from `src/scripts`)

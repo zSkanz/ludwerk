@@ -1,6 +1,6 @@
 # 0007 — Jolt 5.6 as the default 3D physics backend
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

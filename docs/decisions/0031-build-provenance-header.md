@@ -1,6 +1,6 @@
 # 0031 — Build provenance header; the bootstrap grounding gate amended
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 - Supersedes: —
 

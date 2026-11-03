@@ -1,6 +1,6 @@
 # 0006 — HLSL authored shaders via SDL_shadercross
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

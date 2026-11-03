@@ -1,6 +1,6 @@
 # 0254 — A part that moves on its own is drawn where the authority will have it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-20
 - Builds on: ADR 0076 (a replica predicts its own and draws the rest between
   snapshots), ADR 0133 (what its character touches, replayed), ADR 0134 (one

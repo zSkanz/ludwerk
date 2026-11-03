@@ -1,6 +1,6 @@
 # 0038 — Visual fidelity is a v1 target, and the lighting work is where it is paid for
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-20
 
 ## Context

@@ -1,6 +1,6 @@
 # 0005 — Custom RHI; SDL3 GPU default backend; bgfx in the mobile phase
 
-- Status: accepted
+- Status: accepted; partly built; no bgfx backend (deferred past v1)
 - Date: 2026-08-19
 
 ## Context

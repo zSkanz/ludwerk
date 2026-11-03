@@ -1,6 +1,6 @@
 # 0046 — The editor is a mode of the engine binary, drawn in ImGui
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-22
 - Supersedes: — (extends 0011 and 0017)
 

@@ -1,6 +1,6 @@
 # 0059 — `Enabled` is about resumption, and nothing else
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-24
 - Extends: 0058 (a script runs when you press play)
 - Relates to: 0057 (a script is an instance), 0050 (a script carries its `Source`)

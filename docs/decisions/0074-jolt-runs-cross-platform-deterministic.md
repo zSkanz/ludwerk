@@ -1,6 +1,6 @@
 # 0074 — Jolt runs cross-platform deterministic; the engine's transcendentals are what is left
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Amends: ADR 0025 (determinism levels), `third_party/CMakeLists.txt`'s Jolt
   options

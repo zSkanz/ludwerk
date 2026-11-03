@@ -1,6 +1,6 @@
 # 0087 — A large terrain is a folder of cells, and the editor pages it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Builds the deferred third decision of
   [0081](0081-the-editor-holds-the-field-and-the-gpu-holds-what-is-near.md),

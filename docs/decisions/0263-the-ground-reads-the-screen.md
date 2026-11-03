@@ -1,6 +1,6 @@
 # 0263 — The ground reads the screen
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-26
 - Builds on: ADR 0113 (a terrain's layers are materials, kept in arrays),
   ADR 0175 (the lean ground, and the slots it kept named), ADR 0209

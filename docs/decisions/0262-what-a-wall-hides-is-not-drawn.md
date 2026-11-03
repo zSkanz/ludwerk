@@ -1,6 +1,6 @@
 # 0262 — What a wall hides is not drawn, and the culler pays for itself
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-26
 - Builds on: ADR 0134 (one drawn position per instance), ADR 0182 (a run of
   instances drawn in pieces), ADR 0184 (`BasePart.Fade`)

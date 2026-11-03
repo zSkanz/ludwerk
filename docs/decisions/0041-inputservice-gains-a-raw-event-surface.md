@@ -1,6 +1,6 @@
 # 0041 — `InputService` gains a raw event surface, fed from the IAS's own pipeline
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-21
 - Amends: ADR 0029 (its "only input model" clause; everything else stands)
 

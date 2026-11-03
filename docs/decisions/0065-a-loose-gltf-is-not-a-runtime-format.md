@@ -1,6 +1,6 @@
 # 0065 — A loose `.gltf` is not a runtime format; everything arrives compiled
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-27
 - Supersedes, in part: [0010](0010-asset-stack.md) — the
   "fast dev-mode loads" it promises are now the compiled path, not a source parse.

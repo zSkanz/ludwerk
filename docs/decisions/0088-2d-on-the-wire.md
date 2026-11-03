@@ -1,6 +1,6 @@
 # 0088 — 2D on the wire (protocol 11)
 
-- Status: accepted
+- Status: accepted; built; decision 6 superseded by 0103
 - Date: 2026-09-24
 - Amends: ADR 0069 (the wire schema)
 

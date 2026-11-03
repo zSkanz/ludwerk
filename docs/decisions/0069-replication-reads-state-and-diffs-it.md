@@ -1,6 +1,6 @@
 # 0069 — Replication reads state and diffs it, against a declared wire schema
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-27
 - Depends on: [ADR 0070](0070-a-port-is-opened-by-a-posture-and-never-by-a-script.md)
 

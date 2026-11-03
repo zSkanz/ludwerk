@@ -1,6 +1,6 @@
 # 0255 — A sound behind a wall is muffled
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-20
 - Builds on: ADR 0009 (miniaudio is the seam), ADR 0131 (sound effects, a
   low-pass among them), ADR 0147 (the quality level), ADR 0205 (an ear a view)

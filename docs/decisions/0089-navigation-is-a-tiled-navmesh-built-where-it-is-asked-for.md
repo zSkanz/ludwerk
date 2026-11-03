@@ -1,6 +1,6 @@
 # 0089 — Navigation is a tiled navmesh, built where it is asked for
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Amends: ADR 0022 (Recast/Detour vendored with the seam only). This is the
   integration it deferred.

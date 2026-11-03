@@ -1,6 +1,6 @@
 # 0238 — A player's data lives in the manager's database
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-17
 - Builds on: ADR 0111 (`SaveService`), ADR 0220 (the manager), ADR 0222
   (travel), ADR 0230 (saves shared by channels), ADR 0237 (accounts)

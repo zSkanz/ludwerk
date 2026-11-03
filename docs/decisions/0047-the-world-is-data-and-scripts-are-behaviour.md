@@ -1,6 +1,6 @@
 # 0047 — The world is data and scripts are behaviour
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-22
 - Supersedes: — (changes what ADR 0017 deferred, and reframes ADR 0045's
   "a packaged game is a folder that ships source")

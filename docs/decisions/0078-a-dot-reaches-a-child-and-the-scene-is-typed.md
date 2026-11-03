@@ -1,6 +1,6 @@
 # 0078 — A dot reaches a child, and the scene's tree is typed
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-23
 - Supersedes: [0061](0061-a-child-is-not-a-member-and-the-refusal-says-so.md)
   and `api-design.md` divergence #26

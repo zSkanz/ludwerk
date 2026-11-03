@@ -1,6 +1,6 @@
 # 0249 — The local gate runs what a change can affect
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-18
 - Builds on: ADR 0148 (the gate in lanes, the inner and outer loops)
 

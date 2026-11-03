@@ -1,6 +1,6 @@
 # 0045 — A packaged game is a folder, and it ships Luau source
 
-- Status: accepted
+- Status: accepted; amended by 0112 (bytecode default) and 0183 (sealed pack)
 - Date: 2026-08-22
 - Amended by: [0104](0104-a-game-is-exported-from-one-window-for-windows-linux-and-android.md)
   -- the folder is still the product, and now for Windows, Linux and Android,

@@ -1,6 +1,6 @@
 # 0008 — Box2D 3.1 for the post-v1 2D layer
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

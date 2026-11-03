@@ -1,6 +1,6 @@
 # 0257 — A material's pipelines are made off the frame and kept on disk
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-20
 - Builds on: ADR 0091 (surface shaders), ADR 0125 (scenes prepared in the
   background), ADR 0176 (a pipeline that took long is said)

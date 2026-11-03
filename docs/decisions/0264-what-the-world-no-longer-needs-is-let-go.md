@@ -1,6 +1,6 @@
 # 0264 — What the world no longer needs is let go, and what is far is kept smaller
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-26
 - Builds on: ADR 0075 (worlds stream in cells), ADR 0086 (cells are cubes),
   the scene sweep of `MeshLoader` (a scene left lets go of what the

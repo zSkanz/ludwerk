@@ -1,6 +1,6 @@
 # 0027 — IRenderer contract with RenderWorld as the stable boundary
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context
