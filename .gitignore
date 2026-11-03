@@ -101,6 +101,11 @@ examples/05-streaming/content/world/
 # reason: 289 chunk sources, 4.8 MB of JSON, from a hundred committed lines.
 examples/10-open-world/content/world/
 
+# `examples/49-far-city`'s content is all generated: forty towers, sixteen
+# facades of half a megabyte each and the cells that place them, from one
+# committed script.
+examples/49-far-city/content/
+
 # `art/` is source, not scratch: `icons/bake.py` reads the masters under
 # `art/editor-icons/` to produce the theme under `icons/default/`, which IS
 # committed. A generated artifact whose input is missing is an artifact nobody

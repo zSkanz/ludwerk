@@ -102,6 +102,7 @@ local Sections: { Section } = {
             { Slug = "surface-shaders", Title = "Surface shaders" },
             { Slug = "material-graphs", Title = "Material graphs" },
             { Slug = "views", Title = "Views: cameras on screens" },
+            { Slug = "large-worlds", Title = "Drawing a large world" },
             { Slug = "settings", Title = "Graphics and display settings" },
             { Slug = "quality", Title = "Graphics quality settings" },
         },

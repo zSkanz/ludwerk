@@ -1,0 +1,14 @@
+# A city too far to see all of (ADRs 0261 to 0264): an avenue streamed in
+# cells and flown, with what hides, what is let go and what is kept smaller
+# said by the frame report.
+
+[project]
+name = "Ludwerk Far City"
+id = "dev.ludwerk.farcity"
+version = "1.0.0"
+engine = "0.1"
+
+[window]
+title = "Ludwerk — Far City"
+width = 1280
+height = 720

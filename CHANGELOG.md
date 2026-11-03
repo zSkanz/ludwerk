@@ -11,6 +11,10 @@ here.
 
 ### Added
 
+- `examples/49-far-city`, and a manual page, *Drawing a large world*: an
+  avenue streamed in cells and flown, with the frame report saying what a
+  wall hid, what was let go, which textures are kept smaller and how often a
+  mesh changed its level of detail.
 - The ground of a `Terrain` reads the screen: what it reflects and the light
   it bounces, as every part does, where the screen reflection and bounce
   settings are on. With them off it is drawn exactly as before.

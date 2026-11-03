@@ -1546,6 +1546,24 @@ if(ENG_BUILD_TESTS)
         TIMEOUT 600
         LABELS perf)
 
+    # **The far city** (ADRs 0261 to 0264): the category's example flown, and
+    # each of its four claims asked of the frame report -- something hidden,
+    # meshes let go, facades kept smaller, levels changed. `perf` for the
+    # mesh flight's reason: a minute of the clock, paced.
+    add_test(NAME far_city_gate
+        COMMAND ${CMAKE_COMMAND}
+            -DHOST=$<TARGET_FILE:engine_host>
+            -DASSETC=$<TARGET_FILE:assetc>
+            -DPROJECT=${CMAKE_SOURCE_DIR}/examples/49-far-city
+            -DSTAGE=${CMAKE_CURRENT_BINARY_DIR}/far-city
+            -DFRAMES=3600
+            -DMIN_LET_GO=8
+            -P ${CMAKE_SOURCE_DIR}/tests/screenshots/run_far_city_gate.cmake)
+    set_tests_properties(far_city_gate PROPERTIES
+        SKIP_REGULAR_EXPRESSION "ENG_TEST_SKIP"
+        TIMEOUT 600
+        LABELS perf)
+
     add_test(NAME perf_budget
         COMMAND engine_host --bench=${CMAKE_SOURCE_DIR}/tests/bench --bench-repeats=1)
     # `quiet` (ADR 0148): the bench's budgets are the local gate's perf
