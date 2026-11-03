@@ -13,8 +13,8 @@ moves to [Built](#built) and names the decision that records it.
 
 ## Later
 
-- **Web**: games that run in a browser from a link. The decision is
-  [ADR 0265](docs/decisions/0265-a-game-opens-from-a-link.md); its build
+- **Web**: games that run in a browser from a link. In progress: the decision
+  is [ADR 0265](docs/decisions/0265-a-game-opens-from-a-link.md), and its build
   presets and install script are not in the tree yet.
 - **Packages**: a package manager for sharing Luau modules and assets.
 - **Animation**: root motion, and merging a character's worn pieces into one
@@ -35,6 +35,13 @@ moves to [Built](#built) and names the decision that records it.
   ([ADR 0255](docs/decisions/0255-a-sound-behind-a-wall-is-muffled.md)), and
   players talk to each other with Opus voice chat
   ([ADR 0256](docs/decisions/0256-players-talk-to-each-other.md)).
+- **Headsets**: stereo rendering, XR input and the space warp, with a simulated
+  headset for testing ([ADR 0250](docs/decisions/0250-how-a-headsets-eyes-are-drawn-is-the-projects-to-set.md),
+  [0252](docs/decisions/0252-a-standalone-headset-draws-every-other-frame-and-the-runtime-the-rest.md),
+  [0245](docs/decisions/0245-the-head-and-hands-reach-a-game-through-xrservice-and-input-actions.md)).
+  Foveation defaults and a room mesh are still open
+  ([0247](docs/decisions/0247-the-room-around-the-player-is-seen-through-and-known.md),
+  [0248](docs/decisions/0248-a-vr-game-ships-to-the-quest-plays-online-and-is-tested-without-a-headset.md)).
 - **World**: automatic levels of detail
   ([ADR 0261](docs/decisions/0261-a-mesh-changes-its-level-without-being-seen-to.md)),
   occlusion culling
@@ -46,6 +53,5 @@ moves to [Built](#built) and names the decision that records it.
 
 - iOS and console platforms other than Xbox in developer mode.
 - Hardware ray tracing.
-- Virtual reality.
 
 To propose something that is not on this page, open an issue.

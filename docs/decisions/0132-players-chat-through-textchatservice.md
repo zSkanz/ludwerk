@@ -2,6 +2,8 @@
 
 - Status: Withdrawn (TextChatService not built); withdrawal partly superseded by 0239 (@engine/chat)
 - Date: 2026-09-27
+
+*Amended 2026-11-03 to match the code: `@engine/chat` ships (runtime/engine/chat, ADR 0239); `TextChatService` itself is not built.*
 - Builds on: [0077](0077-game-messages-cross-the-wire-through-a-remote-event.md)
   (messages across the wire), [0099](0099-teams-and-network-ownership.md) (teams),
   [0120](0120-the-transport-is-encrypted-and-a-player-is-a-key.md) (a player is a

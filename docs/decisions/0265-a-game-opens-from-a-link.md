@@ -1,6 +1,6 @@
 # 0265 — A game opens from a link: two web builds, and a loop that yields
 
-- Status: accepted. The web is open (R15, 2026-10-10), and its dependencies
+- Status: accepted; web build in progress, not yet in this tree. The web is open (R15, 2026-10-10), and its dependencies
   were approved by the project's maintainer on 2026-10-26 (R5, R6): the
   Emscripten SDK (MIT/UIUC), Dawn's emdawnwebgpu bindings (BSD-3), Tint
   (Apache-2.0, offline only, never in a game) and, later, msquic (MIT, server

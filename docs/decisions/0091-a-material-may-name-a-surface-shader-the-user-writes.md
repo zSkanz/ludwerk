@@ -75,8 +75,8 @@ macOS for that reason. Building it ourselves gives a macOS editor a compiler.
 ### Two tiers, and the code tier comes first
 
 A material asset may name a **surface shader** with `"shader": "<content URN>"`.
-A node graph is the second tier and is not built here: it will generate the
-same surface shader, so building the code tier first means the contract is
+A node graph is the second tier. It was built later (ADR 0211) and generates
+the same surface shader, so building the code tier first meant the contract was
 designed once.
 
 ### A surface shader is two functions, not a pipeline

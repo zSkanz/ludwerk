@@ -13,7 +13,8 @@
 //
 // **R3 applies to what this draws** (ADR 0145, superseding 0046's
 // exemption): the editor will ship in other languages, so every word it shows
-// is a catalog key. `tools/repo/i18n_editor_baseline.json` counts what is left.
+// is a catalog key. The baseline that counted what was left was removed on
+// 2026-10-01 (ADR 0145): the lint allows no raw word.
 #pragma once
 
 #include <span>

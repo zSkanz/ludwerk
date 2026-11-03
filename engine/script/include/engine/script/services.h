@@ -221,7 +221,7 @@ public:
     // `ContentProvider:PreloadAsync` (ADR 0131 §3): the calls parked on it.
     PreloadState preloads;
 
-    // `ClickDetector` and `ProximityPrompt` on this machine (ADR 0126).
+    // `ClickDetector` on this machine (ADR 0126; `ProximityPrompt` was withdrawn).
     DetectorState detectors;
 
     std::vector<ChildWaiter> childWaiters;
