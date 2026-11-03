@@ -50,8 +50,9 @@ delta, so every future DXC bump adds another full copy to history forever.
 
 **A dependency may be a binary release artifact, fetched at configure time and
 pinned by SHA256, rather than a source tree vendored in-tree.** It is a distinct
-row kind in `third_party/manifest.json`, marked `"kind": "binary"`, carrying a
-per-platform URL and hash instead of a commit.
+row kind in `third_party/manifest.json`: a row under the top-level `binaries`
+key (not under `dependencies`), carrying per-platform `artifacts`, each with a
+URL and a SHA256, instead of a commit.
 
 Rules for such a row:
 

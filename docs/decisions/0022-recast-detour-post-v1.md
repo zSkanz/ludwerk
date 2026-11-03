@@ -12,8 +12,11 @@ queries) is real scope.
 ## Decision
 **Vendor Recast/Detour and define the `nav` module seam** (Recast builds on
 the jobs pool, Detour queries on the sim thread), but ship **no navmesh
-integration and no NavigationService in v1**. Navigation is the first post-v1
-item, together with the 2D layer.
+integration and no NavigationService in v1**. *Amended 2026-11-03 to match the
+code: NavigationService exists (ADR 0089; `engine/script/include/engine/script/services.h`)
+and `engine/nav/` is built with agent types, areas, links and crowds (ADR 0098),
+so both cuts are superseded.* Navigation was the first post-v1 item, together
+with the 2D layer.
 
 ## Consequences
 A leaner, honest v1; the seam prevents the deferral from becoming a redesign.

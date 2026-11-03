@@ -11,14 +11,17 @@ rollback release shows where replication eventually goes; retrofitting is the
 failure mode to avoid.
 
 ## Decision
-v1 ships **low-level primitives only**, exposed through the Lute-compatible
+v1 ships **low-level primitives**, exposed through the Lute-compatible
 `@std/net` surface (HTTP client always; HTTP/WS server and raw sockets in dev
 mode, and behind `[permissions] net_serve` in shipped builds). Native
-transports: **GameNetworkingSockets** (encryption, congestion control,
-console/mobile record) with **ENet** as the LAN/fallback option, both behind
-the `ITransport` interface — the seam future replication will use (QUIC/msquic
-can slot in later). There is **no NetworkService, no Remotes, no replication
-in v1**; those names are reserved. The blessed v1 pattern for client/server
+transport: **ENet**, behind the `ITransport` interface — the seam future
+replication uses (`engine/net/src/enet_transport.cpp`; QUIC/msquic can slot in
+later). **GameNetworkingSockets** (encryption, congestion control,
+console/mobile record) was the intended primary transport and is not built; it
+is named only in comments. *Amended 2026-11-03 to match the code: the
+no-NetworkService, no-Remotes and no-replication cuts are superseded — `NetworkService`
+exists (ADR 0119), `RemoteEvent` and `RemoteFunction` exist, and `engine/replication/`
+is built (ADR 0069).* The blessed v1 pattern for client/server
 projects is a sibling backend process running on Lute sharing `@shared` code.
 
 ## Consequences

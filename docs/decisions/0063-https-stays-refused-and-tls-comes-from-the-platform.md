@@ -27,13 +27,16 @@ plainly that it is not the recommended one.
 
 ## Decision
 
-**`https://` stays refused in v1.** R15 closes v1's scope, ADR 0012 makes
-`@std/net` primitives-only, and the documented shape — a backend on localhost or
-a LAN — does not need it. Nothing here is blocked on it.
+**`https://` is served, through the platform's TLS.** *Amended 2026-11-03 to match
+the code: the original decision kept `https://` refused in v1; it is built on
+platform TLS (see Built below). The refusals that remain are a scheme other than
+`http` or `https` (`net.err.http_scheme_unsupported`), a redirect from `https` to
+plain `http` (`net.err.http_redirect_downgrade`), and Linux without a system
+OpenSSL (`net.err.https_no_openssl`).*
 
-**When TLS is built, it comes from the PLATFORM and not from a vendored
-library.** WinHTTP or Schannel on Windows, `NSURLSession` on macOS, the system
-OpenSSL through the platform layer on Linux. The client becomes a thin seam over
+**TLS comes from the PLATFORM and not from a vendored library.** WinHTTP on
+Windows, `NSURLSession` on macOS, the system OpenSSL (loaded at run time) on
+Linux, and the Java platform stack on Android. The client is a seam over
 whichever one the target has, exactly as `platform/` already is for files,
 windows and clocks.
 
@@ -92,9 +95,10 @@ That last point is why the decision is not obvious, and why it is written down.
 
 ## Consequences
 
-- `https://` keeps refusing, and the three documents that say so stay true.
-- A future milestone that wants it has a starting point that is a seam rather
-  than a shopping trip, and knows the client is what changes.
+- `https://` is served through the platform's TLS, and
+  `docs/manual/guides/backend.md` and `docs/manual/concepts/sandbox.md` describe it that way.
+- The seam exists: `performHttps` has one implementation per platform
+  (`engine/net/src/https_*.cpp`), as the Built section records.
 - The maintainer-approval requirement the client's header names is preserved for the
   route that actually needs it: vendoring. The platform route needs no new
   dependency and therefore no approval under R5.

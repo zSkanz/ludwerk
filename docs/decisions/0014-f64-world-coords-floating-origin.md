@@ -16,7 +16,9 @@ the origin shifts when the primary focus moves >4 km from it, in one budgeted
 pass at the FrameStart safe point (physics teleports preserve velocity).
 Scripts always see true world coordinates: `CFrame` carries the f64
 translation; rebasing is invisible to Luau. **Origin/rebase state belongs to
-the World (simulation region), never to a global** — `IPhysics3D` is already
+the simulation region, never to a global** — as built, the rebase decision is
+owned by `StreamingHost` (`engine/app/src/streaming_host.cpp`), which holds the
+focus set and calls `setOrigin` on the physics mirror. `IPhysics3D` is already
 multi-world, so N regions with independent origins remain possible without
 rework (none of that is implemented in v1).
 

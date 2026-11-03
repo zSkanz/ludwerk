@@ -10,8 +10,10 @@ Unity/Godot grew editors on top of working engines.
 ## Decision
 v1 is **code-first**: VS Code + the `ludwerk` CLI + sub-second hot reload, with
 an in-game ImGui debug overlay (DebugShell: explorer, properties, stats, log)
-standing in for inspection needs. The **visual editor is phase 2**, built on
-the finished engine. Nothing in v1 may hard-code assumptions that block an
+standing in for inspection needs. The **visual editor was planned as phase 2**,
+built on the finished engine. *Amended 2026-11-03 to match the code: the editor
+is built as an engine mode (`engine/app/include/engine/app/editor.h`, ADR 0046),
+which supersedes the no-editor v1 scope.* Nothing in v1 may hard-code assumptions that block an
 editor (the reflection/API-definition layer is editor-ready by construction).
 
 ## Consequences

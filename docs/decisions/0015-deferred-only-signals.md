@@ -1,6 +1,6 @@
 # 0015 — Deferred-only signals; no legacy scheduling globals
 
-- Status: accepted; built; re-entrancy cap is 100 in code (body says 10)
+- Status: accepted; built
 - Date: 2026-08-19
 
 ## Context

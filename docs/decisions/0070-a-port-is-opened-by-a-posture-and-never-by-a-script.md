@@ -43,22 +43,26 @@ guarantee checkable rather than a habit.
 
 1. **The four postures are decided at process start, from arguments, and never
    change.** Run it and you are solo. Run it with `--host` and you are client and
-   server at once. Run it `--headless --host` and you are a dedicated server.
-   Run it with `--join=<address>` and you are a replica. Only the two that carry
-   `--host` bind anything.
+   server at once. Run it with `--serve` (or `--serve=<port>`) and you are a
+   dedicated server, which implies `--headless`. Run it with `--join=<address>`
+   and you are a replica. Only the two that carry `--host` or `--serve` bind anything.
 
 2. **No service, no property and no method can cause a bind.** `NetworkService`
    reports the posture; it cannot set it. `Authority`, `Topology` and
    `ServerTick` are read-only and `HostFact`, which is the same mechanism that
    keeps `DataModel.EngineVersion` out of the world hash — a fact about the
-   build and the machine rather than about the world. There is no
-   `NetworkService:Host()`, there will not be one, and the setters refuse by
-   name rather than silently doing nothing.
+   build and the machine rather than about the world. The setters refuse by
+   name rather than silently doing nothing. `NetworkService:Host(port)` does
+   exist (`engine/script/src/services.cpp`): it queues a host request, which
+   `engine/app/src/network_session.cpp` takes at the frame's safe point, so a
+   script can open a listening socket. The only guard is refusal on a dedicated
+   server (`refuseOnDedicated`). This clause is not met as first written, and
+   the status line records that.
 
    This is the clause that makes the rule checkable: **grep the replication
-   module for the bind call and it has exactly one caller, in `app`, reached
-   from argument parsing.** A rule whose enforcement is "nobody would do that"
-   is not enforced.
+   module for the bind call and its callers are in `app` only**: argument
+   parsing, and the session's handling of a script's `Host` request. A rule
+   whose enforcement is "nobody would do that" is not enforced.
 
 3. **A build with no replication module cannot bind at all.**
    `ENG_ENABLE_REPLICATION` is `OFF` by default, and with it off the factory
@@ -72,17 +76,22 @@ guarantee checkable rather than a habit.
    builds only. Nothing about ADR 0035's actual mechanism changes; only the
    sentence generalising it does.
 
-5. **The player profile binds nothing, ever.** ADR 0045's copied player binary is
-   what a game ships to a person, and `--host` is not a flag a shipped game's
-   launcher passes. If a game wants to host, that is a build the author makes
-   deliberately with replication compiled in, and the decision is theirs and
-   visible in their build.
+5. **A shipped game's launcher passes no posture flag.** ADR 0045's copied player
+   binary is what a game ships to a person, and `--host` is not a flag a shipped
+   game's launcher passes. The `player` preset compiles replication in, so a
+   person who types `--host` into that binary gets clause 1's posture; nothing in
+   the binary starts one on its own.
+
+*Amended 2026-11-03 to match the code: a script can request a bind through
+`NetworkService:Host(port)`, refused only on a dedicated server, and a dedicated
+server is started with `--serve`, not `--headless --host`.*
 
 ## Consequences
 
 The three properties ADR 0035 bought are kept for everyone who is not running a
 server on purpose: a player's machine allocates no port, prompts no firewall and
-exposes no inbound parse surface, in every profile that ships to a player.
+exposes no inbound parse surface, in every profile that ships to a player, unless
+a person starts it with `--host` or `--serve`.
 
 What is given up is the *sentence*. "The engine opens no port in any profile" was
 true and is now false, and the replacement is longer because it has to name the
@@ -92,8 +101,9 @@ duplicate the whole engine to avoid rewriting a sentence, and it would break the
 one-binary-four-postures property that makes `if NetworkService.Authority then`
 a gameplay branch rather than a build flavour.
 
-**A test can hold this.** The bind has one caller and a test can assert that:
-that `NetworkService` exposes no method that binds, that a replication-disabled
+**A test can hold this.** The bind's callers are in `app` and a test can assert
+that: that `NetworkService:Host` is refused on a dedicated server (the tests in
+`engine/app/tests/network_session_tests.cpp` call it), that a replication-disabled
 build refuses `--host` by key, and that the solo posture is what a world reports
 with no arguments at all. Those are three assertions rather than a promise, which
 is the difference between this ADR and a comment.
@@ -101,18 +111,20 @@ is the difference between this ADR and a comment.
 ## Which profiles compile it in (recorded 2026-09-22)
 
 The option's default stays `OFF`, and clause 3 holds for every profile that does
-not set it. The presets set it in two kinds of profile and no others:
+not set it. The presets set it in every profile except `shipping`
+(`CMakePresets.json`):
 
-- **`debug`, `dev` and the sanitizer build**, because a module no gate compiles
+- **`debug`, `dev` and the sanitizer builds**, because a module no gate compiles
   is a module nobody knows is broken. It had landed with the option off in every
   preset, so for its first commits no tier had built it or run its tests.
 - **`editor`**, because that is what a person making a game runs, and a
   multiplayer game is tested by running it as a host and joining it — from the
   same download, on the same machine or a second one.
+- **`player`**, which is why clause 5 no longer says the player binds nothing.
+  *Amended 2026-11-03 to match the code.*
 
-**`shipping` and `player` keep it off**, which is clause 5 unchanged: a game a
-person downloads binds nothing, and a game that wants to host is a build its
-author makes on purpose.
+**`shipping` keeps it off**: a shipping build binds nothing and refuses `--host`
+by key (clause 3).
 
 ## Alternatives considered
 

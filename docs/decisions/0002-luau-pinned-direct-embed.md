@@ -12,7 +12,7 @@ native codegen, vector/buffer primitives, tag-based userdata).
 
 ## Decision
 Embed the **Luau VM directly in the C++ core** (the Roblox approach) — not via
-any intermediate runtime. **Pin Luau 0.734** (2026-08-14) in
+any intermediate runtime. **Pin Luau 0.742** (amended 2026-10-14; see the end) in
 `third_party/manifest.json`; upgrades are deliberate, maintainer-approved events run
 through the full CI matrix, never silent tracking. Shipping game clients link
 only `Luau.VM` + `Luau.CodeGen` (bytecode precompiled offline; no Compiler or

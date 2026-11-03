@@ -16,7 +16,7 @@ paths to read vendored headers as API ground truth.
 Vendor **full source trees in `third_party/`**, governed by
 `third_party/manifest.json` (name, version, upstream URL, commit SHA, license,
 patch list) with local patches in `third_party/patches/<dep>/*.patch`,
-re-importable by the `tools/vendor` Lute script. **No submodules, no
+re-importable by the `tools/repo/vendor.luau` Lute script. **No submodules, no
 FetchContent.** Vendored trees are never edited in place (rule R13); changes go
 through the patch set. `THIRD_PARTY_NOTICES.md` is generated from the
 manifest. Lute itself is NOT vendored (it is a rokit-installed binary,

@@ -53,9 +53,13 @@ An engine whose games all wear the engine's face is a template, not an engine �
 and the check that it worked reads the resource back out of the artifact rather
 than looking at it.
 
-**The game ships as Luau source, not bytecode.** This is the amendment, and the
-reason is that bytecode is not a packaging step here — it is an engine feature
-that does not exist:
+**The game ships as Luau bytecode by default, and as source only when the author
+sets `[export] ship_source = true`** (ADR 0112). A default build also seals the
+scripts, catalogues, settings and content names into one pack (ADR 0183, `[export] packed`).
+The reasons below are the case this record first made for source, which is now the
+opt-in. *Amended 2026-11-03 to match the code: `tools/cli/commands/build.luau` compiles
+to bytecode unless `ship_source` is set, and seals the pack unless `packed` says otherwise.*
+The original reasoning was:
 
 - The module loader is defined in terms of SOURCE at a project-relative path
   (`world_host.h`). A bytecode pack means teaching it a second unit type, and
@@ -92,10 +96,9 @@ plus source instructions, and this matches it.
   template, and had not been able to since the CLI's commands moved into
   `commands/`. A scaffolder nothing ever scaffolds with is a scaffolder that
   rots.
-- **A game's source is in the folder a player receives.** Written down here so
-  that nobody has to discover it, and so that the milestone that wants
-  otherwise knows what it is signing up for: a second unit type in the module
-  loader, not a flag on the packager.
+- **A game's source is in the folder a player receives only when its author sets
+  `[export] ship_source = true`.** Bytecode is the default (ADR 0112), so a shipped
+  game's scripts are compiled unless the author chooses to ship them to be read.
 - **The `dist/` directory is ignored by git** and cleared on every rebuild —
   guarded by a marker file, so pointing `--output` at something that is not a
   build directory refuses instead of deleting it.
