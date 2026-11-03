@@ -1,6 +1,6 @@
 # 0182 — A run of instances is drawn in the pieces a pass needs
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-05
 - Builds on: ADR 0043 (per-instance vertex stepping, and the runs it made),
   the cull of what reaches a cascade, the lot that made a skinned horde one run

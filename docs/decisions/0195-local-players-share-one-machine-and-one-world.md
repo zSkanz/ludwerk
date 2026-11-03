@@ -1,6 +1,6 @@
 # 0195 — Local players share one machine and one world
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-09
 - Builds on: ADR 0029 (input contexts and actions), ADR 0189 (preferred
   input, gamepad family), ADR 0192 (gameplay actions and UI navigation share

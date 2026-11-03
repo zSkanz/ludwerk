@@ -1,6 +1,6 @@
 # 0184 — What one machine draws of a part every machine has: `BasePart.Fade`
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-06
 - Builds on: ADR 0090 (what a part looks like), the replication of a part's
   look (the wire's `BasePart` fields)

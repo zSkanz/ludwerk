@@ -1,6 +1,6 @@
 # 0211 — Nodes: one canvas, two graphs
 
-- Status: accepted; built as the third item of category 4
+- Status: accepted; built
 - Date: 2026-10-13
 - Builds on: ADR 0090 (materials), ADR 0091 (surface shaders), ADR 0115 (the
   wind), ADR 0197 (animation graphs)

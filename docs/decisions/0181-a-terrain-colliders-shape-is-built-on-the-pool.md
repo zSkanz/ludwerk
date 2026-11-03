@@ -1,6 +1,6 @@
 # 0181 — A terrain collider's shape is built on the pool
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-05
 - Builds on: ADR 0143 (a chunk's collider and its band), ADR 0117 (what the
   ground is, triangle by triangle), the terrain audit (a tick's

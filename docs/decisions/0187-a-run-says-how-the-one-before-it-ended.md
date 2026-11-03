@@ -1,6 +1,6 @@
 # 0187 — A run says how the one before it ended, and where its report is
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-06
 - Builds on: `architecture.md` §app (the crash handler), audit (the log of
   the run before is kept), another (a phone's log is in the game's external

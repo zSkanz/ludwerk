@@ -1,7 +1,7 @@
 # ADR 0191: Xbox Developer Mode starts with an isolated UWP probe
 
 Date: 2026-10-09
-Status: Accepted, to proceed with the prototype.
+- Status: accepted; prototype built, hardware checks pending
 
 The retail Xbox is in Developer Mode. The current Xbox adapter targets Windows
 PC GDK; it is not a console runtime. Vendored SDL3 explicitly dropped UWP.

@@ -1,6 +1,6 @@
 # 0210 — A profiler inside the editor
 
-- Status: accepted; built as the second item of category 4
+- Status: accepted; built
 - Date: 2026-10-12
 - Builds on: ADR 0171 (the GPU's time by pass), ADR 0208 (corrections a
   player), the engine's scopes (`core::profile`)

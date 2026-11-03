@@ -1,6 +1,6 @@
 # 0189 - Input preference and physical gamepad family
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-09
 
 ## Decision

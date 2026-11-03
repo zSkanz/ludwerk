@@ -1,6 +1,6 @@
 # 0190 - Generic platform services share native providers
 
-- Status: accepted
+- Status: accepted; partly built: the Xbox provider covers identity, sign-in and achievements, other capabilities are NotSupported
 - Date: 2026-10-09
 
 ## Decision

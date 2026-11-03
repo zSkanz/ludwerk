@@ -1,6 +1,6 @@
 # 0202 — Reflection probes: what a room reflects is the room
 
-- Status: accepted and built; amended while built, see the end
+- Status: accepted and built (baking to disk not built); amended while built, see the end
 - Date: 2026-10-10
 - Builds on: ADR 0038 and 0043 (the split-sum environment, octahedral), ADR
   0084 (how much sky a surface sees), ADR 0107 (views), ADR 0116 (compute),

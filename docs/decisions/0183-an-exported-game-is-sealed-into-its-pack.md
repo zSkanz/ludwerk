@@ -1,6 +1,6 @@
 # 0183 — An exported game is sealed into its pack
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-06
 - Amends: ADR 0045 (a packaged game is a folder), ADR 0104 (what `ludwerk
   build` makes), ADR 0112 (an exported game carries bytecode)

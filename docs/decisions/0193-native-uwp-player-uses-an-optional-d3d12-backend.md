@@ -1,7 +1,7 @@
 # ADR 0193: The native UWP player uses an optional D3D12 backend
 
 Date: 2026-10-09
-Status: Accepted, to finish the Xbox player port.
+- Status: accepted; D3D12 backend and UWP build option built; player not finished
 
 The isolated UWP probes in ADR 0191 proved CoreWindow, controller input, local
 storage and the existing shipping DXIL shaders on a Series S. The

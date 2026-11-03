@@ -1,6 +1,6 @@
 # 0209 — Reflections and bounce from the screen
 
-- Status: accepted; built as the head of category 4
+- Status: accepted; built
 - Date: 2026-10-12
 - Builds on: ADR 0202 (reflection probes), ADR 0203 (irradiance volumes), ADR
   0090 and 0091 (materials and the surface a user writes), ADR 0146 (water)

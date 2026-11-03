@@ -1,6 +1,6 @@
 # 0186 — What a client-side script makes is its machine's alone, a host's included
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-06
 - Builds on: ADR 0105 and ADR 0138 (which side a script runs on), ADR 0137
   (a script's run), ADR 0184 (`BasePart.Fade`, the same question asked of a

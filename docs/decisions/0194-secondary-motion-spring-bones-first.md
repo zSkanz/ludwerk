@@ -1,6 +1,6 @@
 # 0194 — Secondary motion: spring bones first, cloth on the same colliders later
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-09
 - Builds on: the skeletal animation system and its override stage (the
   ragdoll's), ADR 0115 (the workspace's wind), ADR 0134 (drawn positions),

@@ -1,6 +1,6 @@
 # 0185 — A decal paints the foliage that stands in it: `FoliageLayer.ReceivesDecals`
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-06
 - Builds on: ADR 0072 (decals), ADR 0116 (foliage), ADR 0160 (a decal's blend modes
   and `BasePart.ReceivesDecals`)

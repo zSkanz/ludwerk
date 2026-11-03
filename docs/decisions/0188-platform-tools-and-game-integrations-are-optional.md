@@ -1,6 +1,6 @@
 # 0188 - Platform tools and game integrations are optional
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-10-09
 
 ## Decision
