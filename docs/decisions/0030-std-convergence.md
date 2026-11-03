@@ -20,6 +20,8 @@ flag); a `test`-compatible shim for engine headless test runs.
 (tooling-only). A **shared conformance suite runs against both Lute and the
 Ludwerk runtime in CI** — the insurance policy on the bet.
 
+Not implemented yet: stringext and tableext.
+
 ## Consequences
 Utility code and community libraries port trivially between Roblox, Lute, and
 Ludwerk; sandbox guarantees are preserved by the virtualized/gated modules. If

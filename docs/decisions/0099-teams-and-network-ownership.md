@@ -30,6 +30,8 @@ owner within whatever checks the game adds.
 
 ## Decision
 
+*Withdrawn 2026-10-03 (protocol 35): decisions 1 and 2 below, the Teams part, are not built. `TeamService`, `Team`, `Player.Team` and `AutoAssign` are absent from the engine (see `engine/script/tests/instance_binding_tests.cpp`). What remains is network ownership, decisions 3 to 6, as built in `engine/replication/src/session.cpp` (`Ownership`).*
+
 1. **`Team` is an instance, under `TeamService`.** `TeamService` is a service
    whose contents replicate to every replica, whatever the distance, as
    `ReplicatedStorage`'s do (ADR 0080). A `Team` has `Color` and `AutoAssign`,

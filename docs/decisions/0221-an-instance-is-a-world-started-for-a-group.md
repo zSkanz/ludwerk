@@ -17,8 +17,8 @@ long or be lost if it falls.
 ### 1. Asked for by a world, made by the manager
 
 ```luau
-local WorldManager = game:GetService("WorldManager")
-local instance = WorldManager:CreateInstanceAsync("crypt", {
+local InstanceService = game:GetService("InstanceService")
+local instance = InstanceService:CreateInstanceAsync("crypt", {
     Players = party,                 -- who may enter; nobody else
     Data = { difficulty = 3 },       -- its scene's `GetLoadData` (ADR 0106)
 })
@@ -45,15 +45,15 @@ An instance takes a player only with a pass that names it (ADR 0222) and only
 if the player is in its `Players`. **A player of it who drops comes back to
 it**: while it lives, the front door sends a reconnecting player listed in it
 there, not to the entry world. The instance's script can add or remove
-players (`WorldManager:AllowPlayer`, `DisallowPlayer`), for a friend who
+players (`InstanceService:AllowPlayer`, `DisallowPlayer`), for a friend who
 joins late.
 
 ### 4. It closes when it is empty
 
 `idle_close_seconds` after its last player leaves -- 60 by default -- the
-instance goes `Draining`, `WorldManager.Closing` fires so its script can save
+instance goes `Draining`, `InstanceService.Closing` fires so its script can save
 what it keeps, and it stops. A script can close it sooner
-(`WorldManager:Close()`) or keep it open longer (`KeepOpen(seconds)`).
+(`InstanceService:Close()`) or keep it open longer (`KeepOpen(seconds)`).
 
 ### 5. A crash sends the group back
 
@@ -89,7 +89,7 @@ default), and says so in the error and the log.
 - A dungeon is a scene, a `[[instance]]` row and two calls.
 - A warm process is memory spent before it is needed; `warm = 0` spends none
   and waits for a process start.
-- New API: `WorldManager` (`CreateInstanceAsync`, `AllowPlayer`,
+- New API: `InstanceService` (`CreateInstanceAsync`, `AllowPlayer`,
   `DisallowPlayer`, `Close`, `KeepOpen`, `Closing`, `InstanceId`), `InstanceHandle`.
 - Manual: "Online games > Worlds and instances".
 

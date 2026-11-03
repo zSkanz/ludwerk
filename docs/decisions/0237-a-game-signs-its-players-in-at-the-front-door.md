@@ -10,7 +10,7 @@
 
 ADR 0226 built the half of accounts a world needs: a server verifies a
 signed ticket (a JWT, EdDSA) where it runs, asks the game's
-`ValidateJoin`, keeps one session an account and bans by account. It left
+`OnJoinRequest`, keeps one session an account and bans by account. It left
 the other half -- **who issues the ticket** -- to "the game's backend", and a
 game that wants accounts has none. An online game made with the engine should
 be able to sign its players in with nothing but its own server, and a game
@@ -81,7 +81,7 @@ platform's and its keys are the developer's.
 
 ## Proof
 
-- Register, sign in, join: a world's `ValidateJoin` sees the account id the
+- Register, sign in, join: a world's `OnJoinRequest` sees the account id the
   manager issued, and `Player.AccountId` is it.
 - A wrong password, a name that does not exist and a taken name are refused,
   and the time to answer each differs from a right one by less than 10%.

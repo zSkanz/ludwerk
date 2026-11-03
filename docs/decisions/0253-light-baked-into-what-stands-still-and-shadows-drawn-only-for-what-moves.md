@@ -38,7 +38,9 @@ commercial titles on these headsets light their places this way.
    out in the frame, as now, so its highlight moves with the eye and
    `Lighting.ClockTime` still turns it -- what is kept of the sun is where
    it does not reach (item 3). `Lighting.BakeSun`, a sun baked whole for
-   the weakest machines, is named here and left for later.
+   the weakest machines, is not built. The sun's baked light is what
+   `--bake-lighting` produces (`engine/app/src/main.cpp`,
+   `engine/app/include/engine/app/lightmap_bake.h`); a sun baked whole is left for later.
 3. **A shadow mask: whether each texel sees the sun from where the sun was
    when it was baked**, past what stands still, one channel beside the
    lightmap; the file keeps that direction. A static surface reads its sun

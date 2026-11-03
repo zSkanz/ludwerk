@@ -59,9 +59,9 @@ container, never a solver.
 
 - **`UIDragDetector`**: child of a `GuiObject`; `DragStyle` (`TranslatePlane`,
   `TranslateLine`, `Rotate`, `Scriptable`), `DragAxis`, `BoundingUI` (stays
-  inside another element), `DragRelativity`, `DragSpace`, `MinDragTranslation`,
+  inside another element), `MinDragTranslation`,
   `MaxDragTranslation`, `MinDragAngle`, `MaxDragAngle`, `ResponseStyle`,
-  `Enabled`; `DragStart`, `DragContinue`, `DragEnd` signals. Mouse and touch.
+  `Enabled`; `DragStart`, `DragContinue`, `DragEnd` signals. Mouse and touch. **`DragSpace` and `DragRelativity` are not built** (see As built, 2026-10-02).
 
 ### 5. Driven by a gamepad or the keyboard
 

@@ -46,12 +46,12 @@ refuses to start an administered session from a key file anybody else can
 read, saying which. The manual says to keep them out of version control, and
 the project template's ignore list has them.
 
-### 3. The channel is Noise `IK`, as a match's will be
+### 3. The channel is Noise `XX`, as a match's became
 
 The administrator knows the server's public key (`--server-key`, or pinned on
 first contact with a warning if it ever changes, as ADR 0120 §2); the server
 knows the administrator's from `admins.toml`. The handshake is Noise
-`IK_25519_ChaChaPoly_BLAKE2b` -- the same primitives and the same code as the
+`XX_25519_ChaChaPoly_BLAKE2b` -- the same primitives and the same code as the
 match's (ADR 0224) -- and a key not in the list fails it. After it, each
 message is a length and a sealed frame: a command line one way, the answer's
 lines the other, and the log's lines if the administrator asked to follow it.

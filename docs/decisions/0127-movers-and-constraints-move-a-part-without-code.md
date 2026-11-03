@@ -48,7 +48,7 @@ torques on the body (at a point where it says so), capped by its maxima.
 - **`PrismaticConstraint`** — a rail along an axis, with limits and the same
   actuator on a line (`Velocity`, `TargetPosition`, `Speed`, `MotorMaxForce`,
   `ServoMaxForce`). Jolt's slider.
-- **`RopeConstraint`** — at most `Length` apart, with `Restitution`; optional
+- **`RopeConstraint`** — at most `Length` apart, with `Restitution` (**not built**: see the amendments of 2026-10-02); optional
   winch (`WinchEnabled`, `WinchTarget`, `WinchSpeed`, `WinchForce`).
 - **`RodConstraint`** — exactly `Length` apart.
 - **`SpringConstraint`** (3D) — `FreeLength`, `Stiffness`, `Damping`,

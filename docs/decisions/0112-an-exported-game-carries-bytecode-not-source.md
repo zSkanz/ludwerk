@@ -29,7 +29,7 @@ removes the plain-text copy and it loads faster.
 2. **Debug information stays at level 1**: line numbers survive, so an error in
    a player's log still names the script and the line.
 3. **The bytecode version is checked at load.** The player refuses bytecode
-   whose version is outside `LBC_VERSION_MIN..LBC_VERSION_TARGET` with a keyed
+   whose version is outside `LBC_VERSION_MIN..LBC_VERSION_MAX` with a keyed
    error naming both — which only happens when a package is run by a different
    engine build than the one that exported it.
 4. **`[export] ship_source = true`** keeps ADR 0045's behaviour, for an author

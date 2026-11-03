@@ -15,10 +15,10 @@ player logging in once a session rather than once a world.
 
 ## Decision
 
-### 1. `NetworkService.ValidateJoin`
+### 1. `NetworkService.OnJoinRequest`
 
 ```luau
-NetworkService.ValidateJoin = function(joiner: JoinRequest): (boolean, string?)
+NetworkService.OnJoinRequest = function(joiner: JoinRequest): (boolean, string?)
     local claims = NetworkService:VerifyTicket(joiner.Ticket)
     if claims == nil then
         return false, "Please log in again."
@@ -36,9 +36,9 @@ end
 - **It runs before the player exists**: no `Player`, no character, no
   `PlayerAdded`, nothing sent to the joiner but the wait. It may yield
   (to ask the game's backend over `net.request`); **after 10 seconds** it is a
-  refusal (`ValidateJoin` timed out), and so is an error in it.
+  refusal (`OnJoinRequest` timed out), and so is an error in it.
 - Refused, the joiner is told the reason in `JoinFailed` -- the game's own
-  words, at most 256 bytes -- with a new `Refused` reason (6,
+  words, at most 256 bytes -- with a new `Refused` reason (7,
   `RefusedByGame`), in the online server's one protocol bump.
 - A server with no callback accepts every joiner, as today.
 
@@ -112,12 +112,12 @@ runs the engine's own code and prints a ticket, until Lute carries Ed25519;
 the same command makes a key pair (`ludwerk ticket keygen`) and is what the
 tests and the example's backend use.
 
-A game with another scheme verifies its own in `ValidateJoin` and never calls
+A game with another scheme verifies its own in `OnJoinRequest` and never calls
 `VerifyTicket`.
 
 ### 4. One session per account
 
-`Player.AccountId` is what `ValidateJoin` set (nil without it). **A second join
+`Player.AccountId` is what `OnJoinRequest` set (nil without it). **A second join
 with an account that is already in** drops the first with the reason
 `SignedInElsewhere`, across every world under a manager -- the manager knows
 which account is where -- and lets the second in.
@@ -125,7 +125,7 @@ which account is where -- and lets the second in.
 ### 5. Bans by account
 
 `ban` and `unban` (ADR 0218) take an account id where players have one, and
-`bans.json` keeps it. A ban by account is checked after `ValidateJoin` has set
+`bans.json` keeps it. A ban by account is checked after `OnJoinRequest` has set
 it and before the joiner is accepted -- on every world under the manager,
 which shares one `bans.json`. This is the ban that holds: a new key with the
 same account is the same banned account.
@@ -158,15 +158,15 @@ same account is the same banned account.
 
 - A game with accounts knows who joined, once a session, without a call out
   per world; a banned account stays out.
-- New API: `NetworkService.ValidateJoin`, `JoinRequest`,
+- New API: `NetworkService.OnJoinRequest`, `JoinRequest`,
   `NetworkService:VerifyTicket`, `Player.AccountId`, `Join`'s `Ticket`
-  option; `[network] ticket_public_key`; `Refused` reason 6; the
+  option; `[network] ticket_public_key`; `Refused` reason 7; the
   `SignedInElsewhere` removal; `ludwerk ticket keygen` and `sign`.
 - Proof: a forged, expired, too-long, reused and wrong-audience ticket each
   refused, and so is one whose `alg` is `none` or `HS256`; one issued by a
   stock JWT library accepted; a second login drops the first; a banned account refused on every
   world under the manager.
-- Manual: "Online games > Accounts and joining" -- `ValidateJoin`, the ticket
+- Manual: "Online games > Accounts and joining" -- `OnJoinRequest`, the ticket
   (a JWT), issuing one from a backend.
 
 ## Not decided here

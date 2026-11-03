@@ -30,6 +30,8 @@ lifetime: a hot reload or a scene change leaves whatever it opened open.
 
 ### 2. The members
 
+*Not built yet: the `NetworkService` connection members below (`Request`, `RequestAsync`, `ConnectWebSocket`, `ConnectTcp`, `OpenUdp`, `Listen`) are absent from `api/defs/services.api.luau`. Built: `@std/net` (`engine/script/src/net_module.cpp`) and the `engine/net` core (`websocket.cpp`, `tcp.cpp`).*
+
 - `NetworkService:Request(options): HttpResponse` — `Url`, `Method`,
   `Headers`, `Body` (string or `buffer`), `Timeout`; yields. `https://` works
   once ADR 0063 is built. `NetworkService:RequestAsync(options): HttpRequest`

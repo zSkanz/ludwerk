@@ -37,7 +37,7 @@ otherwise the same.
 | `kick <player> [reason]` | `Player:Kick` (ADR 0167). |
 | `ban <player\|key> [minutes] [reason]` | Kicks and refuses them again, **across restarts**: kept in `<saves>/bans.json`, by the player's public key (ADR 0120) -- never by name, which a player picks. No minutes is for good. |
 | `unban <key>` | Takes one out. |
-| `say <text>` | A line every player is shown (`NetworkService.ServerMessage`, a new event the game draws as it likes; the engine's own banner where the game connects none). |
+| `say <text>` | A line every player is shown (`NetworkService.Announced`, a new event the game draws as it likes; the engine's own banner where the game connects none). |
 | `save` | `SaveService` writes what is waiting (ADR 0111), and says when it is written. |
 | `stop [minutes]` | Says so to every player at the start and at each minute, then refuses joins, saves, removes every player with a reason, and exits 0. No minutes is now. A second `stop` cancels a countdown. |
 
@@ -108,7 +108,7 @@ banned and why.
 - **Who may join is one gate in the session** (`setJoinGate`), asked of every
   hello that passed the engine's own checks, answered at once or later. A ban
   answers at once, so a gate costs a joiner no tick; ADR 0226's
-  `ValidateJoin` answers later through the same gate. A refusal travels as
+  `OnJoinRequest` answers later through the same gate. A refusal travels as
   `Refused` with reason 7 and the game's words.
 - **Bans are `key:<PublicKey>`**, and `account:<id>` once ADR 0226 names
   accounts, in `bans.json` beside the saves, with who banned and when. A ban
@@ -126,7 +126,7 @@ banned and why.
   command, or wraps it in its own.
 - New API: `ServerConsole` (`Register`, `Unregister`, `Execute` for a script
   that wants to run a command itself), `ConsoleCaller`,
-  `NetworkService.ServerMessage`.
+  `NetworkService.Announced`.
 - Manual: "Online games > Administering a server" -- the console, its
   commands, a game's own, and what a ban by key is worth.
 

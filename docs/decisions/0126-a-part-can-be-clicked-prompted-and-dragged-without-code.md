@@ -32,6 +32,8 @@ writes it; most write it with a bug. Three instances cover almost every case.
 
 ### 2. `ProximityPrompt`
 
+*Withdrawn 2026-10-03 (protocol 35): not built, and absent from the code. A prompt is the game's own code. See the amendment below.*
+
 - Child of a part, an attachment or a model. `ActionText`, `ObjectText`,
   `KeyboardKeyCode` (default `E`), `GamepadKeyCode` (default `ButtonX`),
   `HoldDuration` (0 = a press), `MaxActivationDistance` (default 10 m),
@@ -53,6 +55,8 @@ writes it; most write it with a bug. Three instances cover almost every case.
   authority.
 
 ### 3. `DragDetector`
+
+*Withdrawn 2026-10-03 (protocol 35): the world `DragDetector` is not built, and absent from the code. A world drag is the game's own code. `UIDragDetector` (ADR 0128) is built. See the amendment below.*
 
 - Child of a part or model. `DragStyle` (`TranslateLine`, `TranslatePlane`,
   `TranslateViewPlane`, `RotateAxis`, `RotateTrackball`, `Scriptable`), `Axis`,

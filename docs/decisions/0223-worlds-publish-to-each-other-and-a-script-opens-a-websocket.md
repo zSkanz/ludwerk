@@ -20,8 +20,8 @@ speak WebSocket, and `@std/net` has an HTTP client and nothing else.
 
 ```luau
 local CrossWorld = game:GetService("CrossWorldService")
-CrossWorld:SubscribeAsync("guild:42", function(message, origin) ... end)
-CrossWorld:PublishAsync("guild:42", { from = player.Name, text = text })
+CrossWorld:Subscribe("guild:42", function(message, origin) ... end)
+CrossWorld:Publish("guild:42", { from = player.Name, text = text })
 ```
 
 - A topic is a string of at most 80 bytes; a message is what `SaveService`
@@ -36,7 +36,7 @@ CrossWorld:PublishAsync("guild:42", { from = player.Name, text = text })
   was published meanwhile. What must not be lost is the data service's
   (a later record), not this.
 - **Bounded**: a world may publish 200 messages a second and subscribe to
-  1,000 topics; past that `PublishAsync` errors and says why. The manager
+  1,000 topics; past that `Publish` errors and says why. The manager
   keeps no history. Each world's inbound queue holds **1,000 messages or
   4 MiB**, whichever comes first; a world that falls behind loses the
   **oldest** first, counted in `GetStats().CrossWorldDropped` and said once
@@ -87,7 +87,7 @@ socket:Close()
 - Cross-world chat, guild events and announcements need no service of the
   game's own.
 - `@std/net` gains `websocket`, which category 8 (the web) needs anyway.
-- New API: `CrossWorldService` (`PublishAsync`, `SubscribeAsync`,
+- New API: `CrossWorldService` (`Publish`, `Subscribe`,
   `Unsubscribe`), `net.websocket`.
 - Manual: "Online games > Worlds and instances" (messages between worlds)
   and the `@std/net` page (WebSocket).

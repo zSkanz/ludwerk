@@ -67,7 +67,7 @@ passthrough's colour -- is the maintainer's to see, and the ADRs say so.
 
 ### 5. The example and the manual
 
-`examples/xr-room`: a room with objects to grab and throw, a teleport and a
+`examples/48-xr-room`: a room with objects to grab and throw, a teleport and a
 snap turn (`@engine/xrcomfort`), a panel of UI pointed at by laser, a
 passthrough switch, and, with a second player, the other's head and hands.
 A manual section, "VR and AR": turning XR on, the play space and the camera,
@@ -93,7 +93,7 @@ and multiplayer.
 
 - New: the `quest` export target; `--xr=simulated` and its recorded paths;
   `XRService.MaxHandReach`, `SimulatePose`; Play in headset; replicated head
-  and hands (presentation, one protocol bump); `examples/xr-room`; the
+  and hands (presentation, one protocol bump); `examples/48-xr-room`; the
   manual's "VR and AR".
 - The Quest is the first standalone headset; Android XR headsets take the
   same build with their own manifest entries, added when one is tested.
