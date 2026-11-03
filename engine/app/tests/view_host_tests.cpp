@@ -14,6 +14,30 @@
 using namespace engine;
 using app::ViewCandidate;
 
+TEST_CASE("a ViewportFrame lights its colours without the renderer's default sky")
+{
+    scene::ViewportFrameComponent frame;
+    frame.ambient = core::Color3{0.3f, 0.2f, 0.1f};
+    frame.lightColor = core::Color3{0.8f, 0.7f, 0.6f};
+    frame.lightDirection = core::Vec3{0.0f, -3.0f, -4.0f};
+    const render::RenderEnvironment light = app::frameLighting(frame);
+    CHECK(light.ambient == frame.ambient);
+    CHECK(light.outdoorAmbient == frame.ambient);
+    CHECK(light.lightTint == frame.lightColor);
+    CHECK(light.sunDirection.y == doctest::Approx(0.6f));
+    CHECK(light.sunDirection.z == doctest::Approx(0.8f));
+    CHECK(light.environmentDiffuseScale == 0.0f);
+    CHECK(light.environmentSpecularScale == 0.0f);
+    CHECK_FALSE(light.autoExposure);
+    CHECK_FALSE(light.globalShadows);
+    CHECK(light.transparentBackground);
+    CHECK(light.fogEnd == 0.0f);
+
+    // A zero light direction must not introduce NaNs into the frame.
+    frame.lightDirection = core::Vec3{};
+    CHECK(app::frameLighting(frame).sunDirection.y == 1.0f);
+}
+
 TEST_CASE("the budget draws four of six views, and the other two next frame")
 {
     // Frame 1: six views due, none drawn yet.

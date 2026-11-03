@@ -10632,18 +10632,7 @@ std::optional<core::EngineError> runSession(const EngineOptions& options, Device
                             render::extract(world, view->owner, core::InstanceId{}, meshLibrary, shape, shadowRadius,
                                             host->animation(), framePoses, viewSnapshot, &*lens, {}, &textureLibrary,
                                             {});
-                            render::RenderEnvironment& light = viewSnapshot.environment;
-                            const core::Vec3 d = self->lightDirection;
-                            const f32 length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-                            light.sunDirection = core::Vec3{-d.x / length, -d.y / length, -d.z / length};
-                            light.ambient = self->ambient;
-                            light.outdoorAmbient = self->ambient;
-                            light.lightTint = self->lightColor;
-                            light.fogEnd = 0.0f;
-                            light.globalShadows = false;
-                            light.autoExposure = false;
-                            light.exposureCompensation = 0.0f;
-                            light.transparentBackground = true;
+                            viewSnapshot.environment = frameLighting(*self);
                             viewSnapshot.look = render::RenderLook{};
                             viewSnapshot.look.bloomGoverned = true;
                             viewSnapshot.look.bloomEnabled = false;

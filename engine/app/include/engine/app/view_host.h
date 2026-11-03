@@ -25,6 +25,10 @@
 
 namespace engine::app {
 
+// A portrait uses only the frame's own lights. The renderer's default sky
+// must not add blue irradiance or reflections to its chosen colours.
+[[nodiscard]] render::RenderEnvironment frameLighting(const scene::ViewportFrameComponent& frame);
+
 // The format every view is drawn in, whatever the window's is.
 inline constexpr rhi::TextureFormat ViewFormat = rhi::TextureFormat::Rgba8Unorm;
 

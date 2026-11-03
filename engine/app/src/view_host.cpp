@@ -9,6 +9,26 @@
 
 namespace engine::app {
 
+render::RenderEnvironment frameLighting(const scene::ViewportFrameComponent& frame)
+{
+    render::RenderEnvironment light;
+    const core::Vec3 d = frame.lightDirection;
+    const float length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    light.sunDirection =
+        length > 0.0f ? core::Vec3{-d.x / length, -d.y / length, -d.z / length} : core::Vec3{0.0f, 1.0f, 0.0f};
+    light.ambient = frame.ambient;
+    light.outdoorAmbient = frame.ambient;
+    light.lightTint = frame.lightColor;
+    light.environmentDiffuseScale = 0.0f;
+    light.environmentSpecularScale = 0.0f;
+    light.fogEnd = 0.0f;
+    light.globalShadows = false;
+    light.autoExposure = false;
+    light.exposureCompensation = 0.0f;
+    light.transparentBackground = true;
+    return light;
+}
+
 core::Vec2 viewSize(core::Vec2 resolution, core::u32 maxSide) noexcept
 {
     const float side = static_cast<float>(std::max(maxSide, 1u));
