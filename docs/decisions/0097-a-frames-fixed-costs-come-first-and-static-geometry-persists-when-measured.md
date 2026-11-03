@@ -1,6 +1,6 @@
 # 0097 — A frame's fixed costs come first, and static geometry persists when a measurement asks for it
 
-- Status: accepted
+- Status: accepted; section 1 built; section 2 deferred until its stated trigger
 - Date: 2026-09-25
 - Relates to: [0037](0037-the-rhi-interface-is-frozen.md) (the frozen RHI),
   [0043](0043-per-instance-vertex-stepping.md) (instancing),

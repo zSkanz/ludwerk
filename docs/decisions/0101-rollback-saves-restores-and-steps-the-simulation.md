@@ -1,6 +1,6 @@
 # 0101 — Rollback saves, restores and steps the simulation; the game keeps its own state
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-25
 - Implements: ADR 0016's physics `saveState`/`restoreState` seam, declared at
   v1 and left refusing. Builds on ADR 0083 (level-C determinism) and ADR 0076

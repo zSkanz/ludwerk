@@ -1,6 +1,6 @@
 # 0114 — A voxel holds two materials and a blend
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Amends: [0082](0082-terrain-is-a-grid-of-voxels.md) (a voxel is an occupancy
   and a material).

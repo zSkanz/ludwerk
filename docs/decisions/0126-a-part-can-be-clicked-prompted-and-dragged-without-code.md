@@ -1,6 +1,6 @@
 # 0126 — A part can be clicked, prompted and dragged without code
 
-- Status: accepted
+- Status: accepted; ClickDetector built; ProximityPrompt and world DragDetector withdrawn 2026-10-03 (protocol 35)
 - Date: 2026-09-27
 - Relates to: the input system (`InputAction`, `InputBinding`, `InputContext`),
   [0099](0099-teams-and-network-ownership.md) (network ownership),

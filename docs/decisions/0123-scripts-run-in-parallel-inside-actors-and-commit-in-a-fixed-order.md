@@ -1,6 +1,6 @@
 # 0123 — Scripts run in parallel inside actors, and commit in a fixed order
 
-- Status: accepted
+- Status: accepted; not built; parallel windows reserved (phase.h)
 - Date: 2026-09-27
 - Builds on: `docs/architecture.md` §3 (the reserved parallel windows A and B),
   `api/schema.luau` (`ThreadSafety`), `engine/jobs/include/engine/jobs/commit.h`

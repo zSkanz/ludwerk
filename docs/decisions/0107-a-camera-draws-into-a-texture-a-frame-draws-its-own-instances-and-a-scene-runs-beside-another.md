@@ -1,6 +1,6 @@
 # 0107 — A camera draws into a texture, a frame draws its own instances, and a scene runs beside another
 
-- Status: accepted (to be built after ADRs 0104 to 0106)
+- Status: accepted; built 2026-09-27
 - Date: 2026-09-26
 - Relates to: [0106](0106-a-scene-is-a-place-and-the-game-changes-scenes-at-run-time.md)
   (`SceneService` loads a scene INSTEAD of the current one; a sub-world loads

@@ -1,6 +1,6 @@
 # 0113 — Terrain layers are engine materials, and rules paint by slope and height
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Completes: [0090](0090-a-material-is-an-asset-a-part-wears-one-and-a-script-clones-one.md)'s
   "Not decided here" — *"Making each layer name a material asset is the second

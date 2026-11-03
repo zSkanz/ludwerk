@@ -1,6 +1,6 @@
 # 0120 — The transport is encrypted, and a player is a key
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Amends: [0012](0012-networking-v1-primitives-only.md) (ENet behind
   `ITransport`, GameNetworkingSockets deferred) and

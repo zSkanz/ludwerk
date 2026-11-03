@@ -1,6 +1,6 @@
 # 0128 — UI lays out in grids and pages, adapts to any screen, and is driven by a gamepad
 
-- Status: accepted, and built
+- Status: accepted; built 2026-10-02; DragSpace not built
 - Date: 2026-09-27
 - Builds on: [0040](0040-udim2-layout-is-arithmetic-not-a-solver.md) (UDim2
   layout is arithmetic, not a solver), [0110](0110-a-gradient-colours-and-a-stroke-outlines-a-ui-element.md)

@@ -1,6 +1,6 @@
 # 0100 — The wire protocol is published and versioned
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-25
 - Amends: ADR 0069, which declined "a public protocol commitment". The format
   it designed is unchanged; what changes is that it is written down and

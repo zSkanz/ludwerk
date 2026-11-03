@@ -1,6 +1,6 @@
 # 0115 — Wind is a `Workspace` property that moves what is drawn
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Relates to: [0072](0072-particles-are-a-picture-simulated-on-the-frame.md)
   (particles), [0091](0091-a-material-may-name-a-surface-shader-the-user-writes.md)

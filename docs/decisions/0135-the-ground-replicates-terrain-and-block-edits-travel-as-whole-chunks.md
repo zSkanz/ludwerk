@@ -1,6 +1,6 @@
 # 0135 — The ground replicates: terrain and block edits travel as whole chunks
 
-- Status: accepted (2026-09-29)
+- Status: accepted; built 2026-09-29
 - Date: 2026-09-29
 - Builds on: [0069](0069-replication-reads-state-and-diffs-it.md)
   (the wire), [0082](0082-terrain-is-a-grid-of-voxels.md) (the field),

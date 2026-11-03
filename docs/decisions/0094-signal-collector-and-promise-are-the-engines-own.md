@@ -1,6 +1,6 @@
 # 0094 — Signal, Collector and Promise are the engine's own
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Relates to: [0015](0015-deferred-only-signals.md) (deferred-only signals, R8),
   [0034](0034-luau-casing-objects-modules-files.md) (naming),

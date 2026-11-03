@@ -1,6 +1,6 @@
 # 0134 — Everything visual reads one drawn position per instance
 
-- Status: accepted (built 2026-09-29)
+- Status: accepted; built (2026-09-29)
 - Date: 2026-09-29
 - Builds on: a frame drawn between two ticks, the multiplayer
   smoothness work (a correction's slide),

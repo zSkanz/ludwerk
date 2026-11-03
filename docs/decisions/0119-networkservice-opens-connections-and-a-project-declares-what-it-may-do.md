@@ -1,6 +1,6 @@
 # 0119 — `NetworkService` opens connections, and a project declares what it may do
 
-- Status: accepted
+- Status: accepted; @std/net and engine/net core built; NetworkService connection members not built
 - Date: 2026-09-27
 - Builds on: [0063](0063-https-stays-refused-and-tls-comes-from-the-platform.md)
   (TLS from the platform), [0030](0030-std-convergence.md) (`@std/*` is the

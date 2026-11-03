@@ -1,6 +1,6 @@
 # 0095 — A light can stand on its own
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Relates to: [0013](0013-vector3-native-luau-vector.md) (the -Z look
   convention), [0090](0090-a-material-is-an-asset-a-part-wears-one-and-a-script-clones-one.md)

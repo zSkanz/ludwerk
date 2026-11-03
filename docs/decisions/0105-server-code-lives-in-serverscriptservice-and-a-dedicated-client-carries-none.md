@@ -1,6 +1,6 @@
 # 0105 — Code lives in three script services, and each side's package carries only its own
 
-- Status: accepted; amended by [0138](0138-a-script-carries-the-side-it-runs-on.md), which gives a script
+- Status: accepted; built; amended by 0138
   outside the services a side of its own (`Script.RunContext`) and ends `Enum.RunContext`'s reservation
 - Date: 2026-09-26
 - Amends: [0104](0104-a-game-is-exported-from-one-window-for-windows-linux-and-android.md)

@@ -1,6 +1,6 @@
 # 0091 — A material may name a surface shader the user writes, and the editor ships the compiler
 
-- Status: accepted
+- Status: accepted; code tier built; graph tier built later by 0211
 - Date: 2026-09-24
 - Extends: [0090](0090-a-material-is-an-asset-a-part-wears-one-and-a-script-clones-one.md)
   (a material is an asset). Answers what 0090 left under *Not decided here*: "a

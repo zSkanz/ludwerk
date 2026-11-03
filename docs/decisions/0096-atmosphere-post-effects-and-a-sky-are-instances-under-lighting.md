@@ -1,6 +1,6 @@
 # 0096 — Atmosphere, post effects and a skybox are instances under `Lighting`
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Supersedes: an earlier plan's first item (a post-processing API as
   `Lighting` properties), which this answers more completely and differently.

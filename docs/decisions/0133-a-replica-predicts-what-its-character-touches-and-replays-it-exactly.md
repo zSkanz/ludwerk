@@ -1,6 +1,6 @@
 # 0133 — A replica predicts what its character touches, and replays it exactly
 
-- Status: accepted
+- Status: accepted; built (CharacterBody-only amendment 2026-10-12)
 - Date: 2026-09-28
 - Builds on: [0076](0076-replicas-predict-their-own-and-draw-the-rest-between-snapshots.md)
   (a replica predicts its own character; the rest is drawn between snapshots),

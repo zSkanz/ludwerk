@@ -1,6 +1,6 @@
 # 0103 — 2D on the wire is interpolated, and a tilemap replicates by blocks
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-25
 - Supersedes: decision 6 of [0088](0088-2d-on-the-wire.md) ("`Tilemap2D` stays
   off the wire").

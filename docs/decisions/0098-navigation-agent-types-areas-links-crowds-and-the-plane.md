@@ -1,6 +1,6 @@
 # 0098 — Navigation: agent types, area costs, links, crowds and the plane
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-25
 - Amends: ADR 0089 (one agent, tiles built where queries go). Everything that
   ADR decided stands; this adds to it.

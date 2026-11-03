@@ -1,6 +1,6 @@
 # 0130 — Parts combine into solids, and two more shapes
 
-- Status: accepted.
+- Status: accepted; not built
   **Manifold is adopted** (2026-09-30), under the standing rule that a choice
   like this one follows how professional game engines work: it is Apache-2.0, inside R6,
   and the library the tools that do this at run time use. It is vendored

@@ -1,6 +1,6 @@
 # 0102 — 2D joints join two sprites, and a sprite sheet plays itself
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-25
 - Relates to: [0008](0008-box2d-2d-physics-post-v1.md) (Box2D behind the 2D seam),
   [0088](0088-2d-on-the-wire.md) (what a `Part2D` sends), the 3D constraints

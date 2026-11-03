@@ -1,6 +1,6 @@
 # 0121 — A script can write an image, a sound and a mesh
 
-- Status: accepted
+- Status: accepted; not built
 - Date: 2026-09-27
 - Relates to: [0107](0107-a-camera-draws-into-a-texture-a-frame-draws-its-own-instances-and-a-scene-runs-beside-another.md)
   (`view://` textures), [0009](0009-miniaudio-module-is-the-seam.md) (audio),

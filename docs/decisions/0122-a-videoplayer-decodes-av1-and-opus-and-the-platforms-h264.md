@@ -1,6 +1,6 @@
 # 0122 — A `VideoPlayer` decodes AV1 and Opus, and the platform's H.264
 
-- Status: accepted
+- Status: accepted; not built
 - Date: 2026-09-27
 - Builds on: [0121](0121-a-script-can-write-an-image-a-sound-and-a-mesh.md)
   (`EditableImage`, `AudioStream`),

@@ -1,6 +1,6 @@
 # 0092 — A script lives in the instance it is put in
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-24
 - Amends: [0057](0057-a-script-is-an-instance-and-the-editor-edits-one-thing.md)
   (a script is an instance and the editor edits one thing): its origin table

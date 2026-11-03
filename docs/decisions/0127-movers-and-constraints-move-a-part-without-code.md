@@ -1,6 +1,6 @@
 # 0127 — Movers and constraints move a part without code
 
-- Status: accepted (built, 2026-10-02, with the amendments at the end)
+- Status: accepted; built 2026-10-02; RopeConstraint.Restitution not built
 - Date: 2026-09-27
 - Builds on: [0007](0007-jolt-3d-physics.md) (Jolt), [0066](0066-the-physics-seam-learns-two-static-shapes.md)
   (the physics seam), [0101](0101-rollback-saves-restores-and-steps-the-simulation.md)

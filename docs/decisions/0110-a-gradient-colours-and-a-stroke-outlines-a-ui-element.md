@@ -1,6 +1,6 @@
 # 0110 — A gradient colours a UI element and a stroke outlines it
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Relates to: ADR 0040 (the UI), `UICorner` (the one appearance
   modifier so far), ADR 0034 (naming), ADR 0107 (a `ViewportFrame` will take a

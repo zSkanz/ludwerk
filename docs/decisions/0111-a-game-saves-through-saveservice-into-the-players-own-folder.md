@@ -1,6 +1,6 @@
 # 0111 — A game saves through `SaveService`, into the player's own folder
 
-- Status: accepted
+- Status: accepted; built 2026-09-27
 - Date: 2026-09-27
 - Amended by: [0124](0124-a-scene-closes-as-a-game-does-and-a-handler-dies-with-its-script.md)
   (a scene closes as a game does: `scene:BindToClose`, the global `scene`,

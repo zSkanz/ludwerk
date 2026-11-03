@@ -1,6 +1,6 @@
 # 0116 — Foliage is drawn from rules over terrain and never simulated
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Builds on: [0113](0113-terrain-layers-are-engine-materials-and-rules-paint-by-slope-and-height.md)
   (layers), [0115](0115-wind-is-a-workspace-property-that-moves-what-is-drawn.md)

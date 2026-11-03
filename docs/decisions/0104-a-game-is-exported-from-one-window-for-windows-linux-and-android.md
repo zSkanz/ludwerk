@@ -1,6 +1,6 @@
 # 0104 — A game is exported from one window, for Windows, Linux and Android
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-26
 - Amends: [0045](0045-a-packaged-game-is-a-folder-that-ships-source.md).
   Its `win64`-only target list grows to three targets. Its folder layout and

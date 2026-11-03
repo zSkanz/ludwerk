@@ -1,6 +1,6 @@
 # 0112 — An exported game carries bytecode, not source
 
-- Status: accepted
+- Status: accepted; built
 - Date: 2026-09-27
 - Amends: [0045](0045-a-packaged-game-is-a-folder-that-ships-source.md) (a
   packaged game ships Luau source) and

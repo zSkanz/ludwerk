@@ -1,6 +1,6 @@
 # 0099 — Teams and network ownership
 
-- Status: accepted
+- Status: accepted; network ownership built; Teams withdrawn 2026-10-03 (protocol 35)
 - Date: 2026-09-25
 - Amends: ADR 0069 (which deferred `Team` and `NetworkOwnership` and reserved
   channel 3 for them) and ADR 0076 (where `Player.Character` was the one piece

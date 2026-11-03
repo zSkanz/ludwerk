@@ -1,6 +1,6 @@
 # 0132 — Players chat through `TextChatService`
 
-- Status: **Withdrawn**: a game's chat is the game's own code, built on `RemoteEvent` (ADR 0077) and the transport's encryption; the engine ships nothing chat-specific. The text below is kept as the record of what was decided and undone.
+- Status: Withdrawn (TextChatService not built); withdrawal partly superseded by 0239 (@engine/chat)
 - Date: 2026-09-27
 - Builds on: [0077](0077-game-messages-cross-the-wire-through-a-remote-event.md)
   (messages across the wire), [0099](0099-teams-and-network-ownership.md) (teams),
