@@ -1,7 +1,9 @@
 # 0121 — A script can write an image, a sound and a mesh
 
-- Status: accepted; not built
+- Status: withdrawn (2026-11-03); not built, and the engine's code is the decision
 - Date: 2026-09-27
+
+*Withdrawn 2026-11-03: the engine does not contain this, and the code is the decision on what the engine has. The decision text below is kept as the record of what was considered.*
 - Relates to: [0107](0107-a-camera-draws-into-a-texture-a-frame-draws-its-own-instances-and-a-scene-runs-beside-another.md)
   (`view://` textures), [0009](0009-miniaudio-module-is-the-seam.md) (audio),
   [0007](0007-jolt-3d-physics.md) (physics), [0118](0118-water-is-one-wave-definition-read-by-the-renderer-and-by-physics.md)

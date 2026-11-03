@@ -1,7 +1,9 @@
 # 0122 — A `VideoPlayer` decodes AV1 and Opus, and the platform's H.264
 
-- Status: accepted; not built
+- Status: withdrawn (2026-11-03); not built, and the engine's code is the decision
 - Date: 2026-09-27
+
+*Withdrawn 2026-11-03: the engine does not contain this, and the code is the decision on what the engine has. The decision text below is kept as the record of what was considered.*
 - Builds on: [0121](0121-a-script-can-write-an-image-a-sound-and-a-mesh.md)
   (`EditableImage`, `AudioStream`),
   [0119](0119-networkservice-opens-connections-and-a-project-declares-what-it-may-do.md)

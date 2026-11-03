@@ -1,11 +1,13 @@
 # 0130 — Parts combine into solids, and two more shapes
 
-- Status: accepted; not built
+- Status: withdrawn (2026-11-03); not built, and the engine's code is the decision
   **Manifold is adopted** (2026-09-30), under the standing rule that a choice
   like this one follows how professional game engines work: it is Apache-2.0, inside R6,
   and the library the tools that do this at run time use. It is vendored
   through the manifest, at a pinned release tag, when the work starts.
 - Date: 2026-09-27
+
+*Withdrawn 2026-11-03: the engine does not contain this, and the code is the decision on what the engine has. The decision text below is kept as the record of what was considered.*
 - Relates to: [0010](0010-asset-stack.md) (the asset stack), [0121](0121-a-script-can-write-an-image-a-sound-and-a-mesh.md)
   (`EditableMesh`, whose collision modes this reuses).
 

@@ -30,7 +30,9 @@ without a relay or hole punching.
 
 - **libsodium** is vendored (ISC licence, pinned at the latest release tag by
   `vendor.luau resolve` when vendored, R5 satisfied by this record).
-- The handshake is **Noise `IK`** (the pattern WireGuard uses), over X25519,
+- The handshake is **Noise `XX`** (`Noise_XX_25519_ChaChaPoly_BLAKE2b`, as built;
+  ADR 0224 amends the pattern: `IK` is what WireGuard uses, and it is not what
+  this engine ships), over X25519,
   ChaCha20-Poly1305 and BLAKE2 — a specification, not an invention. After it,
   every ENet packet is sealed with a per-direction key and a counter nonce;
   replays and reordering beyond ENet's window are dropped.

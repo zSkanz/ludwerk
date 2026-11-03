@@ -2,7 +2,7 @@
 
 - Status: accepted; built, with the handshake and the places of "As built"
 - Date: 2026-10-14
-- Builds on: ADR 0218 (the console), ADR 0120 (Noise `IK` and libsodium),
+- Builds on: ADR 0218 (the console), ADR 0120 (Noise `XX`, see ADR 0224, and libsodium),
   ADR 0035 (the engine is a WebSocket client and never listens for its tools)
 - Amends: ADR 0035's rule, for a dedicated server only, as §1 says
 

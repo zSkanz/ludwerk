@@ -57,7 +57,7 @@ container, never a solver.
 
 ### 4. Dragging UI
 
-- **`UIDragDetector`**: child of a `GuiObject`; `DragStyle` (`TranslatePlane`,
+- **`UIDragDetector`**: child of a `UIObject`; `DragStyle` (`TranslatePlane`,
   `TranslateLine`, `Rotate`, `Scriptable`), `DragAxis`, `BoundingUI` (stays
   inside another element), `MinDragTranslation`,
   `MaxDragTranslation`, `MinDragAngle`, `MaxDragAngle`, `ResponseStyle`,

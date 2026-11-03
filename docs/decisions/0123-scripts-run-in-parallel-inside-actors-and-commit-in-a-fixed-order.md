@@ -1,7 +1,9 @@
 # 0123 — Scripts run in parallel inside actors, and commit in a fixed order
 
-- Status: accepted; not built; parallel windows reserved (phase.h)
+- Status: withdrawn (2026-11-03); not built (parallel windows stay reserved in engine/core/include/engine/core/phase.h), and the engine's code is the decision
 - Date: 2026-09-27
+
+*Withdrawn 2026-11-03: the engine does not contain this, and the code is the decision on what the engine has. The decision text below is kept as the record of what was considered.*
 - Builds on: `docs/architecture.md` §3 (the reserved parallel windows A and B),
   `api/schema.luau` (`ThreadSafety`), `engine/jobs/include/engine/jobs/commit.h`
   (the stable commit rule), [0083](0083-the-simulation-is-deterministic-across-platforms.md)
