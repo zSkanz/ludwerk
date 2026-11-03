@@ -129,7 +129,15 @@ Either way it is true until a transition takes it, or the tick ends.
   `at` a point `[x, z]`. The three clips round the parameters' point are mixed
   by where it lies between them; outside them all, the nearest edge.
 - **`sync`** gives a blend's clips one phase, so a walk and a run of different
-  lengths keep their feet together while one becomes the other.
+  lengths keep their feet together while one becomes the other. The blend
+  plays at the rate of its clips' mix -- and **past its furthest clip, as much
+  faster as the parameter is further**: a body at twice the run's speed plays
+  the run at twice its pace, so a speed bonus does not slide the feet. Past a
+  blend across two parameters it is the point's distance from `[0, 0]` over
+  the distance of the edge point it is held to. Inside the blend, short of
+  its slowest clip, on the other side of nought from the edge, or held to a
+  clip at nought (an idle), the rate is the clip's own. A blend without
+  `sync` always plays each clip at its own pace.
 - **`{}`** is a state with no clip. In a layer above the first it is "nothing":
   the layers under it show through.
 

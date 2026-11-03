@@ -33,6 +33,10 @@ constexpr f64 FadeSlack = 1e-5;
 // the arithmetic puts it a hair to either side.
 constexpr f32 InsideSlack = 1e-5f;
 
+// A clip this near nought stands still -- an idle. A body beyond it is not
+// outrunning anything, and a ratio to a hair of nothing would spin the blend.
+constexpr f64 StandingEdge = 1e-4;
+
 [[nodiscard]] u64 bits(f64 value) noexcept
 {
     u64 out = 0;
@@ -84,6 +88,24 @@ struct Nearest
     const f32 oy = a.y + dy * out.along - p.y;
     out.distance2 = ox * ox + oy * oy;
     return out;
+}
+
+// How many times further from nought the parameters' point is than the point
+// of the blend it was held to: how much faster than its furthest clip a body
+// is going. One when the two are not on one side of nought, when the edge
+// stands still, or when the point is the nearer -- a blend is never slowed by
+// it. In f64, so a wild parameter over a small edge is a big number and not
+// an infinity.
+[[nodiscard]] f64 outrunOf(Point at, Point edge) noexcept
+{
+    const f64 ax = static_cast<f64>(at.x);
+    const f64 ay = static_cast<f64>(at.y);
+    const f64 ex = static_cast<f64>(edge.x);
+    const f64 ey = static_cast<f64>(edge.y);
+    const f64 edgeLength = std::sqrt(ex * ex + ey * ey);
+    if (edgeLength < StandingEdge || ax * ex + ay * ey <= 0.0)
+        return 1.0;
+    return std::max(1.0, std::sqrt(ax * ax + ay * ay) / edgeLength);
 }
 
 // A time over a length, as whole loops and the part of one. Both come from
@@ -336,25 +358,25 @@ void GraphPlayer::tryTransitions(const AnimationGraph& graph, u32 index, std::ve
     }
 }
 
-void GraphPlayer::weigh(const AnimationGraph& graph, const GraphState& blend, std::span<f32> shares) const
+f64 GraphPlayer::weigh(const AnimationGraph& graph, const GraphState& blend, std::span<f32> shares) const
 {
     std::fill(shares.begin(), shares.end(), 0.0f);
     const std::span<const GraphClip> uses(graph.clips.data() + blend.firstClip, blend.clipCount);
     const usize count = uses.size();
     if (count == 1 || (blend.kind != GraphStateKind::Blend1 && blend.kind != GraphStateKind::Blend2)) {
         shares[0] = 1.0f;
-        return;
+        return 1.0;
     }
 
     if (blend.kind == GraphStateKind::Blend1) {
         const f32 at = value(static_cast<u32>(std::max(blend.blendX, 0)));
         if (at <= uses.front().at[0]) {
             shares[0] = 1.0f;
-            return;
+            return outrunOf(Point{at, 0.0f}, Point{uses.front().at[0], 0.0f});
         }
         if (at >= uses.back().at[0]) {
             shares[count - 1] = 1.0f;
-            return;
+            return outrunOf(Point{at, 0.0f}, Point{uses.back().at[0], 0.0f});
         }
         // The first clip past the parameter, and the one before it. The one
         // past is strictly past, so two clips written at one value are never
@@ -366,11 +388,11 @@ void GraphPlayer::weigh(const AnimationGraph& graph, const GraphState& blend, st
                 const f32 along = (at - low) / (high - low);
                 shares[index] = 1.0f - along;
                 shares[index + 1] = along;
-                return;
+                return 1.0;
             }
         }
         shares[count - 1] = 1.0f;
-        return;
+        return 1.0;
     }
 
     const Point at{value(static_cast<u32>(std::max(blend.blendX, 0))),
@@ -396,7 +418,7 @@ void GraphPlayer::weigh(const AnimationGraph& graph, const GraphState& blend, st
         shares[triangle[0]] = first / total;
         shares[triangle[1]] = second / total;
         shares[triangle[2]] = third / total;
-        return;
+        return 1.0;
     }
 
     // Outside every triangle: the nearest point of any edge, which is two
@@ -429,6 +451,9 @@ void GraphPlayer::weigh(const AnimationGraph& graph, const GraphState& blend, st
     }
     shares[from] = 1.0f - best.along;
     shares[to] += best.along;
+    const Point a = pointOf(uses[from]);
+    const Point b = pointOf(uses[to]);
+    return outrunOf(at, Point{a.x + (b.x - a.x) * best.along, a.y + (b.y - a.y) * best.along});
 }
 
 GraphPlayer::Played GraphPlayer::play(const AnimationGraph& graph, const GraphState& playing, f64& time, f32 weight,
@@ -440,7 +465,7 @@ GraphPlayer::Played GraphPlayer::play(const AnimationGraph& graph, const GraphSt
         return out;
 
     const std::span<f32> shares(m_shares.data(), count);
-    weigh(graph, playing, shares);
+    const f64 outrun = weigh(graph, playing, shares);
     u32 heaviest = 0;
     for (u32 index = 1; index < count; ++index) {
         if (shares[index] > shares[heaviest])
@@ -485,7 +510,10 @@ GraphPlayer::Played GraphPlayer::play(const AnimationGraph& graph, const GraphSt
         }
         const f64 length = mixedWeight > 0.0 ? mixed / mixedWeight : 0.0;
         if (length > 0.0) {
-            const f64 reached = before + advance / length;
+            // A body faster than the fastest clip is held to that clip, and at
+            // the clip's own pace its feet slide: the phase goes as much
+            // faster as the body is.
+            const f64 reached = before + advance * outrun / length;
             if (playing.loop) {
                 const f64 whole = std::floor(reached);
                 time = reached - whole;

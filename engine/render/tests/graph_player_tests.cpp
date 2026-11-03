@@ -311,6 +311,85 @@ TEST_CASE("a synced blend keeps one phase, at the rate of its clips' mix")
     CHECK(approx(rig.player.stateProgress(0)) - before == doctest::Approx(0.1).epsilon(1e-4));
 }
 
+TEST_CASE("a synced blend past its furthest clip plays as much faster as its parameter is further")
+{
+    // A walk a second long at 1, a run half a second long at 4.
+    const auto phaseAt = [](core::f32 speed, core::f64 dt) {
+        Rig rig = rigOf(
+            blendLayer(R"({"blend":"Speed","sync":true,"clips":[{"clip":"Walk","at":1},{"clip":"Run","at":4}]})"));
+        rig.lengths = {1.0f, 0.5f};
+        rig.player.setOverride(Speed, speed);
+        rig.step(dt);
+        // The feet stay together however fast the phase goes.
+        CHECK(rig.clip(0).time == doctest::Approx(approx(rig.player.stateProgress(0))).epsilon(1e-5));
+        CHECK(rig.clip(1).time == doctest::Approx(0.5 * approx(rig.player.stateProgress(0))).epsilon(1e-5));
+        return approx(rig.player.stateProgress(0));
+    };
+
+    // At the run, the run's own pace: a tenth of a second is a fifth of it.
+    CHECK(phaseAt(4.0f, 0.1) == doctest::Approx(0.2));
+    // Twice as fast as the run is twice the run's pace, and so on.
+    CHECK(phaseAt(8.0f, 0.1) == doctest::Approx(0.4));
+    CHECK(phaseAt(6.0f, 0.1) == doctest::Approx(0.3));
+
+    // Inside the blend nothing changes: half a walk and half a run are a clip
+    // of three quarters of a second.
+    CHECK(phaseAt(2.5f, 0.15) == doctest::Approx(0.2));
+    CHECK(phaseAt(1.0f, 0.1) == doctest::Approx(0.1));
+    // Short of the slowest clip is held to it, and never slower than it.
+    CHECK(phaseAt(0.5f, 0.1) == doctest::Approx(0.1));
+    // The other side of nought from the clips is not faster than any of them.
+    CHECK(phaseAt(-8.0f, 0.1) == doctest::Approx(0.1));
+
+    // Below the lowest clip on the negative side, by the same ratio.
+    Rig both =
+        rigOf(blendLayer(R"({"blend":"Speed","sync":true,"clips":[{"clip":"Back","at":-4},{"clip":"Run","at":4}]})"));
+    both.lengths = {0.5f, 0.5f};
+    both.player.setOverride(Speed, -8.0f);
+    both.step(0.1);
+    CHECK(approx(both.player.stateProgress(0)) == doctest::Approx(0.4));
+    CHECK(both.clip(0).weight == 1.0f);
+
+    // An idle at nought is no edge to outrun: below it is the idle's pace.
+    Rig idle =
+        rigOf(blendLayer(R"({"blend":"Speed","sync":true,"clips":[{"clip":"Idle","at":0},{"clip":"Run","at":4}]})"));
+    idle.player.setOverride(Speed, -3.0f);
+    idle.step(0.1);
+    CHECK(approx(idle.player.stateProgress(0)) == doctest::Approx(0.1));
+}
+
+TEST_CASE("a synced blend across two parameters past its outermost edge plays faster by the ratio")
+{
+    const auto phaseAt = [](core::f32 x, core::f32 y) {
+        Rig rig = rigOf(R"({"name":"Body","start":"S","states":{"S":{"blend":["X","Y"],"sync":true,)"
+                        R"("clips":[{"clip":"Idle","at":[0,0]},{"clip":"Right","at":[2,0]},)"
+                        R"({"clip":"Forward","at":[0,2]}]}}})");
+        rig.player.setOverride(X, x);
+        rig.player.setOverride(Y, y);
+        rig.step(0.1);
+        return approx(rig.player.stateProgress(0));
+    };
+    // Every clip a second long: a tenth of a second is a tenth of the phase.
+    CHECK(phaseAt(0.5f, 0.5f) == doctest::Approx(0.1));
+    CHECK(phaseAt(0.0f, 2.0f) == doctest::Approx(0.1));
+    // Twice as far as the outermost point, straight out from a corner.
+    CHECK(phaseAt(0.0f, 4.0f) == doctest::Approx(0.2));
+    // Twice as far as the middle of the far edge, which is where it is held.
+    CHECK(phaseAt(2.0f, 2.0f) == doctest::Approx(0.2));
+    // Held to the idle at nought, or to an edge pointing away: no faster.
+    CHECK(phaseAt(-1.0f, -1.0f) == doctest::Approx(0.1));
+}
+
+TEST_CASE("an unsynced blend past its furthest clip plays at the clip's own pace")
+{
+    Rig rig = rigOf(blendLayer(R"({"blend":"Speed","clips":[{"clip":"Walk","at":1},{"clip":"Run","at":4}]})"));
+    rig.lengths = {1.0f, 0.5f};
+    rig.player.setOverride(Speed, 8.0f);
+    rig.step(0.1);
+    CHECK(rig.clip(1).time == doctest::Approx(0.1));
+    CHECK(approx(rig.player.stateProgress(0)) == doctest::Approx(0.2));
+}
+
 TEST_CASE("an unsynced blend plays each clip on its own length")
 {
     Rig rig = rigOf(blendLayer(R"({"blend":"Speed","clips":[{"clip":"Walk","at":0},{"clip":"Run","at":1}]})"));

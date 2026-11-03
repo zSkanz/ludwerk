@@ -196,7 +196,11 @@ private:
     [[nodiscard]] bool holds(const asset::GraphCondition& condition) const;
     void tryTransitions(const asset::AnimationGraph& graph, core::u32 index, std::vector<Signal>& signals);
     void enter(Layer& layer, core::u32 to, core::f32 fade);
-    void weigh(const asset::AnimationGraph& graph, const asset::GraphState& blend, std::span<core::f32> shares) const;
+    // Fills `shares` and answers how many times further from nought than the
+    // blend reaches its parameters are: 1 inside it, and more past its
+    // furthest clip, by which a synced blend's phase is sped.
+    [[nodiscard]] core::f64 weigh(const asset::AnimationGraph& graph, const asset::GraphState& blend,
+                                  std::span<core::f32> shares) const;
     Played play(const asset::AnimationGraph& graph, const asset::GraphState& playing, core::f64& time, core::f32 weight,
                 core::f64 dt, std::span<const core::f32> clipLengths);
 

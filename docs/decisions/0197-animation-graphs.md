@@ -329,3 +329,29 @@ ratio: the feet slid. The blend's numbers are the library's, once.
 `VerticalSpeed` is left in metres: a fall is nobody's stride. A body on the
 library's own skeleton has a scale of one and reads what it did. It is on
 the simulation's side of the hash and is a function of the two rigs alone.
+
+## Amended 2026-10-31: a synced blend keeps pace with a body that outruns it
+
+Past a blend's furthest clip the parameters are held to it -- the end clip
+along one parameter, the nearest edge across two -- and a synced blend went
+on at that clip's own rate. A body faster than its fastest clip (a game's
+speed bonus) then ran with feet that slid: the run covered the ground of a
+run while the body covered more.
+
+**A synced blend's phase now advances as much faster as the parameters are
+further out.** Along one parameter, past the last clip's value, by the
+parameter over that value; below the first, the same on the negative side.
+Across two, outside every triangle, by the point's distance from nought over
+the distance of the edge point it was held to. It is never below one: inside
+the blend nothing changes, and a point short of the slowest clip, on the
+other side of nought from the edge (the dot product is not positive), or held
+to a clip at nought -- an idle, which nothing outruns -- plays at the clip's
+own rate. A blend that is not synced is unchanged: its clips each keep their
+own length, and locomotion -- whose feet are what slid -- is what `sync` is
+for.
+
+The factor is plain float arithmetic on the parameters and the clips'
+positions, worked out where the shares are, so it is on the simulation's side
+of the hash with no state of its own: two runs with the same parameters step
+the same phase. Events and `after` follow the phase, so a footstep on a run
+twice as fast comes twice as often.
