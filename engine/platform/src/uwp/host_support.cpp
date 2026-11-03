@@ -94,6 +94,11 @@ bool outputGoesUnread() noexcept
 {
     return true;
 }
+void setCrashNotice(std::string_view, std::string_view)
+{
+    // AppContainer cannot open the desktop crash dialog. Keep the readable
+    // app-local crash note below; showing UI from std::terminate is unsafe.
+}
 bool installCrashHandler(const std::filesystem::path& directory)
 {
     crashDirectory = directory;
